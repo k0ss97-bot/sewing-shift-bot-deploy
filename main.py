@@ -72,6 +72,8 @@ from database import (
     update_employee_position,
     update_shift_operation_quantity,
     update_employee_status,
+    local_now,
+    local_today,
 )
 
 
@@ -388,7 +390,7 @@ def create_database_backup(kind: str = "manual"):
     backups_dir = "backups"
     os.makedirs(backups_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = local_now().strftime("%Y-%m-%d_%H-%M-%S")
     backup_path = os.path.join(backups_dir, f"{kind}_{timestamp}_{DB_NAME}")
 
     source = sqlite3.connect(DB_NAME)
@@ -407,7 +409,7 @@ def create_daily_database_backup():
     backups_dir = "backups"
     os.makedirs(backups_dir, exist_ok=True)
 
-    today = date.today().isoformat()
+    today = local_today().isoformat()
     daily_prefix = f"auto_{today}_"
 
     if any(file_name.startswith(daily_prefix) for file_name in os.listdir(backups_dir)):
@@ -587,7 +589,7 @@ def append_operation_rows(sheet, operation_rows):
 
 
 def create_excel_report(start_date: str | None = None, end_date: str | None = None):
-    today = date.today()
+    today = local_today()
     month_name = today.strftime("%Y-%m")
     is_period_report = start_date is not None and end_date is not None
     exports_dir = "exports"

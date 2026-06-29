@@ -1,8 +1,18 @@
 import sqlite3
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 
 DB_NAME = "bot.db"
+LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
+
+
+def local_now():
+    return datetime.now(LOCAL_TZ).replace(tzinfo=None)
+
+
+def local_today():
+    return local_now().date()
 
 
 CUTTING_PRODUCTS = [
@@ -613,7 +623,7 @@ def create_employee(telegram_id: int, full_name: str, position: str):
         INSERT INTO employees (telegram_id, full_name, position, registered_at)
         VALUES (?, ?, ?, ?)
         """,
-        (telegram_id, full_name, position, datetime.now().isoformat())
+        (telegram_id, full_name, position, local_now().isoformat())
     )
 
     conn.commit()
@@ -736,7 +746,7 @@ def get_shift_for_today(employee_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    today = date.today().isoformat()
+    today = local_today().isoformat()
 
     cursor.execute(
         """
@@ -779,7 +789,7 @@ def get_open_shift_for_today(employee_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    today = date.today().isoformat()
+    today = local_today().isoformat()
 
     cursor.execute(
         """
@@ -801,7 +811,7 @@ def get_editable_shift_for_today(employee_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    today = date.today().isoformat()
+    today = local_today().isoformat()
 
     cursor.execute(
         """
@@ -829,7 +839,7 @@ def get_editable_shift_for_today(employee_id: int):
 
     if status == "closed" and edit_until:
         try:
-            if datetime.now() <= datetime.fromisoformat(edit_until):
+            if local_now() <= datetime.fromisoformat(edit_until):
                 return shift
         except ValueError:
             return None
@@ -841,8 +851,8 @@ def create_shift(employee_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    now = datetime.now()
-    shift_date = date.today().isoformat()
+    now = local_now()
+    shift_date = local_today().isoformat()
     start_time = now.strftime("%H:%M")
     created_at = now.isoformat()
 
@@ -1184,7 +1194,7 @@ def add_shift_operation(
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    now = datetime.now().isoformat()
+    now = local_now().isoformat()
 
     cursor.execute(
         """
@@ -1301,7 +1311,7 @@ def update_shift_operation_quantity(shift_operation_id: int, quantity: int):
             updated_at = ?
         WHERE id = ?
         """,
-        (quantity, datetime.now().isoformat(), shift_operation_id)
+        (quantity, local_now().isoformat(), shift_operation_id)
     )
 
     conn.commit()
@@ -1375,7 +1385,7 @@ def close_shift(shift_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    now = datetime.now()
+    now = local_now()
     end_time = now.strftime("%H:%M")
     closed_at = now.isoformat()
     edit_until = (now + timedelta(hours=1)).isoformat()
@@ -1542,7 +1552,7 @@ def admin_close_shift(shift_id: int, end_time: str):
         conn.close()
         return "bad_time"
 
-    now = datetime.now()
+    now = local_now()
     closed_at = now.isoformat()
     edit_until = (now + timedelta(hours=1)).isoformat()
     total_minutes = int((end_dt - start_dt).total_seconds() // 60)
@@ -1574,7 +1584,7 @@ def get_today_shifts():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    today = date.today().isoformat()
+    today = local_today().isoformat()
 
     cursor.execute(
         """
@@ -1603,8 +1613,8 @@ def get_month_employee_summary():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    month_start = date.today().replace(day=1).isoformat()
-    today = date.today().isoformat()
+    month_start = local_today().replace(day=1).isoformat()
+    today = local_today().isoformat()
 
     cursor.execute(
         """
@@ -1718,8 +1728,8 @@ def get_month_operations_by_employee(employee_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    month_start = date.today().replace(day=1).isoformat()
-    today = date.today().isoformat()
+    month_start = local_today().replace(day=1).isoformat()
+    today = local_today().isoformat()
 
     cursor.execute(
         """
@@ -1795,8 +1805,8 @@ def get_month_operation_rows():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    month_start = date.today().replace(day=1).isoformat()
-    today = date.today().isoformat()
+    month_start = local_today().replace(day=1).isoformat()
+    today = local_today().isoformat()
 
     cursor.execute(
         """
@@ -1896,8 +1906,8 @@ def get_month_shift_details():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    month_start = date.today().replace(day=1).isoformat()
-    today = date.today().isoformat()
+    month_start = local_today().replace(day=1).isoformat()
+    today = local_today().isoformat()
 
     cursor.execute(
         """
@@ -1965,7 +1975,7 @@ def add_edit_log(changed_by: int, role: str, action: str, entity_type: str, enti
             entity_type,
             entity_id,
             details,
-            datetime.now().isoformat(timespec="seconds"),
+            local_now().isoformat(timespec="seconds"),
         )
     )
 
