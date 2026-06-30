@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import sqlite3
 from datetime import date, datetime
 
@@ -140,6 +141,10 @@ class OperationAdmin(StatesGroup):
     waiting_for_edit_value = State()
     waiting_for_hide_number = State()
     waiting_for_restore_number = State()
+
+
+class DatabaseAdmin(StatesGroup):
+    waiting_for_database_file = State()
 
 
 POSITIONS = {
@@ -300,6 +305,9 @@ def admin_files_keyboard():
             ],
             [
                 KeyboardButton(text="Проверка базы"),
+            ],
+            [
+                KeyboardButton(text="Загрузить базу"),
             ],
             [
                 KeyboardButton(text="Создать копию базы"),
@@ -2159,6 +2167,105 @@ async def database_status(message: Message):
     await message.answer(text, reply_markup=admin_files_keyboard())
 
 
+def read_database_counts(db_path: str):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    counts = {}
+
+    for table in ["employees", "shifts", "shift_operations", "operations"]:
+        cursor.execute(f"SELECT COUNT(*) FROM {table}")
+        counts[table] = cursor.fetchone()[0]
+
+    conn.close()
+    return counts
+
+
+@dp.message(Command("restore_db"))
+async def restore_database_start(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    await state.set_state(DatabaseAdmin.waiting_for_database_file)
+    await message.answer(
+        "Отправьте файл рабочей базы данных bot.db сюда в Telegram.\n\n"
+        "Бот проверит файл, сделает копию текущей базы и заменит активную базу.",
+        reply_markup=admin_files_keyboard(),
+    )
+
+
+@dp.message(DatabaseAdmin.waiting_for_database_file)
+async def restore_database_file(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    if not message.document:
+        await message.answer("Нужно отправить файл bot.db как документ.")
+        return
+
+    file_name = message.document.file_name or ""
+
+    if not file_name.endswith(".db"):
+        await message.answer("Нужен файл базы с расширением .db, например bot.db.")
+        return
+
+    db_dir = os.path.dirname(DB_NAME)
+
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    upload_path = f"{DB_NAME}.upload"
+
+    await bot.download(message.document, destination=upload_path)
+
+    try:
+        counts = read_database_counts(upload_path)
+    except sqlite3.Error as error:
+        if os.path.exists(upload_path):
+            os.remove(upload_path)
+
+        await message.answer(f"Это не подходит как база данных.\nОшибка: {error}")
+        return
+
+    if counts["employees"] == 0:
+        os.remove(upload_path)
+        await message.answer(
+            "В этой базе нет сотрудников. Похоже, это пустой файл.\n"
+            "Выберите рабочий bot.db из папки sewing_shift_bot."
+        )
+        return
+
+    backup_path = None
+
+    if os.path.exists(DB_NAME):
+        backups_dir = "backups"
+        os.makedirs(backups_dir, exist_ok=True)
+        timestamp = local_now().strftime("%Y-%m-%d_%H-%M-%S")
+        backup_path = os.path.join(backups_dir, f"before_restore_{timestamp}_{os.path.basename(DB_NAME)}")
+        shutil.copy2(DB_NAME, backup_path)
+
+    shutil.move(upload_path, DB_NAME)
+    await state.clear()
+
+    text = (
+        "База заменена.\n\n"
+        f"Путь: {DB_NAME}\n"
+        f"Сотрудники: {counts['employees']}\n"
+        f"Смены: {counts['shifts']}\n"
+        f"Операции в отчётах: {counts['shift_operations']}\n"
+        f"Справочник операций: {counts['operations']}"
+    )
+
+    if backup_path:
+        text += f"\n\nСтарая база сохранена:\n{backup_path}"
+
+    await message.answer(text, reply_markup=admin_files_keyboard())
+
+
 @dp.message(Command("create_backup"))
 async def create_backup_command(message: Message):
     if not is_admin(message.from_user.id):
@@ -2462,6 +2569,11 @@ async def backup_button(message: Message):
 @dp.message(lambda message: message.text == "Проверка базы")
 async def database_status_button(message: Message):
     await database_status(message)
+
+
+@dp.message(lambda message: message.text == "Загрузить базу")
+async def restore_database_button(message: Message, state: FSMContext):
+    await restore_database_start(message, state)
 
 
 @dp.message(lambda message: message.text == "Создать копию базы")
