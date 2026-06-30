@@ -6,15 +6,31 @@ from zoneinfo import ZoneInfo
 
 
 DB_FILE_NAME = "bot.db"
-SHARED_DIR = os.getenv("SHARED_DIR", "/app/shared")
+DB_DIR_CANDIDATES = [
+    os.getenv("DB_DIR", ""),
+    os.getenv("SHARED_DIR", ""),
+    "/app/shared",
+    "/app/data",
+    "data",
+]
 
-if os.path.isdir(SHARED_DIR):
-    DB_NAME = os.path.join(SHARED_DIR, DB_FILE_NAME)
 
-    if not os.path.exists(DB_NAME) and os.path.exists(DB_FILE_NAME):
-        shutil.copy2(DB_FILE_NAME, DB_NAME)
-else:
-    DB_NAME = DB_FILE_NAME
+def resolve_database_path():
+    for db_dir in DB_DIR_CANDIDATES:
+        if not db_dir or not os.path.isdir(db_dir):
+            continue
+
+        db_path = os.path.join(db_dir, DB_FILE_NAME)
+
+        if not os.path.exists(db_path) and os.path.exists(DB_FILE_NAME):
+            shutil.copy2(DB_FILE_NAME, db_path)
+
+        return db_path
+
+    return DB_FILE_NAME
+
+
+DB_NAME = resolve_database_path()
 LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
 
 
