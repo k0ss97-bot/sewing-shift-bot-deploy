@@ -345,7 +345,7 @@ def setup_logging():
     )
 
 
-def choice_keyboard(prefix: str, items: dict[str, str | dict]):
+def choice_keyboard(prefix: str, items: dict[str, str | dict], with_navigation: bool = True):
     keyboard = []
 
     for number, item in items.items():
@@ -361,7 +361,24 @@ def choice_keyboard(prefix: str, items: dict[str, str | dict]):
             )
         ])
 
+    if with_navigation:
+        keyboard.append([
+            InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
+        ])
+
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def navigation_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
+            ]
+        ]
+    )
 
 
 async def callback_state_is_current(callback: CallbackQuery, state: FSMContext, expected_state: State):
@@ -475,15 +492,159 @@ def parse_period(text: str):
     return start_date, end_date
 
 
+async def send_report_group_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    employee_position = data["employee_position"]
+    group_map = data.get("group_map", {})
+
+    text = f"Раздел: {employee_position}\n\nВыберите группу. Напишите номер:\n\n"
+
+    for number, group in group_map.items():
+        text += f"{number}. {group}\n"
+
+    await state.set_state(Report.waiting_for_group)
+    await message.answer(text, reply_markup=choice_keyboard("report_group", group_map))
+
+
+async def send_report_folder_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    selected_group = data["selected_group"]
+    folder_map = data.get("folder_map", {})
+
+    text = f"Группа: {selected_group}\n\nВыберите изделие. Напишите номер:\n\n"
+
+    for number, folder in folder_map.items():
+        text += f"{number}. {folder}\n"
+
+    await state.set_state(Report.waiting_for_folder)
+    await message.answer(text, reply_markup=choice_keyboard("report_folder", folder_map))
+
+
+async def send_report_size_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    selected_folder = data["selected_folder"]
+    size_map = data.get("size_map", {})
+
+    if not size_map:
+        await send_report_folder_step(message, state)
+        return
+
+    text = f"Изделие: {selected_folder}\n\nВыберите размер. Напишите номер:\n\n"
+
+    for number, product_size in size_map.items():
+        text += f"{number}. {product_size}\n"
+
+    await state.set_state(Report.waiting_for_size)
+    await message.answer(text, reply_markup=choice_keyboard("report_size", size_map))
+
+
+async def send_report_color_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    selected_folder = data["selected_folder"]
+    selected_size = data["selected_size"]
+    color_map = data.get("color_map", {})
+
+    if not color_map:
+        await send_report_size_step(message, state)
+        return
+
+    text = f"Изделие: {selected_folder}\nРазмер: {selected_size}\n\nВыберите цвет. Напишите номер:\n\n"
+
+    for number, color in color_map.items():
+        text += f"{number}. {color}\n"
+
+    await state.set_state(Report.waiting_for_color)
+    await message.answer(text, reply_markup=choice_keyboard("report_color", color_map))
+
+
+async def send_report_operation_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    selected_folder = data["selected_folder"]
+    operation_map = data.get("operation_map", {})
+
+    text = (
+        f"Изделие: {selected_folder}\n"
+        f"Размер: {data['selected_size']}\n"
+        f"Цвет: {data['selected_color']}\n\n"
+        "Выберите операцию. Напишите номер:\n\n"
+    )
+
+    for number, operation in operation_map.items():
+        text += f"{number}. {operation['name']}\n"
+
+    await state.set_state(Report.waiting_for_operation)
+    await message.answer(text, reply_markup=choice_keyboard("report_operation", operation_map))
+
+
+async def go_back_in_report(message: Message, state: FSMContext, current_state: str):
+    if current_state == Report.waiting_for_group.state:
+        await state.clear()
+        await message.answer("Выберите действие с отчётом:", reply_markup=report_keyboard())
+        return
+
+    if current_state == Report.waiting_for_folder.state:
+        await send_report_group_step(message, state)
+        return
+
+    if current_state == Report.waiting_for_size.state:
+        await send_report_folder_step(message, state)
+        return
+
+    if current_state == Report.waiting_for_color.state:
+        data = await state.get_data()
+        if data.get("size_map"):
+            await send_report_size_step(message, state)
+        else:
+            await send_report_folder_step(message, state)
+        return
+
+    if current_state == Report.waiting_for_operation.state:
+        data = await state.get_data()
+        if data.get("color_map"):
+            await send_report_color_step(message, state)
+        elif data.get("size_map"):
+            await send_report_size_step(message, state)
+        else:
+            await send_report_folder_step(message, state)
+        return
+
+    if current_state == Report.waiting_for_quantity.state:
+        await send_report_operation_step(message, state)
+        return
+
+    await state.clear()
+    await message.answer("Основное меню:", reply_markup=employee_keyboard())
+
+
 async def reset_state_if_command(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+
+    if message.text in {"Отмена", "Отменить"}:
+        await state.clear()
+        await message.answer("Действие отменено.", reply_markup=employee_keyboard())
+        return True
+
     if message.text == "Админ меню" and is_admin(message.from_user.id):
         await state.clear()
         await message.answer("Админ-панель:", reply_markup=admin_keyboard())
         return True
 
-    if message.text == "Назад":
+    if message.text == "Админ-панель" and is_admin(message.from_user.id):
         await state.clear()
-        await message.answer("Основное меню:", reply_markup=employee_keyboard())
+        await message.answer("Админ-панель:", reply_markup=admin_keyboard())
+        return True
+
+    if message.text == "Отчёт":
+        await state.clear()
+        await message.answer("Выберите действие с отчётом:", reply_markup=report_keyboard())
+        return True
+
+    if message.text == "Назад":
+        if current_state and current_state.startswith("Report:"):
+            await go_back_in_report(message, state, current_state)
+        else:
+            await state.clear()
+            await message.answer("Основное меню:", reply_markup=employee_keyboard())
         return True
 
     if message.text and message.text.startswith("/"):
@@ -494,6 +655,26 @@ async def reset_state_if_command(message: Message, state: FSMContext):
         return True
 
     return False
+
+
+@dp.callback_query(lambda callback: callback.data in {"nav_back", "nav_cancel"})
+async def process_navigation_button(callback: CallbackQuery, state: FSMContext):
+    current_state = await state.get_state()
+
+    if callback.data == "nav_cancel":
+        await state.clear()
+        await callback.answer("Отменено")
+        await callback.message.answer("Действие отменено.", reply_markup=employee_keyboard())
+        return
+
+    if current_state and current_state.startswith("Report:"):
+        await callback.answer()
+        await go_back_in_report(callback.message, state, current_state)
+        return
+
+    await state.clear()
+    await callback.answer("Назад")
+    await callback.message.answer("Основное меню:", reply_markup=employee_keyboard())
 
 
 @dp.message(Command("admin"))
@@ -2516,7 +2697,8 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
         f"Операция: {operation_name}\n"
         f"Размер: {data['selected_size']}\n"
         f"Цвет: {data['selected_color']}\n\n"
-        "Введите количество:"
+        "Введите количество:",
+        reply_markup=navigation_keyboard(),
     )
 
 
