@@ -39,6 +39,7 @@ from database import (
     get_active_operations,
     get_all_employees,
     get_all_operations,
+    get_database_status,
     get_editable_shift_for_today,
     get_employee_by_telegram_id,
     get_employee_period_operation_totals,
@@ -296,6 +297,9 @@ def admin_files_keyboard():
             [
                 KeyboardButton(text="Журнал"),
                 KeyboardButton(text="Скачать базу"),
+            ],
+            [
+                KeyboardButton(text="Проверка базы"),
             ],
             [
                 KeyboardButton(text="Создать копию базы"),
@@ -2131,6 +2135,30 @@ async def backup_database(message: Message):
     await message.answer("База отправлена.", reply_markup=admin_files_keyboard())
 
 
+@dp.message(Command("db_status"))
+async def database_status(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    status = get_database_status()
+    text = (
+        "Проверка базы:\n\n"
+        f"Путь: {status['path']}\n"
+        f"Файл найден: {'да' if status['exists'] else 'нет'}\n"
+        f"Размер: {status['size']} байт\n"
+        f"Сотрудники: {status['employees']}\n"
+        f"Смены: {status['shifts']}\n"
+        f"Операции в отчётах: {status['shift_operations']}\n"
+        f"Справочник операций: {status['operations']}"
+    )
+
+    if "error" in status:
+        text += f"\nОшибка: {status['error']}"
+
+    await message.answer(text, reply_markup=admin_files_keyboard())
+
+
 @dp.message(Command("create_backup"))
 async def create_backup_command(message: Message):
     if not is_admin(message.from_user.id):
@@ -2429,6 +2457,11 @@ async def inactive_employees_button(message: Message):
 @dp.message(lambda message: message.text == "Скачать базу")
 async def backup_button(message: Message):
     await backup_database(message)
+
+
+@dp.message(lambda message: message.text == "Проверка базы")
+async def database_status_button(message: Message):
+    await database_status(message)
 
 
 @dp.message(lambda message: message.text == "Создать копию базы")

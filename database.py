@@ -30,23 +30,27 @@ def resolve_database_path():
         except sqlite3.Error:
             return False
 
+    root_db_has_data = has_business_data(DB_FILE_NAME)
+
     db_paths = [
         os.path.join(db_dir, DB_FILE_NAME)
         for db_dir in DB_DIR_CANDIDATES
         if db_dir and os.path.isdir(db_dir)
     ]
 
+    if root_db_has_data:
+        for db_path in db_paths:
+            if not has_business_data(db_path):
+                shutil.copy2(DB_FILE_NAME, db_path)
+
+        return DB_FILE_NAME
+
     for db_path in db_paths:
         if has_business_data(db_path):
             return db_path
 
-    root_db_has_data = has_business_data(DB_FILE_NAME)
-
     if db_paths:
         target_path = db_paths[0]
-
-        if root_db_has_data:
-            shutil.copy2(DB_FILE_NAME, target_path)
 
         return target_path
 
@@ -55,6 +59,35 @@ def resolve_database_path():
 
 DB_NAME = resolve_database_path()
 LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
+
+
+def get_database_status():
+    status = {
+        "path": DB_NAME,
+        "exists": os.path.exists(DB_NAME),
+        "size": os.path.getsize(DB_NAME) if os.path.exists(DB_NAME) else 0,
+        "employees": None,
+        "shifts": None,
+        "shift_operations": None,
+        "operations": None,
+    }
+
+    if not status["exists"]:
+        return status
+
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+
+        for table in ["employees", "shifts", "shift_operations", "operations"]:
+            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            status[table] = cursor.fetchone()[0]
+
+        conn.close()
+    except sqlite3.Error as error:
+        status["error"] = str(error)
+
+    return status
 
 
 def local_now():
