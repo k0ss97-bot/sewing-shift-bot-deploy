@@ -16,16 +16,39 @@ DB_DIR_CANDIDATES = [
 
 
 def resolve_database_path():
-    for db_dir in DB_DIR_CANDIDATES:
-        if not db_dir or not os.path.isdir(db_dir):
-            continue
+    def has_business_data(db_path: str):
+        if not os.path.exists(db_path):
+            return False
 
-        db_path = os.path.join(db_dir, DB_FILE_NAME)
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM employees")
+            employee_count = cursor.fetchone()[0]
+            conn.close()
+            return employee_count > 0
+        except sqlite3.Error:
+            return False
 
-        if not os.path.exists(db_path) and os.path.exists(DB_FILE_NAME):
-            shutil.copy2(DB_FILE_NAME, db_path)
+    db_paths = [
+        os.path.join(db_dir, DB_FILE_NAME)
+        for db_dir in DB_DIR_CANDIDATES
+        if db_dir and os.path.isdir(db_dir)
+    ]
 
-        return db_path
+    for db_path in db_paths:
+        if has_business_data(db_path):
+            return db_path
+
+    root_db_has_data = has_business_data(DB_FILE_NAME)
+
+    if db_paths:
+        target_path = db_paths[0]
+
+        if root_db_has_data:
+            shutil.copy2(DB_FILE_NAME, target_path)
+
+        return target_path
 
     return DB_FILE_NAME
 
