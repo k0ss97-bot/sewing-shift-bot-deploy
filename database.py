@@ -1,9 +1,20 @@
+import os
+import shutil
 import sqlite3
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 
-DB_NAME = "bot.db"
+DB_FILE_NAME = "bot.db"
+SHARED_DIR = os.getenv("SHARED_DIR", "/app/shared")
+
+if os.path.isdir(SHARED_DIR):
+    DB_NAME = os.path.join(SHARED_DIR, DB_FILE_NAME)
+
+    if not os.path.exists(DB_NAME) and os.path.exists(DB_FILE_NAME):
+        shutil.copy2(DB_FILE_NAME, DB_NAME)
+else:
+    DB_NAME = DB_FILE_NAME
 LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
 
 

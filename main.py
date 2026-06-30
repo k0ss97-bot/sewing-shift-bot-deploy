@@ -408,7 +408,7 @@ def create_database_backup(kind: str = "manual"):
     os.makedirs(backups_dir, exist_ok=True)
 
     timestamp = local_now().strftime("%Y-%m-%d_%H-%M-%S")
-    backup_path = os.path.join(backups_dir, f"{kind}_{timestamp}_{DB_NAME}")
+    backup_path = os.path.join(backups_dir, f"{kind}_{timestamp}_{os.path.basename(DB_NAME)}")
 
     source = sqlite3.connect(DB_NAME)
     backup = sqlite3.connect(backup_path)
