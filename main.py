@@ -277,9 +277,6 @@ def admin_reports_keyboard():
                 KeyboardButton(text="Править отчёт"),
             ],
             [
-                KeyboardButton(text="Партии раскроя"),
-            ],
-            [
                 KeyboardButton(text="Выгрузить отчёт"),
                 KeyboardButton(text="Админ меню"),
             ],
@@ -3532,6 +3529,7 @@ async def ask_report_operation(message: Message, state: FSMContext):
         operation_map[str(index)] = {
             "id": operation_id,
             "name": name,
+            "unit": unit,
         }
         text += f"{index}. {name} ({unit})\n"
 
@@ -3878,6 +3876,7 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
     update_payload = {
         "operation_id": operation["id"],
         "operation_name": operation_name,
+        "operation_unit": operation.get("unit", "шт"),
     }
 
     if data.get("employee_position") == "Раскройщик":
@@ -3920,11 +3919,12 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
         return
 
     await state.set_state(Report.waiting_for_quantity)
+    quantity_prompt = "Введите время в минутах:" if operation.get("unit") == "мин" else "Введите количество:"
     await message.answer(
         f"Операция: {operation_name}\n"
         f"Размер: {data.get('selected_size', ', '.join(data.get('selected_sizes', [])))}\n"
         f"Цвет: {data.get('selected_color', ', '.join(data.get('selected_colors', [])))}\n\n"
-        "Введите количество:",
+        f"{quantity_prompt}",
         reply_markup=navigation_keyboard(),
     )
 
@@ -4066,12 +4066,18 @@ async def process_quantity(message: Message, state: FSMContext):
     if await reset_state_if_command(message, state):
         return
 
+    data = await state.get_data()
+    quantity_error_text = (
+        "Введите время положительным числом минут, например: 15"
+        if data.get("operation_unit") == "мин"
+        else "Введите количество положительным числом, например: 200"
+    )
+
     if not message.text.isdigit() or int(message.text) <= 0:
-        await message.answer("Введите количество положительным числом, например: 200")
+        await message.answer(quantity_error_text)
         return
 
     quantity = int(message.text)
-    data = await state.get_data()
 
     if data.get("employee_position") == "Раскройщик":
         if data.get("cutting_mode") == CUTTING_MODE_CONTOURS:
