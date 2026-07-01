@@ -3060,15 +3060,47 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
     operation = operation_map[selected_number]
     operation_name = f"{data['selected_folder']}: {operation['name']}"
 
-    await state.update_data(operation_id=operation["id"], operation_name=operation_name)
+    update_payload = {
+        "operation_id": operation["id"],
+        "operation_name": operation_name,
+    }
+
+    if data.get("employee_position") == "Раскройщик":
+        update_payload["cutting_quantity_index"] = 0
+        update_payload["cutting_quantities"] = {}
+
+    await state.update_data(**update_payload)
     await state.set_state(Report.waiting_for_quantity)
+
+    if data.get("employee_position") == "Раскройщик":
+        await ask_cutting_color_quantity(message, state)
+        return
 
     await message.answer(
         f"Операция: {operation_name}\n"
         f"Размер: {data.get('selected_size', ', '.join(data.get('selected_sizes', [])))}\n"
         f"Цвет: {data.get('selected_color', ', '.join(data.get('selected_colors', [])))}\n\n"
-        "Введите количество:"
-        + ("\nДля раскроя это количество будет добавлено к каждой выбранной комбинации размер + цвет." if data.get("employee_position") == "Раскройщик" else ""),
+        "Введите количество:",
+        reply_markup=navigation_keyboard(),
+    )
+
+
+async def ask_cutting_color_quantity(message: Message, state: FSMContext):
+    data = await state.get_data()
+    selected_colors = data.get("selected_colors") or [data["selected_color"]]
+    selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
+    color_index = data.get("cutting_quantity_index", 0)
+
+    if color_index >= len(selected_colors):
+        return
+
+    current_color = selected_colors[color_index]
+
+    await message.answer(
+        f"Операция: {data['operation_name']}\n"
+        f"Размеры: {', '.join(selected_sizes)}\n"
+        f"Цвет {color_index + 1} из {len(selected_colors)}: {current_color}\n\n"
+        f"Введите количество для цвета «{current_color}»:",
         reply_markup=navigation_keyboard(),
     )
 
@@ -3101,6 +3133,75 @@ async def process_quantity(message: Message, state: FSMContext):
 
     quantity = int(message.text)
     data = await state.get_data()
+
+    if data.get("employee_position") == "Раскройщик":
+        selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
+        selected_colors = data.get("selected_colors") or [data["selected_color"]]
+        color_index = data.get("cutting_quantity_index", 0)
+        cutting_quantities = data.get("cutting_quantities", {})
+
+        current_color = selected_colors[color_index]
+        cutting_quantities[current_color] = quantity
+        next_index = color_index + 1
+
+        if next_index < len(selected_colors):
+            await state.update_data(
+                cutting_quantity_index=next_index,
+                cutting_quantities=cutting_quantities,
+            )
+            await ask_cutting_color_quantity(message, state)
+            return
+
+        added_count = 0
+
+        for selected_color in selected_colors:
+            color_quantity = cutting_quantities[selected_color]
+
+            for selected_size in selected_sizes:
+                add_shift_operation(
+                    data["shift_id"],
+                    data["employee_id"],
+                    data["operation_id"],
+                    selected_size,
+                    selected_color,
+                    color_quantity,
+                )
+                added_count += 1
+
+        quantity_text = ", ".join(
+            f"{color}: {cutting_quantities[color]}" for color in selected_colors
+        )
+
+        add_edit_log(
+            message.from_user.id,
+            "employee",
+            "Добавил операцию",
+            "shift",
+            data["shift_id"],
+            (
+                f"{data['operation_name']}, размеры {', '.join(selected_sizes)}, "
+                f"количество по цветам: {quantity_text}, строк добавлено: {added_count}"
+            ),
+        )
+
+        report = get_shift_report(data["shift_id"])
+
+        text = (
+            f"Операция добавлена. Строк добавлено: {added_count}\n\n"
+            "Количество по цветам:\n"
+            f"{quantity_text}\n\n"
+            "Текущий отчёт за смену:\n\n"
+        )
+
+        for index, row in enumerate(report, start=1):
+            name, product_size, product_color, qty, unit = row
+            text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
+
+        text += "\nВыберите следующее действие в меню ниже."
+
+        await state.clear()
+        await message.answer(text, reply_markup=report_keyboard())
+        return
 
     selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
     selected_colors = data.get("selected_colors") or [data["selected_color"]]
