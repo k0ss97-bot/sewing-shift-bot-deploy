@@ -153,6 +153,12 @@ POSITIONS = {
     "3": "Раскройщик",
 }
 
+CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
+CUTTING_LAYOUT_OPERATION = "Формирование настила"
+CUTTING_MODE_CONTOURS = "contours"
+CUTTING_MODE_LAYOUT = "layout"
+CUTTING_MODE_FULL = "full"
+
 
 def employee_keyboard():
     return ReplyKeyboardMarkup(
@@ -187,6 +193,16 @@ def report_keyboard():
         ],
         resize_keyboard=True,
     )
+
+
+def get_cutting_mode(operation_name: str) -> str:
+    if operation_name == CUTTING_CONTOUR_OPERATION:
+        return CUTTING_MODE_CONTOURS
+
+    if operation_name == CUTTING_LAYOUT_OPERATION:
+        return CUTTING_MODE_LAYOUT
+
+    return CUTTING_MODE_FULL
 
 
 def admin_keyboard():
@@ -567,9 +583,15 @@ async def send_report_size_step(message: Message, state: FSMContext):
         return
 
     if data.get("employee_position") == "Раскройщик":
+        cutting_mode = data.get("cutting_mode")
+        action_text = "Выберите один или несколько размеров"
+
+        if cutting_mode == CUTTING_MODE_CONTOURS:
+            action_text = "Выберите размеры, на которые нанесены контуры лекал"
+
         text = (
             f"Изделие: {selected_folder}\n\n"
-            "Выберите один или несколько размеров, затем нажмите «Далее».\n"
+            f"{action_text}, затем нажмите «Далее».\n"
             "Можно написать номера через пробел, например: 1 2 3 4\n\n"
         )
 
@@ -601,10 +623,17 @@ async def send_report_color_step(message: Message, state: FSMContext):
         return
 
     if data.get("employee_position") == "Раскройщик":
+        cutting_mode = data.get("cutting_mode")
+        size_line = "" if cutting_mode == CUTTING_MODE_LAYOUT else f"Размеры: {selected_size}\n"
+        action_text = "Выберите один или несколько цветов"
+
+        if cutting_mode == CUTTING_MODE_LAYOUT:
+            action_text = "Выберите цвета настила"
+
         text = (
             f"Изделие: {selected_folder}\n"
-            f"Размеры: {selected_size}\n\n"
-            "Выберите один или несколько цветов, затем нажмите «Далее».\n"
+            f"{size_line}\n"
+            f"{action_text}, затем нажмите «Далее».\n"
             "Можно написать номера через пробел, например: 1 2 3\n\n"
         )
 
@@ -629,12 +658,15 @@ async def send_report_operation_step(message: Message, state: FSMContext):
     selected_folder = data["selected_folder"]
     operation_map = data.get("operation_map", {})
 
-    text = (
-        f"Изделие: {selected_folder}\n"
-        f"Размер: {data.get('selected_size', ', '.join(data.get('selected_sizes', [])))}\n"
-        f"Цвет: {data.get('selected_color', ', '.join(data.get('selected_colors', [])))}\n\n"
-        "Выберите операцию. Напишите номер:\n\n"
-    )
+    text = f"Изделие: {selected_folder}\n"
+
+    if data.get("selected_size") or data.get("selected_sizes"):
+        text += f"Размер: {data.get('selected_size', ', '.join(data.get('selected_sizes', [])))}\n"
+
+    if data.get("selected_color") or data.get("selected_colors"):
+        text += f"Цвет: {data.get('selected_color', ', '.join(data.get('selected_colors', [])))}\n"
+
+    text += "\nВыберите операцию. Напишите номер:\n\n"
 
     for number, operation in operation_map.items():
         text += f"{number}. {operation['name']}\n"
@@ -654,11 +686,25 @@ async def go_back_in_report(message: Message, state: FSMContext, current_state: 
         return
 
     if current_state == Report.waiting_for_size.state:
+        data = await state.get_data()
+        if data.get("employee_position") == "Раскройщик" and data.get("operation_id"):
+            await send_report_operation_step(message, state)
+            return
+
         await send_report_folder_step(message, state)
         return
 
     if current_state == Report.waiting_for_color.state:
         data = await state.get_data()
+        if data.get("employee_position") == "Раскройщик":
+            if data.get("cutting_mode") == CUTTING_MODE_LAYOUT:
+                await send_report_operation_step(message, state)
+                return
+
+            if data.get("size_map"):
+                await send_report_size_step(message, state)
+                return
+
         if data.get("size_map"):
             await send_report_size_step(message, state)
         else:
@@ -667,6 +713,10 @@ async def go_back_in_report(message: Message, state: FSMContext, current_state: 
 
     if current_state == Report.waiting_for_operation.state:
         data = await state.get_data()
+        if data.get("employee_position") == "Раскройщик":
+            await send_report_folder_step(message, state)
+            return
+
         if data.get("color_map"):
             await send_report_color_step(message, state)
         elif data.get("size_map"):
@@ -676,7 +726,11 @@ async def go_back_in_report(message: Message, state: FSMContext, current_state: 
         return
 
     if current_state == Report.waiting_for_quantity.state:
-        await send_report_operation_step(message, state)
+        data = await state.get_data()
+        if data.get("employee_position") == "Раскройщик" and data.get("color_map"):
+            await send_report_color_step(message, state)
+        else:
+            await send_report_operation_step(message, state)
         return
 
     await state.clear()
@@ -2733,6 +2787,35 @@ async def select_operation_folder(message: Message, state: FSMContext, selected_
     selected_folder = folder_map[selected_number]
     sizes = get_product_sizes(selected_folder)
 
+    if data.get("employee_position") == "Раскройщик":
+        size_map = {}
+        color_map = {}
+
+        for index, product_size in enumerate(sizes, start=1):
+            size_map[str(index)] = product_size
+
+        for index, color in enumerate(get_product_colors(selected_folder), start=1):
+            color_map[str(index)] = color
+
+        await state.update_data(
+            selected_folder=selected_folder,
+            selected_size="",
+            selected_color="",
+            selected_sizes=[],
+            selected_colors=[],
+            selected_size_numbers=[],
+            selected_color_numbers=[],
+            size_map=size_map,
+            color_map=color_map,
+            operation_id=None,
+            operation_name="",
+            cutting_mode="",
+            cutting_quantity_index=0,
+            cutting_quantities={},
+        )
+        await ask_report_operation(message, state)
+        return
+
     if sizes:
         size_map = {}
 
@@ -2828,12 +2911,15 @@ async def ask_report_operation(message: Message, state: FSMContext):
     operation_map = {}
     size_text = data.get("selected_size", ", ".join(data.get("selected_sizes", [])))
     color_text = data.get("selected_color", ", ".join(data.get("selected_colors", [])))
-    text = (
-        f"Изделие: {selected_folder}\n"
-        f"Размер: {size_text}\n"
-        f"Цвет: {color_text}\n\n"
-        "Выберите операцию. Напишите номер:\n\n"
-    )
+    text = f"Изделие: {selected_folder}\n"
+
+    if size_text:
+        text += f"Размер: {size_text}\n"
+
+    if color_text:
+        text += f"Цвет: {color_text}\n"
+
+    text += "\nВыберите операцию. Напишите номер:\n\n"
 
     for index, operation in enumerate(operations, start=1):
         operation_id, _, name, unit = operation
@@ -2873,6 +2959,49 @@ async def finish_multi_size_selection(message: Message, state: FSMContext):
         selected_size=", ".join(selected_sizes),
         selected_sizes=selected_sizes,
     )
+
+    if data.get("employee_position") == "Раскройщик" and data.get("cutting_mode") == CUTTING_MODE_CONTOURS:
+        added_count = 0
+
+        for selected_size in selected_sizes:
+            add_shift_operation(
+                data["shift_id"],
+                data["employee_id"],
+                data["operation_id"],
+                selected_size,
+                "без цвета",
+                1,
+            )
+            added_count += 1
+
+        add_edit_log(
+            message.from_user.id,
+            "employee",
+            "Добавил операцию",
+            "shift",
+            data["shift_id"],
+            (
+                f"{data['operation_name']}, размеры {', '.join(selected_sizes)}, "
+                f"без цвета и количества, строк добавлено: {added_count}"
+            ),
+        )
+
+        report = get_shift_report(data["shift_id"])
+        text = (
+            f"Операция добавлена. Размеров добавлено: {added_count}\n\n"
+            "Текущий отчёт за смену:\n\n"
+        )
+
+        for index, row in enumerate(report, start=1):
+            name, product_size, product_color, qty, unit = row
+            text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
+
+        text += "\nВыберите следующее действие в меню ниже."
+
+        await state.clear()
+        await message.answer(text, reply_markup=report_keyboard())
+        return
+
     await ask_report_color(message, state)
 
 
@@ -2890,6 +3019,13 @@ async def finish_multi_color_selection(message: Message, state: FSMContext):
         selected_color=", ".join(selected_colors),
         selected_colors=selected_colors,
     )
+
+    if data.get("employee_position") == "Раскройщик" and data.get("operation_id"):
+        await state.update_data(cutting_quantity_index=0, cutting_quantities={})
+        await state.set_state(Report.waiting_for_quantity)
+        await ask_cutting_color_quantity(message, state)
+        return
+
     await ask_report_operation(message, state)
 
 
@@ -3059,6 +3195,7 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
 
     operation = operation_map[selected_number]
     operation_name = f"{data['selected_folder']}: {operation['name']}"
+    cutting_mode = get_cutting_mode(operation["name"])
 
     update_payload = {
         "operation_id": operation["id"],
@@ -3066,16 +3203,37 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
     }
 
     if data.get("employee_position") == "Раскройщик":
-        update_payload["cutting_quantity_index"] = 0
-        update_payload["cutting_quantities"] = {}
+        update_payload.update(
+            {
+                "cutting_mode": cutting_mode,
+                "cutting_quantity_index": 0,
+                "cutting_quantities": {},
+            }
+        )
 
     await state.update_data(**update_payload)
-    await state.set_state(Report.waiting_for_quantity)
 
     if data.get("employee_position") == "Раскройщик":
-        await ask_cutting_color_quantity(message, state)
+        if cutting_mode == CUTTING_MODE_LAYOUT:
+            await state.update_data(
+                selected_size="без размера",
+                selected_sizes=["без размера"],
+                selected_color_numbers=[],
+                selected_colors=[],
+            )
+            await send_report_color_step(message, state)
+            return
+
+        await state.update_data(
+            selected_color="без цвета" if cutting_mode == CUTTING_MODE_CONTOURS else "",
+            selected_colors=["без цвета"] if cutting_mode == CUTTING_MODE_CONTOURS else [],
+            selected_size_numbers=[],
+            selected_sizes=[],
+        )
+        await send_report_size_step(message, state)
         return
 
+    await state.set_state(Report.waiting_for_quantity)
     await message.answer(
         f"Операция: {operation_name}\n"
         f"Размер: {data.get('selected_size', ', '.join(data.get('selected_sizes', [])))}\n"
@@ -3095,12 +3253,15 @@ async def ask_cutting_color_quantity(message: Message, state: FSMContext):
         return
 
     current_color = selected_colors[color_index]
+    is_layout = data.get("cutting_mode") == CUTTING_MODE_LAYOUT
+    size_line = "" if is_layout else f"Размеры: {', '.join(selected_sizes)}\n"
+    unit_text = "количество слоёв" if is_layout else "количество"
 
     await message.answer(
         f"Операция: {data['operation_name']}\n"
-        f"Размеры: {', '.join(selected_sizes)}\n"
+        f"{size_line}"
         f"Цвет {color_index + 1} из {len(selected_colors)}: {current_color}\n\n"
-        f"Введите количество для цвета «{current_color}»:",
+        f"Введите {unit_text} для цвета «{current_color}»:",
         reply_markup=navigation_keyboard(),
     )
 
@@ -3168,9 +3329,11 @@ async def process_quantity(message: Message, state: FSMContext):
                 )
                 added_count += 1
 
+        is_layout = data.get("cutting_mode") == CUTTING_MODE_LAYOUT
         quantity_text = ", ".join(
             f"{color}: {cutting_quantities[color]}" for color in selected_colors
         )
+        quantity_label = "слоёв по цветам" if is_layout else "количество по цветам"
 
         add_edit_log(
             message.from_user.id,
@@ -3180,7 +3343,7 @@ async def process_quantity(message: Message, state: FSMContext):
             data["shift_id"],
             (
                 f"{data['operation_name']}, размеры {', '.join(selected_sizes)}, "
-                f"количество по цветам: {quantity_text}, строк добавлено: {added_count}"
+                f"{quantity_label}: {quantity_text}, строк добавлено: {added_count}"
             ),
         )
 
@@ -3188,7 +3351,7 @@ async def process_quantity(message: Message, state: FSMContext):
 
         text = (
             f"Операция добавлена. Строк добавлено: {added_count}\n\n"
-            "Количество по цветам:\n"
+            f"{quantity_label.capitalize()}:\n"
             f"{quantity_text}\n\n"
             "Текущий отчёт за смену:\n\n"
         )
