@@ -562,6 +562,54 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cutting_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'contours_done',
+            contour_shift_id INTEGER,
+            contour_operation_id INTEGER,
+            contour_employee_id INTEGER,
+            contour_date TEXT,
+            layout_shift_id INTEGER,
+            layout_operation_id INTEGER,
+            layout_employee_id INTEGER,
+            layout_date TEXT,
+            cutting_shift_id INTEGER,
+            cutting_operation_id INTEGER,
+            cutting_employee_id INTEGER,
+            cutting_progress INTEGER NOT NULL DEFAULT 0,
+            formed_shift_id INTEGER,
+            formed_operation_id INTEGER,
+            formed_employee_id INTEGER,
+            formed_date TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cutting_batch_sizes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            product_size TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            UNIQUE(batch_id, product_size),
+            FOREIGN KEY (batch_id) REFERENCES cutting_batches (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cutting_batch_colors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            product_color TEXT NOT NULL,
+            layers INTEGER NOT NULL,
+            UNIQUE(batch_id, product_color),
+            FOREIGN KEY (batch_id) REFERENCES cutting_batches (id)
+        )
+    """)
+
     cursor.execute("SELECT COUNT(*) FROM operations")
     count = cursor.fetchone()[0]
 
@@ -1298,6 +1346,38 @@ def add_shift_operation(
     conn.close()
 
 
+def set_shift_operation_quantity(
+    shift_id: int,
+    employee_id: int,
+    operation_id: int,
+    product_size: str,
+    product_color: str,
+    quantity: int,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    now = local_now().isoformat()
+
+    cursor.execute(
+        """
+        INSERT INTO shift_operations (
+            shift_id, employee_id, operation_id,
+            product_size, product_color, quantity, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(shift_id, operation_id, product_size, product_color)
+        DO UPDATE SET
+            quantity = excluded.quantity,
+            updated_at = excluded.updated_at
+        """,
+        (shift_id, employee_id, operation_id, product_size, product_color, quantity, now, now)
+    )
+
+    conn.commit()
+    conn.close()
+
+
 def get_shift_report(shift_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -1462,6 +1542,268 @@ def delete_shift_operation(shift_operation_id: int):
         "quantity": quantity,
         "unit": unit,
     }
+
+
+def create_cutting_contour_batch(
+    product_name: str,
+    shift_id: int,
+    employee_id: int,
+    operation_id: int,
+    size_quantities: dict[str, int],
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    now = local_now()
+    now_text = now.isoformat()
+
+    cursor.execute(
+        """
+        INSERT INTO cutting_batches (
+            product_name, status,
+            contour_shift_id, contour_operation_id, contour_employee_id, contour_date,
+            created_at, updated_at
+        )
+        VALUES (?, 'contours_done', ?, ?, ?, ?, ?, ?)
+        """,
+        (product_name, shift_id, operation_id, employee_id, now.date().isoformat(), now_text, now_text)
+    )
+
+    batch_id = cursor.lastrowid
+
+    cursor.executemany(
+        """
+        INSERT INTO cutting_batch_sizes (batch_id, product_size, quantity)
+        VALUES (?, ?, ?)
+        """,
+        [(batch_id, product_size, quantity) for product_size, quantity in size_quantities.items()]
+    )
+
+    conn.commit()
+    conn.close()
+    return batch_id
+
+
+def get_cutting_batches_for_layout(product_name: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            cutting_batches.id,
+            cutting_batches.product_name,
+            cutting_batches.contour_date,
+            employees.full_name,
+            GROUP_CONCAT(cutting_batch_sizes.product_size || ' - ' || cutting_batch_sizes.quantity, ', ') AS sizes_text
+        FROM cutting_batches
+        LEFT JOIN employees ON employees.id = cutting_batches.contour_employee_id
+        LEFT JOIN cutting_batch_sizes ON cutting_batch_sizes.batch_id = cutting_batches.id
+        WHERE cutting_batches.product_name = ?
+          AND cutting_batches.status = 'contours_done'
+        GROUP BY cutting_batches.id, cutting_batches.product_name, cutting_batches.contour_date, employees.full_name
+        ORDER BY cutting_batches.contour_date ASC, cutting_batches.id ASC
+        """,
+        (product_name,)
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def add_cutting_layout(
+    batch_id: int,
+    shift_id: int,
+    employee_id: int,
+    operation_id: int,
+    color_layers: dict[str, int],
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    now = local_now()
+    now_text = now.isoformat()
+
+    cursor.execute(
+        """
+        UPDATE cutting_batches
+        SET status = 'layout_done',
+            layout_shift_id = ?,
+            layout_operation_id = ?,
+            layout_employee_id = ?,
+            layout_date = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND status = 'contours_done'
+        """,
+        (shift_id, operation_id, employee_id, now.date().isoformat(), now_text, batch_id)
+    )
+
+    if cursor.rowcount == 0:
+        conn.close()
+        return False
+
+    cursor.executemany(
+        """
+        INSERT INTO cutting_batch_colors (batch_id, product_color, layers)
+        VALUES (?, ?, ?)
+        ON CONFLICT(batch_id, product_color)
+        DO UPDATE SET layers = excluded.layers
+        """,
+        [(batch_id, product_color, layers) for product_color, layers in color_layers.items()]
+    )
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_cutting_batches_for_cutting(product_name: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            cutting_batches.id,
+            cutting_batches.product_name,
+            cutting_batches.contour_date,
+            cutting_batches.layout_date,
+            cutting_batches.cutting_progress,
+            GROUP_CONCAT(DISTINCT cutting_batch_colors.product_color || ' - ' || cutting_batch_colors.layers || ' сл.') AS colors_text
+        FROM cutting_batches
+        LEFT JOIN cutting_batch_colors ON cutting_batch_colors.batch_id = cutting_batches.id
+        WHERE cutting_batches.product_name = ?
+          AND cutting_batches.status IN ('layout_done', 'cutting_in_progress')
+        GROUP BY
+            cutting_batches.id,
+            cutting_batches.product_name,
+            cutting_batches.contour_date,
+            cutting_batches.layout_date,
+            cutting_batches.cutting_progress
+        ORDER BY cutting_batches.layout_date ASC, cutting_batches.id ASC
+        """,
+        (product_name,)
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def update_cutting_batch_progress(
+    batch_id: int,
+    shift_id: int,
+    employee_id: int,
+    operation_id: int,
+    progress: int,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    now = local_now()
+    now_text = now.isoformat()
+    status = "cutting_done" if progress >= 100 else "cutting_in_progress"
+
+    cursor.execute(
+        """
+        UPDATE cutting_batches
+        SET status = ?,
+            cutting_shift_id = ?,
+            cutting_operation_id = ?,
+            cutting_employee_id = ?,
+            cutting_progress = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND status IN ('layout_done', 'cutting_in_progress')
+        """,
+        (status, shift_id, operation_id, employee_id, progress, now_text, batch_id)
+    )
+
+    changed = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def get_cutting_batches_for_formation(product_name: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            product_name,
+            contour_date,
+            layout_date,
+            cutting_progress
+        FROM cutting_batches
+        WHERE product_name = ?
+          AND status = 'cutting_done'
+        ORDER BY layout_date ASC, id ASC
+        """,
+        (product_name,)
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_cutting_batch_result_rows(batch_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            cutting_batch_sizes.product_size,
+            cutting_batch_colors.product_color,
+            cutting_batch_sizes.quantity * cutting_batch_colors.layers AS quantity
+        FROM cutting_batch_sizes
+        CROSS JOIN cutting_batch_colors
+        WHERE cutting_batch_sizes.batch_id = ?
+          AND cutting_batch_colors.batch_id = ?
+        ORDER BY
+            CAST(cutting_batch_sizes.product_size AS INTEGER),
+            cutting_batch_colors.product_color
+        """,
+        (batch_id, batch_id)
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, operation_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    now = local_now()
+    now_text = now.isoformat()
+
+    cursor.execute(
+        """
+        UPDATE cutting_batches
+        SET status = 'formed',
+            formed_shift_id = ?,
+            formed_operation_id = ?,
+            formed_employee_id = ?,
+            formed_date = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND status = 'cutting_done'
+        """,
+        (shift_id, operation_id, employee_id, now.date().isoformat(), now_text, batch_id)
+    )
+
+    changed = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return changed
 
 
 def close_shift(shift_id: int):
