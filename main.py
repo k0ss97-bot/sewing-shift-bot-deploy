@@ -35,6 +35,7 @@ from database import (
     create_cutting_contour_batch,
     create_employee,
     create_shift,
+    delete_cutting_batch,
     delete_shift_by_id,
     delete_shift_operation,
     get_active_operation_groups,
@@ -42,6 +43,7 @@ from database import (
     get_active_operations,
     get_all_employees,
     get_all_operations,
+    get_admin_cutting_batches,
     get_cutting_batch_result_rows,
     get_cutting_batches_for_cutting,
     get_cutting_batches_for_formation,
@@ -149,6 +151,10 @@ class AdminEditReport(StatesGroup):
     waiting_for_operation = State()
     waiting_for_action = State()
     waiting_for_quantity = State()
+
+
+class AdminCuttingBatch(StatesGroup):
+    waiting_for_batch = State()
 
 
 class OperationAdmin(StatesGroup):
@@ -269,6 +275,9 @@ def admin_reports_keyboard():
             [
                 KeyboardButton(text="Отчёт по сотруднику"),
                 KeyboardButton(text="Править отчёт"),
+            ],
+            [
+                KeyboardButton(text="Партии раскроя"),
             ],
             [
                 KeyboardButton(text="Выгрузить отчёт"),
@@ -965,6 +974,55 @@ async def send_admin_edit_action_step(message: Message, state: FSMContext):
     )
 
 
+def format_cutting_batch_status(status: str):
+    statuses = {
+        "contours_done": "контуры нанесены",
+        "layout_done": "настил сформирован",
+        "cutting_in_progress": "раскрой в работе",
+        "cutting_done": "раскрой 100%",
+        "formed": "готовый крой сформирован",
+    }
+    return statuses.get(status, status)
+
+
+async def send_admin_cutting_batches_step(message: Message, state: FSMContext):
+    batches = get_admin_cutting_batches()
+
+    if not batches:
+        await state.clear()
+        await message.answer("Партий раскроя пока нет.", reply_markup=admin_reports_keyboard())
+        return
+
+    batch_map = {}
+    text = "Партии раскроя.\nВыберите тестовую/ошибочную партию для удаления:\n\n"
+
+    for index, batch in enumerate(batches, start=1):
+        batch_id, product_name, status, contour_date, layout_date, progress, employee_name, sizes_text, colors_text = batch
+        line = (
+            f"ID {batch_id} — {product_name}, {format_cutting_batch_status(status)}\n"
+            f"   контуры: {contour_date or '-'}, настил: {layout_date or '-'}, готовность: {progress}%"
+        )
+
+        if employee_name:
+            line += f"\n   сотрудник: {employee_name}"
+
+        if sizes_text:
+            line += f"\n   размеры: {sizes_text}"
+
+        if colors_text:
+            line += f"\n   цвета: {colors_text}"
+
+        batch_map[str(index)] = {
+            "id": batch_id,
+            "name": f"ID {batch_id} — {product_name}, {format_cutting_batch_status(status)}",
+        }
+        text += f"{index}. {line}\n\n"
+
+    await state.update_data(admin_cutting_batch_map=batch_map)
+    await state.set_state(AdminCuttingBatch.waiting_for_batch)
+    await send_long_text(message, text, reply_markup=choice_keyboard("admin_cutting_batch", batch_map))
+
+
 async def go_back_in_admin_edit_report(message: Message, state: FSMContext, current_state: str):
     if current_state == AdminEditReport.waiting_for_employee.state:
         await state.clear()
@@ -1052,6 +1110,12 @@ async def process_navigation_button(callback: CallbackQuery, state: FSMContext):
     if current_state and current_state.startswith("AdminEditReport:"):
         await callback.answer()
         await go_back_in_admin_edit_report(callback.message, state, current_state)
+        return
+
+    if current_state and current_state.startswith("AdminCuttingBatch:"):
+        await state.clear()
+        await callback.answer("Назад")
+        await callback.message.answer("Раздел отчётов:", reply_markup=admin_reports_keyboard())
         return
 
     await state.clear()
@@ -2815,6 +2879,71 @@ async def admin_edit_report_button(message: Message, state: FSMContext):
         return
 
     await send_admin_edit_employee_step(message, state)
+
+
+@dp.message(lambda message: message.text == "Партии раскроя")
+async def admin_cutting_batches_button(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    await send_admin_cutting_batches_step(message, state)
+
+
+async def select_admin_cutting_batch(message: Message, state: FSMContext, selected_number: str):
+    data = await state.get_data()
+    batch_map = data.get("admin_cutting_batch_map", {})
+
+    if selected_number not in batch_map:
+        await message.answer("Выберите номер партии из списка.")
+        return
+
+    batch = batch_map[selected_number]
+    result = delete_cutting_batch(batch["id"])
+
+    if result is None:
+        await state.clear()
+        await message.answer("Не удалось удалить партию. Возможно, она уже удалена.", reply_markup=admin_reports_keyboard())
+        return
+
+    batch_id, product_name, status, contour_date, employee_name = result
+
+    add_edit_log(
+        message.from_user.id,
+        "admin",
+        "Удалил партию раскроя",
+        "cutting_batch",
+        batch_id,
+        f"{product_name}, статус {status}, контуры {contour_date}, сотрудник {employee_name or '-'}",
+    )
+
+    await state.clear()
+    await message.answer(
+        "Партия раскроя удалена.\n\n"
+        f"ID: {batch_id}\n"
+        f"Изделие: {product_name}\n"
+        f"Статус: {format_cutting_batch_status(status)}\n"
+        f"Дата контуров: {contour_date or '-'}\n\n"
+        "Она больше не будет появляться в выборе следующих операций.",
+        reply_markup=admin_reports_keyboard(),
+    )
+
+
+@dp.message(AdminCuttingBatch.waiting_for_batch)
+async def process_admin_cutting_batch(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_admin_cutting_batch(message, state, message.text.strip())
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("admin_cutting_batch:"))
+async def process_admin_cutting_batch_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, AdminCuttingBatch.waiting_for_batch):
+        return
+
+    await callback.answer()
+    await select_admin_cutting_batch(callback.message, state, callback.data.rsplit(":", 1)[1])
 
 
 async def select_admin_edit_employee(message: Message, state: FSMContext, selected_number: str):

@@ -1806,6 +1806,79 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
     return changed
 
 
+def get_admin_cutting_batches(limit: int = 50):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            cutting_batches.id,
+            cutting_batches.product_name,
+            cutting_batches.status,
+            cutting_batches.contour_date,
+            cutting_batches.layout_date,
+            cutting_batches.cutting_progress,
+            employees.full_name,
+            GROUP_CONCAT(DISTINCT cutting_batch_sizes.product_size || ' - ' || cutting_batch_sizes.quantity) AS sizes_text,
+            GROUP_CONCAT(DISTINCT cutting_batch_colors.product_color || ' - ' || cutting_batch_colors.layers || ' сл.') AS colors_text
+        FROM cutting_batches
+        LEFT JOIN employees ON employees.id = cutting_batches.contour_employee_id
+        LEFT JOIN cutting_batch_sizes ON cutting_batch_sizes.batch_id = cutting_batches.id
+        LEFT JOIN cutting_batch_colors ON cutting_batch_colors.batch_id = cutting_batches.id
+        GROUP BY
+            cutting_batches.id,
+            cutting_batches.product_name,
+            cutting_batches.status,
+            cutting_batches.contour_date,
+            cutting_batches.layout_date,
+            cutting_batches.cutting_progress,
+            employees.full_name
+        ORDER BY cutting_batches.id DESC
+        LIMIT ?
+        """,
+        (limit,)
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def delete_cutting_batch(batch_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            cutting_batches.id,
+            cutting_batches.product_name,
+            cutting_batches.status,
+            cutting_batches.contour_date,
+            employees.full_name
+        FROM cutting_batches
+        LEFT JOIN employees ON employees.id = cutting_batches.contour_employee_id
+        WHERE cutting_batches.id = ?
+        """,
+        (batch_id,)
+    )
+
+    batch = cursor.fetchone()
+
+    if batch is None:
+        conn.close()
+        return None
+
+    cursor.execute("DELETE FROM cutting_batch_colors WHERE batch_id = ?", (batch_id,))
+    cursor.execute("DELETE FROM cutting_batch_sizes WHERE batch_id = ?", (batch_id,))
+    cursor.execute("DELETE FROM cutting_batches WHERE id = ?", (batch_id,))
+
+    conn.commit()
+    conn.close()
+    return batch
+
+
 def close_shift(shift_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
