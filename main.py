@@ -1799,7 +1799,7 @@ async def today_report(message: Message):
                 text += f"- {format_operation_line(name, product_size, product_color, qty, unit)}\n"
             text += "\n"
 
-    await message.answer(text, reply_markup=admin_reports_keyboard())
+    await send_long_text(message, text, reply_markup=admin_reports_keyboard())
 
 
 @dp.message(Command("month"))
@@ -1835,7 +1835,7 @@ async def month_report(message: Message):
                 text += f"- {format_operation_line(name, product_size, product_color, quantity, unit)}\n"
             text += "\n"
 
-    await message.answer(text, reply_markup=admin_reports_keyboard())
+    await send_long_text(message, text, reply_markup=admin_reports_keyboard())
 
 
 async def send_period_report(message: Message, start_date: str, end_date: str):
@@ -1890,7 +1890,7 @@ async def send_period_report(message: Message, start_date: str, end_date: str):
             f"{start_time}–{end_text}, {worked_text}, {status_text}\n"
         )
 
-    await message.answer(text, reply_markup=admin_reports_keyboard())
+    await send_long_text(message, text, reply_markup=admin_reports_keyboard())
 
 
 @dp.message(Command("period"))
@@ -2962,7 +2962,7 @@ async def select_admin_edit_action(message: Message, state: FSMContext, selected
             text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
     await state.clear()
-    await message.answer(text, reply_markup=admin_reports_keyboard())
+    await send_long_text(message, text, reply_markup=admin_reports_keyboard())
 
 
 @dp.message(AdminEditReport.waiting_for_action)
@@ -3021,7 +3021,7 @@ async def process_admin_edit_quantity(message: Message, state: FSMContext):
         text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
     await state.clear()
-    await message.answer(text, reply_markup=admin_reports_keyboard())
+    await send_long_text(message, text, reply_markup=admin_reports_keyboard())
 
 
 @dp.message(AdminPeriod.waiting_for_report_period)
@@ -3714,7 +3714,7 @@ async def select_cutting_batch(message: Message, state: FSMContext, selected_num
             text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
         await state.clear()
-        await message.answer(text, reply_markup=report_keyboard())
+        await send_long_text(message, text, reply_markup=report_keyboard())
 
 
 @dp.message(Report.waiting_for_batch)
@@ -3908,7 +3908,7 @@ async def finish_cutting_progress(message: Message, state: FSMContext, progress:
         text += "\nПартия останется доступной в операции «Раскрой» для продолжения."
 
     await state.clear()
-    await message.answer(text, reply_markup=report_keyboard())
+    await send_long_text(message, text, reply_markup=report_keyboard())
 
 
 @dp.message(Report.waiting_for_progress)
@@ -4006,7 +4006,7 @@ async def process_quantity(message: Message, state: FSMContext):
                 text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
             await state.clear()
-            await message.answer(text, reply_markup=report_keyboard())
+            await send_long_text(message, text, reply_markup=report_keyboard())
             return
 
         selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
@@ -4090,7 +4090,7 @@ async def process_quantity(message: Message, state: FSMContext):
         text += "\nВыберите следующее действие в меню ниже."
 
         await state.clear()
-        await message.answer(text, reply_markup=report_keyboard())
+        await send_long_text(message, text, reply_markup=report_keyboard())
         return
 
     selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
@@ -4135,7 +4135,7 @@ async def process_quantity(message: Message, state: FSMContext):
     text += "\nВыберите следующее действие в меню ниже."
 
     await state.clear()
-    await message.answer(text, reply_markup=report_keyboard())
+    await send_long_text(message, text, reply_markup=report_keyboard())
 
 
 @dp.message(Command("current"))
@@ -4177,7 +4177,7 @@ async def current_report(message: Message):
     else:
         text += "\nМожно посмотреть отчёт за другой период через кнопку «Отчёт за даты»."
 
-    await message.answer(text, reply_markup=report_keyboard())
+    await send_long_text(message, text, reply_markup=report_keyboard())
 
 
 async def send_employee_period_report(message: Message, start_date: str, end_date: str):
@@ -4244,7 +4244,7 @@ async def send_employee_period_report(message: Message, start_date: str, end_dat
     if total_minutes:
         text += f"Итого времени: {format_minutes(total_minutes)}"
 
-    await message.answer(text, reply_markup=report_keyboard())
+    await send_long_text(message, text, reply_markup=report_keyboard())
 
 
 @dp.message(Command("my_report"))
@@ -4389,7 +4389,7 @@ async def edit_quantity_entered(message: Message, state: FSMContext):
         text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
     await state.clear()
-    await message.answer(text, reply_markup=report_keyboard())
+    await send_long_text(message, text, reply_markup=report_keyboard())
 
 
 @dp.message(Command("delete"))
@@ -4468,7 +4468,7 @@ async def select_delete_operation(message: Message, state: FSMContext, selected_
             text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
     await state.clear()
-    await message.answer(text, reply_markup=report_keyboard())
+    await send_long_text(message, text, reply_markup=report_keyboard())
 
 
 @dp.message(DeleteReport.waiting_for_operation)
