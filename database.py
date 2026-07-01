@@ -1573,6 +1573,39 @@ def get_recent_shifts(limit: int = 20):
     return shifts
 
 
+def get_employee_recent_shifts(employee_id: int, limit: int = 20):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            shifts.id,
+            shifts.shift_date,
+            shifts.start_time,
+            shifts.end_time,
+            shifts.status,
+            COALESCE(COUNT(shift_operations.id), 0) AS operation_count
+        FROM shifts
+        LEFT JOIN shift_operations ON shift_operations.shift_id = shifts.id
+        WHERE shifts.employee_id = ?
+        GROUP BY
+            shifts.id,
+            shifts.shift_date,
+            shifts.start_time,
+            shifts.end_time,
+            shifts.status
+        ORDER BY shifts.shift_date DESC, shifts.start_time DESC, shifts.id DESC
+        LIMIT ?
+        """,
+        (employee_id, limit)
+    )
+
+    shifts = cursor.fetchall()
+    conn.close()
+    return shifts
+
+
 def delete_shift_by_id(shift_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()

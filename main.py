@@ -45,6 +45,7 @@ from database import (
     get_employee_by_telegram_id,
     get_employee_period_operation_totals,
     get_employee_period_summary,
+    get_employee_recent_shifts,
     get_employee_shifts_by_period,
     get_employees_by_status,
     get_month_employee_summary,
@@ -129,6 +130,14 @@ class AdminPeriod(StatesGroup):
     waiting_for_excel_period = State()
     waiting_for_employee_report_id = State()
     waiting_for_employee_report_period = State()
+
+
+class AdminEditReport(StatesGroup):
+    waiting_for_employee = State()
+    waiting_for_shift = State()
+    waiting_for_operation = State()
+    waiting_for_action = State()
+    waiting_for_quantity = State()
 
 
 class OperationAdmin(StatesGroup):
@@ -238,6 +247,7 @@ def admin_reports_keyboard():
             ],
             [
                 KeyboardButton(text="Отчёт по сотруднику"),
+                KeyboardButton(text="Править отчёт"),
             ],
             [
                 KeyboardButton(text="Выгрузить отчёт"),
@@ -737,12 +747,138 @@ async def go_back_in_report(message: Message, state: FSMContext, current_state: 
     await message.answer("Основное меню:", reply_markup=employee_keyboard())
 
 
+async def send_admin_edit_employee_step(message: Message, state: FSMContext):
+    employees = get_all_employees()
+
+    if not employees:
+        await state.clear()
+        await message.answer("Сотрудников пока нет.", reply_markup=admin_reports_keyboard())
+        return
+
+    employee_map = {}
+    text = "Выберите сотрудника, чей отчёт нужно исправить:\n\n"
+
+    for employee in employees:
+        employee_id, full_name, position, _, status = employee
+        employee_map[str(employee_id)] = {
+            "id": employee_id,
+            "name": f"{full_name} — {position}, {format_employee_status(status)}",
+        }
+        text += f"{employee_id}. {full_name} — {position}, {format_employee_status(status)}\n"
+
+    await state.update_data(admin_edit_employee_map=employee_map)
+    await state.set_state(AdminEditReport.waiting_for_employee)
+    await message.answer(text, reply_markup=choice_keyboard("admin_edit_employee", employee_map))
+
+
+async def send_admin_edit_shift_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    employee_id = data["admin_edit_employee_id"]
+    shifts = get_employee_recent_shifts(employee_id, 20)
+
+    if not shifts:
+        await message.answer("У этого сотрудника пока нет смен.", reply_markup=admin_reports_keyboard())
+        await state.clear()
+        return
+
+    shift_map = {}
+    text = f"Сотрудник: {data['admin_edit_employee_name']}\n\nВыберите смену:\n\n"
+
+    for index, shift in enumerate(shifts, start=1):
+        shift_id, shift_date, start_time, end_time, status, operation_count = shift
+        end_text = end_time if end_time else "открыта"
+        status_text = "закрыта" if status == "closed" else "открыта"
+        line = f"{shift_date}, {start_time}–{end_text}, {status_text}, операций: {operation_count}"
+        shift_map[str(index)] = {
+            "id": shift_id,
+            "name": line,
+        }
+        text += f"{index}. ID {shift_id} — {line}\n"
+
+    await state.update_data(admin_edit_shift_map=shift_map)
+    await state.set_state(AdminEditReport.waiting_for_shift)
+    await message.answer(text, reply_markup=choice_keyboard("admin_edit_shift", shift_map))
+
+
+async def send_admin_edit_operation_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    shift_id = data["admin_edit_shift_id"]
+    operations = get_shift_operation_choices(shift_id)
+
+    if not operations:
+        await message.answer("В этой смене нет операций для правки.", reply_markup=admin_reports_keyboard())
+        await state.clear()
+        return
+
+    operation_map = {}
+    text = (
+        f"Сотрудник: {data['admin_edit_employee_name']}\n"
+        f"Смена ID {shift_id}: {data['admin_edit_shift_name']}\n\n"
+        "Выберите строку отчёта:\n\n"
+    )
+
+    for index, operation in enumerate(operations, start=1):
+        shift_operation_id, name, product_size, product_color, quantity, unit = operation
+        operation_line = format_operation_line(name, product_size, product_color, quantity, unit)
+        operation_map[str(index)] = {
+            "id": shift_operation_id,
+            "name": operation_line,
+        }
+        text += f"{index}. {operation_line}\n"
+
+    await state.update_data(admin_edit_operation_map=operation_map)
+    await state.set_state(AdminEditReport.waiting_for_operation)
+    await message.answer(text, reply_markup=choice_keyboard("admin_edit_operation", operation_map))
+
+
+async def send_admin_edit_action_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    action_map = {
+        "1": {"id": "quantity", "name": "Изменить количество"},
+        "2": {"id": "delete", "name": "Удалить строку"},
+    }
+
+    await state.update_data(admin_edit_action_map=action_map)
+    await state.set_state(AdminEditReport.waiting_for_action)
+    await message.answer(
+        f"Строка отчёта:\n{data['admin_edit_operation_name']}\n\nЧто сделать?",
+        reply_markup=choice_keyboard("admin_edit_action", action_map),
+    )
+
+
+async def go_back_in_admin_edit_report(message: Message, state: FSMContext, current_state: str):
+    if current_state == AdminEditReport.waiting_for_employee.state:
+        await state.clear()
+        await message.answer("Раздел отчётов:", reply_markup=admin_reports_keyboard())
+        return
+
+    if current_state == AdminEditReport.waiting_for_shift.state:
+        await send_admin_edit_employee_step(message, state)
+        return
+
+    if current_state == AdminEditReport.waiting_for_operation.state:
+        await send_admin_edit_shift_step(message, state)
+        return
+
+    if current_state == AdminEditReport.waiting_for_action.state:
+        await send_admin_edit_operation_step(message, state)
+        return
+
+    if current_state == AdminEditReport.waiting_for_quantity.state:
+        await send_admin_edit_action_step(message, state)
+        return
+
+    await state.clear()
+    await message.answer("Раздел отчётов:", reply_markup=admin_reports_keyboard())
+
+
 async def reset_state_if_command(message: Message, state: FSMContext):
     current_state = await state.get_state()
 
     if message.text in {"Отмена", "Отменить"}:
         await state.clear()
-        await message.answer("Действие отменено.", reply_markup=employee_keyboard())
+        reply_markup = admin_reports_keyboard() if current_state and current_state.startswith("AdminEditReport:") else employee_keyboard()
+        await message.answer("Действие отменено.", reply_markup=reply_markup)
         return True
 
     if message.text == "Админ меню" and is_admin(message.from_user.id):
@@ -785,12 +921,18 @@ async def process_navigation_button(callback: CallbackQuery, state: FSMContext):
     if callback.data == "nav_cancel":
         await state.clear()
         await callback.answer("Отменено")
-        await callback.message.answer("Действие отменено.", reply_markup=employee_keyboard())
+        reply_markup = admin_reports_keyboard() if current_state and current_state.startswith("AdminEditReport:") else employee_keyboard()
+        await callback.message.answer("Действие отменено.", reply_markup=reply_markup)
         return
 
     if current_state and current_state.startswith("Report:"):
         await callback.answer()
         await go_back_in_report(callback.message, state, current_state)
+        return
+
+    if current_state and current_state.startswith("AdminEditReport:"):
+        await callback.answer()
+        await go_back_in_admin_edit_report(callback.message, state, current_state)
         return
 
     await state.clear()
@@ -2545,6 +2687,222 @@ async def employee_report_button(message: Message, state: FSMContext):
 
     await state.set_state(AdminPeriod.waiting_for_employee_report_id)
     await message.answer(text)
+
+
+@dp.message(lambda message: message.text == "Править отчёт")
+async def admin_edit_report_button(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    await send_admin_edit_employee_step(message, state)
+
+
+async def select_admin_edit_employee(message: Message, state: FSMContext, selected_number: str):
+    data = await state.get_data()
+    employee_map = data.get("admin_edit_employee_map", {})
+
+    if selected_number not in employee_map:
+        await message.answer("Введите ID сотрудника из списка.")
+        return
+
+    employee = employee_map[selected_number]
+    await state.update_data(
+        admin_edit_employee_id=employee["id"],
+        admin_edit_employee_name=employee["name"],
+    )
+    await send_admin_edit_shift_step(message, state)
+
+
+@dp.message(AdminEditReport.waiting_for_employee)
+async def process_admin_edit_employee(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_admin_edit_employee(message, state, message.text.strip())
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("admin_edit_employee:"))
+async def process_admin_edit_employee_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, AdminEditReport.waiting_for_employee):
+        return
+
+    await callback.answer()
+    await select_admin_edit_employee(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+async def select_admin_edit_shift(message: Message, state: FSMContext, selected_number: str):
+    data = await state.get_data()
+    shift_map = data.get("admin_edit_shift_map", {})
+
+    if selected_number not in shift_map:
+        await message.answer("Введите номер смены из списка.")
+        return
+
+    shift = shift_map[selected_number]
+    await state.update_data(
+        admin_edit_shift_id=shift["id"],
+        admin_edit_shift_name=shift["name"],
+    )
+    await send_admin_edit_operation_step(message, state)
+
+
+@dp.message(AdminEditReport.waiting_for_shift)
+async def process_admin_edit_shift(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_admin_edit_shift(message, state, message.text.strip())
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("admin_edit_shift:"))
+async def process_admin_edit_shift_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, AdminEditReport.waiting_for_shift):
+        return
+
+    await callback.answer()
+    await select_admin_edit_shift(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+async def select_admin_edit_operation(message: Message, state: FSMContext, selected_number: str):
+    data = await state.get_data()
+    operation_map = data.get("admin_edit_operation_map", {})
+
+    if selected_number not in operation_map:
+        await message.answer("Введите номер строки из списка.")
+        return
+
+    operation = operation_map[selected_number]
+    await state.update_data(
+        admin_edit_shift_operation_id=operation["id"],
+        admin_edit_operation_name=operation["name"],
+    )
+    await send_admin_edit_action_step(message, state)
+
+
+@dp.message(AdminEditReport.waiting_for_operation)
+async def process_admin_edit_operation(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_admin_edit_operation(message, state, message.text.strip())
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("admin_edit_operation:"))
+async def process_admin_edit_operation_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, AdminEditReport.waiting_for_operation):
+        return
+
+    await callback.answer()
+    await select_admin_edit_operation(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+async def select_admin_edit_action(message: Message, state: FSMContext, selected_number: str):
+    data = await state.get_data()
+    action_map = data.get("admin_edit_action_map", {})
+
+    if selected_number not in action_map:
+        await message.answer("Выберите действие из списка.")
+        return
+
+    action = action_map[selected_number]["id"]
+
+    if action == "quantity":
+        await state.set_state(AdminEditReport.waiting_for_quantity)
+        await message.answer("Введите новое количество:", reply_markup=navigation_keyboard())
+        return
+
+    result = delete_shift_operation(data["admin_edit_shift_operation_id"])
+
+    if result is None:
+        await state.clear()
+        await message.answer("Не удалось удалить строку отчёта.", reply_markup=admin_reports_keyboard())
+        return
+
+    add_edit_log(
+        message.from_user.id,
+        "admin",
+        "Удалил строку отчёта сотрудника",
+        "shift",
+        result["shift_id"],
+        (
+            f"{data['admin_edit_employee_name']}: "
+            f"{result['operation_name']}, размер {result['product_size']}, "
+            f"цвет {result['product_color']} — {result['quantity']} {result['unit']}"
+        ),
+    )
+
+    report = get_shift_report(result["shift_id"])
+    text = "Строка удалена.\n\nОтчёт после правки:\n\n"
+
+    if not report:
+        text += "Операции ещё не добавлены."
+    else:
+        for index, row in enumerate(report, start=1):
+            name, product_size, product_color, qty, unit = row
+            text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
+
+    await state.clear()
+    await message.answer(text, reply_markup=admin_reports_keyboard())
+
+
+@dp.message(AdminEditReport.waiting_for_action)
+async def process_admin_edit_action(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_admin_edit_action(message, state, message.text.strip())
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("admin_edit_action:"))
+async def process_admin_edit_action_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, AdminEditReport.waiting_for_action):
+        return
+
+    await callback.answer()
+    await select_admin_edit_action(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(AdminEditReport.waiting_for_quantity)
+async def process_admin_edit_quantity(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    if not message.text.isdigit() or int(message.text) <= 0:
+        await message.answer("Введите количество положительным числом, например: 280")
+        return
+
+    data = await state.get_data()
+    quantity = int(message.text)
+    result = update_shift_operation_quantity(data["admin_edit_shift_operation_id"], quantity)
+
+    if result is None:
+        await state.clear()
+        await message.answer("Не удалось изменить строку отчёта.", reply_markup=admin_reports_keyboard())
+        return
+
+    add_edit_log(
+        message.from_user.id,
+        "admin",
+        "Изменил отчёт сотрудника",
+        "shift",
+        result["shift_id"],
+        (
+            f"{data['admin_edit_employee_name']}: {result['operation_name']}: "
+            f"размер {result['product_size']}, цвет {result['product_color']}: "
+            f"{result['old_quantity']} -> {result['new_quantity']} {result['unit']}"
+        ),
+    )
+
+    report = get_shift_report(result["shift_id"])
+    text = "Количество изменено.\n\nОтчёт после правки:\n\n"
+
+    for index, row in enumerate(report, start=1):
+        name, product_size, product_color, qty, unit = row
+        text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
+
+    await state.clear()
+    await message.answer(text, reply_markup=admin_reports_keyboard())
 
 
 @dp.message(AdminPeriod.waiting_for_report_period)
