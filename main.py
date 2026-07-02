@@ -70,7 +70,7 @@ from database import (
     get_pending_employees,
     get_product_colors,
     get_product_sizes,
-    get_preparation_material_colors,
+    get_preparation_operation_colors,
     get_preparation_operation_sizes,
     get_recent_edit_logs,
     get_recent_shifts,
@@ -692,13 +692,16 @@ async def send_report_color_step(message: Message, state: FSMContext):
         await send_report_size_step(message, state)
         return
 
-    if data.get("employee_position") == "Раскройщик":
+    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data):
         cutting_mode = data.get("cutting_mode")
         size_line = "" if cutting_mode == CUTTING_MODE_LAYOUT else f"Размеры: {selected_size}\n"
         action_text = "Выберите один или несколько цветов"
 
         if cutting_mode == CUTTING_MODE_LAYOUT:
             action_text = "Выберите цвета настила"
+
+        if is_packing_preparation_flow(data):
+            action_text = "Выберите один или несколько цветов"
 
         text = (
             f"Изделие: {selected_folder}\n"
@@ -3512,7 +3515,7 @@ async def ask_report_color(message: Message, state: FSMContext):
     colors = get_product_colors(selected_folder)
 
     if is_packing_preparation_flow(data):
-        colors = get_preparation_material_colors()
+        colors = get_preparation_operation_colors(data.get("operation_base_name", ""))
 
     if colors:
         color_map = {}
@@ -3523,7 +3526,7 @@ async def ask_report_color(message: Message, state: FSMContext):
         await state.update_data(color_map=color_map, selected_color_numbers=[], selected_colors=[])
         await state.set_state(Report.waiting_for_color)
 
-        if data.get("employee_position") == "Раскройщик":
+        if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data):
             await send_report_color_step(message, state)
             return
 
@@ -3641,6 +3644,14 @@ async def finish_multi_color_selection(message: Message, state: FSMContext):
         await ask_cutting_color_quantity(message, state)
         return
 
+    updated_data = {**data, "selected_color": ", ".join(selected_colors), "selected_colors": selected_colors}
+
+    if is_packing_preparation_flow(updated_data):
+        await state.update_data(preparation_quantity_index=0, preparation_quantities={})
+        await state.set_state(Report.waiting_for_quantity)
+        await ask_preparation_size_quantity(message, state)
+        return
+
     await ask_report_operation(message, state)
 
 
@@ -3751,7 +3762,7 @@ async def process_report_color(message: Message, state: FSMContext):
 
     data = await state.get_data()
 
-    if data.get("employee_position") == "Раскройщик":
+    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data):
         color_map = data.get("color_map", {})
         selected_numbers = parse_multiple_numbers(message.text, set(color_map.keys()))
 
@@ -3933,6 +3944,7 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
     update_payload = {
         "operation_id": operation["id"],
         "operation_name": operation_name,
+        "operation_base_name": operation["name"],
         "operation_unit": operation.get("unit", "шт"),
     }
 
@@ -3983,11 +3995,21 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
         }
         color_map = {
             str(index): color
-            for index, color in enumerate(get_preparation_material_colors(), start=1)
+            for index, color in enumerate(get_preparation_operation_colors(operation["name"]), start=1)
         }
 
         if not size_map:
-            await message.answer("Для этой подготовки пока нет размеров в справочнике.")
+            await state.update_data(
+                selected_size="без размера",
+                selected_color="без цвета",
+                selected_sizes=[],
+                selected_colors=[],
+            )
+            await state.set_state(Report.waiting_for_quantity)
+            await message.answer(
+                f"Операция: {operation_name}\n\nВведите количество:",
+                reply_markup=navigation_keyboard(),
+            )
             return
 
         await state.update_data(
@@ -4056,18 +4078,25 @@ async def ask_cutting_size_quantity(message: Message, state: FSMContext):
 async def ask_preparation_size_quantity(message: Message, state: FSMContext):
     data = await state.get_data()
     selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
-    size_index = data.get("preparation_quantity_index", 0)
+    selected_colors = data.get("selected_colors") or [data["selected_color"]]
+    combinations = [
+        (selected_size, selected_color)
+        for selected_color in selected_colors
+        for selected_size in selected_sizes
+    ]
+    combination_index = data.get("preparation_quantity_index", 0)
 
-    if size_index >= len(selected_sizes):
+    if combination_index >= len(combinations):
         return
 
-    current_size = selected_sizes[size_index]
+    current_size, current_color = combinations[combination_index]
 
     await message.answer(
         f"Операция: {data['operation_name']}\n"
-        f"Материал: {data['selected_color']}\n"
-        f"Размер {size_index + 1} из {len(selected_sizes)}: {current_size}\n\n"
-        f"Введите количество для размера {current_size}:",
+        f"Позиция {combination_index + 1} из {len(combinations)}\n"
+        f"Размер: {current_size}\n"
+        f"Цвет: {current_color}\n\n"
+        f"Введите количество для размера {current_size}, цвет {current_color}:",
         reply_markup=navigation_keyboard(),
     )
 
@@ -4181,15 +4210,22 @@ async def process_quantity(message: Message, state: FSMContext):
 
     quantity = int(message.text)
 
-    if is_packing_preparation_flow(data):
+    if is_packing_preparation_flow(data) and data.get("selected_sizes"):
         selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
-        size_index = data.get("preparation_quantity_index", 0)
+        selected_colors = data.get("selected_colors") or [data["selected_color"]]
+        combinations = [
+            (selected_size, selected_color)
+            for selected_color in selected_colors
+            for selected_size in selected_sizes
+        ]
+        combination_index = data.get("preparation_quantity_index", 0)
         preparation_quantities = data.get("preparation_quantities", {})
-        current_size = selected_sizes[size_index]
-        preparation_quantities[current_size] = quantity
-        next_index = size_index + 1
+        current_size, current_color = combinations[combination_index]
+        quantity_key = f"{current_size}|{current_color}"
+        preparation_quantities[quantity_key] = quantity
+        next_index = combination_index + 1
 
-        if next_index < len(selected_sizes):
+        if next_index < len(combinations):
             await state.update_data(
                 preparation_quantity_index=next_index,
                 preparation_quantities=preparation_quantities,
@@ -4197,23 +4233,22 @@ async def process_quantity(message: Message, state: FSMContext):
             await ask_preparation_size_quantity(message, state)
             return
 
-        selected_color = data.get("selected_color", "без цвета")
         added_count = 0
 
-        for selected_size in selected_sizes:
+        for selected_size, selected_color in combinations:
             add_shift_operation(
                 data["shift_id"],
                 data["employee_id"],
                 data["operation_id"],
                 selected_size,
                 selected_color,
-                preparation_quantities[selected_size],
+                preparation_quantities[f"{selected_size}|{selected_color}"],
             )
             added_count += 1
 
         quantity_text = ", ".join(
-            f"{selected_size}: {preparation_quantities[selected_size]}"
-            for selected_size in selected_sizes
+            f"{selected_size}, {selected_color}: {preparation_quantities[f'{selected_size}|{selected_color}']}"
+            for selected_size, selected_color in combinations
         )
 
         add_edit_log(
@@ -4223,16 +4258,15 @@ async def process_quantity(message: Message, state: FSMContext):
             "shift",
             data["shift_id"],
             (
-                f"{data['operation_name']}, материал {selected_color}, "
-                f"количество по размерам: {quantity_text}, строк добавлено: {added_count}"
+                f"{data['operation_name']}, количество по размерам и цветам: "
+                f"{quantity_text}, строк добавлено: {added_count}"
             ),
         )
 
         report = get_shift_report(data["shift_id"])
         text = (
             f"Подготовка добавлена. Строк добавлено: {added_count}\n\n"
-            f"Материал: {selected_color}\n"
-            f"Количество по размерам:\n{quantity_text}\n\n"
+            f"Количество по размерам и цветам:\n{quantity_text}\n\n"
             "Текущий отчёт за смену:\n\n"
         )
 
