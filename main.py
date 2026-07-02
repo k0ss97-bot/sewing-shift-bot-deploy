@@ -81,6 +81,7 @@ from database import (
     hide_operation,
     init_db,
     is_preparation_operation_folder,
+    is_packing_product_folder,
     mark_cutting_batch_formed,
     restore_operation,
     set_shift_operation_quantity,
@@ -248,6 +249,13 @@ def is_packing_preparation_flow(data: dict):
     return (
         data.get("employee_position") == "Упаковщик"
         and is_preparation_operation_folder(data.get("selected_folder", ""))
+    )
+
+
+def is_packing_product_flow(data: dict):
+    return (
+        data.get("employee_position") == "Упаковщик"
+        and is_packing_product_folder(data.get("selected_folder", ""))
     )
 
 
@@ -649,7 +657,7 @@ async def send_report_size_step(message: Message, state: FSMContext):
         await send_report_folder_step(message, state)
         return
 
-    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data):
+    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data) or is_packing_product_flow(data):
         cutting_mode = data.get("cutting_mode")
         action_text = "Выберите один или несколько размеров"
 
@@ -658,6 +666,9 @@ async def send_report_size_step(message: Message, state: FSMContext):
 
         if is_packing_preparation_flow(data):
             action_text = "Выберите один или несколько размеров для подготовки"
+
+        if is_packing_product_flow(data):
+            action_text = "Выберите один или несколько размеров"
 
         text = (
             f"Изделие: {selected_folder}\n\n"
@@ -692,7 +703,7 @@ async def send_report_color_step(message: Message, state: FSMContext):
         await send_report_size_step(message, state)
         return
 
-    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data):
+    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data) or is_packing_product_flow(data):
         cutting_mode = data.get("cutting_mode")
         size_line = "" if cutting_mode == CUTTING_MODE_LAYOUT else f"Размеры: {selected_size}\n"
         action_text = "Выберите один или несколько цветов"
@@ -701,6 +712,9 @@ async def send_report_color_step(message: Message, state: FSMContext):
             action_text = "Выберите цвета настила"
 
         if is_packing_preparation_flow(data):
+            action_text = "Выберите один или несколько цветов"
+
+        if is_packing_product_flow(data):
             action_text = "Выберите один или несколько цветов"
 
         text = (
@@ -854,6 +868,10 @@ async def go_back_in_report(message: Message, state: FSMContext, current_state: 
             await send_report_size_step(message, state)
             return
 
+        if is_packing_product_flow(data):
+            await send_report_size_step(message, state)
+            return
+
         if data.get("employee_position") == "Раскройщик":
             if data.get("cutting_mode") == CUTTING_MODE_LAYOUT:
                 await send_report_operation_step(message, state)
@@ -887,6 +905,8 @@ async def go_back_in_report(message: Message, state: FSMContext, current_state: 
         data = await state.get_data()
         if is_packing_preparation_flow(data):
             await send_report_color_step(message, state)
+        elif is_packing_product_flow(data) and data.get("selected_colors"):
+            await send_report_operation_step(message, state)
         elif data.get("employee_position") == "Раскройщик" and data.get("cutting_mode") == CUTTING_MODE_CONTOURS:
             await send_report_size_step(message, state)
         elif data.get("employee_position") == "Раскройщик" and data.get("color_map"):
@@ -3476,7 +3496,7 @@ async def select_operation_folder(message: Message, state: FSMContext, selected_
         )
         await state.set_state(Report.waiting_for_size)
 
-        if data.get("employee_position") == "Раскройщик":
+        if data.get("employee_position") == "Раскройщик" or data.get("employee_position") == "Упаковщик":
             await send_report_size_step(message, state)
             return
 
@@ -3526,7 +3546,7 @@ async def ask_report_color(message: Message, state: FSMContext):
         await state.update_data(color_map=color_map, selected_color_numbers=[], selected_colors=[])
         await state.set_state(Report.waiting_for_color)
 
-        if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data):
+        if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data) or is_packing_product_flow(data):
             await send_report_color_step(message, state)
             return
 
@@ -3539,6 +3559,8 @@ async def ask_report_color(message: Message, state: FSMContext):
         return
 
     if data.get("employee_position") == "Раскройщик":
+        await state.update_data(selected_colors=["без цвета"], selected_color="без цвета")
+    elif is_packing_product_flow(data):
         await state.update_data(selected_colors=["без цвета"], selected_color="без цвета")
     else:
         await state.update_data(selected_color="без цвета")
@@ -3620,6 +3642,10 @@ async def finish_multi_size_selection(message: Message, state: FSMContext):
         await ask_report_color(message, state)
         return
 
+    if is_packing_product_flow({**data, "selected_folder": data.get("selected_folder", "")}):
+        await ask_report_color(message, state)
+        return
+
     await ask_report_color(message, state)
 
 
@@ -3674,7 +3700,7 @@ async def process_report_size(message: Message, state: FSMContext):
 
     data = await state.get_data()
 
-    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data):
+    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data) or is_packing_product_flow(data):
         size_map = data.get("size_map", {})
         selected_numbers = parse_multiple_numbers(message.text, set(size_map.keys()))
 
@@ -3752,6 +3778,10 @@ async def select_report_color(message: Message, state: FSMContext, selected_numb
         await ask_preparation_size_quantity(message, state)
         return
 
+    if is_packing_product_flow(updated_data):
+        await ask_report_operation(message, state)
+        return
+
     await ask_report_operation(message, state)
 
 
@@ -3762,7 +3792,7 @@ async def process_report_color(message: Message, state: FSMContext):
 
     data = await state.get_data()
 
-    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data):
+    if data.get("employee_position") == "Раскройщик" or is_packing_preparation_flow(data) or is_packing_product_flow(data):
         color_map = data.get("color_map", {})
         selected_numbers = parse_multiple_numbers(message.text, set(color_map.keys()))
 
@@ -4023,6 +4053,12 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
         await send_report_size_step(message, state)
         return
 
+    if is_packing_product_flow({**data, **update_payload}) and data.get("selected_sizes") and data.get("selected_colors"):
+        await state.update_data(preparation_quantity_index=0, preparation_quantities={})
+        await state.set_state(Report.waiting_for_quantity)
+        await ask_preparation_size_quantity(message, state)
+        return
+
     await state.set_state(Report.waiting_for_quantity)
     quantity_prompt = "Введите время в минутах:" if operation.get("unit") == "мин" else "Введите количество:"
     await message.answer(
@@ -4210,7 +4246,7 @@ async def process_quantity(message: Message, state: FSMContext):
 
     quantity = int(message.text)
 
-    if is_packing_preparation_flow(data) and data.get("selected_sizes"):
+    if (is_packing_preparation_flow(data) or is_packing_product_flow(data)) and data.get("selected_sizes"):
         selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
         selected_colors = data.get("selected_colors") or [data["selected_color"]]
         combinations = [
@@ -4251,10 +4287,13 @@ async def process_quantity(message: Message, state: FSMContext):
             for selected_size, selected_color in combinations
         )
 
+        log_action = "Добавил подготовку" if is_packing_preparation_flow(data) else "Добавил операцию"
+        success_title = "Подготовка добавлена" if is_packing_preparation_flow(data) else "Операция добавлена"
+
         add_edit_log(
             message.from_user.id,
             "employee",
-            "Добавил подготовку",
+            log_action,
             "shift",
             data["shift_id"],
             (
@@ -4265,7 +4304,7 @@ async def process_quantity(message: Message, state: FSMContext):
 
         report = get_shift_report(data["shift_id"])
         text = (
-            f"Подготовка добавлена. Строк добавлено: {added_count}\n\n"
+            f"{success_title}. Строк добавлено: {added_count}\n\n"
             f"Количество по размерам и цветам:\n{quantity_text}\n\n"
             "Текущий отчёт за смену:\n\n"
         )

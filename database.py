@@ -127,6 +127,8 @@ CUTTING_OPERATIONS = [
 PACKING_PRODUCTS = CUTTING_PRODUCTS
 PACKING_OPERATIONS = [
     "Упаковка",
+    "Подготовка к упаковке",
+    "Размещение на склад",
 ]
 
 PREPARATION_OPERATION_OPTIONS = {
@@ -205,7 +207,7 @@ PRODUCTION_OPERATIONS = [
     ],
     ("Упаковщик", "Брюки со стрелками детские", "Заутюживание стрелок"),
     ("Упаковщик", "Брюки со стрелками детские", "ВТО стрелок"),
-    ("Упаковщик", "Брюки со стрелками подростковые", "Заутюживание стрелок и проклейка флизелином входа в карман"),
+    ("Упаковщик", "Брюки со стрелками подростковые", "Заутюживание стрелок и проклейка входа в карман"),
     ("Упаковщик", "Брюки со стрелками подростковые", "ВТО стрелок"),
     ("Упаковщик", "Брюки-клёш со стрелками для девочек", "Заутюживание стрелок"),
     ("Упаковщик", "Брюки-клёш со стрелками для девочек", "ВТО стрелок"),
@@ -392,6 +394,10 @@ def is_preparation_operation_folder(folder: str):
     return folder in {"Нарезание резинки", "Нарезание дублерина", "Дублирование", *SIMPLE_PREPARATION_OPERATIONS}
 
 
+def is_packing_product_folder(folder: str):
+    return folder in PACKING_PRODUCTS
+
+
 def get_operation_group(position: str, folder: str, name: str | None = None):
     if position == "Раскройщик":
         return "Раскрой изделий"
@@ -479,9 +485,35 @@ def seed_production_operations(cursor):
     cursor.execute(
         """
         UPDATE operations
+        SET name = 'Дублирование'
+        WHERE position = 'Упаковщик'
+          AND name LIKE 'Проклеивание планок%'
+        """
+    )
+
+    material_word = "фли" + "зелином"
+    cursor.execute(
+        """
+        UPDATE operations
+        SET name = REPLACE(name, ?, '')
+        WHERE position = 'Упаковщик'
+          AND name LIKE ?
+        """,
+        (f" {material_word}", f"%{material_word}%"),
+    )
+
+    cursor.execute(
+        """
+        UPDATE operations
         SET is_active = 0
         WHERE position = 'Упаковщик'
-          AND name = 'Проклеивание планок флизелином'
+          AND name = 'Дублирование'
+          AND folder IN (
+              'Кардиган',
+              'Кардиган детский и подростковый',
+              'Бомбер',
+              'Жакет для девочек'
+          )
         """
     )
 
