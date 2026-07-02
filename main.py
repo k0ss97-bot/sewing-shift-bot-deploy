@@ -41,7 +41,6 @@ from database import (
     get_active_operation_groups,
     get_active_operation_folders,
     get_active_operations,
-    get_all_product_colors,
     get_all_employees,
     get_all_operations,
     get_admin_cutting_batches,
@@ -71,6 +70,7 @@ from database import (
     get_pending_employees,
     get_product_colors,
     get_product_sizes,
+    get_preparation_material_colors,
     get_preparation_operation_sizes,
     get_recent_edit_logs,
     get_recent_shifts,
@@ -3512,7 +3512,7 @@ async def ask_report_color(message: Message, state: FSMContext):
     colors = get_product_colors(selected_folder)
 
     if is_packing_preparation_flow(data):
-        colors = get_all_product_colors()
+        colors = get_preparation_material_colors()
 
     if colors:
         color_map = {}
@@ -3973,7 +3973,7 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
         }
         color_map = {
             str(index): color
-            for index, color in enumerate(get_all_product_colors(), start=1)
+            for index, color in enumerate(get_preparation_material_colors(), start=1)
         }
 
         if not size_map:

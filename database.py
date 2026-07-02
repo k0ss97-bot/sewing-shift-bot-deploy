@@ -167,6 +167,7 @@ PREPARATION_OPERATION_OPTIONS = {
         "sizes": ["98 (28,5 см)", "104 (30,5 см)", "110 (31,5 см)", "116 (35,5 см)", "122 (38,5 см)", "128 (40 см)"],
     },
 }
+PREPARATION_MATERIAL_COLORS = ["черный", "белый"]
 
 
 PRODUCTION_OPERATIONS = [
@@ -350,6 +351,10 @@ def get_all_product_colors():
 
 def get_preparation_operation_sizes(operation_name: str):
     return PREPARATION_OPERATION_OPTIONS.get(operation_name, {}).get("sizes", [])
+
+
+def get_preparation_material_colors():
+    return PREPARATION_MATERIAL_COLORS
 
 
 def is_preparation_operation_folder(folder: str):
