@@ -129,9 +129,51 @@ PACKING_OPERATIONS = [
     "Упаковка",
 ]
 
+PREPARATION_OPERATION_OPTIONS = {
+    "Брюки со стрелкой / стрелка — резинка 35 мм": {
+        "folder": "Нарезание резинки",
+        "sizes": ["92 (47 см)", "98 (49 см)", "104 (49 см)", "110 (52 см)", "116 (52 см)", "122 (52 см)", "128 (55 см)"],
+    },
+    "Клёш и юбка-шорты — резинка 35 мм": {
+        "folder": "Нарезание резинки",
+        "sizes": ["92 (47 см)", "98 (49 см)", "104 (49 см)", "110 (52 см)", "116 (52 см)", "122 (52 см)", "128 (54 см)"],
+    },
+    "Большие стрелки / подростковые с карманами — резинка 35 мм": {
+        "folder": "Нарезание резинки",
+        "sizes": ["134 (57 см)", "140 (58,5 см)", "146 (60 см)", "152 (61,5 см)", "158 (63 см)", "164 (65 см)"],
+    },
+    "Джоггеры — резинка 35 мм": {
+        "folder": "Нарезание резинки",
+        "sizes": ["86 (44 см)", "92 (45 см)", "98 (47 см)", "104 (47 см)", "110 (50 см)", "116 (50 см)", "122 (51 см)"],
+    },
+    "Джоггеры, манжеты — резинка 25 мм": {
+        "folder": "Нарезание резинки",
+        "sizes": ["86 (18 см)", "92 (19 см)", "98 (19 см)", "104 (19 см)", "110 (20 см)", "116 (20 см)", "122 (21 см)"],
+    },
+    "Ползунки — резинка 25 мм": {
+        "folder": "Нарезание резинки",
+        "sizes": ["86 (43 см)", "92 (45 см)", "98 (47 см)", "104 (47 см)", "110 (50 см)", "116 (50 см)", "122 (50 см)"],
+    },
+    "Карманы прорезные — дублерин 15 мм": {
+        "folder": "Нарезание дублерина",
+        "sizes": ["134 (14 см)", "140 (14,5 см)", "146 (15 см)", "152 (15,5 см)", "158 (16 см)", "164 (16,5 см)"],
+    },
+    "Карманы — дублерин 25 мм": {
+        "folder": "Нарезание дублерина",
+        "sizes": ["92 (22 см)", "98 (24 см)", "104 (26 см)", "110 (27 см)", "116 (29 см)", "122 (30 см)", "128 (32 см)", "134 (34 см)", "140 (35 см)", "146 (37 см)", "152 (39 см)", "158 (40 см)", "164 (42 см)"],
+    },
+    "Жакеты — дублерин 80 мм": {
+        "folder": "Нарезание дублерина",
+        "sizes": ["98 (28,5 см)", "104 (30,5 см)", "110 (31,5 см)", "116 (35,5 см)", "122 (38,5 см)", "128 (40 см)"],
+    },
+}
+
 
 PRODUCTION_OPERATIONS = [
-    ("Упаковщик", "Подготовка", "Нарезка резинок"),
+    *[
+        ("Упаковщик", options["folder"], name)
+        for name, options in PREPARATION_OPERATION_OPTIONS.items()
+    ],
     ("Упаковщик", "Брюки со стрелками детские", "Заутюживание стрелок"),
     ("Упаковщик", "Брюки со стрелками детские", "ВТО стрелок"),
     ("Упаковщик", "Брюки со стрелками подростковые", "Заутюживание стрелок и проклейка флизелином входа в карман"),
@@ -228,6 +270,8 @@ PRODUCT_OPTIONS = {
         "sizes": ["86", "92", "98", "104", "110", "116", "122", "128", "134", "140", "146", "152", "158", "164"],
     },
     "Подготовка": {"colors": [], "sizes": []},
+    "Нарезание резинки": {"colors": [], "sizes": []},
+    "Нарезание дублерина": {"colors": [], "sizes": []},
     "Брюки со стрелками детские": {
         "colors": ["бежевый", "голубой", "капучино", "кофейный", "светло-серый", "темно - синий", "черный"],
         "sizes": ["86", "92", "98", "104", "110", "116", "122", "128"],
@@ -293,12 +337,31 @@ def get_product_colors(folder: str):
     return PRODUCT_OPTIONS.get(folder, {}).get("colors", [])
 
 
+def get_all_product_colors():
+    colors = []
+
+    for options in PRODUCT_OPTIONS.values():
+        for color in options.get("colors", []):
+            if color not in colors:
+                colors.append(color)
+
+    return colors
+
+
+def get_preparation_operation_sizes(operation_name: str):
+    return PREPARATION_OPERATION_OPTIONS.get(operation_name, {}).get("sizes", [])
+
+
+def is_preparation_operation_folder(folder: str):
+    return folder in {"Нарезание резинки", "Нарезание дублерина"}
+
+
 def get_operation_group(position: str, folder: str, name: str | None = None):
     if position == "Раскройщик":
         return "Раскрой изделий"
 
     if position == "Упаковщик":
-        if folder == "Подготовка":
+        if folder == "Подготовка" or is_preparation_operation_folder(folder):
             return "Подготовка"
 
         if folder in {
@@ -368,6 +431,15 @@ def seed_production_operations(cursor):
         """
     )
 
+    cursor.execute(
+        """
+        UPDATE operations
+        SET is_active = 0
+        WHERE position = 'Упаковщик'
+          AND folder = 'Подготовка'
+        """
+    )
+
     cutting_items = [
         ("Раскройщик", product, operation)
         for product in CUTTING_PRODUCTS
@@ -381,7 +453,7 @@ def seed_production_operations(cursor):
     packing_preparation_items = [
         item
         for item in PRODUCTION_OPERATIONS
-        if item[0] == "Упаковщик" and item[1] == "Подготовка"
+        if item[0] == "Упаковщик" and get_operation_group(item[0], item[1], item[2]) == "Подготовка"
     ]
     remaining_production_items = [
         item
