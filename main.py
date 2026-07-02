@@ -3730,7 +3730,17 @@ async def select_report_color(message: Message, state: FSMContext, selected_numb
         await message.answer("Введите номер цвета из списка.")
         return
 
-    await state.update_data(selected_color=color_map[selected_number])
+    selected_color = color_map[selected_number]
+    await state.update_data(selected_color=selected_color, selected_colors=[selected_color])
+
+    updated_data = {**data, "selected_color": selected_color, "selected_colors": [selected_color]}
+
+    if is_packing_preparation_flow(updated_data):
+        await state.update_data(preparation_quantity_index=0, preparation_quantities={})
+        await state.set_state(Report.waiting_for_quantity)
+        await ask_preparation_size_quantity(message, state)
+        return
+
     await ask_report_operation(message, state)
 
 
@@ -4043,6 +4053,25 @@ async def ask_cutting_size_quantity(message: Message, state: FSMContext):
     )
 
 
+async def ask_preparation_size_quantity(message: Message, state: FSMContext):
+    data = await state.get_data()
+    selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
+    size_index = data.get("preparation_quantity_index", 0)
+
+    if size_index >= len(selected_sizes):
+        return
+
+    current_size = selected_sizes[size_index]
+
+    await message.answer(
+        f"Операция: {data['operation_name']}\n"
+        f"Материал: {data['selected_color']}\n"
+        f"Размер {size_index + 1} из {len(selected_sizes)}: {current_size}\n\n"
+        f"Введите количество для размера {current_size}:",
+        reply_markup=navigation_keyboard(),
+    )
+
+
 @dp.message(Report.waiting_for_operation)
 async def process_operation(message: Message, state: FSMContext):
     if await reset_state_if_command(message, state):
@@ -4151,6 +4180,71 @@ async def process_quantity(message: Message, state: FSMContext):
         return
 
     quantity = int(message.text)
+
+    if is_packing_preparation_flow(data):
+        selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
+        size_index = data.get("preparation_quantity_index", 0)
+        preparation_quantities = data.get("preparation_quantities", {})
+        current_size = selected_sizes[size_index]
+        preparation_quantities[current_size] = quantity
+        next_index = size_index + 1
+
+        if next_index < len(selected_sizes):
+            await state.update_data(
+                preparation_quantity_index=next_index,
+                preparation_quantities=preparation_quantities,
+            )
+            await ask_preparation_size_quantity(message, state)
+            return
+
+        selected_color = data.get("selected_color", "без цвета")
+        added_count = 0
+
+        for selected_size in selected_sizes:
+            add_shift_operation(
+                data["shift_id"],
+                data["employee_id"],
+                data["operation_id"],
+                selected_size,
+                selected_color,
+                preparation_quantities[selected_size],
+            )
+            added_count += 1
+
+        quantity_text = ", ".join(
+            f"{selected_size}: {preparation_quantities[selected_size]}"
+            for selected_size in selected_sizes
+        )
+
+        add_edit_log(
+            message.from_user.id,
+            "employee",
+            "Добавил подготовку",
+            "shift",
+            data["shift_id"],
+            (
+                f"{data['operation_name']}, материал {selected_color}, "
+                f"количество по размерам: {quantity_text}, строк добавлено: {added_count}"
+            ),
+        )
+
+        report = get_shift_report(data["shift_id"])
+        text = (
+            f"Подготовка добавлена. Строк добавлено: {added_count}\n\n"
+            f"Материал: {selected_color}\n"
+            f"Количество по размерам:\n{quantity_text}\n\n"
+            "Текущий отчёт за смену:\n\n"
+        )
+
+        for index, row in enumerate(report, start=1):
+            name, product_size, product_color, qty, unit = row
+            text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
+
+        text += "\nВыберите следующее действие в меню ниже."
+
+        await state.clear()
+        await send_long_text(message, text, reply_markup=report_keyboard())
+        return
 
     if data.get("employee_position") == "Раскройщик":
         if data.get("cutting_mode") == CUTTING_MODE_CONTOURS:
