@@ -359,6 +359,7 @@ PRODUCT_OPTIONS = {
         "sizes": ["92", "98", "104", "110", "116", "122", "128", "134", "140", "146", "152", "158", "164"],
     },
     "Техобслуживание швейной машинки": {"colors": [], "sizes": []},
+    "ТО оборудования": {"colors": [], "sizes": []},
 }
 
 
@@ -434,6 +435,9 @@ def get_operation_group(position: str, folder: str, name: str | None = None):
 
     if folder == "Техобслуживание швейной машинки":
         return "Техобслуживание"
+
+    if folder == "ТО оборудования":
+        return "ТО оборудования"
 
     if folder in {
         "Брюки со стрелками детские",
@@ -644,6 +648,54 @@ def seed_production_operations(cursor):
             """
             INSERT INTO operations (number, name, position, operation_group, folder, sort_order, unit, is_active)
             VALUES (?, ?, ?, ?, ?, ?, 'мин', 1)
+            """,
+            (next_number, name, position, operation_group, folder, sort_order),
+        )
+
+    equipment_maintenance_items = [
+        "Замена ножей",
+    ]
+
+    for offset, name in enumerate(equipment_maintenance_items, start=1):
+        position = "Швея"
+        folder = "ТО оборудования"
+        operation_group = get_operation_group(position, folder, name)
+        sort_order = len(seed_items) + len(maintenance_items) + offset
+
+        cursor.execute(
+            """
+            SELECT id
+            FROM operations
+            WHERE name = ?
+              AND position = ?
+              AND folder = ?
+            """,
+            (name, position, folder),
+        )
+
+        existing_operation = cursor.fetchone()
+
+        if existing_operation is not None:
+            cursor.execute(
+                """
+                UPDATE operations
+                SET unit = 'шт',
+                    is_active = 1,
+                    operation_group = ?,
+                    sort_order = ?
+                WHERE id = ?
+                """,
+                (operation_group, sort_order, existing_operation[0]),
+            )
+            continue
+
+        cursor.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM operations")
+        next_number = cursor.fetchone()[0]
+
+        cursor.execute(
+            """
+            INSERT INTO operations (number, name, position, operation_group, folder, sort_order, unit, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, 'шт', 1)
             """,
             (next_number, name, position, operation_group, folder, sort_order),
         )
