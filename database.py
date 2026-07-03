@@ -666,6 +666,7 @@ def seed_production_operations(cursor):
 
     equipment_maintenance_items = [
         "Замена ножей",
+        "Замена масла",
     ]
 
     for offset, name in enumerate(equipment_maintenance_items, start=1):
