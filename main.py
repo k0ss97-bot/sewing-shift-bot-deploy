@@ -442,9 +442,11 @@ def choice_keyboard(prefix: str, items: dict[str, str | dict], with_navigation: 
             if prefix.startswith("report_color"):
                 label = format_color_label(label)
 
+        button_text = label if prefix.startswith("report_color") else f"{number}. {label}"
+
         keyboard.append([
             InlineKeyboardButton(
-                text=f"{number}. {label}",
+                text=button_text,
                 callback_data=f"{prefix}:{number}",
             )
         ])
@@ -476,9 +478,11 @@ def multi_choice_keyboard(prefix: str, items: dict[str, str], selected_numbers: 
     for number, label in items.items():
         mark = "☑️" if number in selected_set else "☐"
         display_label = format_color_label(label) if prefix.startswith("report_color") else label
+        button_text = f"{mark} {display_label}" if prefix.startswith("report_color") else f"{mark} {number}. {display_label}"
+
         keyboard.append([
             InlineKeyboardButton(
-                text=f"{mark} {number}. {display_label}",
+                text=button_text,
                 callback_data=f"{prefix}_toggle:{number}",
             )
         ])
@@ -751,10 +755,7 @@ async def send_report_color_step(message: Message, state: FSMContext):
         )
         return
 
-    text = f"Изделие: {selected_folder}\nРазмер: {selected_size}\n\nВыберите цвет. Напишите номер:\n\n"
-
-    for number, color in color_map.items():
-        text += f"{number}. {format_color_label(color)}\n"
+    text = f"Изделие: {selected_folder}\nРазмер: {selected_size}\n\nВыберите цвет кнопкой ниже:"
 
     await state.set_state(Report.waiting_for_color)
     await message.answer(text, reply_markup=choice_keyboard("report_color", color_map))
@@ -3570,10 +3571,7 @@ async def ask_report_color(message: Message, state: FSMContext):
             await send_report_color_step(message, state)
             return
 
-        text = f"Изделие: {selected_folder}\nРазмер: {data['selected_size']}\n\nВыберите цвет. Напишите номер:\n\n"
-
-        for number, color in color_map.items():
-            text += f"{number}. {format_color_label(color)}\n"
+        text = f"Изделие: {selected_folder}\nРазмер: {data['selected_size']}\n\nВыберите цвет кнопкой ниже:"
 
         await message.answer(text, reply_markup=choice_keyboard("report_color", color_map))
         return
