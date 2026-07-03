@@ -406,6 +406,9 @@ def get_operation_group(position: str, folder: str, name: str | None = None):
     if position == "Раскройщик":
         return "Раскрой изделий"
 
+    if position == "Ремонт":
+        return "ТО оборудования"
+
     if position == "Упаковщик":
         if folder == "Подготовка" or is_preparation_operation_folder(folder):
             return "Подготовка"
@@ -533,6 +536,15 @@ def seed_production_operations(cursor):
         """
     )
 
+    cursor.execute(
+        """
+        UPDATE operations
+        SET is_active = 0
+        WHERE position = 'Швея'
+          AND folder = 'ТО оборудования'
+        """
+    )
+
     cutting_items = [
         ("Раскройщик", product, operation)
         for product in CUTTING_PRODUCTS
@@ -657,7 +669,7 @@ def seed_production_operations(cursor):
     ]
 
     for offset, name in enumerate(equipment_maintenance_items, start=1):
-        position = "Швея"
+        position = "Ремонт"
         folder = "ТО оборудования"
         operation_group = get_operation_group(position, folder, name)
         sort_order = len(seed_items) + len(maintenance_items) + offset
