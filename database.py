@@ -109,6 +109,7 @@ from catalog import (
     PRODUCTION_OPERATIONS,
     SIMPLE_PREPARATION_OPERATIONS,
     STARTER_OPERATION_NAMES,
+    format_color_label,
 )
 
 

@@ -1,6 +1,7 @@
 from collections import Counter
 
 from catalog import (
+    COLOR_EMOJIS,
     CUTTING_PRODUCTS,
     PACKING_PRODUCTS,
     PREPARATION_MATERIAL_COLORS,
@@ -60,9 +61,16 @@ def main():
             if has_bad_color_format(color):
                 errors.append(f"Проверь цвет в изделии {product}: {color}")
 
+            if color not in COLOR_EMOJIS:
+                errors.append(f"Для цвета нет кружка: {color}")
+
         duplicates = [color for color, count in Counter(colors).items() if count > 1]
         if duplicates:
             errors.append(f"Дубли цветов в изделии {product}: {', '.join(duplicates)}")
+
+    for color in PREPARATION_MATERIAL_COLORS:
+        if color not in COLOR_EMOJIS:
+            errors.append(f"Для цвета материала нет кружка: {color}")
 
     if errors:
         print("Проверка справочника: есть вопросы")

@@ -68,6 +68,7 @@ from database import (
     get_period_operations_by_employee,
     get_period_shift_details,
     get_pending_employees,
+    format_color_label,
     get_product_colors,
     get_product_sizes,
     get_preparation_operation_colors,
@@ -438,6 +439,8 @@ def choice_keyboard(prefix: str, items: dict[str, str | dict], with_navigation: 
             label = item.get("name", number)
         else:
             label = item
+            if prefix.startswith("report_color"):
+                label = format_color_label(label)
 
         keyboard.append([
             InlineKeyboardButton(
@@ -472,9 +475,10 @@ def multi_choice_keyboard(prefix: str, items: dict[str, str], selected_numbers: 
 
     for number, label in items.items():
         mark = "☑️" if number in selected_set else "☐"
+        display_label = format_color_label(label) if prefix.startswith("report_color") else label
         keyboard.append([
             InlineKeyboardButton(
-                text=f"{mark} {number}. {label}",
+                text=f"{mark} {number}. {display_label}",
                 callback_data=f"{prefix}_toggle:{number}",
             )
         ])
@@ -570,10 +574,24 @@ def format_operation_line(name: str, product_size: str, product_color: str, quan
         details.append(f"размер {product_size}")
 
     if product_color and product_color != "без цвета":
-        details.append(f"цвет {product_color}")
+        details.append(f"цвет {format_color_label(product_color)}")
 
     details_text = f" ({', '.join(details)})" if details else ""
     return f"{name}{details_text} — {quantity} {unit}"
+
+
+def format_color_list(colors: list[str]):
+    return ", ".join(format_color_label(color) for color in colors)
+
+
+def format_selected_colors(data: dict):
+    colors = data.get("selected_colors")
+
+    if colors:
+        return format_color_list(colors)
+
+    color = data.get("selected_color", "")
+    return format_color_label(color) if color else ""
 
 
 def is_valid_time(value: str):
@@ -736,7 +754,7 @@ async def send_report_color_step(message: Message, state: FSMContext):
     text = f"Изделие: {selected_folder}\nРазмер: {selected_size}\n\nВыберите цвет. Напишите номер:\n\n"
 
     for number, color in color_map.items():
-        text += f"{number}. {color}\n"
+        text += f"{number}. {format_color_label(color)}\n"
 
     await state.set_state(Report.waiting_for_color)
     await message.answer(text, reply_markup=choice_keyboard("report_color", color_map))
@@ -753,7 +771,7 @@ async def send_report_operation_step(message: Message, state: FSMContext):
         text += f"Размер: {data.get('selected_size', ', '.join(data.get('selected_sizes', [])))}\n"
 
     if data.get("selected_color") or data.get("selected_colors"):
-        text += f"Цвет: {data.get('selected_color', ', '.join(data.get('selected_colors', [])))}\n"
+        text += f"Цвет: {format_selected_colors(data)}\n"
 
     text += "\nВыберите операцию. Напишите номер:\n\n"
 
@@ -3555,7 +3573,7 @@ async def ask_report_color(message: Message, state: FSMContext):
         text = f"Изделие: {selected_folder}\nРазмер: {data['selected_size']}\n\nВыберите цвет. Напишите номер:\n\n"
 
         for number, color in color_map.items():
-            text += f"{number}. {color}\n"
+            text += f"{number}. {format_color_label(color)}\n"
 
         await message.answer(text, reply_markup=choice_keyboard("report_color", color_map))
         return
@@ -3583,7 +3601,7 @@ async def ask_report_operation(message: Message, state: FSMContext):
 
     operation_map = {}
     size_text = data.get("selected_size", ", ".join(data.get("selected_sizes", [])))
-    color_text = data.get("selected_color", ", ".join(data.get("selected_colors", [])))
+    color_text = format_selected_colors(data)
     text = f"Изделие: {selected_folder}\n"
 
     if size_text:
@@ -4066,7 +4084,7 @@ async def select_operation(message: Message, state: FSMContext, selected_number:
     await message.answer(
         f"Операция: {operation_name}\n"
         f"Размер: {data.get('selected_size', ', '.join(data.get('selected_sizes', [])))}\n"
-        f"Цвет: {data.get('selected_color', ', '.join(data.get('selected_colors', [])))}\n\n"
+        f"Цвет: {format_selected_colors(data)}\n\n"
         f"{quantity_prompt}",
         reply_markup=navigation_keyboard(),
     )
@@ -4089,8 +4107,8 @@ async def ask_cutting_color_quantity(message: Message, state: FSMContext):
     await message.answer(
         f"Операция: {data['operation_name']}\n"
         f"{size_line}"
-        f"Цвет {color_index + 1} из {len(selected_colors)}: {current_color}\n\n"
-        f"Введите {unit_text} для цвета «{current_color}»:",
+        f"Цвет {color_index + 1} из {len(selected_colors)}: {format_color_label(current_color)}\n\n"
+        f"Введите {unit_text} для цвета «{format_color_label(current_color)}»:",
         reply_markup=navigation_keyboard(),
     )
 
@@ -4133,8 +4151,8 @@ async def ask_preparation_size_quantity(message: Message, state: FSMContext):
         f"Операция: {data['operation_name']}\n"
         f"Позиция {combination_index + 1} из {len(combinations)}\n"
         f"Размер: {current_size}\n"
-        f"Цвет: {current_color}\n\n"
-        f"Введите количество для размера {current_size}, цвет {current_color}:",
+        f"Цвет: {format_color_label(current_color)}\n\n"
+        f"Введите количество для размера {current_size}, цвет {format_color_label(current_color)}:",
         reply_markup=navigation_keyboard(),
     )
 
@@ -4285,7 +4303,7 @@ async def process_quantity(message: Message, state: FSMContext):
             added_count += 1
 
         quantity_text = ", ".join(
-            f"{selected_size}, {selected_color}: {preparation_quantities[f'{selected_size}|{selected_color}']}"
+            f"{selected_size}, {format_color_label(selected_color)}: {preparation_quantities[f'{selected_size}|{selected_color}']}"
             for selected_size, selected_color in combinations
         )
 
@@ -4435,7 +4453,7 @@ async def process_quantity(message: Message, state: FSMContext):
 
         is_layout = data.get("cutting_mode") == CUTTING_MODE_LAYOUT
         quantity_text = ", ".join(
-            f"{color}: {cutting_quantities[color]}" for color in selected_colors
+            f"{format_color_label(color)}: {cutting_quantities[color]}" for color in selected_colors
         )
         quantity_label = "слоёв по цветам" if is_layout else "количество по цветам"
 
@@ -4494,7 +4512,7 @@ async def process_quantity(message: Message, state: FSMContext):
         data["shift_id"],
         (
             f"{data['operation_name']}, размеры {', '.join(selected_sizes)}, "
-            f"цвета {', '.join(selected_colors)} — {quantity}, строк добавлено: {added_count}"
+            f"цвета {format_color_list(selected_colors)} — {quantity}, строк добавлено: {added_count}"
         ),
     )
 
