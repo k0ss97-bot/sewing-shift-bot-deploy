@@ -13,11 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
     Message,
-    ReplyKeyboardMarkup,
 )
 from dotenv import load_dotenv
 from openpyxl import Workbook
@@ -30,6 +26,7 @@ from database import (
     add_shift_operation,
     add_edit_log,
     add_cutting_layout,
+    admin_update_cutting_batch_progress,
     admin_close_shift,
     close_shift,
     create_cutting_contour_batch,
@@ -86,6 +83,7 @@ from database import (
     is_packing_product_folder,
     mark_cutting_batch_formed,
     restore_operation,
+    rollback_cutting_batch,
     set_shift_operation_quantity,
     update_cutting_batch_progress,
     update_operation_field,
@@ -94,6 +92,21 @@ from database import (
     update_employee_status,
     local_now,
     local_today,
+)
+from keyboards import (
+    admin_employees_keyboard,
+    admin_files_keyboard,
+    admin_keyboard,
+    admin_operations_keyboard,
+    admin_reports_keyboard,
+    admin_shifts_keyboard,
+    choice_keyboard,
+    employee_keyboard,
+    multi_choice_keyboard,
+    navigation_keyboard,
+    position_list_text,
+    progress_keyboard,
+    report_keyboard,
 )
 
 
@@ -161,6 +174,8 @@ class AdminEditReport(StatesGroup):
 
 class AdminCuttingBatch(StatesGroup):
     waiting_for_batch = State()
+    waiting_for_action = State()
+    waiting_for_progress = State()
 
 
 class OperationAdmin(StatesGroup):
@@ -195,41 +210,9 @@ CUTTING_MODE_LAYOUT = "layout"
 CUTTING_MODE_CUT = "cut"
 CUTTING_MODE_FORM = "form"
 CUTTING_MODE_FULL = "full"
-
-
-def employee_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Отчёт"),
-                KeyboardButton(text="Закрыть смену"),
-            ],
-            [
-                KeyboardButton(text="Админ-панель"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
-
-
-def report_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Отправить отчёт"),
-                KeyboardButton(text="Текущий отчёт"),
-            ],
-            [
-                KeyboardButton(text="Изменить отчёт"),
-                KeyboardButton(text="Удалить операцию"),
-            ],
-            [
-                KeyboardButton(text="Отчёт за даты"),
-                KeyboardButton(text="Назад"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+QUANTITY_FLOW_PACKING_MATRIX = "packing_matrix"
+QUANTITY_FLOW_CUTTING = "cutting"
+QUANTITY_FLOW_REGULAR = "regular"
 
 
 def get_cutting_mode(operation_name: str) -> str:
@@ -262,146 +245,14 @@ def is_packing_product_flow(data: dict):
     )
 
 
-def admin_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Отчёты"),
-                KeyboardButton(text="Смены"),
-            ],
-            [
-                KeyboardButton(text="Сотрудники"),
-                KeyboardButton(text="Операции"),
-            ],
-            [
-                KeyboardButton(text="Файлы"),
-                KeyboardButton(text="В меню сотрудника"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+def get_quantity_flow(data: dict):
+    if (is_packing_preparation_flow(data) or is_packing_product_flow(data)) and data.get("selected_sizes"):
+        return QUANTITY_FLOW_PACKING_MATRIX
 
+    if data.get("employee_position") == "Раскройщик":
+        return QUANTITY_FLOW_CUTTING
 
-def admin_reports_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Отчёт за сегодня"),
-                KeyboardButton(text="Отчёт за месяц"),
-            ],
-            [
-                KeyboardButton(text="Отчёт за период"),
-                KeyboardButton(text="Excel за период"),
-            ],
-            [
-                KeyboardButton(text="Отчёт по сотруднику"),
-                KeyboardButton(text="Править отчёт"),
-            ],
-            [
-                KeyboardButton(text="Выгрузить отчёт"),
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
-
-
-def admin_shifts_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Открытые смены"),
-                KeyboardButton(text="Последние смены"),
-            ],
-            [
-                KeyboardButton(text="Удалить смену"),
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
-
-
-def admin_employees_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Заявки"),
-                KeyboardButton(text="Список сотрудников"),
-            ],
-            [
-                KeyboardButton(text="Активные сотрудники"),
-                KeyboardButton(text="Неактивные сотрудники"),
-            ],
-            [
-                KeyboardButton(text="Активировать сотрудника"),
-                KeyboardButton(text="Отключить сотрудника"),
-            ],
-            [
-                KeyboardButton(text="Сменить должность"),
-            ],
-            [
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
-
-
-def admin_operations_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Список операций"),
-                KeyboardButton(text="Добавить операцию"),
-            ],
-            [
-                KeyboardButton(text="Изменить операцию"),
-            ],
-            [
-                KeyboardButton(text="Скрыть операцию"),
-                KeyboardButton(text="Вернуть операцию"),
-            ],
-            [
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
-
-
-def admin_files_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Журнал"),
-                KeyboardButton(text="Скачать базу"),
-            ],
-            [
-                KeyboardButton(text="Проверка базы"),
-            ],
-            [
-                KeyboardButton(text="Загрузить базу"),
-            ],
-            [
-                KeyboardButton(text="Создать копию базы"),
-                KeyboardButton(text="Ошибки"),
-            ],
-            [
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
-
-
-def position_list_text():
-    return (
-        "1. Швея\n"
-        "2. Упаковщик\n"
-        "3. Раскройщик\n"
-        "4. Ремонт"
-    )
+    return QUANTITY_FLOW_REGULAR
 
 
 EMPLOYEE_STATUS_NAMES = {
@@ -429,92 +280,6 @@ def setup_logging():
             logging.FileHandler(ERROR_LOG_FILE, encoding="utf-8"),
             logging.StreamHandler(),
         ],
-    )
-
-
-def choice_keyboard(prefix: str, items: dict[str, str | dict], with_navigation: bool = True):
-    keyboard = []
-
-    for number, item in items.items():
-        if isinstance(item, dict):
-            label = item.get("name", number)
-        else:
-            label = item
-            if prefix.startswith("report_color"):
-                label = format_color_label(label)
-
-        button_text = label if prefix.startswith("report_color") else f"{number}. {label}"
-
-        keyboard.append([
-            InlineKeyboardButton(
-                text=button_text,
-                callback_data=f"{prefix}:{number}",
-            )
-        ])
-
-    if with_navigation:
-        keyboard.append([
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
-        ])
-
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def navigation_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
-                InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
-            ]
-        ]
-    )
-
-
-def multi_choice_keyboard(prefix: str, items: dict[str, str], selected_numbers: list[str]):
-    keyboard = []
-    selected_set = set(selected_numbers)
-
-    for number, label in items.items():
-        mark = "☑️" if number in selected_set else "☐"
-        display_label = format_color_label(label) if prefix.startswith("report_color") else label
-        button_text = f"{mark} {display_label}" if prefix.startswith("report_color") else f"{mark} {number}. {display_label}"
-
-        keyboard.append([
-            InlineKeyboardButton(
-                text=button_text,
-                callback_data=f"{prefix}_toggle:{number}",
-            )
-        ])
-
-    keyboard.append([
-        InlineKeyboardButton(text="✅ Далее", callback_data=f"{prefix}_done"),
-    ])
-    keyboard.append([
-        InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
-    ])
-
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def progress_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="25%", callback_data="cutting_progress:25"),
-                InlineKeyboardButton(text="50%", callback_data="cutting_progress:50"),
-            ],
-            [
-                InlineKeyboardButton(text="75%", callback_data="cutting_progress:75"),
-                InlineKeyboardButton(text="100%", callback_data="cutting_progress:100"),
-            ],
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
-                InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
-            ],
-        ]
     )
 
 
@@ -1060,7 +825,7 @@ async def send_admin_cutting_batches_step(message: Message, state: FSMContext):
         return
 
     batch_map = {}
-    text = "Партии раскроя.\nВыберите тестовую/ошибочную партию для удаления:\n\n"
+    text = "Партии раскроя.\nВыберите партию для управления:\n\n"
 
     for index, batch in enumerate(batches, start=1):
         batch_id, product_name, status, contour_date, layout_date, progress, employee_name, sizes_text, colors_text = batch
@@ -1087,6 +852,25 @@ async def send_admin_cutting_batches_step(message: Message, state: FSMContext):
     await state.update_data(admin_cutting_batch_map=batch_map)
     await state.set_state(AdminCuttingBatch.waiting_for_batch)
     await send_long_text(message, text, reply_markup=choice_keyboard("admin_cutting_batch", batch_map))
+
+
+async def send_admin_cutting_batch_action_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    batch_name = data.get("admin_cutting_batch_name", "партия")
+    action_map = {
+        "1": {"id": "progress", "name": "Изменить готовность раскроя"},
+        "2": {"id": "rollback_contours", "name": "Откатить к контурам"},
+        "3": {"id": "rollback_layout", "name": "Откатить к настилу"},
+        "4": {"id": "rollback_cutting_done", "name": "Откатить к раскрою 100%"},
+        "5": {"id": "delete", "name": "Удалить партию"},
+    }
+
+    await state.update_data(admin_cutting_action_map=action_map)
+    await state.set_state(AdminCuttingBatch.waiting_for_action)
+    await message.answer(
+        f"Партия:\n{batch_name}\n\nВыберите действие:",
+        reply_markup=choice_keyboard("admin_cutting_action", action_map),
+    )
 
 
 async def go_back_in_admin_edit_report(message: Message, state: FSMContext, current_state: str):
@@ -1164,7 +948,11 @@ async def process_navigation_button(callback: CallbackQuery, state: FSMContext):
     if callback.data == "nav_cancel":
         await state.clear()
         await callback.answer("Отменено")
-        reply_markup = admin_reports_keyboard() if current_state and current_state.startswith("AdminEditReport:") else employee_keyboard()
+        is_admin_report_state = current_state and (
+            current_state.startswith("AdminEditReport:")
+            or current_state.startswith("AdminCuttingBatch:")
+        )
+        reply_markup = admin_reports_keyboard() if is_admin_report_state else employee_keyboard()
         await callback.message.answer("Действие отменено.", reply_markup=reply_markup)
         return
 
@@ -1179,8 +967,16 @@ async def process_navigation_button(callback: CallbackQuery, state: FSMContext):
         return
 
     if current_state and current_state.startswith("AdminCuttingBatch:"):
-        await state.clear()
         await callback.answer("Назад")
+        if current_state == AdminCuttingBatch.waiting_for_action.state:
+            await send_admin_cutting_batches_step(callback.message, state)
+            return
+
+        if current_state == AdminCuttingBatch.waiting_for_progress.state:
+            await send_admin_cutting_batch_action_step(callback.message, state)
+            return
+
+        await state.clear()
         await callback.message.answer("Раздел отчётов:", reply_markup=admin_reports_keyboard())
         return
 
@@ -2967,7 +2763,15 @@ async def select_admin_cutting_batch(message: Message, state: FSMContext, select
         return
 
     batch = batch_map[selected_number]
-    result = delete_cutting_batch(batch["id"])
+    await state.update_data(
+        admin_cutting_batch_id=batch["id"],
+        admin_cutting_batch_name=batch["name"],
+    )
+    await send_admin_cutting_batch_action_step(message, state)
+
+
+async def finish_admin_cutting_batch_delete(message: Message, state: FSMContext, batch_id: int):
+    result = delete_cutting_batch(batch_id)
 
     if result is None:
         await state.clear()
@@ -2997,6 +2801,69 @@ async def select_admin_cutting_batch(message: Message, state: FSMContext, select
     )
 
 
+async def finish_admin_cutting_batch_rollback(message: Message, state: FSMContext, batch_id: int, target_status: str):
+    result = rollback_cutting_batch(batch_id, target_status)
+
+    if result is None:
+        await state.clear()
+        await message.answer(
+            "Не удалось откатить партию. Проверьте, что у неё уже есть нужный предыдущий этап.",
+            reply_markup=admin_reports_keyboard(),
+        )
+        return
+
+    add_edit_log(
+        message.from_user.id,
+        "admin",
+        "Откатил партию раскроя",
+        "cutting_batch",
+        batch_id,
+        (
+            f"{result['product_name']}: "
+            f"{format_cutting_batch_status(result['old_status'])} -> "
+            f"{format_cutting_batch_status(result['new_status'])}"
+        ),
+    )
+
+    await state.clear()
+    await message.answer(
+        "Партия раскроя обновлена.\n\n"
+        f"ID: {batch_id}\n"
+        f"Изделие: {result['product_name']}\n"
+        f"Было: {format_cutting_batch_status(result['old_status'])}\n"
+        f"Стало: {format_cutting_batch_status(result['new_status'])}",
+        reply_markup=admin_reports_keyboard(),
+    )
+
+
+async def select_admin_cutting_batch_action(message: Message, state: FSMContext, selected_number: str):
+    data = await state.get_data()
+    action_map = data.get("admin_cutting_action_map", {})
+
+    if selected_number not in action_map:
+        await message.answer("Выберите действие из списка.")
+        return
+
+    action = action_map[selected_number]["id"]
+    batch_id = data["admin_cutting_batch_id"]
+
+    if action == "progress":
+        await state.set_state(AdminCuttingBatch.waiting_for_progress)
+        await message.answer("Введите готовность раскроя: 25, 50, 75 или 100.", reply_markup=navigation_keyboard())
+        return
+
+    if action == "delete":
+        await finish_admin_cutting_batch_delete(message, state, batch_id)
+        return
+
+    target_status = {
+        "rollback_contours": "contours_done",
+        "rollback_layout": "layout_done",
+        "rollback_cutting_done": "cutting_done",
+    }[action]
+    await finish_admin_cutting_batch_rollback(message, state, batch_id, target_status)
+
+
 @dp.message(AdminCuttingBatch.waiting_for_batch)
 async def process_admin_cutting_batch(message: Message, state: FSMContext):
     if await reset_state_if_command(message, state):
@@ -3012,6 +2879,64 @@ async def process_admin_cutting_batch_button(callback: CallbackQuery, state: FSM
 
     await callback.answer()
     await select_admin_cutting_batch(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(AdminCuttingBatch.waiting_for_action)
+async def process_admin_cutting_batch_action(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_admin_cutting_batch_action(message, state, message.text.strip())
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("admin_cutting_action:"))
+async def process_admin_cutting_batch_action_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, AdminCuttingBatch.waiting_for_action):
+        return
+
+    await callback.answer()
+    await select_admin_cutting_batch_action(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(AdminCuttingBatch.waiting_for_progress)
+async def process_admin_cutting_batch_progress(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    if not message.text.isdigit() or int(message.text) not in {25, 50, 75, 100}:
+        await message.answer("Введите готовность раскроя: 25, 50, 75 или 100.")
+        return
+
+    data = await state.get_data()
+    progress = int(message.text)
+    result = admin_update_cutting_batch_progress(data["admin_cutting_batch_id"], progress)
+
+    if result is None:
+        await state.clear()
+        await message.answer("Не удалось изменить готовность. Для партии должен быть сформирован настил.", reply_markup=admin_reports_keyboard())
+        return
+
+    add_edit_log(
+        message.from_user.id,
+        "admin",
+        "Изменил готовность партии раскроя",
+        "cutting_batch",
+        result["id"],
+        (
+            f"{result['product_name']}: {result['old_progress']}% -> "
+            f"{result['new_progress']}%, статус {format_cutting_batch_status(result['new_status'])}"
+        ),
+    )
+
+    await state.clear()
+    await message.answer(
+        "Готовность партии изменена.\n\n"
+        f"ID: {result['id']}\n"
+        f"Изделие: {result['product_name']}\n"
+        f"Готовность: {result['old_progress']}% -> {result['new_progress']}%\n"
+        f"Статус: {format_cutting_batch_status(result['new_status'])}",
+        reply_markup=admin_reports_keyboard(),
+    )
 
 
 async def select_admin_edit_employee(message: Message, state: FSMContext, selected_number: str):
@@ -4249,246 +4174,233 @@ async def process_cutting_progress_button(callback: CallbackQuery, state: FSMCon
     await finish_cutting_progress(callback.message, state, int(callback.data.rsplit(":", 1)[1]))
 
 
-@dp.message(Report.waiting_for_quantity)
-async def process_quantity(message: Message, state: FSMContext):
-    if await reset_state_if_command(message, state):
+def render_shift_report_block(shift_id: int):
+    report = get_shift_report(shift_id)
+    text = "Текущий отчёт за смену:\n\n"
+
+    if not report:
+        return text + "Операции ещё не добавлены."
+
+    for index, row in enumerate(report, start=1):
+        name, product_size, product_color, qty, unit = row
+        text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
+
+    return text
+
+
+async def finish_packing_quantity(message: Message, state: FSMContext, data: dict, quantity: int):
+    selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
+    selected_colors = data.get("selected_colors") or [data["selected_color"]]
+    combinations = [
+        (selected_size, selected_color)
+        for selected_color in selected_colors
+        for selected_size in selected_sizes
+    ]
+    combination_index = data.get("preparation_quantity_index", 0)
+    preparation_quantities = data.get("preparation_quantities", {})
+    current_size, current_color = combinations[combination_index]
+    quantity_key = f"{current_size}|{current_color}"
+    preparation_quantities[quantity_key] = quantity
+    next_index = combination_index + 1
+
+    if next_index < len(combinations):
+        await state.update_data(
+            preparation_quantity_index=next_index,
+            preparation_quantities=preparation_quantities,
+        )
+        await ask_preparation_size_quantity(message, state)
         return
 
-    data = await state.get_data()
-    quantity_error_text = (
-        "Введите время положительным числом минут, например: 15"
-        if data.get("operation_unit") == "мин"
-        else "Введите количество положительным числом, например: 200"
+    added_count = 0
+
+    for selected_size, selected_color in combinations:
+        add_shift_operation(
+            data["shift_id"],
+            data["employee_id"],
+            data["operation_id"],
+            selected_size,
+            selected_color,
+            preparation_quantities[f"{selected_size}|{selected_color}"],
+        )
+        added_count += 1
+
+    quantity_text = ", ".join(
+        f"{selected_size}, {format_color_label(selected_color)}: {preparation_quantities[f'{selected_size}|{selected_color}']}"
+        for selected_size, selected_color in combinations
     )
 
-    if not message.text.isdigit() or int(message.text) <= 0:
-        await message.answer(quantity_error_text)
+    log_action = "Добавил подготовку" if is_packing_preparation_flow(data) else "Добавил операцию"
+    success_title = "Подготовка добавлена" if is_packing_preparation_flow(data) else "Операция добавлена"
+
+    add_edit_log(
+        message.from_user.id,
+        "employee",
+        log_action,
+        "shift",
+        data["shift_id"],
+        (
+            f"{data['operation_name']}, количество по размерам и цветам: "
+            f"{quantity_text}, строк добавлено: {added_count}"
+        ),
+    )
+
+    text = (
+        f"{success_title}. Строк добавлено: {added_count}\n\n"
+        f"Количество по размерам и цветам:\n{quantity_text}\n\n"
+        f"{render_shift_report_block(data['shift_id'])}"
+        "\nВыберите следующее действие в меню ниже."
+    )
+
+    await state.clear()
+    await send_long_text(message, text, reply_markup=report_keyboard())
+
+
+async def finish_cutting_contours_quantity(message: Message, state: FSMContext, data: dict, quantity: int):
+    selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
+    size_index = data.get("cutting_quantity_index", 0)
+    cutting_quantities = data.get("cutting_quantities", {})
+    current_size = selected_sizes[size_index]
+    cutting_quantities[current_size] = quantity
+    next_index = size_index + 1
+
+    if next_index < len(selected_sizes):
+        await state.update_data(
+            cutting_quantity_index=next_index,
+            cutting_quantities=cutting_quantities,
+        )
+        await ask_cutting_size_quantity(message, state)
         return
 
-    quantity = int(message.text)
+    batch_id = create_cutting_contour_batch(
+        data["selected_folder"],
+        data["shift_id"],
+        data["employee_id"],
+        data["operation_id"],
+        cutting_quantities,
+    )
 
-    if (is_packing_preparation_flow(data) or is_packing_product_flow(data)) and data.get("selected_sizes"):
-        selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
-        selected_colors = data.get("selected_colors") or [data["selected_color"]]
-        combinations = [
-            (selected_size, selected_color)
-            for selected_color in selected_colors
-            for selected_size in selected_sizes
-        ]
-        combination_index = data.get("preparation_quantity_index", 0)
-        preparation_quantities = data.get("preparation_quantities", {})
-        current_size, current_color = combinations[combination_index]
-        quantity_key = f"{current_size}|{current_color}"
-        preparation_quantities[quantity_key] = quantity
-        next_index = combination_index + 1
+    added_count = 0
+    for selected_size in selected_sizes:
+        add_shift_operation(
+            data["shift_id"],
+            data["employee_id"],
+            data["operation_id"],
+            selected_size,
+            "без цвета",
+            cutting_quantities[selected_size],
+        )
+        added_count += 1
 
-        if next_index < len(combinations):
-            await state.update_data(
-                preparation_quantity_index=next_index,
-                preparation_quantities=preparation_quantities,
-            )
-            await ask_preparation_size_quantity(message, state)
+    quantity_text = ", ".join(f"{size}: {cutting_quantities[size]}" for size in selected_sizes)
+
+    add_edit_log(
+        message.from_user.id,
+        "employee",
+        "Создал партию раскроя",
+        "shift",
+        data["shift_id"],
+        f"{data['operation_name']}, партия {batch_id}, контуры: {quantity_text}, строк добавлено: {added_count}",
+    )
+
+    text = (
+        f"Контуры сохранены. Партия ID {batch_id}\n\n"
+        "Количество по размерам:\n"
+        f"{quantity_text}\n\n"
+        "Теперь эту партию можно выбрать в операции «Формирование настила».\n\n"
+        f"{render_shift_report_block(data['shift_id'])}"
+    )
+
+    await state.clear()
+    await send_long_text(message, text, reply_markup=report_keyboard())
+
+
+async def finish_cutting_color_quantity(message: Message, state: FSMContext, data: dict, quantity: int):
+    selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
+    selected_colors = data.get("selected_colors") or [data["selected_color"]]
+    color_index = data.get("cutting_quantity_index", 0)
+    cutting_quantities = data.get("cutting_quantities", {})
+
+    current_color = selected_colors[color_index]
+    cutting_quantities[current_color] = quantity
+    next_index = color_index + 1
+
+    if next_index < len(selected_colors):
+        await state.update_data(
+            cutting_quantity_index=next_index,
+            cutting_quantities=cutting_quantities,
+        )
+        await ask_cutting_color_quantity(message, state)
+        return
+
+    added_count = 0
+
+    if data.get("cutting_mode") == CUTTING_MODE_LAYOUT:
+        layout_saved = add_cutting_layout(
+            data["cutting_batch_id"],
+            data["shift_id"],
+            data["employee_id"],
+            data["operation_id"],
+            cutting_quantities,
+        )
+
+        if not layout_saved:
+            await state.clear()
+            await message.answer("Не удалось сохранить настил. Возможно, партия уже использована.", reply_markup=report_keyboard())
             return
 
-        added_count = 0
+    for selected_color in selected_colors:
+        color_quantity = cutting_quantities[selected_color]
 
-        for selected_size, selected_color in combinations:
+        for selected_size in selected_sizes:
             add_shift_operation(
                 data["shift_id"],
                 data["employee_id"],
                 data["operation_id"],
                 selected_size,
                 selected_color,
-                preparation_quantities[f"{selected_size}|{selected_color}"],
+                color_quantity,
             )
             added_count += 1
 
-        quantity_text = ", ".join(
-            f"{selected_size}, {format_color_label(selected_color)}: {preparation_quantities[f'{selected_size}|{selected_color}']}"
-            for selected_size, selected_color in combinations
-        )
+    is_layout = data.get("cutting_mode") == CUTTING_MODE_LAYOUT
+    quantity_text = ", ".join(
+        f"{format_color_label(color)}: {cutting_quantities[color]}" for color in selected_colors
+    )
+    quantity_label = "слоёв по цветам" if is_layout else "количество по цветам"
 
-        log_action = "Добавил подготовку" if is_packing_preparation_flow(data) else "Добавил операцию"
-        success_title = "Подготовка добавлена" if is_packing_preparation_flow(data) else "Операция добавлена"
+    add_edit_log(
+        message.from_user.id,
+        "employee",
+        "Добавил операцию",
+        "shift",
+        data["shift_id"],
+        (
+            f"{data['operation_name']}, размеры {', '.join(selected_sizes)}, "
+            f"{quantity_label}: {quantity_text}, строк добавлено: {added_count}"
+        ),
+    )
 
-        add_edit_log(
-            message.from_user.id,
-            "employee",
-            log_action,
-            "shift",
-            data["shift_id"],
-            (
-                f"{data['operation_name']}, количество по размерам и цветам: "
-                f"{quantity_text}, строк добавлено: {added_count}"
-            ),
-        )
+    text = (
+        f"Операция добавлена. Строк добавлено: {added_count}\n\n"
+        f"{quantity_label.capitalize()}:\n"
+        f"{quantity_text}\n\n"
+        f"{render_shift_report_block(data['shift_id'])}"
+        "\nВыберите следующее действие в меню ниже."
+    )
 
-        report = get_shift_report(data["shift_id"])
-        text = (
-            f"{success_title}. Строк добавлено: {added_count}\n\n"
-            f"Количество по размерам и цветам:\n{quantity_text}\n\n"
-            "Текущий отчёт за смену:\n\n"
-        )
+    await state.clear()
+    await send_long_text(message, text, reply_markup=report_keyboard())
 
-        for index, row in enumerate(report, start=1):
-            name, product_size, product_color, qty, unit = row
-            text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
-        text += "\nВыберите следующее действие в меню ниже."
-
-        await state.clear()
-        await send_long_text(message, text, reply_markup=report_keyboard())
+async def finish_cutting_quantity(message: Message, state: FSMContext, data: dict, quantity: int):
+    if data.get("cutting_mode") == CUTTING_MODE_CONTOURS:
+        await finish_cutting_contours_quantity(message, state, data, quantity)
         return
 
-    if data.get("employee_position") == "Раскройщик":
-        if data.get("cutting_mode") == CUTTING_MODE_CONTOURS:
-            selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
-            size_index = data.get("cutting_quantity_index", 0)
-            cutting_quantities = data.get("cutting_quantities", {})
-            current_size = selected_sizes[size_index]
-            cutting_quantities[current_size] = quantity
-            next_index = size_index + 1
+    await finish_cutting_color_quantity(message, state, data, quantity)
 
-            if next_index < len(selected_sizes):
-                await state.update_data(
-                    cutting_quantity_index=next_index,
-                    cutting_quantities=cutting_quantities,
-                )
-                await ask_cutting_size_quantity(message, state)
-                return
 
-            batch_id = create_cutting_contour_batch(
-                data["selected_folder"],
-                data["shift_id"],
-                data["employee_id"],
-                data["operation_id"],
-                cutting_quantities,
-            )
-
-            added_count = 0
-            for selected_size in selected_sizes:
-                add_shift_operation(
-                    data["shift_id"],
-                    data["employee_id"],
-                    data["operation_id"],
-                    selected_size,
-                    "без цвета",
-                    cutting_quantities[selected_size],
-                )
-                added_count += 1
-
-            quantity_text = ", ".join(f"{size}: {cutting_quantities[size]}" for size in selected_sizes)
-
-            add_edit_log(
-                message.from_user.id,
-                "employee",
-                "Создал партию раскроя",
-                "shift",
-                data["shift_id"],
-                f"{data['operation_name']}, партия {batch_id}, контуры: {quantity_text}",
-            )
-
-            report = get_shift_report(data["shift_id"])
-            text = (
-                f"Контуры сохранены. Партия ID {batch_id}\n\n"
-                "Количество по размерам:\n"
-                f"{quantity_text}\n\n"
-                "Теперь эту партию можно выбрать в операции «Формирование настила».\n\n"
-                "Текущий отчёт за смену:\n\n"
-            )
-
-            for index, row in enumerate(report, start=1):
-                name, product_size, product_color, qty, unit = row
-                text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
-
-            await state.clear()
-            await send_long_text(message, text, reply_markup=report_keyboard())
-            return
-
-        selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
-        selected_colors = data.get("selected_colors") or [data["selected_color"]]
-        color_index = data.get("cutting_quantity_index", 0)
-        cutting_quantities = data.get("cutting_quantities", {})
-
-        current_color = selected_colors[color_index]
-        cutting_quantities[current_color] = quantity
-        next_index = color_index + 1
-
-        if next_index < len(selected_colors):
-            await state.update_data(
-                cutting_quantity_index=next_index,
-                cutting_quantities=cutting_quantities,
-            )
-            await ask_cutting_color_quantity(message, state)
-            return
-
-        added_count = 0
-
-        if data.get("cutting_mode") == CUTTING_MODE_LAYOUT:
-            layout_saved = add_cutting_layout(
-                data["cutting_batch_id"],
-                data["shift_id"],
-                data["employee_id"],
-                data["operation_id"],
-                cutting_quantities,
-            )
-
-            if not layout_saved:
-                await state.clear()
-                await message.answer("Не удалось сохранить настил. Возможно, партия уже использована.", reply_markup=report_keyboard())
-                return
-
-        for selected_color in selected_colors:
-            color_quantity = cutting_quantities[selected_color]
-
-            for selected_size in selected_sizes:
-                add_shift_operation(
-                    data["shift_id"],
-                    data["employee_id"],
-                    data["operation_id"],
-                    selected_size,
-                    selected_color,
-                    color_quantity,
-                )
-                added_count += 1
-
-        is_layout = data.get("cutting_mode") == CUTTING_MODE_LAYOUT
-        quantity_text = ", ".join(
-            f"{format_color_label(color)}: {cutting_quantities[color]}" for color in selected_colors
-        )
-        quantity_label = "слоёв по цветам" if is_layout else "количество по цветам"
-
-        add_edit_log(
-            message.from_user.id,
-            "employee",
-            "Добавил операцию",
-            "shift",
-            data["shift_id"],
-            (
-                f"{data['operation_name']}, размеры {', '.join(selected_sizes)}, "
-                f"{quantity_label}: {quantity_text}, строк добавлено: {added_count}"
-            ),
-        )
-
-        report = get_shift_report(data["shift_id"])
-
-        text = (
-            f"Операция добавлена. Строк добавлено: {added_count}\n\n"
-            f"{quantity_label.capitalize()}:\n"
-            f"{quantity_text}\n\n"
-            "Текущий отчёт за смену:\n\n"
-        )
-
-        for index, row in enumerate(report, start=1):
-            name, product_size, product_color, qty, unit = row
-            text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
-
-        text += "\nВыберите следующее действие в меню ниже."
-
-        await state.clear()
-        await send_long_text(message, text, reply_markup=report_keyboard())
-        return
-
+async def finish_regular_quantity(message: Message, state: FSMContext, data: dict, quantity: int):
     selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
     selected_colors = data.get("selected_colors") or [data["selected_color"]]
     added_count = 0
@@ -4517,21 +4429,45 @@ async def process_quantity(message: Message, state: FSMContext):
         ),
     )
 
-    report = get_shift_report(data["shift_id"])
-
     text = (
         f"Операция добавлена. Строк добавлено: {added_count}\n\n"
-        "Текущий отчёт за смену:\n\n"
+        f"{render_shift_report_block(data['shift_id'])}"
+        "\nВыберите следующее действие в меню ниже."
     )
-
-    for index, row in enumerate(report, start=1):
-        name, product_size, product_color, qty, unit = row
-        text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
-
-    text += "\nВыберите следующее действие в меню ниже."
 
     await state.clear()
     await send_long_text(message, text, reply_markup=report_keyboard())
+
+
+@dp.message(Report.waiting_for_quantity)
+async def process_quantity(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    data = await state.get_data()
+    quantity_error_text = (
+        "Введите время положительным числом минут, например: 15"
+        if data.get("operation_unit") == "мин"
+        else "Введите количество положительным числом, например: 200"
+    )
+
+    if not message.text.isdigit() or int(message.text) <= 0:
+        await message.answer(quantity_error_text)
+        return
+
+    quantity = int(message.text)
+
+    quantity_flow = get_quantity_flow(data)
+
+    if quantity_flow == QUANTITY_FLOW_PACKING_MATRIX:
+        await finish_packing_quantity(message, state, data, quantity)
+        return
+
+    if quantity_flow == QUANTITY_FLOW_CUTTING:
+        await finish_cutting_quantity(message, state, data, quantity)
+        return
+
+    await finish_regular_quantity(message, state, data, quantity)
 
 
 @dp.message(Command("current"))

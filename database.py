@@ -1928,6 +1928,166 @@ def delete_cutting_batch(batch_id: int):
     return batch
 
 
+def rollback_cutting_batch(batch_id: int, target_status: str):
+    if target_status not in {"contours_done", "layout_done", "cutting_done"}:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, product_name, status, contour_date, layout_date, cutting_progress
+        FROM cutting_batches
+        WHERE id = ?
+        """,
+        (batch_id,)
+    )
+    batch = cursor.fetchone()
+
+    if batch is None:
+        conn.close()
+        return None
+
+    batch_id, product_name, old_status, contour_date, layout_date, cutting_progress = batch
+    now_text = local_now().isoformat()
+
+    if target_status == "contours_done":
+        cursor.execute("DELETE FROM cutting_batch_colors WHERE batch_id = ?", (batch_id,))
+        cursor.execute(
+            """
+            UPDATE cutting_batches
+            SET status = 'contours_done',
+                layout_shift_id = NULL,
+                layout_operation_id = NULL,
+                layout_employee_id = NULL,
+                layout_date = NULL,
+                cutting_shift_id = NULL,
+                cutting_operation_id = NULL,
+                cutting_employee_id = NULL,
+                cutting_progress = 0,
+                formed_shift_id = NULL,
+                formed_operation_id = NULL,
+                formed_employee_id = NULL,
+                formed_date = NULL,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now_text, batch_id)
+        )
+    elif target_status == "layout_done":
+        if layout_date is None:
+            conn.close()
+            return None
+
+        cursor.execute(
+            """
+            UPDATE cutting_batches
+            SET status = 'layout_done',
+                cutting_shift_id = NULL,
+                cutting_operation_id = NULL,
+                cutting_employee_id = NULL,
+                cutting_progress = 0,
+                formed_shift_id = NULL,
+                formed_operation_id = NULL,
+                formed_employee_id = NULL,
+                formed_date = NULL,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now_text, batch_id)
+        )
+    else:
+        if layout_date is None:
+            conn.close()
+            return None
+
+        cursor.execute(
+            """
+            UPDATE cutting_batches
+            SET status = 'cutting_done',
+                cutting_progress = 100,
+                formed_shift_id = NULL,
+                formed_operation_id = NULL,
+                formed_employee_id = NULL,
+                formed_date = NULL,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now_text, batch_id)
+        )
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "id": batch_id,
+        "product_name": product_name,
+        "old_status": old_status,
+        "new_status": target_status,
+        "contour_date": contour_date,
+        "layout_date": layout_date,
+        "old_progress": cutting_progress,
+    }
+
+
+def admin_update_cutting_batch_progress(batch_id: int, progress: int):
+    if progress not in {25, 50, 75, 100}:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, product_name, status, layout_date, cutting_progress
+        FROM cutting_batches
+        WHERE id = ?
+        """,
+        (batch_id,)
+    )
+    batch = cursor.fetchone()
+
+    if batch is None:
+        conn.close()
+        return None
+
+    batch_id, product_name, old_status, layout_date, old_progress = batch
+
+    if layout_date is None:
+        conn.close()
+        return None
+
+    new_status = "cutting_done" if progress == 100 else "cutting_in_progress"
+
+    cursor.execute(
+        """
+        UPDATE cutting_batches
+        SET status = ?,
+            cutting_progress = ?,
+            formed_shift_id = NULL,
+            formed_operation_id = NULL,
+            formed_employee_id = NULL,
+            formed_date = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (new_status, progress, local_now().isoformat(), batch_id)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "id": batch_id,
+        "product_name": product_name,
+        "old_status": old_status,
+        "new_status": new_status,
+        "old_progress": old_progress,
+        "new_progress": progress,
+    }
+
+
 def close_shift(shift_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
