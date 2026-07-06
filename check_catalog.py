@@ -54,6 +54,16 @@ def main():
     if PREPARATION_MATERIAL_COLORS != ["Черный", "Белый"]:
         errors.append("Цвета материалов подготовки должны быть только: Черный, Белый")
 
+    emoji_counter = Counter(COLOR_EMOJIS.values())
+    duplicate_emojis = {
+        emoji: [color for color, color_emoji in COLOR_EMOJIS.items() if color_emoji == emoji]
+        for emoji, count in emoji_counter.items()
+        if count > 1
+    }
+
+    for emoji, colors in duplicate_emojis.items():
+        errors.append(f"Одинаковый эмодзи {emoji} у цветов: {', '.join(colors)}")
+
     for product, options in PRODUCT_OPTIONS.items():
         colors = options.get("colors", [])
 
