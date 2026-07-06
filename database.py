@@ -61,11 +61,22 @@ DB_NAME = resolve_database_path()
 LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
 
 
+def get_database_dir():
+    return os.path.dirname(os.path.abspath(DB_NAME))
+
+
+def get_backup_dir():
+    return os.path.join(get_database_dir(), "backups")
+
+
 def get_database_status():
+    backup_dir = get_backup_dir()
     status = {
         "path": DB_NAME,
         "exists": os.path.exists(DB_NAME),
         "size": os.path.getsize(DB_NAME) if os.path.exists(DB_NAME) else 0,
+        "backup_dir": backup_dir,
+        "backup_count": len([name for name in os.listdir(backup_dir) if name.endswith(".db")]) if os.path.isdir(backup_dir) else 0,
         "employees": None,
         "shifts": None,
         "shift_operations": None,
@@ -640,6 +651,13 @@ def init_db():
             FOREIGN KEY (batch_id) REFERENCES cutting_batches (id)
         )
     """)
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_employee_date ON shifts (employee_id, shift_date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_date_status ON shifts (shift_date, status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_shift ON shift_operations (shift_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_employee ON shift_operations (employee_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_operations_navigation ON operations (position, operation_group, folder, is_active)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batches_product_status ON cutting_batches (product_name, status)")
 
     cursor.execute("SELECT COUNT(*) FROM operations")
     count = cursor.fetchone()[0]

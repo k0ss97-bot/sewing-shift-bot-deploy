@@ -48,6 +48,7 @@ from database import (
     get_cutting_batches_for_cutting,
     get_cutting_batches_for_formation,
     get_cutting_batches_for_layout,
+    get_backup_dir,
     get_database_status,
     get_editable_shift_for_today,
     get_employee_by_telegram_id,
@@ -540,7 +541,7 @@ def format_minutes(total_minutes: int):
 
 
 def create_database_backup(kind: str = "manual"):
-    backups_dir = "backups"
+    backups_dir = get_backup_dir()
     os.makedirs(backups_dir, exist_ok=True)
 
     timestamp = local_now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -559,7 +560,7 @@ def create_database_backup(kind: str = "manual"):
 
 
 def create_daily_database_backup():
-    backups_dir = "backups"
+    backups_dir = get_backup_dir()
     os.makedirs(backups_dir, exist_ok=True)
 
     today = local_today().isoformat()
@@ -2654,6 +2655,8 @@ async def database_status(message: Message):
         f"Путь: {status['path']}\n"
         f"Файл найден: {'да' if status['exists'] else 'нет'}\n"
         f"Размер: {status['size']} байт\n"
+        f"Папка копий: {status['backup_dir']}\n"
+        f"Копий базы: {status['backup_count']}\n"
         f"Сотрудники: {status['employees']}\n"
         f"Смены: {status['shifts']}\n"
         f"Операции в отчётах: {status['shift_operations']}\n"
@@ -2741,7 +2744,7 @@ async def restore_database_file(message: Message, state: FSMContext):
     backup_path = None
 
     if os.path.exists(DB_NAME):
-        backups_dir = "backups"
+        backups_dir = get_backup_dir()
         os.makedirs(backups_dir, exist_ok=True)
         timestamp = local_now().strftime("%Y-%m-%d_%H-%M-%S")
         backup_path = os.path.join(backups_dir, f"before_restore_{timestamp}_{os.path.basename(DB_NAME)}")
@@ -5146,7 +5149,9 @@ async def process_position(message: Message, state: FSMContext):
 async def main():
     setup_logging()
     init_db()
-    create_daily_database_backup()
+    backup_path = create_daily_database_backup()
+    if backup_path:
+        logging.info("Daily database backup created: %s", backup_path)
     logging.info("Bot started")
     await dp.start_polling(bot)
 
