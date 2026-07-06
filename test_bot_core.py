@@ -89,6 +89,57 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ],
         )
 
+    def test_zero_quantity_is_not_saved_or_reported(self):
+        self.database.create_employee(2002, "Тест Швея", "Швея")
+        employee = self.database.get_employee_by_telegram_id(2002)
+        employee_id = employee[0]
+        self.database.update_employee_status(employee_id, "active")
+        shift = self.database.create_shift(employee_id)
+
+        operation = self.database.get_active_operations(
+            position="Швея",
+            folder="Брюки-джоггеры",
+        )[0]
+        operation_id = operation[0]
+
+        self.assertFalse(
+            self.database.add_shift_operation(
+                shift["id"],
+                employee_id,
+                operation_id,
+                "86",
+                "Капучино",
+                0,
+            )
+        )
+        self.assertEqual(self.database.get_shift_report(shift["id"]), [])
+        self.assertEqual(self.database.get_shift_operation_choices(shift["id"]), [])
+
+        self.assertTrue(
+            self.database.add_shift_operation(
+                shift["id"],
+                employee_id,
+                operation_id,
+                "86",
+                "Капучино",
+                5,
+            )
+        )
+        self.assertEqual(len(self.database.get_shift_report(shift["id"])), 1)
+
+        self.assertFalse(
+            self.database.set_shift_operation_quantity(
+                shift["id"],
+                employee_id,
+                operation_id,
+                "86",
+                "Капучино",
+                0,
+            )
+        )
+        self.assertEqual(self.database.get_shift_report(shift["id"]), [])
+        self.assertEqual(self.database.get_shift_operation_choices(shift["id"]), [])
+
     def test_admin_can_update_and_rollback_cutting_batch(self):
         batch_id = self._create_layout_done_batch()
 

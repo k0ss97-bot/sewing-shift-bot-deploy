@@ -1371,6 +1371,9 @@ def add_shift_operation(
     product_color: str,
     quantity: int,
 ):
+    if quantity <= 0:
+        return False
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -1393,6 +1396,7 @@ def add_shift_operation(
 
     conn.commit()
     conn.close()
+    return True
 
 
 def set_shift_operation_quantity(
@@ -1407,6 +1411,21 @@ def set_shift_operation_quantity(
     cursor = conn.cursor()
 
     now = local_now().isoformat()
+
+    if quantity <= 0:
+        cursor.execute(
+            """
+            DELETE FROM shift_operations
+            WHERE shift_id = ?
+              AND operation_id = ?
+              AND product_size = ?
+              AND product_color = ?
+            """,
+            (shift_id, operation_id, product_size, product_color)
+        )
+        conn.commit()
+        conn.close()
+        return False
 
     cursor.execute(
         """
@@ -1425,6 +1444,7 @@ def set_shift_operation_quantity(
 
     conn.commit()
     conn.close()
+    return True
 
 
 def get_shift_report(shift_id: int):
@@ -1445,6 +1465,7 @@ def get_shift_report(shift_id: int):
         FROM shift_operations
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shift_operations.shift_id = ?
+          AND shift_operations.quantity > 0
         ORDER BY COALESCE(operations.sort_order, operations.number), operations.number
         """,
         (shift_id,)
@@ -1474,6 +1495,7 @@ def get_shift_operation_choices(shift_id: int):
         FROM shift_operations
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shift_operations.shift_id = ?
+          AND shift_operations.quantity > 0
         ORDER BY COALESCE(operations.sort_order, operations.number), operations.number
         """,
         (shift_id,)
@@ -2449,6 +2471,7 @@ def get_employee_period_operation_totals(employee_id: int, start_date: str, end_
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.employee_id = ?
           AND shifts.shift_date BETWEEN ? AND ?
+          AND shift_operations.quantity > 0
         GROUP BY
             operations.id,
             operations.folder,
@@ -2487,6 +2510,7 @@ def get_month_operations_by_employee(employee_id: int):
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.employee_id = ?
           AND shifts.shift_date BETWEEN ? AND ?
+          AND shift_operations.quantity > 0
         GROUP BY
             operations.id,
             operations.folder,
@@ -2524,6 +2548,7 @@ def get_period_operations_by_employee(employee_id: int, start_date: str, end_dat
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.employee_id = ?
           AND shifts.shift_date BETWEEN ? AND ?
+          AND shift_operations.quantity > 0
         GROUP BY
             operations.id,
             operations.folder,
@@ -2572,6 +2597,7 @@ def get_month_operation_rows():
         JOIN employees ON employees.id = shifts.employee_id
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.shift_date BETWEEN ? AND ?
+          AND shift_operations.quantity > 0
         GROUP BY
             shifts.shift_date,
             employees.id,
@@ -2621,6 +2647,7 @@ def get_period_operation_rows(start_date: str, end_date: str):
         JOIN employees ON employees.id = shifts.employee_id
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.shift_date BETWEEN ? AND ?
+          AND shift_operations.quantity > 0
         GROUP BY
             shifts.shift_date,
             employees.id,

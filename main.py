@@ -3109,12 +3109,43 @@ async def process_admin_edit_quantity(message: Message, state: FSMContext):
     if await reset_state_if_command(message, state):
         return
 
-    if not message.text.isdigit() or int(message.text) <= 0:
-        await message.answer("Введите количество положительным числом, например: 280")
+    if not message.text.isdigit():
+        await message.answer("Введите количество целым числом, например: 280. Введите 0, чтобы удалить строку из отчёта.")
         return
 
     data = await state.get_data()
     quantity = int(message.text)
+
+    if quantity == 0:
+        result = delete_shift_operation(data["admin_edit_shift_operation_id"])
+
+        if result is None:
+            await state.clear()
+            await message.answer("Не удалось удалить строку отчёта.", reply_markup=admin_reports_keyboard())
+            return
+
+        add_edit_log(
+            message.from_user.id,
+            "admin",
+            "Удалил строку отчёта сотрудника через количество 0",
+            "shift",
+            result["shift_id"],
+            (
+                f"{data['admin_edit_employee_name']}: {result['operation_name']}: "
+                f"размер {result['product_size']}, цвет {result['product_color']}: "
+                f"{result['quantity']} {result['unit']} -> 0"
+            ),
+        )
+
+        await state.clear()
+        await send_long_text(
+            message,
+            "Количество 0 принято. Строка удалена из отчёта.\n\n"
+            f"{render_shift_report_block(result['shift_id'])}",
+            reply_markup=admin_reports_keyboard(),
+        )
+        return
+
     result = update_shift_operation_quantity(data["admin_edit_shift_operation_id"], quantity)
 
     if result is None:
@@ -4212,8 +4243,13 @@ async def finish_packing_quantity(message: Message, state: FSMContext, data: dic
         return
 
     added_count = 0
+    positive_combinations = [
+        (selected_size, selected_color)
+        for selected_size, selected_color in combinations
+        if preparation_quantities[f"{selected_size}|{selected_color}"] > 0
+    ]
 
-    for selected_size, selected_color in combinations:
+    for selected_size, selected_color in positive_combinations:
         add_shift_operation(
             data["shift_id"],
             data["employee_id"],
@@ -4226,11 +4262,16 @@ async def finish_packing_quantity(message: Message, state: FSMContext, data: dic
 
     quantity_text = ", ".join(
         f"{selected_size}, {format_color_label(selected_color)}: {preparation_quantities[f'{selected_size}|{selected_color}']}"
-        for selected_size, selected_color in combinations
-    )
+        for selected_size, selected_color in positive_combinations
+    ) or "Все выбранные строки указаны как 0 и не добавлены."
+    skipped_count = len(combinations) - added_count
 
     log_action = "Добавил подготовку" if is_packing_preparation_flow(data) else "Добавил операцию"
     success_title = "Подготовка добавлена" if is_packing_preparation_flow(data) else "Операция добавлена"
+
+    if added_count == 0:
+        log_action = "Не добавил подготовку с нулевым количеством" if is_packing_preparation_flow(data) else "Не добавил операцию с нулевым количеством"
+        success_title = "Подготовка не добавлена" if is_packing_preparation_flow(data) else "Операция не добавлена"
 
     add_edit_log(
         message.from_user.id,
@@ -4250,6 +4291,9 @@ async def finish_packing_quantity(message: Message, state: FSMContext, data: dic
         f"{render_shift_report_block(data['shift_id'])}"
         "\nВыберите следующее действие в меню ниже."
     )
+
+    if skipped_count:
+        text = text.replace("\n\nТекущий отчёт:", f"\nНулевые строки пропущены: {skipped_count}\n\nТекущий отчёт:", 1)
 
     await state.clear()
     await send_long_text(message, text, reply_markup=report_keyboard())
@@ -4271,27 +4315,52 @@ async def finish_cutting_contours_quantity(message: Message, state: FSMContext, 
         await ask_cutting_size_quantity(message, state)
         return
 
+    positive_quantities = {
+        selected_size: cutting_quantities[selected_size]
+        for selected_size in selected_sizes
+        if cutting_quantities[selected_size] > 0
+    }
+
+    if not positive_quantities:
+        add_edit_log(
+            message.from_user.id,
+            "employee",
+            "Не добавил партию раскроя с нулевым количеством",
+            "shift",
+            data["shift_id"],
+            f"{data['operation_name']}, все выбранные размеры указаны как 0",
+        )
+        await state.clear()
+        await send_long_text(
+            message,
+            "Количество 0 принято. Партия раскроя не создана, строки в отчёт не добавлены.\n\n"
+            f"{render_shift_report_block(data['shift_id'])}",
+            reply_markup=report_keyboard(),
+        )
+        return
+
     batch_id = create_cutting_contour_batch(
         data["selected_folder"],
         data["shift_id"],
         data["employee_id"],
         data["operation_id"],
-        cutting_quantities,
+        positive_quantities,
     )
 
     added_count = 0
-    for selected_size in selected_sizes:
+    for selected_size, size_quantity in positive_quantities.items():
         add_shift_operation(
             data["shift_id"],
             data["employee_id"],
             data["operation_id"],
             selected_size,
             "без цвета",
-            cutting_quantities[selected_size],
+            size_quantity,
         )
         added_count += 1
 
-    quantity_text = ", ".join(f"{size}: {cutting_quantities[size]}" for size in selected_sizes)
+    quantity_text = ", ".join(f"{size}: {quantity}" for size, quantity in positive_quantities.items())
+    skipped_count = len(selected_sizes) - added_count
 
     add_edit_log(
         message.from_user.id,
@@ -4306,6 +4375,7 @@ async def finish_cutting_contours_quantity(message: Message, state: FSMContext, 
         f"Контуры сохранены. Партия ID {batch_id}\n\n"
         "Количество по размерам:\n"
         f"{quantity_text}\n\n"
+        f"{'Нулевые размеры пропущены: ' + str(skipped_count) + chr(10) if skipped_count else ''}"
         "Теперь эту партию можно выбрать в операции «Формирование настила».\n\n"
         f"{render_shift_report_block(data['shift_id'])}"
     )
@@ -4333,14 +4403,41 @@ async def finish_cutting_color_quantity(message: Message, state: FSMContext, dat
         return
 
     added_count = 0
+    positive_colors = [
+        selected_color
+        for selected_color in selected_colors
+        if cutting_quantities[selected_color] > 0
+    ]
+
+    if not positive_colors:
+        add_edit_log(
+            message.from_user.id,
+            "employee",
+            "Не добавил операцию раскроя с нулевым количеством",
+            "shift",
+            data["shift_id"],
+            f"{data['operation_name']}, все выбранные цвета указаны как 0",
+        )
+        await state.clear()
+        await send_long_text(
+            message,
+            "Количество 0 принято. Операция не добавлена, строки в отчёт не попадут.\n\n"
+            f"{render_shift_report_block(data['shift_id'])}",
+            reply_markup=report_keyboard(),
+        )
+        return
 
     if data.get("cutting_mode") == CUTTING_MODE_LAYOUT:
+        positive_quantities = {
+            selected_color: cutting_quantities[selected_color]
+            for selected_color in positive_colors
+        }
         layout_saved = add_cutting_layout(
             data["cutting_batch_id"],
             data["shift_id"],
             data["employee_id"],
             data["operation_id"],
-            cutting_quantities,
+            positive_quantities,
         )
 
         if not layout_saved:
@@ -4348,7 +4445,7 @@ async def finish_cutting_color_quantity(message: Message, state: FSMContext, dat
             await message.answer("Не удалось сохранить настил. Возможно, партия уже использована.", reply_markup=report_keyboard())
             return
 
-    for selected_color in selected_colors:
+    for selected_color in positive_colors:
         color_quantity = cutting_quantities[selected_color]
 
         for selected_size in selected_sizes:
@@ -4364,9 +4461,10 @@ async def finish_cutting_color_quantity(message: Message, state: FSMContext, dat
 
     is_layout = data.get("cutting_mode") == CUTTING_MODE_LAYOUT
     quantity_text = ", ".join(
-        f"{format_color_label(color)}: {cutting_quantities[color]}" for color in selected_colors
+        f"{format_color_label(color)}: {cutting_quantities[color]}" for color in positive_colors
     )
     quantity_label = "слоёв по цветам" if is_layout else "количество по цветам"
+    skipped_count = len(selected_colors) - len(positive_colors)
 
     add_edit_log(
         message.from_user.id,
@@ -4384,6 +4482,7 @@ async def finish_cutting_color_quantity(message: Message, state: FSMContext, dat
         f"Операция добавлена. Строк добавлено: {added_count}\n\n"
         f"{quantity_label.capitalize()}:\n"
         f"{quantity_text}\n\n"
+        f"{'Нулевые цвета пропущены: ' + str(skipped_count) + chr(10) + chr(10) if skipped_count else ''}"
         f"{render_shift_report_block(data['shift_id'])}"
         "\nВыберите следующее действие в меню ниже."
     )
@@ -4404,6 +4503,28 @@ async def finish_regular_quantity(message: Message, state: FSMContext, data: dic
     selected_sizes = data.get("selected_sizes") or [data["selected_size"]]
     selected_colors = data.get("selected_colors") or [data["selected_color"]]
     added_count = 0
+
+    if quantity == 0:
+        add_edit_log(
+            message.from_user.id,
+            "employee",
+            "Не добавил операцию с нулевым количеством",
+            "shift",
+            data["shift_id"],
+            (
+                f"{data['operation_name']}, размеры {', '.join(selected_sizes)}, "
+                f"цвета {format_color_list(selected_colors)} — 0"
+            ),
+        )
+        await state.clear()
+        await send_long_text(
+            message,
+            "Количество 0 принято. Операция не добавлена и не будет показываться в отчёте.\n\n"
+            f"{render_shift_report_block(data['shift_id'])}"
+            "\nВыберите следующее действие в меню ниже.",
+            reply_markup=report_keyboard(),
+        )
+        return
 
     for selected_size in selected_sizes:
         for selected_color in selected_colors:
@@ -4446,12 +4567,12 @@ async def process_quantity(message: Message, state: FSMContext):
 
     data = await state.get_data()
     quantity_error_text = (
-        "Введите время положительным числом минут, например: 15"
+        "Введите время целым числом минут, например: 15. Можно ввести 0, чтобы не добавлять строку."
         if data.get("operation_unit") == "мин"
-        else "Введите количество положительным числом, например: 200"
+        else "Введите количество целым числом, например: 200. Можно ввести 0, чтобы не добавлять строку."
     )
 
-    if not message.text.isdigit() or int(message.text) <= 0:
+    if not message.text.isdigit():
         await message.answer(quantity_error_text)
         return
 
@@ -4685,12 +4806,42 @@ async def edit_quantity_entered(message: Message, state: FSMContext):
     if await reset_state_if_command(message, state):
         return
 
-    if not message.text.isdigit() or int(message.text) <= 0:
-        await message.answer("Введите количество положительным числом, например: 280")
+    if not message.text.isdigit():
+        await message.answer("Введите количество целым числом, например: 280. Введите 0, чтобы удалить строку из отчёта.")
         return
 
     data = await state.get_data()
     quantity = int(message.text)
+
+    if quantity == 0:
+        result = delete_shift_operation(data["shift_operation_id"])
+
+        if result is None:
+            await message.answer("Не удалось удалить операцию.")
+            await state.clear()
+            return
+
+        add_edit_log(
+            message.from_user.id,
+            "employee",
+            "Удалил операцию через количество 0",
+            "shift",
+            result["shift_id"],
+            (
+                f"{result['operation_name']}: "
+                f"размер {result['product_size']}, цвет {result['product_color']}: "
+                f"{result['quantity']} {result['unit']} -> 0"
+            ),
+        )
+
+        await state.clear()
+        await send_long_text(
+            message,
+            "Количество 0 принято. Строка удалена из отчёта.\n\n"
+            f"{render_shift_report_block(result['shift_id'])}",
+            reply_markup=report_keyboard(),
+        )
+        return
 
     result = update_shift_operation_quantity(data["shift_operation_id"], quantity)
 
