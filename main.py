@@ -1152,6 +1152,27 @@ def append_feedback_rows(sheet, feedback_rows):
         ])
 
 
+def append_shift_day_rows(sheet, shift_rows, employee_name: str | None = None):
+    sheet.append(["Дата", "Сотрудник", "Пришёл", "Ушёл", "Отработано", "Статус"])
+
+    for row in shift_rows:
+        if employee_name is None:
+            shift_date, full_name, start_time, end_time, total_minutes, status = row
+        else:
+            _, shift_date, start_time, end_time, total_minutes, status = row
+            full_name = employee_name
+
+        status_text = "Закрыта" if status == "closed" else "Открыта"
+        sheet.append([
+            shift_date,
+            full_name,
+            start_time,
+            end_time or "",
+            minutes_to_excel_time(total_minutes),
+            status_text,
+        ])
+
+
 def create_excel_report(start_date: str | None = None, end_date: str | None = None):
     today = local_today()
     month_name = today.strftime("%Y-%m")
@@ -1189,6 +1210,9 @@ def create_excel_report(start_date: str | None = None, end_date: str | None = No
     append_total_row(summary_sheet, "Итого", total_shifts, label_column=1, value_column=2)
     summary_sheet.cell(row=summary_sheet.max_row, column=3, value=minutes_to_excel_time(total_minutes))
 
+    days_sheet = workbook.create_sheet("Смены по дням", 1)
+    append_shift_day_rows(days_sheet, shift_details)
+
     operations_sheet = workbook.create_sheet("Операции")
     append_operation_rows(operations_sheet, operation_rows)
 
@@ -1206,20 +1230,6 @@ def create_excel_report(start_date: str | None = None, end_date: str | None = No
 
         group_sheet = workbook.create_sheet(sheet_name)
         append_operation_rows(group_sheet, group_rows)
-
-    days_sheet = workbook.create_sheet("Дни")
-    days_sheet.append(["Дата", "Сотрудник", "Начало", "Окончание", "Часы", "Статус"])
-
-    for row in shift_details:
-        shift_date, full_name, start_time, end_time, total_minutes, status = row
-        days_sheet.append([
-            shift_date,
-            full_name,
-            start_time,
-            end_time or "",
-            minutes_to_excel_time(total_minutes),
-            status,
-        ])
 
     feedback_sheet = workbook.create_sheet("Обратная связь")
     append_feedback_rows(feedback_sheet, feedback_rows)
@@ -1242,6 +1252,7 @@ def create_employee_excel_report(employee_id: int, start_date: str, end_date: st
 
     _, full_name, position, shift_count, total_minutes = employee_summary
     operations = get_employee_period_operation_totals(employee_id, start_date, end_date)
+    shift_rows = get_employee_shifts_by_period(employee_id, start_date, end_date)
     feedback_rows = get_feedback_entries(start_date, end_date, employee_id=employee_id)
     safe_name = re.sub(r"[^0-9A-Za-zА-Яа-я_-]+", "_", full_name).strip("_")
     file_path = os.path.join(exports_dir, f"employee_{employee_id}_{safe_name}_{start_date}_{end_date}.xlsx")
@@ -1256,6 +1267,9 @@ def create_employee_excel_report(employee_id: int, start_date: str, end_date: st
     summary_sheet.append(["Период", f"{start_date} — {end_date}"])
     summary_sheet.append(["Отработано смен", shift_count])
     summary_sheet.append(["Отработано часов", minutes_to_excel_time(total_minutes)])
+
+    days_sheet = workbook.create_sheet("Смены по дням", 1)
+    append_shift_day_rows(days_sheet, shift_rows, employee_name=full_name)
 
     operations_sheet = workbook.create_sheet("Операции")
     operations_sheet.append(["Операция", "Количество", "Ед."])
