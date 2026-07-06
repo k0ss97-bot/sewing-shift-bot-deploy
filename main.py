@@ -1080,7 +1080,9 @@ def style_sheet(sheet):
         sheet.column_dimensions[column_letter].width = min(max_length + 3, 45)
 
     sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = sheet.dimensions
+
+    if not sheet.auto_filter.ref:
+        sheet.auto_filter.ref = sheet.dimensions
 
 
 def append_total_row(sheet, label: str, value, label_column: int = 1, value_column: int = 2):
@@ -1093,14 +1095,33 @@ def append_total_row(sheet, label: str, value, label_column: int = 1, value_colu
         cell.fill = PatternFill("solid", fgColor="EEF6EE")
 
 
+def set_filter_range(sheet, last_data_row: int | None = None):
+    if sheet.max_row == 0 or sheet.max_column == 0:
+        return
+
+    end_row = last_data_row if last_data_row is not None else sheet.max_row
+    end_column = get_column_letter(sheet.max_column)
+    sheet.auto_filter.ref = f"A1:{end_column}{max(1, end_row)}"
+
+
+def append_filtered_total_row(sheet, label: str, label_column: int, value_column: int):
+    last_data_row = sheet.max_row
+
+    if last_data_row < 2:
+        value = 0
+    else:
+        value_letter = get_column_letter(value_column)
+        value = f"=SUBTOTAL(109,{value_letter}2:{value_letter}{last_data_row})"
+
+    append_total_row(sheet, label, value, label_column=label_column, value_column=value_column)
+    set_filter_range(sheet, last_data_row=last_data_row)
+
+
 def append_operation_rows(sheet, operation_rows):
     sheet.append(["Дата", "Сотрудник", "Группа", "Операция", "Размер", "Цвет", "Количество", "Ед."])
 
-    total_quantity = 0
-
     for row in operation_rows:
         shift_date, full_name, work_group, operation_name, product_size, product_color, quantity, unit = row
-        total_quantity += quantity or 0
         sheet.append([
             shift_date,
             full_name,
@@ -1112,7 +1133,7 @@ def append_operation_rows(sheet, operation_rows):
             unit,
         ])
 
-    append_total_row(sheet, "Итого количество", total_quantity, label_column=6, value_column=7)
+    append_filtered_total_row(sheet, "Итого по фильтру", label_column=6, value_column=7)
 
 
 def append_feedback_rows(sheet, feedback_rows):
@@ -1238,13 +1259,11 @@ def create_employee_excel_report(employee_id: int, start_date: str, end_date: st
 
     operations_sheet = workbook.create_sheet("Операции")
     operations_sheet.append(["Операция", "Количество", "Ед."])
-    total_quantity = 0
 
     for operation_name, quantity, unit in operations:
-        total_quantity += quantity or 0
         operations_sheet.append([operation_name, quantity, unit])
 
-    append_total_row(operations_sheet, "Итого количество", total_quantity, label_column=1, value_column=2)
+    append_filtered_total_row(operations_sheet, "Итого по фильтру", label_column=1, value_column=2)
 
     feedback_sheet = workbook.create_sheet("Обратная связь")
     append_feedback_rows(feedback_sheet, feedback_rows)
