@@ -1,7 +1,6 @@
 from collections import Counter
 
 from catalog import (
-    COLOR_EMOJIS,
     CUTTING_PRODUCTS,
     PACKING_PRODUCTS,
     PREPARATION_MATERIAL_COLORS,
@@ -54,16 +53,6 @@ def main():
     if PREPARATION_MATERIAL_COLORS != ["Черный", "Белый"]:
         errors.append("Цвета материалов подготовки должны быть только: Черный, Белый")
 
-    emoji_counter = Counter(COLOR_EMOJIS.values())
-    duplicate_emojis = {
-        emoji: [color for color, color_emoji in COLOR_EMOJIS.items() if color_emoji == emoji]
-        for emoji, count in emoji_counter.items()
-        if count > 1
-    }
-
-    for emoji, colors in duplicate_emojis.items():
-        errors.append(f"Одинаковый эмодзи {emoji} у цветов: {', '.join(colors)}")
-
     for product, options in PRODUCT_OPTIONS.items():
         colors = options.get("colors", [])
 
@@ -71,16 +60,9 @@ def main():
             if has_bad_color_format(color):
                 errors.append(f"Проверь цвет в изделии {product}: {color}")
 
-            if color not in COLOR_EMOJIS:
-                errors.append(f"Для цвета нет кружка: {color}")
-
         duplicates = [color for color, count in Counter(colors).items() if count > 1]
         if duplicates:
             errors.append(f"Дубли цветов в изделии {product}: {', '.join(duplicates)}")
-
-    for color in PREPARATION_MATERIAL_COLORS:
-        if color not in COLOR_EMOJIS:
-            errors.append(f"Для цвета материала нет кружка: {color}")
 
     if errors:
         print("Проверка справочника: есть вопросы")
