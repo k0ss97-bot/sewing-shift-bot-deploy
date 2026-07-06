@@ -112,6 +112,7 @@ from keyboards import (
     progress_keyboard,
     report_keyboard,
 )
+from route_maps import PRODUCT_ROUTE_MAPS
 
 
 load_dotenv(".env")
@@ -157,6 +158,10 @@ class DateReport(StatesGroup):
 class Feedback(StatesGroup):
     waiting_for_category = State()
     waiting_for_message = State()
+
+
+class RouteMapView(StatesGroup):
+    waiting_for_product = State()
 
 
 class EmployeeAdmin(StatesGroup):
@@ -951,6 +956,11 @@ async def reset_state_if_command(message: Message, state: FSMContext):
         await message.answer("Выберите действие с отчётом:", reply_markup=report_keyboard())
         return True
 
+    if message.text == "Маршрутные карты":
+        await state.clear()
+        await send_route_map_product_step(message, state)
+        return True
+
     if message.text == "Назад":
         if current_state and current_state.startswith("Report:"):
             await go_back_in_report(message, state, current_state)
@@ -996,6 +1006,12 @@ async def process_navigation_button(callback: CallbackQuery, state: FSMContext):
             return
 
         await state.clear()
+        await callback.message.answer("Основное меню:", reply_markup=employee_keyboard())
+        return
+
+    if current_state and current_state.startswith("RouteMapView:"):
+        await state.clear()
+        await callback.answer("Назад")
         await callback.message.answer("Основное меню:", reply_markup=employee_keyboard())
         return
 
@@ -5237,6 +5253,113 @@ async def edit_button(message: Message, state: FSMContext):
 @dp.message(lambda message: message.text == "Удалить операцию")
 async def delete_button(message: Message, state: FSMContext):
     await delete_report_operation(message, state)
+
+
+def get_route_map_product_options():
+    return {
+        str(index): product_name
+        for index, product_name in enumerate(PRODUCT_ROUTE_MAPS, start=1)
+    }
+
+
+def find_route_map_product(selected_text: str):
+    selected_text = selected_text.strip()
+    product_options = get_route_map_product_options()
+
+    if selected_text in product_options:
+        return product_options[selected_text]
+
+    normalized_text = selected_text.casefold()
+
+    for product_name in PRODUCT_ROUTE_MAPS:
+        if product_name.casefold() == normalized_text:
+            return product_name
+
+    return None
+
+
+def format_route_map(product_name: str):
+    route_steps = PRODUCT_ROUTE_MAPS[product_name]
+    lines = [
+        "Маршрутная карта изделия",
+        "",
+        f"Изделие: {product_name}",
+        "",
+    ]
+
+    for index, route_step in enumerate(route_steps, start=1):
+        lines.extend(
+            [
+                f"{index}. {route_step['operation']}",
+                f"   Кто делает: {route_step['position']}",
+                f"   После этапа: {route_step['status_after']}",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "Это каркас маршрута. Дальше по нему можно будет делать движение партий между этапами.",
+        ]
+    )
+
+    return "\n".join(lines)
+
+
+async def send_route_map_product_step(message: Message, state: FSMContext):
+    await state.set_state(RouteMapView.waiting_for_product)
+    await message.answer(
+        "Маршрутные карты\n\nВыберите изделие:",
+        reply_markup=choice_keyboard("route_map_product", get_route_map_product_options()),
+    )
+
+
+async def start_route_maps(message: Message, state: FSMContext):
+    employee = get_employee_by_telegram_id(message.from_user.id)
+
+    if (employee is None or employee[5] != "active") and not is_admin(message.from_user.id):
+        await message.answer("Сначала нужно зарегистрироваться и дождаться подтверждения.")
+        return
+
+    await send_route_map_product_step(message, state)
+
+
+async def select_route_map_product(message: Message, state: FSMContext, selected_text: str):
+    product_name = find_route_map_product(selected_text)
+
+    if product_name is None:
+        await message.answer("Выберите изделие из списка.")
+        return
+
+    await state.clear()
+    await send_long_text(message, format_route_map(product_name), reply_markup=employee_keyboard())
+
+
+@dp.message(lambda message: message.text == "Маршрутные карты")
+async def route_maps_button(message: Message, state: FSMContext):
+    await start_route_maps(message, state)
+
+
+@dp.message(Command("routes"))
+async def route_maps_command(message: Message, state: FSMContext):
+    await start_route_maps(message, state)
+
+
+@dp.message(RouteMapView.waiting_for_product)
+async def process_route_map_product(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_route_map_product(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("route_map_product:"))
+async def process_route_map_product_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, RouteMapView.waiting_for_product):
+        return
+
+    await callback.answer()
+    await select_route_map_product(callback.message, state, callback.data.rsplit(":", 1)[1])
 
 
 async def send_feedback_category_step(message: Message, state: FSMContext):

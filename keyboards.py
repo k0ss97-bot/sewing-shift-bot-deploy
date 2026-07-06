@@ -19,6 +19,9 @@ def employee_keyboard():
                 KeyboardButton(text="Обратная связь"),
             ],
             [
+                KeyboardButton(text="Маршрутные карты"),
+            ],
+            [
                 KeyboardButton(text="Админ-панель"),
             ],
         ],
