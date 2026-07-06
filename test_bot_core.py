@@ -18,7 +18,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         os.environ["DB_DIR"] = self.temp_dir.name
         os.chdir(self.temp_dir.name)
 
-        for module_name in ["database", "catalog"]:
+        for module_name in ["database", "catalog", "route_maps"]:
             sys.modules.pop(module_name, None)
 
         sys.path.insert(0, str(PROJECT_DIR))
@@ -35,7 +35,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             sys.path.remove(str(PROJECT_DIR))
 
         os.chdir(self.old_cwd)
-        for module_name in ["database", "catalog"]:
+        for module_name in ["database", "catalog", "route_maps"]:
             sys.modules.pop(module_name, None)
 
         self.temp_dir.cleanup()
@@ -65,6 +65,25 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("Ползунки — резинка 25 мм", operation_names)
         self.assertIn("Шорты — резинка 25 мм", operation_names)
         self.assertIn("80 (43 см)", self.database.get_preparation_operation_sizes("Шорты — резинка 25 мм"))
+
+    def test_route_maps_cover_catalog_products_and_operations(self):
+        catalog = importlib.import_module("catalog")
+        route_maps = importlib.import_module("route_maps")
+        known_operations = {
+            *catalog.CUTTING_OPERATIONS,
+            *catalog.PACKING_OPERATIONS,
+            *(operation[2] for operation in catalog.PRODUCTION_OPERATIONS),
+        }
+
+        self.assertEqual(set(route_maps.PRODUCT_ROUTE_MAPS), set(catalog.CUTTING_PRODUCTS))
+
+        for product_name, steps in route_maps.PRODUCT_ROUTE_MAPS.items():
+            self.assertGreater(len(steps), 0, product_name)
+
+            for route_step in steps:
+                self.assertIn(route_step["operation"], known_operations, product_name)
+                self.assertIn(route_step["position"], {"Раскройщик", "Упаковщик", "Швея"}, product_name)
+                self.assertTrue(route_step["status_after"], product_name)
 
     def test_cutting_batch_flow_multiplies_sizes_by_layers(self):
         batch_id = self._create_layout_done_batch()
