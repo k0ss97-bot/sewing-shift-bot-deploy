@@ -16,6 +16,9 @@ def employee_keyboard():
                 KeyboardButton(text="Закрыть смену"),
             ],
             [
+                KeyboardButton(text="Обратная связь"),
+            ],
+            [
                 KeyboardButton(text="Админ-панель"),
             ],
         ],

@@ -55,6 +55,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("idx_shifts_employee_date", indexes)
         self.assertIn("idx_operations_navigation", indexes)
         self.assertIn("idx_cutting_batches_product_status", indexes)
+        self.assertIn("idx_feedback_entries_date", indexes)
+        self.assertIn("idx_feedback_entries_employee_date", indexes)
 
     def test_catalog_seed_contains_expected_operations(self):
         operations = self.database.get_active_operations(position="Упаковщик", folder="Нарезание резинки")
@@ -139,6 +141,38 @@ class IsolatedDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(self.database.get_shift_report(shift["id"]), [])
         self.assertEqual(self.database.get_shift_operation_choices(shift["id"]), [])
+
+    def test_feedback_entries_are_saved_and_listed(self):
+        self.database.create_employee(3003, "Тест Сотрудник", "Упаковщик")
+        employee = self.database.get_employee_by_telegram_id(3003)
+        employee_id = employee[0]
+        self.database.update_employee_status(employee_id, "active")
+        shift = self.database.create_shift(employee_id)
+
+        today = self.database.local_today().isoformat()
+        feedback_id = self.database.add_feedback_entry(
+            employee_id,
+            shift["id"],
+            "Производство",
+            "Заканчивается резинка 25 мм",
+        )
+
+        self.assertIsNotNone(feedback_id)
+        self.assertIsNone(self.database.add_feedback_entry(employee_id, shift["id"], "Бытовое", "   "))
+
+        period_rows = self.database.get_feedback_entries(today, today)
+        shift_rows = self.database.get_feedback_entries_by_shift(shift["id"])
+        employee_rows = self.database.get_feedback_entries(today, today, employee_id=employee_id)
+        status = self.database.get_database_status()
+
+        self.assertEqual(period_rows, shift_rows)
+        self.assertEqual(period_rows, employee_rows)
+        self.assertEqual(len(period_rows), 1)
+        self.assertEqual(period_rows[0][2], "Тест Сотрудник")
+        self.assertEqual(period_rows[0][4], "Производство")
+        self.assertEqual(period_rows[0][5], "Заканчивается резинка 25 мм")
+        self.assertEqual(period_rows[0][6], shift["id"])
+        self.assertEqual(status["feedback_entries"], 1)
 
     def test_admin_can_update_and_rollback_cutting_batch(self):
         batch_id = self._create_layout_done_batch()

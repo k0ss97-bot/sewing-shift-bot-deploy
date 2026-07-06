@@ -81,6 +81,7 @@ def get_database_status():
         "shifts": None,
         "shift_operations": None,
         "operations": None,
+        "feedback_entries": None,
     }
 
     if not status["exists"]:
@@ -90,7 +91,7 @@ def get_database_status():
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
-        for table in ["employees", "shifts", "shift_operations", "operations"]:
+        for table in ["employees", "shifts", "shift_operations", "operations", "feedback_entries"]:
             cursor.execute(f"SELECT COUNT(*) FROM {table}")
             status[table] = cursor.fetchone()[0]
 
@@ -605,6 +606,20 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS feedback_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id INTEGER NOT NULL,
+            shift_id INTEGER,
+            category TEXT NOT NULL,
+            message TEXT NOT NULL,
+            feedback_date TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (employee_id) REFERENCES employees (id),
+            FOREIGN KEY (shift_id) REFERENCES shifts (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS cutting_batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_name TEXT NOT NULL,
@@ -658,6 +673,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_employee ON shift_operations (employee_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_operations_navigation ON operations (position, operation_group, folder, is_active)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batches_product_status ON cutting_batches (product_name, status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_date ON feedback_entries (feedback_date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_employee_date ON feedback_entries (employee_id, feedback_date)")
 
     cursor.execute("SELECT COUNT(*) FROM operations")
     count = cursor.fetchone()[0]
@@ -963,6 +980,100 @@ def get_employee_shifts_by_period(employee_id: int, start_date: str, end_date: s
     shifts = cursor.fetchall()
     conn.close()
     return shifts
+
+
+def add_feedback_entry(employee_id: int, shift_id: int | None, category: str, message: str):
+    clean_message = message.strip()
+
+    if not clean_message:
+        return None
+
+    now = local_now()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO feedback_entries (
+            employee_id, shift_id, category, message, feedback_date, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (employee_id, shift_id, category, clean_message, now.date().isoformat(), now.isoformat())
+    )
+
+    feedback_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return feedback_id
+
+
+def get_feedback_entries(start_date: str, end_date: str, employee_id: int | None = None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    params = [start_date, end_date]
+    employee_filter = ""
+
+    if employee_id is not None:
+        employee_filter = "AND feedback_entries.employee_id = ?"
+        params.append(employee_id)
+
+    cursor.execute(
+        f"""
+        SELECT
+            feedback_entries.feedback_date,
+            substr(feedback_entries.created_at, 12, 5) AS feedback_time,
+            employees.full_name,
+            COALESCE(employees.position, ''),
+            feedback_entries.category,
+            feedback_entries.message,
+            feedback_entries.shift_id
+        FROM feedback_entries
+        JOIN employees ON employees.id = feedback_entries.employee_id
+        WHERE feedback_entries.feedback_date BETWEEN ? AND ?
+          {employee_filter}
+        ORDER BY feedback_entries.feedback_date ASC, feedback_entries.created_at ASC
+        """,
+        params
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_feedback_entries_by_shift(shift_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            feedback_entries.feedback_date,
+            substr(feedback_entries.created_at, 12, 5) AS feedback_time,
+            employees.full_name,
+            COALESCE(employees.position, ''),
+            feedback_entries.category,
+            feedback_entries.message,
+            feedback_entries.shift_id
+        FROM feedback_entries
+        JOIN employees ON employees.id = feedback_entries.employee_id
+        WHERE feedback_entries.shift_id = ?
+        ORDER BY feedback_entries.created_at ASC
+        """,
+        (shift_id,)
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_month_feedback_entries():
+    month_start = local_today().replace(day=1).isoformat()
+    today = local_today().isoformat()
+    return get_feedback_entries(month_start, today)
 
 
 def get_open_shift_for_today(employee_id: int):

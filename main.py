@@ -22,6 +22,7 @@ from openpyxl.utils import get_column_letter
 
 from database import (
     DB_NAME,
+    add_feedback_entry,
     add_operation,
     add_shift_operation,
     add_edit_log,
@@ -54,7 +55,10 @@ from database import (
     get_employee_recent_shifts,
     get_employee_shifts_by_period,
     get_employees_by_status,
+    get_feedback_entries,
+    get_feedback_entries_by_shift,
     get_month_employee_summary,
+    get_month_feedback_entries,
     get_month_operation_rows,
     get_month_operations_by_employee,
     get_month_shift_details,
@@ -150,6 +154,11 @@ class DateReport(StatesGroup):
     waiting_for_period = State()
 
 
+class Feedback(StatesGroup):
+    waiting_for_category = State()
+    waiting_for_message = State()
+
+
 class EmployeeAdmin(StatesGroup):
     waiting_for_active_id = State()
     waiting_for_inactive_id = State()
@@ -199,6 +208,11 @@ POSITIONS = {
     "2": "Упаковщик",
     "3": "Раскройщик",
     "4": "Ремонт",
+}
+
+FEEDBACK_CATEGORIES = {
+    "1": "Производство",
+    "2": "Бытовое",
 }
 
 CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
@@ -352,6 +366,20 @@ def format_operation_line(name: str, product_size: str, product_color: str, quan
 
 def format_color_list(colors: list[str]):
     return ", ".join(format_color_label(color) for color in colors)
+
+
+def format_feedback_block(feedback_rows):
+    if not feedback_rows:
+        return ""
+
+    text = "Обратная связь:\n"
+
+    for row in feedback_rows:
+        feedback_date, feedback_time, full_name, position, category, message_text, shift_id = row
+        shift_text = f", смена ID {shift_id}" if shift_id else ""
+        text += f"- {feedback_date} {feedback_time}: {full_name} ({position}), {category}{shift_text}: {message_text}\n"
+
+    return text + "\n"
 
 
 def format_selected_colors(data: dict):
@@ -961,6 +989,16 @@ async def process_navigation_button(callback: CallbackQuery, state: FSMContext):
         await go_back_in_report(callback.message, state, current_state)
         return
 
+    if current_state and current_state.startswith("Feedback:"):
+        await callback.answer("Назад")
+        if current_state == Feedback.waiting_for_message.state:
+            await send_feedback_category_step(callback.message, state)
+            return
+
+        await state.clear()
+        await callback.message.answer("Основное меню:", reply_markup=employee_keyboard())
+        return
+
     if current_state and current_state.startswith("AdminEditReport:"):
         await callback.answer()
         await go_back_in_admin_edit_report(callback.message, state, current_state)
@@ -1077,6 +1115,22 @@ def append_operation_rows(sheet, operation_rows):
     append_total_row(sheet, "Итого количество", total_quantity, label_column=6, value_column=7)
 
 
+def append_feedback_rows(sheet, feedback_rows):
+    sheet.append(["Дата", "Время", "Сотрудник", "Должность", "Раздел", "Сообщение", "ID смены"])
+
+    for row in feedback_rows:
+        feedback_date, feedback_time, full_name, position, category, message_text, shift_id = row
+        sheet.append([
+            feedback_date,
+            feedback_time,
+            full_name,
+            position,
+            category,
+            message_text,
+            shift_id or "",
+        ])
+
+
 def create_excel_report(start_date: str | None = None, end_date: str | None = None):
     today = local_today()
     month_name = today.strftime("%Y-%m")
@@ -1089,11 +1143,13 @@ def create_excel_report(start_date: str | None = None, end_date: str | None = No
         employee_summary = get_period_employee_summary(start_date, end_date)
         operation_rows = get_period_operation_rows(start_date, end_date)
         shift_details = get_period_shift_details(start_date, end_date)
+        feedback_rows = get_feedback_entries(start_date, end_date)
     else:
         file_path = os.path.join(exports_dir, f"report_{month_name}.xlsx")
         employee_summary = get_month_employee_summary()
         operation_rows = get_month_operation_rows()
         shift_details = get_month_shift_details()
+        feedback_rows = get_month_feedback_entries()
 
     workbook = Workbook()
 
@@ -1144,6 +1200,9 @@ def create_excel_report(start_date: str | None = None, end_date: str | None = No
             status,
         ])
 
+    feedback_sheet = workbook.create_sheet("Обратная связь")
+    append_feedback_rows(feedback_sheet, feedback_rows)
+
     for sheet in workbook.worksheets:
         style_sheet(sheet)
 
@@ -1162,6 +1221,7 @@ def create_employee_excel_report(employee_id: int, start_date: str, end_date: st
 
     _, full_name, position, shift_count, total_minutes = employee_summary
     operations = get_employee_period_operation_totals(employee_id, start_date, end_date)
+    feedback_rows = get_feedback_entries(start_date, end_date, employee_id=employee_id)
     safe_name = re.sub(r"[^0-9A-Za-zА-Яа-я_-]+", "_", full_name).strip("_")
     file_path = os.path.join(exports_dir, f"employee_{employee_id}_{safe_name}_{start_date}_{end_date}.xlsx")
 
@@ -1185,6 +1245,9 @@ def create_employee_excel_report(employee_id: int, start_date: str, end_date: st
         operations_sheet.append([operation_name, quantity, unit])
 
     append_total_row(operations_sheet, "Итого количество", total_quantity, label_column=1, value_column=2)
+
+    feedback_sheet = workbook.create_sheet("Обратная связь")
+    append_feedback_rows(feedback_sheet, feedback_rows)
 
     for sheet in workbook.worksheets:
         style_sheet(sheet)
@@ -1692,8 +1755,10 @@ async def today_report(message: Message):
         return
 
     shifts = get_today_shifts()
+    today = local_today().isoformat()
+    feedback_rows = get_feedback_entries(today, today)
 
-    if not shifts:
+    if not shifts and not feedback_rows:
         await message.answer("Сегодня смен ещё нет.", reply_markup=admin_reports_keyboard())
         return
 
@@ -1725,6 +1790,13 @@ async def today_report(message: Message):
                 text += f"- {format_operation_line(name, product_size, product_color, qty, unit)}\n"
             text += "\n"
 
+        text += format_feedback_block(get_feedback_entries_by_shift(shift_id))
+
+    feedback_without_shift = [row for row in feedback_rows if not row[6]]
+
+    if feedback_without_shift:
+        text += format_feedback_block(feedback_without_shift)
+
     await send_long_text(message, text, reply_markup=admin_reports_keyboard())
 
 
@@ -1735,8 +1807,11 @@ async def month_report(message: Message):
         return
 
     employees = get_month_employee_summary()
+    month_start = local_today().replace(day=1).isoformat()
+    today = local_today().isoformat()
+    all_feedback_rows = get_feedback_entries(month_start, today)
 
-    if not employees:
+    if not employees and not all_feedback_rows:
         await message.answer("За текущий месяц закрытых смен ещё нет.", reply_markup=admin_reports_keyboard())
         return
 
@@ -1745,6 +1820,7 @@ async def month_report(message: Message):
     for employee in employees:
         employee_id, full_name, shift_count, total_minutes = employee
         operations = get_month_operations_by_employee(employee_id)
+        feedback_rows = get_feedback_entries(month_start, today, employee_id=employee_id)
 
         text += (
             f"{full_name}\n"
@@ -1761,6 +1837,14 @@ async def month_report(message: Message):
                 text += f"- {format_operation_line(name, product_size, product_color, quantity, unit)}\n"
             text += "\n"
 
+        text += format_feedback_block(feedback_rows)
+
+    employee_names = {employee[1] for employee in employees}
+    feedback_without_shifts = [row for row in all_feedback_rows if row[2] not in employee_names]
+
+    if feedback_without_shifts:
+        text += format_feedback_block(feedback_without_shifts)
+
     await send_long_text(message, text, reply_markup=admin_reports_keyboard())
 
 
@@ -1770,8 +1854,9 @@ async def send_period_report(message: Message, start_date: str, end_date: str):
         return
 
     shifts = get_period_shift_details(start_date, end_date)
+    all_feedback_rows = get_feedback_entries(start_date, end_date)
 
-    if not shifts:
+    if not shifts and not all_feedback_rows:
         await message.answer(
             f"За период {start_date} — {end_date} смен нет.",
             reply_markup=admin_reports_keyboard(),
@@ -1787,6 +1872,7 @@ async def send_period_report(message: Message, start_date: str, end_date: str):
         for employee in employees:
             employee_id, full_name, shift_count, total_minutes = employee
             operations = get_period_operations_by_employee(employee_id, start_date, end_date)
+            feedback_rows = get_feedback_entries(start_date, end_date, employee_id=employee_id)
 
             text += (
                 f"{full_name}\n"
@@ -1802,6 +1888,17 @@ async def send_period_report(message: Message, start_date: str, end_date: str):
                     name, product_size, product_color, quantity, unit = operation
                     text += f"- {format_operation_line(name, product_size, product_color, quantity, unit)}\n"
                 text += "\n"
+
+            text += format_feedback_block(feedback_rows)
+
+    if not employees and all_feedback_rows:
+        text += format_feedback_block(all_feedback_rows)
+    elif employees:
+        employee_names = {employee[1] for employee in employees}
+        feedback_without_summary = [row for row in all_feedback_rows if row[2] not in employee_names]
+
+        if feedback_without_summary:
+            text += format_feedback_block(feedback_without_summary)
 
     text += "Смены:\n"
 
@@ -1856,8 +1953,9 @@ async def send_period_excel(message: Message, start_date: str, end_date: str):
         return
 
     shifts = get_period_shift_details(start_date, end_date)
+    feedback_rows = get_feedback_entries(start_date, end_date)
 
-    if not shifts:
+    if not shifts and not feedback_rows:
         await message.answer(
             f"За период {start_date} — {end_date} смен нет.",
             reply_markup=admin_reports_keyboard(),
@@ -2456,6 +2554,7 @@ async def database_status(message: Message):
         f"Сотрудники: {status['employees']}\n"
         f"Смены: {status['shifts']}\n"
         f"Операции в отчётах: {status['shift_operations']}\n"
+        f"Обратная связь: {status['feedback_entries']}\n"
         f"Справочник операций: {status['operations']}"
     )
 
@@ -2470,9 +2569,12 @@ def read_database_counts(db_path: str):
     cursor = conn.cursor()
     counts = {}
 
-    for table in ["employees", "shifts", "shift_operations", "operations"]:
-        cursor.execute(f"SELECT COUNT(*) FROM {table}")
-        counts[table] = cursor.fetchone()[0]
+    for table in ["employees", "shifts", "shift_operations", "operations", "feedback_entries"]:
+        try:
+            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            counts[table] = cursor.fetchone()[0]
+        except sqlite3.Error:
+            counts[table] = 0
 
     conn.close()
     return counts
@@ -2555,6 +2657,7 @@ async def restore_database_file(message: Message, state: FSMContext):
         f"Сотрудники: {counts['employees']}\n"
         f"Смены: {counts['shifts']}\n"
         f"Операции в отчётах: {counts['shift_operations']}\n"
+        f"Обратная связь: {counts['feedback_entries']}\n"
         f"Справочник операций: {counts['operations']}"
     )
 
@@ -4625,6 +4728,8 @@ async def current_report(message: Message):
             name, product_size, product_color, qty, unit = row
             text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
+    text += "\n" + format_feedback_block(get_feedback_entries_by_shift(shift[0])).rstrip()
+
     if shift[5] == "open":
         text += "\nВыберите следующее действие в меню отчёта."
     else:
@@ -4684,7 +4789,9 @@ async def send_employee_period_report(message: Message, start_date: str, end_dat
         report = get_shift_report(shift_id)
 
         if not report:
-            text += "Операции не добавлены.\n\n"
+            text += "Операции не добавлены.\n"
+            text += format_feedback_block(get_feedback_entries_by_shift(shift_id))
+            text += "\n"
             continue
 
         text += "Операции:\n"
@@ -4692,7 +4799,16 @@ async def send_employee_period_report(message: Message, start_date: str, end_dat
             name, product_size, product_color, qty, unit = row
             text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
+        text += format_feedback_block(get_feedback_entries_by_shift(shift_id))
         text += "\n"
+
+    feedback_without_shift = [
+        row for row in get_feedback_entries(start_date, end_date, employee_id=employee[0])
+        if not row[6]
+    ]
+
+    if feedback_without_shift:
+        text += format_feedback_block(feedback_without_shift)
 
     if total_minutes:
         text += f"Итого времени: {format_minutes(total_minutes)}"
@@ -5002,6 +5118,11 @@ async def close_report_preview(message: Message):
         name, product_size, product_color, qty, unit = row
         text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
 
+    feedback_block = format_feedback_block(get_feedback_entries_by_shift(shift[0]))
+
+    if feedback_block:
+        text += f"\n{feedback_block.rstrip()}\n"
+
     text += "\nПодтвердить закрытие смены: /confirm_close"
 
     await message.answer(text, reply_markup=employee_keyboard())
@@ -5083,6 +5204,120 @@ async def edit_button(message: Message, state: FSMContext):
 @dp.message(lambda message: message.text == "Удалить операцию")
 async def delete_button(message: Message, state: FSMContext):
     await delete_report_operation(message, state)
+
+
+async def send_feedback_category_step(message: Message, state: FSMContext):
+    await state.set_state(Feedback.waiting_for_category)
+    await message.answer(
+        "Обратная связь\n\nВыберите раздел:",
+        reply_markup=choice_keyboard("feedback_category", FEEDBACK_CATEGORIES),
+    )
+
+
+async def start_feedback(message: Message, state: FSMContext):
+    employee = get_employee_by_telegram_id(message.from_user.id)
+
+    if employee is None or employee[5] != "active":
+        await message.answer("Сначала нужно зарегистрироваться и дождаться подтверждения.")
+        return
+
+    shift = get_open_shift_for_today(employee[0])
+    await state.update_data(
+        feedback_employee_id=employee[0],
+        feedback_shift_id=shift[0] if shift else None,
+    )
+    await send_feedback_category_step(message, state)
+
+
+async def select_feedback_category(message: Message, state: FSMContext, selected_number: str):
+    if selected_number not in FEEDBACK_CATEGORIES:
+        await message.answer("Выберите раздел из списка.")
+        return
+
+    category = FEEDBACK_CATEGORIES[selected_number]
+    await state.update_data(feedback_category=category)
+    await state.set_state(Feedback.waiting_for_message)
+    await message.answer(
+        f"Раздел: {category}\n\nНапишите сообщение в свободной форме.",
+        reply_markup=navigation_keyboard(),
+    )
+
+
+@dp.message(lambda message: message.text == "Обратная связь")
+async def feedback_button(message: Message, state: FSMContext):
+    await start_feedback(message, state)
+
+
+@dp.message(Command("feedback"))
+async def feedback_command(message: Message, state: FSMContext):
+    await start_feedback(message, state)
+
+
+@dp.message(Feedback.waiting_for_category)
+async def process_feedback_category(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    if message.text == "Назад":
+        await state.clear()
+        await message.answer("Основное меню:", reply_markup=employee_keyboard())
+        return
+
+    await select_feedback_category(message, state, message.text.strip())
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("feedback_category:"))
+async def process_feedback_category_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, Feedback.waiting_for_category):
+        return
+
+    await callback.answer()
+    await select_feedback_category(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(Feedback.waiting_for_message)
+async def process_feedback_message(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    feedback_text = (message.text or "").strip()
+
+    if feedback_text == "Назад":
+        await send_feedback_category_step(message, state)
+        return
+
+    if feedback_text == "Отмена":
+        await state.clear()
+        await message.answer("Действие отменено.", reply_markup=employee_keyboard())
+        return
+
+    if not feedback_text:
+        await message.answer("Напишите текст сообщения.")
+        return
+
+    data = await state.get_data()
+    feedback_id = add_feedback_entry(
+        data["feedback_employee_id"],
+        data.get("feedback_shift_id"),
+        data["feedback_category"],
+        feedback_text,
+    )
+
+    if feedback_id is None:
+        await message.answer("Не удалось сохранить сообщение. Попробуйте ещё раз.")
+        return
+
+    add_edit_log(
+        message.from_user.id,
+        "employee",
+        "Добавил обратную связь",
+        "feedback",
+        feedback_id,
+        f"{data['feedback_category']}: {feedback_text[:300]}",
+    )
+
+    await state.clear()
+    await message.answer("Спасибо. Сообщение сохранено и попадёт в отчёт.", reply_markup=employee_keyboard())
 
 
 @dp.message(lambda message: message.text == "Назад")
