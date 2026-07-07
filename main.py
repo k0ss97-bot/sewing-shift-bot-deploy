@@ -127,7 +127,7 @@ ADMIN_IDS = os.getenv("ADMIN_IDS", "")
 LOGS_DIR = "logs"
 ERROR_LOG_FILE = os.path.join(LOGS_DIR, "errors.log")
 MINIAPP_HOST = os.getenv("MINIAPP_HOST", "0.0.0.0")
-MINIAPP_PORT = int(os.getenv("PORT") or os.getenv("MINIAPP_PORT") or "8080")
+MINIAPP_PORT = int(os.getenv("PORT") or os.getenv("MINIAPP_PORT") or "3000")
 MINIAPP_DEBUG = os.getenv("MINIAPP_DEBUG") == "1"
 
 bot = Bot(token=BOT_TOKEN)
