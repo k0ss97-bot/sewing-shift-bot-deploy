@@ -47,11 +47,23 @@ def miniapp_inline_keyboard(telegram_id: int | None = None):
     )
 
 
+def miniapp_reply_button():
+    miniapp_url = get_miniapp_url()
+
+    if not miniapp_url:
+        return KeyboardButton(text="Открыть приложение")
+
+    return KeyboardButton(
+        text="Открыть приложение",
+        web_app=WebAppInfo(url=miniapp_url),
+    )
+
+
 def employee_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="Открыть приложение"),
+                miniapp_reply_button(),
             ],
             [
                 KeyboardButton(text="Отчёт"),

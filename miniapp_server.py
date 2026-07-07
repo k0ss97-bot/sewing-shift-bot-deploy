@@ -1757,7 +1757,19 @@ MINIAPP_HTML = """<!doctype html>
     const tg = window.Telegram && window.Telegram.WebApp;
     const urlParams = new URLSearchParams(window.location.search);
     const debugTelegramId = urlParams.get("debug_tg_id");
-    const authToken = urlParams.get("auth");
+    const queryAuthToken = urlParams.get("auth");
+    let storedAuthToken = "";
+
+    try {
+      if (queryAuthToken) {
+        window.localStorage.setItem("miniapp_auth", queryAuthToken);
+      }
+      storedAuthToken = window.localStorage.getItem("miniapp_auth") || "";
+    } catch (error) {
+      storedAuthToken = "";
+    }
+
+    const authToken = queryAuthToken || storedAuthToken;
     const state = {
       initData: tg ? tg.initData : "",
       loading: false,

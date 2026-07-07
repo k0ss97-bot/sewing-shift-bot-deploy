@@ -13,7 +13,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
+    MenuButtonWebApp,
     Message,
+    WebAppInfo,
 )
 from dotenv import load_dotenv
 from openpyxl import Workbook
@@ -110,6 +112,7 @@ from keyboards import (
     admin_shifts_keyboard,
     choice_keyboard,
     employee_keyboard,
+    get_miniapp_url,
     miniapp_inline_keyboard,
     multi_choice_keyboard,
     navigation_keyboard,
@@ -5295,7 +5298,7 @@ async def send_miniapp_button(message: Message):
         return
 
     await message.answer(
-        "Открывайте миниапп через кнопку ниже. Кнопка персональная и действует 24 часа.",
+        "Открывайте миниапп через кнопку ниже. Доступ запомнится на этом устройстве до 30 дней.",
         reply_markup=reply_markup,
     )
 
@@ -6216,6 +6219,25 @@ async def process_position(message: Message, state: FSMContext):
     await state.clear()
 
 
+async def setup_miniapp_menu_button():
+    miniapp_url = get_miniapp_url()
+
+    if not miniapp_url:
+        logging.info("Miniapp menu button skipped: MINIAPP_URL is not set")
+        return
+
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="Открыть приложение",
+                web_app=WebAppInfo(url=miniapp_url),
+            )
+        )
+        logging.info("Miniapp menu button configured")
+    except Exception:
+        logging.exception("Miniapp menu button setup failed")
+
+
 async def main():
     setup_logging()
     init_db()
@@ -6223,6 +6245,7 @@ async def main():
     if backup_path:
         logging.info("Daily database backup created: %s", backup_path)
     start_miniapp_server(BOT_TOKEN, MINIAPP_HOST, MINIAPP_PORT, MINIAPP_DEBUG)
+    await setup_miniapp_menu_button()
     logging.info("Bot started")
     await dp.start_polling(bot)
 
