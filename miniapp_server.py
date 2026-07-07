@@ -1164,17 +1164,23 @@ MINIAPP_HTML = """<!doctype html>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      color-scheme: light dark;
-      --bg: var(--tg-theme-bg-color, #f4f5f7);
-      --text: var(--tg-theme-text-color, #18212f);
-      --muted: var(--tg-theme-hint-color, #667085);
-      --card: var(--tg-theme-secondary-bg-color, #ffffff);
-      --accent: var(--tg-theme-button-color, #2775f6);
-      --accent-text: var(--tg-theme-button-text-color, #ffffff);
-      --danger: #d92d20;
-      --success: #039855;
-      --border: rgba(100, 116, 139, 0.22);
-      --soft: rgba(100, 116, 139, 0.10);
+      color-scheme: light;
+      --bg: #edf1ef;
+      --surface: rgba(255, 255, 255, 0.78);
+      --surface-strong: rgba(255, 255, 255, 0.92);
+      --text: #2f3740;
+      --muted: #7a858e;
+      --accent: #849481;
+      --accent-strong: #637461;
+      --accent-soft: rgba(132, 148, 129, 0.16);
+      --danger: #a65b56;
+      --danger-soft: rgba(166, 91, 86, 0.14);
+      --success: #6f8b70;
+      --success-soft: rgba(111, 139, 112, 0.16);
+      --border: rgba(114, 128, 121, 0.22);
+      --soft: rgba(255, 255, 255, 0.54);
+      --shadow: 0 18px 46px rgba(76, 88, 82, 0.16);
+      --shadow-soft: 0 8px 24px rgba(76, 88, 82, 0.10);
     }
 
     * {
@@ -1184,15 +1190,18 @@ MINIAPP_HTML = """<!doctype html>
     body {
       margin: 0;
       min-height: 100vh;
-      background: var(--bg);
+      background:
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.23) 0 1px, transparent 1px 96px),
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.18) 0 1px, transparent 1px 96px),
+        linear-gradient(135deg, #f8faf9 0%, #eef2ef 42%, #dfe6e2 100%);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     .page {
-      width: min(860px, 100%);
+      width: min(960px, 100%);
       margin: 0 auto;
-      padding: 14px;
+      padding: 18px 14px 96px;
     }
 
     .topbar {
@@ -1200,7 +1209,68 @@ MINIAPP_HTML = """<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
+      padding: 14px;
+      background: var(--surface);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      border-radius: 8px;
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(22px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 10px;
+    }
+
+    .brand-mark {
+      position: relative;
+      width: 44px;
+      height: 44px;
+      flex: 0 0 44px;
+      border-radius: 50%;
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(230, 236, 232, 0.76));
+      border: 1px solid rgba(120, 135, 128, 0.28);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 20px rgba(88, 101, 94, 0.12);
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      border: 2px solid var(--accent);
+      border-right-color: transparent;
+      border-radius: 50%;
+    }
+
+    .brand-mark::before {
+      width: 22px;
+      height: 28px;
+      left: 9px;
+      top: 8px;
+      transform: rotate(-26deg);
+    }
+
+    .brand-mark::after {
+      width: 16px;
+      height: 18px;
+      right: 8px;
+      bottom: 7px;
+      transform: rotate(34deg);
+      opacity: 0.76;
+    }
+
+    .brand-text {
+      min-width: 0;
+    }
+
+    .brand-subtitle {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.25;
     }
 
     h1, h2, h3, p {
@@ -1210,56 +1280,66 @@ MINIAPP_HTML = """<!doctype html>
 
     h1 {
       margin-bottom: 0;
-      font-size: 22px;
+      font-size: 24px;
       line-height: 1.2;
+      color: #344039;
     }
 
     h2 {
       margin-bottom: 12px;
-      font-size: 18px;
+      font-size: 19px;
+      color: #344039;
     }
 
     h3 {
       margin-bottom: 8px;
       font-size: 15px;
+      color: #344039;
     }
 
     .status {
-      padding: 6px 10px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--muted);
+      padding: 8px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.82);
+      border-radius: 999px;
+      color: var(--accent-strong);
+      background: rgba(255, 255, 255, 0.56);
       font-size: 13px;
+      font-weight: 800;
       white-space: nowrap;
     }
 
     .tabs {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 6px;
-      margin-bottom: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
       position: sticky;
       top: 0;
       z-index: 2;
-      padding: 4px 0;
-      background: var(--bg);
+      padding: 6px;
+      background: rgba(255, 255, 255, 0.62);
+      border: 1px solid rgba(255, 255, 255, 0.74);
+      border-radius: 8px;
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(20px);
     }
 
     .tab {
-      min-height: 38px;
+      min-height: 42px;
       padding: 8px;
       color: var(--text);
-      background: var(--soft);
-      border: 1px solid var(--border);
+      background: transparent;
+      border: 1px solid transparent;
       border-radius: 8px;
       font-size: 13px;
-      font-weight: 700;
+      font-weight: 800;
     }
 
     .tab.active {
-      color: var(--accent-text);
-      background: var(--accent);
-      border-color: var(--accent);
+      color: #ffffff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      border-color: rgba(255, 255, 255, 0.34);
+      box-shadow: 0 9px 20px rgba(99, 116, 97, 0.24);
     }
 
     .tab[hidden] {
@@ -1275,11 +1355,26 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .card {
-      background: var(--card);
-      border: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid rgba(255, 255, 255, 0.74);
       border-radius: 8px;
-      padding: 14px;
-      margin-bottom: 10px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(22px);
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.9);
+      pointer-events: none;
     }
 
     .label {
@@ -1290,9 +1385,10 @@ MINIAPP_HTML = """<!doctype html>
 
     .value {
       margin: 0;
-      font-size: 18px;
+      font-size: 21px;
       font-weight: 800;
       line-height: 1.25;
+      color: #27312b;
     }
 
     .grid {
@@ -1317,34 +1413,40 @@ MINIAPP_HTML = """<!doctype html>
       border: 0;
       padding: 11px 12px;
       font-weight: 800;
-      color: var(--accent-text);
-      background: var(--accent);
+      color: #ffffff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      box-shadow: 0 10px 22px rgba(99, 116, 97, 0.22);
     }
 
     button.secondary {
       color: var(--text);
-      background: transparent;
-      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.44);
+      border: 1px solid rgba(255, 255, 255, 0.68);
+      box-shadow: none;
     }
 
     button.danger {
-      background: var(--danger);
+      background: linear-gradient(135deg, #b46b66, var(--danger));
+      box-shadow: 0 10px 22px rgba(166, 91, 86, 0.20);
     }
 
     button.success {
-      background: var(--success);
+      background: linear-gradient(135deg, #7f987f, var(--success));
+      box-shadow: 0 10px 22px rgba(111, 139, 112, 0.20);
     }
 
     button:disabled {
-      opacity: 0.45;
+      opacity: 0.42;
+      box-shadow: none;
     }
 
     select, input, textarea {
       min-height: 44px;
       padding: 10px;
-      border: 1px solid var(--border);
+      border: 1px solid rgba(255, 255, 255, 0.72);
       color: var(--text);
-      background: var(--card);
+      background: rgba(255, 255, 255, 0.62);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
     }
 
     textarea {
@@ -1378,7 +1480,7 @@ MINIAPP_HTML = """<!doctype html>
       justify-content: space-between;
       gap: 16px;
       padding-top: 9px;
-      border-top: 1px solid var(--border);
+      border-top: 1px solid rgba(114, 128, 121, 0.16);
       color: var(--muted);
       font-size: 14px;
     }
@@ -1395,10 +1497,11 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .item {
-      padding: 10px;
-      border: 1px solid var(--border);
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.68);
       border-radius: 8px;
-      background: var(--soft);
+      background: rgba(255, 255, 255, 0.50);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
     }
 
     .item-title {
@@ -1433,9 +1536,10 @@ MINIAPP_HTML = """<!doctype html>
 
     .pill {
       padding: 5px 8px;
-      border: 1px solid var(--border);
+      border: 1px solid rgba(255, 255, 255, 0.68);
       border-radius: 999px;
       color: var(--muted);
+      background: rgba(255, 255, 255, 0.46);
       font-size: 12px;
     }
 
@@ -1444,22 +1548,63 @@ MINIAPP_HTML = """<!doctype html>
       min-height: 34px;
       padding: 7px 10px;
       color: var(--text);
-      background: var(--soft);
-      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.46);
+      border: 1px solid rgba(255, 255, 255, 0.68);
       border-radius: 999px;
       font-size: 12px;
       font-weight: 800;
+      box-shadow: none;
     }
 
     .pill-button.active {
-      color: var(--accent-text);
+      color: #ffffff;
       background: var(--accent);
       border-color: var(--accent);
     }
 
     @media (max-width: 560px) {
+      .page {
+        padding: 12px 10px 92px;
+      }
+
+      .topbar {
+        padding: 12px;
+      }
+
+      h1 {
+        font-size: 22px;
+      }
+
       .tabs {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        position: fixed;
+        left: 10px;
+        right: 10px;
+        top: auto;
+        bottom: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+        margin: 0;
+        z-index: 10;
+      }
+
+      .tab {
+        min-height: 44px;
+        padding: 6px 4px;
+        font-size: 11px;
+      }
+
+      .brand-mark {
+        width: 38px;
+        height: 38px;
+        flex-basis: 38px;
+      }
+
+      .brand-subtitle {
+        display: none;
+      }
+
+      .status {
+        padding: 7px 9px;
+        font-size: 12px;
       }
 
       .grid, .three {
@@ -1471,7 +1616,13 @@ MINIAPP_HTML = """<!doctype html>
 <body>
   <main class="page">
     <div class="topbar">
-      <h1>Шагаем вместе</h1>
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div class="brand-text">
+          <h1>Шагаем вместе</h1>
+          <p class="brand-subtitle">Управление производством швейной фабрики</p>
+        </div>
+      </div>
       <div class="status" id="connection">Загрузка</div>
     </div>
 
