@@ -116,6 +116,7 @@ from keyboards import (
     progress_keyboard,
     report_keyboard,
 )
+from miniapp_server import start_miniapp_server
 from route_maps import PRODUCT_ROUTE_MAPS
 
 
@@ -125,6 +126,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = os.getenv("ADMIN_IDS", "")
 LOGS_DIR = "logs"
 ERROR_LOG_FILE = os.path.join(LOGS_DIR, "errors.log")
+MINIAPP_HOST = os.getenv("MINIAPP_HOST", "0.0.0.0")
+MINIAPP_PORT = int(os.getenv("PORT") or os.getenv("MINIAPP_PORT") or "8080")
+MINIAPP_DEBUG = os.getenv("MINIAPP_DEBUG") == "1"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -5238,6 +5242,20 @@ async def report_menu_button(message: Message):
     await message.answer("Выберите действие с отчётом:", reply_markup=report_keyboard())
 
 
+@dp.message(lambda message: message.text == "Открыть приложение")
+async def miniapp_button(message: Message):
+    miniapp_url = os.getenv("MINIAPP_URL") or os.getenv("WEBAPP_URL")
+
+    if not miniapp_url:
+        await message.answer(
+            "Миниапп добавлен, но для открытия нужна публичная HTTPS-ссылка.\n\n"
+            "На хостинге добавьте переменную MINIAPP_URL с адресом приложения."
+        )
+        return
+
+    await message.answer(f"Открыть приложение: {miniapp_url.rstrip('/')}/app")
+
+
 @dp.message(lambda message: message.text == "Отправить отчёт")
 async def report_button(message: Message, state: FSMContext):
     await start_report(message, state)
@@ -6150,6 +6168,7 @@ async def main():
     backup_path = create_daily_database_backup()
     if backup_path:
         logging.info("Daily database backup created: %s", backup_path)
+    start_miniapp_server(BOT_TOKEN, MINIAPP_HOST, MINIAPP_PORT, MINIAPP_DEBUG)
     logging.info("Bot started")
     await dp.start_polling(bot)
 

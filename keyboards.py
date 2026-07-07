@@ -1,16 +1,38 @@
+import os
+
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 
 from catalog import format_color_label
 
 
+def get_miniapp_url():
+    base_url = os.getenv("MINIAPP_URL") or os.getenv("WEBAPP_URL")
+
+    if not base_url:
+        return ""
+
+    return f"{base_url.rstrip('/')}/app"
+
+
 def employee_keyboard():
+    miniapp_url = get_miniapp_url()
+    miniapp_button = (
+        KeyboardButton(text="Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
+        if miniapp_url
+        else KeyboardButton(text="Открыть приложение")
+    )
+
     return ReplyKeyboardMarkup(
         keyboard=[
+            [
+                miniapp_button,
+            ],
             [
                 KeyboardButton(text="Отчёт"),
                 KeyboardButton(text="Закрыть смену"),
