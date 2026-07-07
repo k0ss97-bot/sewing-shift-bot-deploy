@@ -1204,7 +1204,7 @@ MINIAPP_HTML = """<!doctype html>
     .page {
       width: min(1040px, 100%);
       margin: 0 auto;
-      padding: 20px 14px 96px;
+      padding: 14px 14px 96px;
     }
 
     .topbar {
@@ -1212,7 +1212,7 @@ MINIAPP_HTML = """<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 16px;
+      margin-bottom: 10px;
       padding: 4px 2px;
     }
 
@@ -1225,9 +1225,9 @@ MINIAPP_HTML = """<!doctype html>
 
     .brand-mark {
       position: relative;
-      width: 58px;
-      height: 58px;
-      flex: 0 0 58px;
+      width: 42px;
+      height: 42px;
+      flex: 0 0 42px;
       border-radius: 8px;
       background: linear-gradient(135deg, #5f75ff 0%, #303cff 100%);
       border: 1px solid rgba(255, 255, 255, 0.64);
@@ -1242,21 +1242,21 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .brand-mark::before {
-      width: 31px;
-      height: 19px;
-      left: 14px;
-      top: 20px;
+      width: 22px;
+      height: 14px;
+      left: 10px;
+      top: 15px;
       border-radius: 3px 3px 2px 2px;
       box-shadow:
-        -8px 13px 0 -5px #ffffff,
-        9px 13px 0 -5px #ffffff;
+        -6px 10px 0 -4px #ffffff,
+        7px 10px 0 -4px #ffffff;
     }
 
     .brand-mark::after {
-      width: 34px;
-      height: 4px;
-      left: 12px;
-      top: 41px;
+      width: 25px;
+      height: 3px;
+      left: 9px;
+      top: 31px;
       border-radius: 999px;
       opacity: 0.94;
     }
@@ -1266,10 +1266,10 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .brand-subtitle {
-      margin: 6px 0 0;
+      margin: 3px 0 0;
       color: var(--muted);
-      font-size: 13px;
-      line-height: 1.35;
+      font-size: 12px;
+      line-height: 1.25;
     }
 
     h1, h2, h3, p {
@@ -1279,7 +1279,7 @@ MINIAPP_HTML = """<!doctype html>
 
     h1 {
       margin-bottom: 0;
-      font-size: 30px;
+      font-size: 24px;
       line-height: 1.2;
       color: #151b31;
       font-weight: 900;
@@ -1310,73 +1310,16 @@ MINIAPP_HTML = """<!doctype html>
       backdrop-filter: blur(18px);
     }
 
-    .hero-dashboard {
-      display: grid;
-      grid-template-columns: 1.35fr 0.82fr 0.82fr;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-
-    .metric-card {
-      min-height: 112px;
-      padding: 14px;
-      border: 1px solid rgba(255, 255, 255, 0.74);
-      border-radius: 8px;
-      background:
-        linear-gradient(145deg, rgba(255, 255, 255, 0.86), rgba(235, 240, 255, 0.56)),
-        var(--surface);
-      box-shadow: var(--shadow-soft);
-      backdrop-filter: blur(24px);
-    }
-
-    .metric-card.primary {
-      background:
-        linear-gradient(135deg, rgba(255, 255, 255, 0.90), rgba(229, 235, 255, 0.68)),
-        var(--surface);
-      box-shadow: var(--shadow);
-    }
-
-    .metric-label {
-      display: block;
-      margin-bottom: 9px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .metric-value {
-      display: block;
-      color: #11162a;
-      font-size: 25px;
-      font-weight: 900;
-      line-height: 1.12;
-      overflow-wrap: anywhere;
-    }
-
-    .metric-note {
-      display: block;
-      margin-top: 6px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.3;
-      overflow-wrap: anywhere;
-    }
-
-    .progress-track {
-      height: 7px;
-      margin-top: 14px;
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
       overflow: hidden;
-      border-radius: 999px;
-      background: rgba(68, 88, 255, 0.12);
-    }
-
-    .progress-fill {
-      width: 0%;
-      height: 100%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, #5266ff, #2f3fe8);
-      box-shadow: 0 0 18px rgba(68, 88, 255, 0.42);
-      transition: width 220ms ease;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
 
     .tabs {
@@ -1637,7 +1580,7 @@ MINIAPP_HTML = """<!doctype html>
 
     @media (max-width: 560px) {
       .page {
-        padding: 12px 10px 92px;
+        padding: 10px 10px 92px;
       }
 
       .topbar {
@@ -1645,12 +1588,8 @@ MINIAPP_HTML = """<!doctype html>
         padding: 3px 2px;
       }
 
-      .hero-dashboard {
-        grid-template-columns: 1fr;
-      }
-
       h1 {
-        font-size: 28px;
+        font-size: 22px;
       }
 
       .tabs {
@@ -1671,29 +1610,24 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       .brand-mark {
-        width: 48px;
-        height: 48px;
-        flex-basis: 48px;
+        width: 38px;
+        height: 38px;
+        flex-basis: 38px;
       }
 
       .brand-mark::before {
-        left: 11px;
-        top: 16px;
+        left: 9px;
+        top: 13px;
       }
 
       .brand-mark::after {
-        left: 9px;
-        top: 36px;
+        left: 8px;
+        top: 29px;
       }
 
       .brand-subtitle {
-        max-width: 220px;
-        font-size: 12px;
-      }
-
-      .status {
-        padding: 7px 9px;
-        font-size: 12px;
+        max-width: 240px;
+        font-size: 11px;
       }
 
       .grid, .three {
@@ -1712,36 +1646,15 @@ MINIAPP_HTML = """<!doctype html>
           <p class="brand-subtitle">Управление производством швейной фабрики</p>
         </div>
       </div>
-      <div class="status" id="connection">Загрузка</div>
+      <div class="visually-hidden" id="connection">Загрузка</div>
     </div>
-
-    <section class="hero-dashboard" aria-label="Производственный центр">
-      <div class="metric-card primary">
-        <span class="metric-label">Текущая смена</span>
-        <span class="metric-value" id="metricShiftState">Проверяем доступ</span>
-        <span class="metric-note" id="metricShiftTime">Откройте приложение из Telegram</span>
-        <div class="progress-track" aria-hidden="true">
-          <div class="progress-fill" id="metricShiftProgress"></div>
-        </div>
-      </div>
-      <div class="metric-card">
-        <span class="metric-label">Операции сегодня</span>
-        <span class="metric-value" id="metricReportCount">0</span>
-        <span class="metric-note">строк в текущем отчёте</span>
-      </div>
-      <div class="metric-card">
-        <span class="metric-label">Профиль</span>
-        <span class="metric-value" id="metricPosition">-</span>
-        <span class="metric-note" id="metricEmployee">Сотрудник не определён</span>
-      </div>
-    </section>
 
     <nav class="tabs">
       <button class="tab active" data-tab="shift">Смена</button>
       <button class="tab" data-tab="report">Отчёт</button>
-      <button class="tab" data-tab="feedback">Связь</button>
       <button class="tab" data-tab="routes">Маршруты</button>
       <button class="tab" data-tab="admin" id="adminTab" hidden>Админ</button>
+      <button class="tab" data-tab="feedback">Связь</button>
     </nav>
 
     <section class="section active" id="section-shift">
@@ -1787,21 +1700,6 @@ MINIAPP_HTML = """<!doctype html>
       <div class="card">
         <h3>Обратная связь за смену</h3>
         <div class="list" id="reportFeedback"></div>
-      </div>
-    </section>
-
-    <section class="section" id="section-feedback">
-      <div class="card">
-        <h2>Обратная связь</h2>
-        <div class="form">
-          <select id="feedbackCategory">
-            <option value="Производство">Производство</option>
-            <option value="Бытовое">Бытовое</option>
-          </select>
-          <textarea id="feedbackMessage" placeholder="Напишите сообщение"></textarea>
-          <button id="sendFeedbackButton">Отправить</button>
-        </div>
-        <div class="message" id="feedbackStatus"></div>
       </div>
     </section>
 
@@ -1859,6 +1757,21 @@ MINIAPP_HTML = """<!doctype html>
           <button id="adminEmployeeReport" class="secondary">Отчёт по сотруднику</button>
         </div>
         <div class="list" id="adminReportOutput"></div>
+      </div>
+    </section>
+
+    <section class="section" id="section-feedback">
+      <div class="card">
+        <h2>Обратная связь</h2>
+        <div class="form">
+          <select id="feedbackCategory">
+            <option value="Производство">Производство</option>
+            <option value="Бытовое">Бытовое</option>
+          </select>
+          <textarea id="feedbackMessage" placeholder="Напишите сообщение"></textarea>
+          <button id="sendFeedbackButton">Отправить</button>
+        </div>
+        <div class="message" id="feedbackStatus"></div>
       </div>
     </section>
   </main>
@@ -1922,50 +1835,6 @@ MINIAPP_HTML = """<!doctype html>
       return `<p class="empty">${escapeHtml(text)}</p>`;
     }
 
-    function parseTimeToMinutes(value) {
-      const parts = String(value || "").split(":");
-
-      if (parts.length < 2) {
-        return null;
-      }
-
-      const hours = Number(parts[0]);
-      const minutes = Number(parts[1]);
-
-      if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
-        return null;
-      }
-
-      return hours * 60 + minutes;
-    }
-
-    function clampPercent(value) {
-      return Math.max(0, Math.min(100, Math.round(value)));
-    }
-
-    function estimateShiftProgress(shift) {
-      if (!shift) {
-        return 0;
-      }
-
-      if (shift.status === "closed") {
-        return 100;
-      }
-
-      const startMinutes = parseTimeToMinutes(shift.start_time);
-
-      if (startMinutes === null) {
-        return 0;
-      }
-
-      const now = new Date();
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
-      const elapsed = nowMinutes - startMinutes;
-      const plannedShiftMinutes = 12 * 60;
-
-      return clampPercent((elapsed / plannedShiftMinutes) * 100);
-    }
-
     function item(title, meta = "") {
       return `
         <div class="item">
@@ -1992,15 +1861,10 @@ MINIAPP_HTML = """<!doctype html>
     function renderShift(data) {
       const employee = data.employee;
       const shift = data.shift;
-      let metricShiftState = "Нет доступа";
-      let metricShiftTime = data.message || "Откройте приложение из Telegram";
-      let metricProgress = 0;
 
       setText("employeeName", employee ? employee.full_name : "Нет доступа");
       setText("employeePosition", employee ? employee.position : "-");
       setText("employeeStatus", employee ? employee.status : "-");
-      setText("metricPosition", employee ? employee.position : "-");
-      setText("metricEmployee", employee ? employee.full_name : "Сотрудник не определён");
 
       if (!shift) {
         setText("shiftStatus", "Смена не открыта");
@@ -2008,31 +1872,20 @@ MINIAPP_HTML = """<!doctype html>
         setText("shiftStart", "-");
         setText("shiftEnd", "-");
         setText("shiftTotal", "-");
-        metricShiftState = employee ? "Смена не открыта" : "Нет доступа";
-        metricShiftTime = employee ? "Можно открыть смену" : metricShiftTime;
       } else if (shift.status === "open") {
         setText("shiftStatus", "Смена открыта");
         setText("shiftDate", shift.date);
         setText("shiftStart", shift.start_time);
         setText("shiftEnd", "-");
         setText("shiftTotal", "-");
-        metricShiftState = "В работе";
-        metricShiftTime = `${shift.start_time} — сейчас`;
-        metricProgress = estimateShiftProgress(shift);
       } else {
         setText("shiftStatus", "Смена закрыта");
         setText("shiftDate", shift.date);
         setText("shiftStart", shift.start_time);
         setText("shiftEnd", shift.end_time);
         setText("shiftTotal", shift.total_minutes_text);
-        metricShiftState = "Смена закрыта";
-        metricShiftTime = `${shift.start_time || "-"} — ${shift.end_time || "-"}`;
-        metricProgress = 100;
       }
 
-      setText("metricShiftState", metricShiftState);
-      setText("metricShiftTime", metricShiftTime);
-      $("metricShiftProgress").style.width = `${metricProgress}%`;
       $("message").textContent = data.message || "";
       $("openButton").disabled = state.loading || !data.ok || data.has_open_shift || (shift && shift.status === "closed");
       $("closeButton").disabled = state.loading || !data.ok || !data.has_open_shift;
@@ -2045,7 +1898,6 @@ MINIAPP_HTML = """<!doctype html>
 
       setText("reportShift", shift ? `${shift.date}, ${shift.status === "open" ? "открыта" : "закрыта"}` : "Нет смены");
       setText("reportCount", String(operations.length));
-      setText("metricReportCount", String(operations.length));
 
       $("reportOperations").innerHTML = operations.length
         ? operations.map((row, index) => item(
