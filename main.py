@@ -110,6 +110,7 @@ from keyboards import (
     admin_shifts_keyboard,
     choice_keyboard,
     employee_keyboard,
+    miniapp_inline_keyboard,
     multi_choice_keyboard,
     navigation_keyboard,
     position_list_text,
@@ -5256,18 +5257,31 @@ async def report_menu_button(message: Message):
     await message.answer("Выберите действие с отчётом:", reply_markup=report_keyboard())
 
 
-@dp.message(lambda message: message.text == "Открыть приложение")
-async def miniapp_button(message: Message):
+async def send_miniapp_button(message: Message):
     miniapp_url = os.getenv("MINIAPP_URL") or os.getenv("WEBAPP_URL")
+    reply_markup = miniapp_inline_keyboard()
 
-    if not miniapp_url:
+    if not miniapp_url or reply_markup is None:
         await message.answer(
             "Миниапп добавлен, но для открытия нужна публичная HTTPS-ссылка.\n\n"
             "На хостинге добавьте переменную MINIAPP_URL с адресом приложения."
         )
         return
 
-    await message.answer(f"Открыть приложение: {miniapp_url.rstrip('/')}/app")
+    await message.answer(
+        "Открывайте миниапп только через кнопку ниже, тогда Telegram передаст доступ.",
+        reply_markup=reply_markup,
+    )
+
+
+@dp.message(Command("app"))
+async def miniapp_command(message: Message):
+    await send_miniapp_button(message)
+
+
+@dp.message(lambda message: message.text == "Открыть приложение")
+async def miniapp_button(message: Message):
+    await send_miniapp_button(message)
 
 
 @dp.message(lambda message: message.text == "Отправить отчёт")

@@ -20,6 +20,24 @@ def get_miniapp_url():
     return f"{base_url.rstrip('/')}/app"
 
 
+def miniapp_inline_keyboard():
+    miniapp_url = get_miniapp_url()
+
+    if not miniapp_url:
+        return None
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Открыть приложение",
+                    web_app=WebAppInfo(url=miniapp_url),
+                ),
+            ],
+        ],
+    )
+
+
 def employee_keyboard():
     miniapp_url = get_miniapp_url()
     miniapp_button = (
