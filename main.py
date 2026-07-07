@@ -30,12 +30,15 @@ from database import (
     admin_update_cutting_batch_progress,
     admin_close_shift,
     close_shift,
+    complete_route_batch_step,
     create_cutting_contour_batch,
     create_employee,
+    create_route_batch,
     create_shift,
     delete_cutting_batch,
     delete_shift_by_id,
     delete_shift_operation,
+    get_active_route_batches,
     get_active_operation_groups,
     get_active_operation_folders,
     get_active_operations,
@@ -77,6 +80,7 @@ from database import (
     get_preparation_operation_sizes,
     get_recent_edit_logs,
     get_recent_shifts,
+    get_route_batch_by_id,
     get_shift_for_today,
     get_shift_operation_choices,
     get_shift_report,
@@ -161,7 +165,14 @@ class Feedback(StatesGroup):
 
 
 class RouteMapView(StatesGroup):
+    waiting_for_menu = State()
     waiting_for_product = State()
+    waiting_for_batch_product = State()
+    waiting_for_batch_size = State()
+    waiting_for_batch_color = State()
+    waiting_for_batch_quantity = State()
+    waiting_for_task = State()
+    waiting_for_task_action = State()
 
 
 class EmployeeAdmin(StatesGroup):
@@ -218,6 +229,12 @@ POSITIONS = {
 FEEDBACK_CATEGORIES = {
     "1": "Производство",
     "2": "Бытовое",
+}
+
+ROUTE_MAP_MENU_OPTIONS = {
+    "1": "Посмотреть карту",
+    "2": "Создать пробную партию",
+    "3": "Доступные задания",
 }
 
 CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
@@ -958,11 +975,13 @@ async def reset_state_if_command(message: Message, state: FSMContext):
 
     if message.text == "Маршрутные карты":
         await state.clear()
-        await send_route_map_product_step(message, state)
+        await send_route_map_menu_step(message, state)
         return True
 
     if message.text == "Назад":
-        if current_state and current_state.startswith("Report:"):
+        if current_state and current_state.startswith("RouteMapView:"):
+            await go_back_in_route_maps(message, state, current_state)
+        elif current_state and current_state.startswith("Report:"):
             await go_back_in_report(message, state, current_state)
         else:
             await state.clear()
@@ -1010,9 +1029,8 @@ async def process_navigation_button(callback: CallbackQuery, state: FSMContext):
         return
 
     if current_state and current_state.startswith("RouteMapView:"):
-        await state.clear()
         await callback.answer("Назад")
-        await callback.message.answer("Основное меню:", reply_markup=employee_keyboard())
+        await go_back_in_route_maps(callback.message, state, current_state)
         return
 
     if current_state and current_state.startswith("AdminEditReport:"):
@@ -5262,6 +5280,10 @@ def get_route_map_product_options():
     }
 
 
+def get_numbered_options(items):
+    return {str(index): item for index, item in enumerate(items, start=1)}
+
+
 def find_route_map_product(selected_text: str):
     selected_text = selected_text.strip()
     product_options = get_route_map_product_options()
@@ -5276,6 +5298,48 @@ def find_route_map_product(selected_text: str):
             return product_name
 
     return None
+
+
+def get_route_step(product_name: str, step_index: int):
+    steps = PRODUCT_ROUTE_MAPS.get(product_name, [])
+
+    if step_index < 0 or step_index >= len(steps):
+        return None
+
+    return steps[step_index]
+
+
+def get_route_previous_status(batch: dict):
+    if batch["status"] == "done":
+        steps = PRODUCT_ROUTE_MAPS.get(batch["product_name"], [])
+        return steps[-1]["status_after"] if steps else "Маршрут завершён"
+
+    step_index = batch["route_step_index"]
+
+    if step_index == 0:
+        return "Партия создана"
+
+    previous_step = get_route_step(batch["product_name"], step_index - 1)
+    return previous_step["status_after"] if previous_step else "Партия в работе"
+
+
+def format_route_batch_identity(batch: dict):
+    return (
+        f"{batch['product_name']} / "
+        f"{batch['product_size']} / "
+        f"{batch['product_color']} / "
+        f"{batch['quantity']} шт"
+    )
+
+
+def can_employee_work_route_step(employee, current_step: dict | None):
+    if current_step is None:
+        return False
+
+    if employee is None:
+        return False
+
+    return employee[3] == current_step["position"]
 
 
 def format_route_map(product_name: str):
@@ -5306,12 +5370,129 @@ def format_route_map(product_name: str):
     return "\n".join(lines)
 
 
+async def send_route_map_menu_step(message: Message, state: FSMContext):
+    await state.set_state(RouteMapView.waiting_for_menu)
+    await message.answer(
+        "Маршрутные карты\n\nВыберите действие:",
+        reply_markup=choice_keyboard("route_map_menu", ROUTE_MAP_MENU_OPTIONS),
+    )
+
+
 async def send_route_map_product_step(message: Message, state: FSMContext):
     await state.set_state(RouteMapView.waiting_for_product)
     await message.answer(
-        "Маршрутные карты\n\nВыберите изделие:",
+        "Просмотр маршрутной карты\n\nВыберите изделие:",
         reply_markup=choice_keyboard("route_map_product", get_route_map_product_options()),
     )
+
+
+async def send_route_batch_product_step(message: Message, state: FSMContext):
+    await state.set_state(RouteMapView.waiting_for_batch_product)
+    await message.answer(
+        "Создание пробной партии\n\nВыберите изделие:",
+        reply_markup=choice_keyboard("route_batch_product", get_route_map_product_options()),
+    )
+
+
+async def send_route_batch_size_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    product_name = data["route_batch_product"]
+    sizes = get_product_sizes(product_name)
+
+    if not sizes:
+        await state.update_data(route_batch_size="без размера")
+        await send_route_batch_color_step(message, state)
+        return
+
+    size_map = get_numbered_options(sizes)
+    await state.update_data(route_batch_size_map=size_map)
+    await state.set_state(RouteMapView.waiting_for_batch_size)
+    await message.answer(
+        f"Изделие: {product_name}\n\nВыберите размер:",
+        reply_markup=choice_keyboard("route_batch_size", size_map),
+    )
+
+
+async def send_route_batch_color_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    product_name = data["route_batch_product"]
+    colors = get_product_colors(product_name)
+
+    if not colors:
+        await state.update_data(route_batch_color="без цвета")
+        await send_route_batch_quantity_step(message, state)
+        return
+
+    color_map = get_numbered_options(colors)
+    await state.update_data(route_batch_color_map=color_map)
+    await state.set_state(RouteMapView.waiting_for_batch_color)
+    await message.answer(
+        f"Изделие: {product_name}\n"
+        f"Размер: {data.get('route_batch_size', '')}\n\n"
+        "Выберите цвет:",
+        reply_markup=choice_keyboard("route_batch_color", color_map),
+    )
+
+
+async def send_route_batch_quantity_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(RouteMapView.waiting_for_batch_quantity)
+    await message.answer(
+        f"Пробная партия:\n"
+        f"{data['route_batch_product']} / {data['route_batch_size']} / {data['route_batch_color']}\n\n"
+        "Введите количество:",
+        reply_markup=navigation_keyboard(),
+    )
+
+
+async def send_route_tasks_step(message: Message, state: FSMContext):
+    employee = get_employee_by_telegram_id(message.chat.id)
+
+    if employee is None and not is_admin(message.chat.id):
+        await message.answer("Сначала нужно зарегистрироваться и дождаться подтверждения.")
+        return
+
+    batches = []
+    route_task_map = {}
+    text = "Доступные маршрутные задания\n\n"
+
+    for batch in get_active_route_batches():
+        current_step = get_route_step(batch["product_name"], batch["route_step_index"])
+
+        if current_step is None:
+            continue
+
+        can_show = is_admin(message.chat.id) or can_employee_work_route_step(employee, current_step)
+
+        if not can_show:
+            continue
+
+        batches.append((batch, current_step))
+
+    if not batches:
+        position_text = f" для должности «{employee[3]}»" if employee else ""
+        await state.clear()
+        await message.answer(
+            f"Маршрутных заданий{position_text} пока нет.",
+            reply_markup=employee_keyboard(),
+        )
+        return
+
+    button_options = {}
+
+    for index, (batch, current_step) in enumerate(batches, start=1):
+        number = str(index)
+        route_task_map[number] = batch["id"]
+        button_options[number] = f"#{batch['id']} {current_step['operation']}"
+        text += (
+            f"{index}. #{batch['id']} {format_route_batch_identity(batch)}\n"
+            f"   Сейчас: {get_route_previous_status(batch)}\n"
+            f"   Нужно сделать: {current_step['position']} — {current_step['operation']}\n\n"
+        )
+
+    await state.update_data(route_task_map=route_task_map)
+    await state.set_state(RouteMapView.waiting_for_task)
+    await send_long_text(message, text, reply_markup=choice_keyboard("route_task", button_options))
 
 
 async def start_route_maps(message: Message, state: FSMContext):
@@ -5321,7 +5502,25 @@ async def start_route_maps(message: Message, state: FSMContext):
         await message.answer("Сначала нужно зарегистрироваться и дождаться подтверждения.")
         return
 
-    await send_route_map_product_step(message, state)
+    await send_route_map_menu_step(message, state)
+
+
+async def select_route_map_menu(message: Message, state: FSMContext, selected_text: str):
+    selected_text = selected_text.strip()
+
+    if selected_text not in ROUTE_MAP_MENU_OPTIONS:
+        await message.answer("Выберите действие из списка.")
+        return
+
+    if selected_text == "1":
+        await send_route_map_product_step(message, state)
+        return
+
+    if selected_text == "2":
+        await send_route_batch_product_step(message, state)
+        return
+
+    await send_route_tasks_step(message, state)
 
 
 async def select_route_map_product(message: Message, state: FSMContext, selected_text: str):
@@ -5335,6 +5534,217 @@ async def select_route_map_product(message: Message, state: FSMContext, selected
     await send_long_text(message, format_route_map(product_name), reply_markup=employee_keyboard())
 
 
+async def select_route_batch_product(message: Message, state: FSMContext, selected_text: str):
+    product_name = find_route_map_product(selected_text)
+
+    if product_name is None:
+        await message.answer("Выберите изделие из списка.")
+        return
+
+    await state.update_data(route_batch_product=product_name)
+    await send_route_batch_size_step(message, state)
+
+
+async def select_route_batch_size(message: Message, state: FSMContext, selected_text: str):
+    data = await state.get_data()
+    size_map = data.get("route_batch_size_map", {})
+    selected_text = selected_text.strip()
+
+    if selected_text not in size_map:
+        await message.answer("Выберите размер из списка.")
+        return
+
+    await state.update_data(route_batch_size=size_map[selected_text])
+    await send_route_batch_color_step(message, state)
+
+
+async def select_route_batch_color(message: Message, state: FSMContext, selected_text: str):
+    data = await state.get_data()
+    color_map = data.get("route_batch_color_map", {})
+    selected_text = selected_text.strip()
+
+    if selected_text not in color_map:
+        await message.answer("Выберите цвет из списка.")
+        return
+
+    await state.update_data(route_batch_color=color_map[selected_text])
+    await send_route_batch_quantity_step(message, state)
+
+
+async def create_route_batch_from_state(message: Message, state: FSMContext):
+    quantity_text = (message.text or "").strip()
+
+    if not quantity_text.isdigit() or int(quantity_text) <= 0:
+        await message.answer("Введите количество положительным целым числом.")
+        return
+
+    employee = get_employee_by_telegram_id(message.from_user.id)
+    data = await state.get_data()
+    batch = create_route_batch(
+        data["route_batch_product"],
+        data["route_batch_size"],
+        data["route_batch_color"],
+        int(quantity_text),
+        employee[0] if employee else None,
+    )
+
+    if batch is None:
+        await message.answer("Не удалось создать пробную партию.")
+        return
+
+    current_step = get_route_step(batch["product_name"], batch["route_step_index"])
+    await state.clear()
+    await message.answer(
+        f"Пробная партия создана: #{batch['id']}\n\n"
+        f"{format_route_batch_identity(batch)}\n"
+        f"Сейчас: {get_route_previous_status(batch)}\n"
+        f"Первый этап: {current_step['position']} — {current_step['operation']}\n\n"
+        "Её можно увидеть в «Маршрутные карты» → «Доступные задания».",
+        reply_markup=employee_keyboard(),
+    )
+
+
+async def select_route_task(message: Message, state: FSMContext, selected_text: str):
+    data = await state.get_data()
+    route_task_map = data.get("route_task_map", {})
+    selected_text = selected_text.strip()
+
+    if selected_text not in route_task_map:
+        await message.answer("Выберите задание из списка.")
+        return
+
+    batch = get_route_batch_by_id(route_task_map[selected_text])
+
+    if batch is None or batch["status"] != "active":
+        await message.answer("Эта партия уже недоступна. Откройте список заново.")
+        return
+
+    current_step = get_route_step(batch["product_name"], batch["route_step_index"])
+    employee = get_employee_by_telegram_id(message.chat.id)
+
+    if not is_admin(message.chat.id) and not can_employee_work_route_step(employee, current_step):
+        await message.answer("Это задание сейчас доступно другой должности.")
+        return
+
+    await state.update_data(route_task_batch_id=batch["id"])
+    await state.set_state(RouteMapView.waiting_for_task_action)
+    await message.answer(
+        f"Пробная партия #{batch['id']}\n\n"
+        f"{format_route_batch_identity(batch)}\n"
+        f"Сейчас: {get_route_previous_status(batch)}\n\n"
+        f"Нужно выполнить:\n"
+        f"{current_step['position']} — {current_step['operation']}\n\n"
+        f"После выполнения будет статус:\n"
+        f"{current_step['status_after']}",
+        reply_markup=choice_keyboard("route_task_action", {"1": "Завершить этап"}),
+    )
+
+
+async def complete_selected_route_task(message: Message, state: FSMContext, selected_text: str):
+    if selected_text.strip() != "1":
+        await message.answer("Выберите действие из списка.")
+        return
+
+    data = await state.get_data()
+    batch = get_route_batch_by_id(data.get("route_task_batch_id"))
+
+    if batch is None or batch["status"] != "active":
+        await state.clear()
+        await message.answer("Эта партия уже недоступна.", reply_markup=employee_keyboard())
+        return
+
+    current_step = get_route_step(batch["product_name"], batch["route_step_index"])
+    employee = get_employee_by_telegram_id(message.chat.id)
+
+    if not is_admin(message.chat.id) and not can_employee_work_route_step(employee, current_step):
+        await message.answer("Это задание сейчас доступно другой должности.")
+        return
+
+    next_step_index = batch["route_step_index"] + 1
+    route_steps = PRODUCT_ROUTE_MAPS[batch["product_name"]]
+    new_status = "done" if next_step_index >= len(route_steps) else "active"
+    updated_batch = complete_route_batch_step(
+        batch["id"],
+        employee[0] if employee else None,
+        current_step["operation"],
+        current_step["position"],
+        next_step_index,
+        new_status,
+    )
+
+    if updated_batch is None:
+        await state.clear()
+        await message.answer("Не удалось завершить этап.", reply_markup=employee_keyboard())
+        return
+
+    details = (
+        f"Партия #{batch['id']}: {format_route_batch_identity(batch)}. "
+        f"Этап: {current_step['position']} — {current_step['operation']}"
+    )
+    actor_id = message.chat.id
+    add_edit_log(
+        actor_id,
+        "admin" if is_admin(actor_id) else "employee",
+        "Завершил этап маршрута",
+        "route_batch",
+        batch["id"],
+        details,
+    )
+
+    await state.clear()
+
+    if updated_batch["status"] == "done":
+        await message.answer(
+            f"Этап завершён: {current_step['operation']}\n\n"
+            f"Партия #{batch['id']} полностью прошла маршрут.\n"
+            f"Финальный статус: {current_step['status_after']}",
+            reply_markup=employee_keyboard(),
+        )
+        return
+
+    next_step = get_route_step(updated_batch["product_name"], updated_batch["route_step_index"])
+    await message.answer(
+        f"Этап завершён: {current_step['operation']}\n\n"
+        f"Теперь: {current_step['status_after']}\n"
+        f"Следующий этап: {next_step['position']} — {next_step['operation']}",
+        reply_markup=employee_keyboard(),
+    )
+
+
+async def go_back_in_route_maps(message: Message, state: FSMContext, current_state: str):
+    if current_state == RouteMapView.waiting_for_menu.state:
+        await state.clear()
+        await message.answer("Основное меню:", reply_markup=employee_keyboard())
+        return
+
+    if current_state in {
+        RouteMapView.waiting_for_product.state,
+        RouteMapView.waiting_for_batch_product.state,
+        RouteMapView.waiting_for_task.state,
+    }:
+        await send_route_map_menu_step(message, state)
+        return
+
+    if current_state == RouteMapView.waiting_for_batch_size.state:
+        await send_route_batch_product_step(message, state)
+        return
+
+    if current_state == RouteMapView.waiting_for_batch_color.state:
+        await send_route_batch_size_step(message, state)
+        return
+
+    if current_state == RouteMapView.waiting_for_batch_quantity.state:
+        await send_route_batch_color_step(message, state)
+        return
+
+    if current_state == RouteMapView.waiting_for_task_action.state:
+        await send_route_tasks_step(message, state)
+        return
+
+    await state.clear()
+    await message.answer("Основное меню:", reply_markup=employee_keyboard())
+
+
 @dp.message(lambda message: message.text == "Маршрутные карты")
 async def route_maps_button(message: Message, state: FSMContext):
     await start_route_maps(message, state)
@@ -5343,6 +5753,23 @@ async def route_maps_button(message: Message, state: FSMContext):
 @dp.message(Command("routes"))
 async def route_maps_command(message: Message, state: FSMContext):
     await start_route_maps(message, state)
+
+
+@dp.message(RouteMapView.waiting_for_menu)
+async def process_route_map_menu(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_route_map_menu(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("route_map_menu:"))
+async def process_route_map_menu_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, RouteMapView.waiting_for_menu):
+        return
+
+    await callback.answer()
+    await select_route_map_menu(callback.message, state, callback.data.rsplit(":", 1)[1])
 
 
 @dp.message(RouteMapView.waiting_for_product)
@@ -5360,6 +5787,99 @@ async def process_route_map_product_button(callback: CallbackQuery, state: FSMCo
 
     await callback.answer()
     await select_route_map_product(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(RouteMapView.waiting_for_batch_product)
+async def process_route_batch_product(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_route_batch_product(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("route_batch_product:"))
+async def process_route_batch_product_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, RouteMapView.waiting_for_batch_product):
+        return
+
+    await callback.answer()
+    await select_route_batch_product(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(RouteMapView.waiting_for_batch_size)
+async def process_route_batch_size(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_route_batch_size(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("route_batch_size:"))
+async def process_route_batch_size_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, RouteMapView.waiting_for_batch_size):
+        return
+
+    await callback.answer()
+    await select_route_batch_size(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(RouteMapView.waiting_for_batch_color)
+async def process_route_batch_color(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_route_batch_color(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("route_batch_color:"))
+async def process_route_batch_color_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, RouteMapView.waiting_for_batch_color):
+        return
+
+    await callback.answer()
+    await select_route_batch_color(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(RouteMapView.waiting_for_batch_quantity)
+async def process_route_batch_quantity(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await create_route_batch_from_state(message, state)
+
+
+@dp.message(RouteMapView.waiting_for_task)
+async def process_route_task(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_route_task(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("route_task:"))
+async def process_route_task_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, RouteMapView.waiting_for_task):
+        return
+
+    await callback.answer()
+    await select_route_task(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(RouteMapView.waiting_for_task_action)
+async def process_route_task_action(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await complete_selected_route_task(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("route_task_action:"))
+async def process_route_task_action_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, RouteMapView.waiting_for_task_action):
+        return
+
+    await callback.answer()
+    await complete_selected_route_task(callback.message, state, callback.data.rsplit(":", 1)[1])
 
 
 async def send_feedback_category_step(message: Message, state: FSMContext):

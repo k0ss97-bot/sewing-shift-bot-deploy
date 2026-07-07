@@ -57,6 +57,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("idx_cutting_batches_product_status", indexes)
         self.assertIn("idx_feedback_entries_date", indexes)
         self.assertIn("idx_feedback_entries_employee_date", indexes)
+        self.assertIn("idx_route_batches_status_step", indexes)
+        self.assertIn("idx_route_batch_history_batch", indexes)
 
     def test_catalog_seed_contains_expected_operations(self):
         operations = self.database.get_active_operations(position="Упаковщик", folder="Нарезание резинки")
@@ -84,6 +86,47 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 self.assertIn(route_step["operation"], known_operations, product_name)
                 self.assertIn(route_step["position"], {"Раскройщик", "Упаковщик", "Швея"}, product_name)
                 self.assertTrue(route_step["status_after"], product_name)
+
+    def test_route_batch_flow_advances_and_writes_history(self):
+        route_maps = importlib.import_module("route_maps")
+        self.database.create_employee(4004, "Тест Маршрут", "Раскройщик")
+        employee = self.database.get_employee_by_telegram_id(4004)
+        employee_id = employee[0]
+        self.database.update_employee_status(employee_id, "active")
+
+        batch = self.database.create_route_batch(
+            "Шорты",
+            "110",
+            "Голубой",
+            12,
+            employee_id,
+        )
+        first_step = route_maps.PRODUCT_ROUTE_MAPS["Шорты"][0]
+
+        self.assertIsNotNone(batch)
+        self.assertEqual(batch["route_step_index"], 0)
+        self.assertEqual(batch["status"], "active")
+
+        updated = self.database.complete_route_batch_step(
+            batch["id"],
+            employee_id,
+            first_step["operation"],
+            first_step["position"],
+            1,
+            "active",
+        )
+
+        self.assertEqual(updated["route_step_index"], 1)
+        self.assertEqual(updated["status"], "active")
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT operation_name, position, quantity FROM route_batch_history WHERE batch_id = ?",
+            (batch["id"],),
+        )
+        self.assertEqual(cursor.fetchone(), (first_step["operation"], first_step["position"], 12))
+        conn.close()
 
     def test_cutting_batch_flow_multiplies_sizes_by_layers(self):
         batch_id = self._create_layout_done_batch()

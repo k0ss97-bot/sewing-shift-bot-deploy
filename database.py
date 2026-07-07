@@ -59,6 +59,19 @@ def resolve_database_path():
 
 DB_NAME = resolve_database_path()
 LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
+ROUTE_BATCH_COLUMNS = [
+    "id",
+    "product_name",
+    "product_size",
+    "product_color",
+    "quantity",
+    "route_step_index",
+    "status",
+    "created_by_employee_id",
+    "created_at",
+    "updated_at",
+    "completed_at",
+]
 
 
 def get_database_dir():
@@ -108,6 +121,13 @@ def local_now():
 
 def local_today():
     return local_now().date()
+
+
+def route_batch_from_row(row):
+    if row is None:
+        return None
+
+    return dict(zip(ROUTE_BATCH_COLUMNS, row))
 
 
 from catalog import (
@@ -667,6 +687,38 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS route_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_name TEXT NOT NULL,
+            product_size TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            route_step_index INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_by_employee_id INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            FOREIGN KEY (created_by_employee_id) REFERENCES employees (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS route_batch_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            step_index INTEGER NOT NULL,
+            operation_name TEXT NOT NULL,
+            position TEXT NOT NULL,
+            employee_id INTEGER,
+            quantity INTEGER NOT NULL,
+            completed_at TEXT NOT NULL,
+            FOREIGN KEY (batch_id) REFERENCES route_batches (id),
+            FOREIGN KEY (employee_id) REFERENCES employees (id)
+        )
+    """)
+
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_employee_date ON shifts (employee_id, shift_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_date_status ON shifts (shift_date, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_shift ON shift_operations (shift_id)")
@@ -675,6 +727,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batches_product_status ON cutting_batches (product_name, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_date ON feedback_entries (feedback_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_employee_date ON feedback_entries (employee_id, feedback_date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batches_status_step ON route_batches (status, route_step_index)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_history_batch ON route_batch_history (batch_id)")
 
     cursor.execute("SELECT COUNT(*) FROM operations")
     count = cursor.fetchone()[0]
@@ -1556,6 +1610,163 @@ def set_shift_operation_quantity(
     conn.commit()
     conn.close()
     return True
+
+
+def get_route_batch_by_id(batch_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            product_name,
+            product_size,
+            product_color,
+            quantity,
+            route_step_index,
+            status,
+            created_by_employee_id,
+            created_at,
+            updated_at,
+            completed_at
+        FROM route_batches
+        WHERE id = ?
+        """,
+        (batch_id,)
+    )
+
+    batch = route_batch_from_row(cursor.fetchone())
+    conn.close()
+    return batch
+
+
+def get_active_route_batches():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            product_name,
+            product_size,
+            product_color,
+            quantity,
+            route_step_index,
+            status,
+            created_by_employee_id,
+            created_at,
+            updated_at,
+            completed_at
+        FROM route_batches
+        WHERE status = 'active'
+        ORDER BY created_at ASC, id ASC
+        """
+    )
+
+    batches = [route_batch_from_row(row) for row in cursor.fetchall()]
+    conn.close()
+    return batches
+
+
+def create_route_batch(
+    product_name: str,
+    product_size: str,
+    product_color: str,
+    quantity: int,
+    employee_id: int | None,
+):
+    if quantity <= 0:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    now = local_now().isoformat()
+
+    cursor.execute(
+        """
+        INSERT INTO route_batches (
+            product_name,
+            product_size,
+            product_color,
+            quantity,
+            route_step_index,
+            status,
+            created_by_employee_id,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, 0, 'active', ?, ?, ?)
+        """,
+        (product_name, product_size, product_color, quantity, employee_id, now, now)
+    )
+
+    batch_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return get_route_batch_by_id(batch_id)
+
+
+def complete_route_batch_step(
+    batch_id: int,
+    employee_id: int | None,
+    operation_name: str,
+    position: str,
+    next_step_index: int,
+    new_status: str,
+):
+    batch = get_route_batch_by_id(batch_id)
+
+    if batch is None or batch["status"] != "active":
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    now = local_now().isoformat()
+    completed_at = now if new_status == "done" else None
+
+    cursor.execute(
+        """
+        INSERT INTO route_batch_history (
+            batch_id,
+            step_index,
+            operation_name,
+            position,
+            employee_id,
+            quantity,
+            completed_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            batch_id,
+            batch["route_step_index"],
+            operation_name,
+            position,
+            employee_id,
+            batch["quantity"],
+            now,
+        )
+    )
+
+    cursor.execute(
+        """
+        UPDATE route_batches
+        SET route_step_index = ?,
+            status = ?,
+            updated_at = ?,
+            completed_at = ?
+        WHERE id = ?
+        """,
+        (next_step_index, new_status, now, completed_at, batch_id)
+    )
+
+    conn.commit()
+    conn.close()
+    return get_route_batch_by_id(batch_id)
 
 
 def get_shift_report(shift_id: int):
