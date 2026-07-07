@@ -1184,6 +1184,7 @@ MINIAPP_HTML = """<!doctype html>
       --shadow: 0 24px 58px rgba(35, 48, 88, 0.20);
       --shadow-soft: 0 12px 28px rgba(35, 48, 88, 0.12);
       --blue-shadow: 0 16px 32px rgba(68, 88, 255, 0.24);
+      --font-main: "Anthropic Serif", ui-serif, Georgia, "Times New Roman", serif;
     }
 
     * {
@@ -1198,7 +1199,7 @@ MINIAPP_HTML = """<!doctype html>
         repeating-linear-gradient(90deg, rgba(68, 88, 255, 0.045) 0 1px, transparent 1px 86px),
         repeating-linear-gradient(0deg, rgba(68, 88, 255, 0.035) 0 1px, transparent 1px 86px);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--font-main);
     }
 
     .page {
@@ -1224,41 +1225,28 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .brand-mark {
+      display: flex;
+      align-items: center;
+      justify-content: center;
       position: relative;
-      width: 42px;
-      height: 42px;
-      flex: 0 0 42px;
+      width: 44px;
+      height: 44px;
+      flex: 0 0 44px;
       border-radius: 8px;
-      background: linear-gradient(135deg, #5f75ff 0%, #303cff 100%);
-      border: 1px solid rgba(255, 255, 255, 0.64);
-      box-shadow: var(--blue-shadow);
-    }
-
-    .brand-mark::before,
-    .brand-mark::after {
-      content: "";
-      position: absolute;
-      background: #ffffff;
-    }
-
-    .brand-mark::before {
-      width: 22px;
-      height: 14px;
-      left: 10px;
-      top: 15px;
-      border-radius: 3px 3px 2px 2px;
+      color: #ffffff;
+      overflow: hidden;
+      background: linear-gradient(135deg, #6378ff 0%, #3d4dff 52%, #2832d7 100%);
+      border: 1px solid rgba(255, 255, 255, 0.70);
       box-shadow:
-        -6px 10px 0 -4px #ffffff,
-        7px 10px 0 -4px #ffffff;
+        var(--blue-shadow),
+        inset 0 1px 0 rgba(255, 255, 255, 0.28);
     }
 
-    .brand-mark::after {
-      width: 25px;
-      height: 3px;
-      left: 9px;
-      top: 31px;
-      border-radius: 999px;
-      opacity: 0.94;
+    .brand-mark svg {
+      display: block;
+      width: 34px;
+      height: 34px;
+      filter: drop-shadow(0 1px 1px rgba(18, 24, 63, 0.18));
     }
 
     .brand-text {
@@ -1610,19 +1598,14 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       .brand-mark {
-        width: 38px;
-        height: 38px;
-        flex-basis: 38px;
+        width: 40px;
+        height: 40px;
+        flex-basis: 40px;
       }
 
-      .brand-mark::before {
-        left: 9px;
-        top: 13px;
-      }
-
-      .brand-mark::after {
-        left: 8px;
-        top: 29px;
+      .brand-mark svg {
+        width: 31px;
+        height: 31px;
       }
 
       .brand-subtitle {
@@ -1640,7 +1623,16 @@ MINIAPP_HTML = """<!doctype html>
   <main class="page">
     <div class="topbar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true"></div>
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64" focusable="false">
+            <path fill="currentColor" d="M11 47h42c2.2 0 4 1.8 4 4v3H7v-3c0-2.2 1.8-4 4-4Z"/>
+            <path fill="currentColor" d="M15 24h25c7.7 0 14 6.3 14 14v9H15V24Z"/>
+            <path fill="currentColor" d="M15 17h10v8H15v-8Z"/>
+            <path fill="currentColor" d="M42 19h9v10h-9V19Z"/>
+            <path fill="#303cff" d="M23 32h14v5H23z"/>
+            <circle cx="31" cy="43" r="3.8" fill="#303cff"/>
+          </svg>
+        </div>
         <div class="brand-text">
           <h1>Шагаем вместе</h1>
           <p class="brand-subtitle">Управление производством швейной фабрики</p>
