@@ -1165,22 +1165,25 @@ MINIAPP_HTML = """<!doctype html>
   <style>
     :root {
       color-scheme: light;
-      --bg: #edf1ef;
-      --surface: rgba(255, 255, 255, 0.78);
+      --bg: #edf2fb;
+      --surface: rgba(255, 255, 255, 0.74);
       --surface-strong: rgba(255, 255, 255, 0.92);
-      --text: #2f3740;
-      --muted: #7a858e;
-      --accent: #849481;
-      --accent-strong: #637461;
-      --accent-soft: rgba(132, 148, 129, 0.16);
-      --danger: #a65b56;
-      --danger-soft: rgba(166, 91, 86, 0.14);
-      --success: #6f8b70;
-      --success-soft: rgba(111, 139, 112, 0.16);
-      --border: rgba(114, 128, 121, 0.22);
-      --soft: rgba(255, 255, 255, 0.54);
-      --shadow: 0 18px 46px rgba(76, 88, 82, 0.16);
-      --shadow-soft: 0 8px 24px rgba(76, 88, 82, 0.10);
+      --glass-blue: rgba(238, 243, 255, 0.78);
+      --text: #12182b;
+      --muted: #687287;
+      --accent: #4458ff;
+      --accent-strong: #2f3fe8;
+      --accent-soft: rgba(68, 88, 255, 0.13);
+      --danger: #dd4f5d;
+      --danger-soft: rgba(221, 79, 93, 0.12);
+      --success: #31a86b;
+      --success-soft: rgba(49, 168, 107, 0.14);
+      --warning: #f2a23a;
+      --border: rgba(109, 124, 158, 0.22);
+      --soft: rgba(255, 255, 255, 0.56);
+      --shadow: 0 24px 58px rgba(35, 48, 88, 0.20);
+      --shadow-soft: 0 12px 28px rgba(35, 48, 88, 0.12);
+      --blue-shadow: 0 16px 32px rgba(68, 88, 255, 0.24);
     }
 
     * {
@@ -1191,17 +1194,17 @@ MINIAPP_HTML = """<!doctype html>
       margin: 0;
       min-height: 100vh;
       background:
-        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.23) 0 1px, transparent 1px 96px),
-        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.18) 0 1px, transparent 1px 96px),
-        linear-gradient(135deg, #f8faf9 0%, #eef2ef 42%, #dfe6e2 100%);
+        linear-gradient(120deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 249, 255, 0.92) 32%, rgba(218, 225, 245, 0.72) 70%, rgba(128, 140, 169, 0.62) 100%),
+        repeating-linear-gradient(90deg, rgba(68, 88, 255, 0.045) 0 1px, transparent 1px 86px),
+        repeating-linear-gradient(0deg, rgba(68, 88, 255, 0.035) 0 1px, transparent 1px 86px);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     .page {
-      width: min(960px, 100%);
+      width: min(1040px, 100%);
       margin: 0 auto;
-      padding: 18px 14px 96px;
+      padding: 20px 14px 96px;
     }
 
     .topbar {
@@ -1209,13 +1212,8 @@ MINIAPP_HTML = """<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 14px;
-      padding: 14px;
-      background: var(--surface);
-      border: 1px solid rgba(255, 255, 255, 0.72);
-      border-radius: 8px;
-      box-shadow: var(--shadow-soft);
-      backdrop-filter: blur(22px);
+      margin-bottom: 16px;
+      padding: 4px 2px;
     }
 
     .brand {
@@ -1227,39 +1225,40 @@ MINIAPP_HTML = """<!doctype html>
 
     .brand-mark {
       position: relative;
-      width: 44px;
-      height: 44px;
-      flex: 0 0 44px;
-      border-radius: 50%;
-      background: linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(230, 236, 232, 0.76));
-      border: 1px solid rgba(120, 135, 128, 0.28);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 20px rgba(88, 101, 94, 0.12);
+      width: 58px;
+      height: 58px;
+      flex: 0 0 58px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #5f75ff 0%, #303cff 100%);
+      border: 1px solid rgba(255, 255, 255, 0.64);
+      box-shadow: var(--blue-shadow);
     }
 
     .brand-mark::before,
     .brand-mark::after {
       content: "";
       position: absolute;
-      border: 2px solid var(--accent);
-      border-right-color: transparent;
-      border-radius: 50%;
+      background: #ffffff;
     }
 
     .brand-mark::before {
-      width: 22px;
-      height: 28px;
-      left: 9px;
-      top: 8px;
-      transform: rotate(-26deg);
+      width: 31px;
+      height: 19px;
+      left: 14px;
+      top: 20px;
+      border-radius: 3px 3px 2px 2px;
+      box-shadow:
+        -8px 13px 0 -5px #ffffff,
+        9px 13px 0 -5px #ffffff;
     }
 
     .brand-mark::after {
-      width: 16px;
-      height: 18px;
-      right: 8px;
-      bottom: 7px;
-      transform: rotate(34deg);
-      opacity: 0.76;
+      width: 34px;
+      height: 4px;
+      left: 12px;
+      top: 41px;
+      border-radius: 999px;
+      opacity: 0.94;
     }
 
     .brand-text {
@@ -1267,10 +1266,10 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .brand-subtitle {
-      margin: 2px 0 0;
+      margin: 6px 0 0;
       color: var(--muted);
-      font-size: 12px;
-      line-height: 1.25;
+      font-size: 13px;
+      line-height: 1.35;
     }
 
     h1, h2, h3, p {
@@ -1280,32 +1279,104 @@ MINIAPP_HTML = """<!doctype html>
 
     h1 {
       margin-bottom: 0;
-      font-size: 24px;
+      font-size: 30px;
       line-height: 1.2;
-      color: #344039;
+      color: #151b31;
+      font-weight: 900;
     }
 
     h2 {
       margin-bottom: 12px;
       font-size: 19px;
-      color: #344039;
+      color: #151b31;
     }
 
     h3 {
       margin-bottom: 8px;
       font-size: 15px;
-      color: #344039;
+      color: #151b31;
     }
 
     .status {
-      padding: 8px 12px;
-      border: 1px solid rgba(255, 255, 255, 0.82);
+      padding: 9px 13px;
+      border: 1px solid rgba(119, 133, 171, 0.22);
       border-radius: 999px;
-      color: var(--accent-strong);
-      background: rgba(255, 255, 255, 0.56);
+      color: #28315b;
+      background: rgba(255, 255, 255, 0.66);
       font-size: 13px;
       font-weight: 800;
       white-space: nowrap;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82), var(--shadow-soft);
+      backdrop-filter: blur(18px);
+    }
+
+    .hero-dashboard {
+      display: grid;
+      grid-template-columns: 1.35fr 0.82fr 0.82fr;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .metric-card {
+      min-height: 112px;
+      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.74);
+      border-radius: 8px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.86), rgba(235, 240, 255, 0.56)),
+        var(--surface);
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(24px);
+    }
+
+    .metric-card.primary {
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.90), rgba(229, 235, 255, 0.68)),
+        var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .metric-label {
+      display: block;
+      margin-bottom: 9px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .metric-value {
+      display: block;
+      color: #11162a;
+      font-size: 25px;
+      font-weight: 900;
+      line-height: 1.12;
+      overflow-wrap: anywhere;
+    }
+
+    .metric-note {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+    }
+
+    .progress-track {
+      height: 7px;
+      margin-top: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(68, 88, 255, 0.12);
+    }
+
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #5266ff, #2f3fe8);
+      box-shadow: 0 0 18px rgba(68, 88, 255, 0.42);
+      transition: width 220ms ease;
     }
 
     .tabs {
@@ -1317,17 +1388,17 @@ MINIAPP_HTML = """<!doctype html>
       top: 0;
       z-index: 2;
       padding: 6px;
-      background: rgba(255, 255, 255, 0.62);
-      border: 1px solid rgba(255, 255, 255, 0.74);
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.82);
       border-radius: 8px;
       box-shadow: var(--shadow-soft);
-      backdrop-filter: blur(20px);
+      backdrop-filter: blur(24px);
     }
 
     .tab {
       min-height: 42px;
       padding: 8px;
-      color: var(--text);
+      color: #47526b;
       background: transparent;
       border: 1px solid transparent;
       border-radius: 8px;
@@ -1337,9 +1408,9 @@ MINIAPP_HTML = """<!doctype html>
 
     .tab.active {
       color: #ffffff;
-      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      background: linear-gradient(135deg, #5d72ff, var(--accent-strong));
       border-color: rgba(255, 255, 255, 0.34);
-      box-shadow: 0 9px 20px rgba(99, 116, 97, 0.24);
+      box-shadow: var(--blue-shadow);
     }
 
     .tab[hidden] {
@@ -1357,13 +1428,15 @@ MINIAPP_HTML = """<!doctype html>
     .card {
       position: relative;
       overflow: hidden;
-      background: var(--surface);
-      border: 1px solid rgba(255, 255, 255, 0.74);
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.86), rgba(234, 239, 255, 0.56)),
+        var(--surface);
+      border: 1px solid rgba(255, 255, 255, 0.78);
       border-radius: 8px;
       padding: 16px;
       margin-bottom: 12px;
       box-shadow: var(--shadow-soft);
-      backdrop-filter: blur(22px);
+      backdrop-filter: blur(24px);
     }
 
     .card::before {
@@ -1388,7 +1461,7 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 21px;
       font-weight: 800;
       line-height: 1.25;
-      color: #27312b;
+      color: #11162a;
     }
 
     .grid {
@@ -1414,25 +1487,25 @@ MINIAPP_HTML = """<!doctype html>
       padding: 11px 12px;
       font-weight: 800;
       color: #ffffff;
-      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-      box-shadow: 0 10px 22px rgba(99, 116, 97, 0.22);
+      background: linear-gradient(135deg, #5d72ff, var(--accent-strong));
+      box-shadow: var(--blue-shadow);
     }
 
     button.secondary {
-      color: var(--text);
-      background: rgba(255, 255, 255, 0.44);
-      border: 1px solid rgba(255, 255, 255, 0.68);
+      color: #27304a;
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid rgba(255, 255, 255, 0.76);
       box-shadow: none;
     }
 
     button.danger {
-      background: linear-gradient(135deg, #b46b66, var(--danger));
-      box-shadow: 0 10px 22px rgba(166, 91, 86, 0.20);
+      background: linear-gradient(135deg, #f16f78, var(--danger));
+      box-shadow: 0 12px 24px rgba(221, 79, 93, 0.22);
     }
 
     button.success {
-      background: linear-gradient(135deg, #7f987f, var(--success));
-      box-shadow: 0 10px 22px rgba(111, 139, 112, 0.20);
+      background: linear-gradient(135deg, #42c983, var(--success));
+      box-shadow: 0 12px 24px rgba(49, 168, 107, 0.22);
     }
 
     button:disabled {
@@ -1443,10 +1516,10 @@ MINIAPP_HTML = """<!doctype html>
     select, input, textarea {
       min-height: 44px;
       padding: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(129, 143, 178, 0.24);
       color: var(--text);
-      background: rgba(255, 255, 255, 0.62);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
     }
 
     textarea {
@@ -1480,7 +1553,7 @@ MINIAPP_HTML = """<!doctype html>
       justify-content: space-between;
       gap: 16px;
       padding-top: 9px;
-      border-top: 1px solid rgba(114, 128, 121, 0.16);
+      border-top: 1px solid rgba(109, 124, 158, 0.16);
       color: var(--muted);
       font-size: 14px;
     }
@@ -1498,10 +1571,10 @@ MINIAPP_HTML = """<!doctype html>
 
     .item {
       padding: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.68);
+      border: 1px solid rgba(255, 255, 255, 0.78);
       border-radius: 8px;
-      background: rgba(255, 255, 255, 0.50);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+      background: rgba(255, 255, 255, 0.62);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
     }
 
     .item-title {
@@ -1536,10 +1609,10 @@ MINIAPP_HTML = """<!doctype html>
 
     .pill {
       padding: 5px 8px;
-      border: 1px solid rgba(255, 255, 255, 0.68);
+      border: 1px solid rgba(255, 255, 255, 0.76);
       border-radius: 999px;
       color: var(--muted);
-      background: rgba(255, 255, 255, 0.46);
+      background: rgba(255, 255, 255, 0.58);
       font-size: 12px;
     }
 
@@ -1547,9 +1620,9 @@ MINIAPP_HTML = """<!doctype html>
       width: auto;
       min-height: 34px;
       padding: 7px 10px;
-      color: var(--text);
-      background: rgba(255, 255, 255, 0.46);
-      border: 1px solid rgba(255, 255, 255, 0.68);
+      color: #27304a;
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid rgba(255, 255, 255, 0.76);
       border-radius: 999px;
       font-size: 12px;
       font-weight: 800;
@@ -1568,11 +1641,16 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       .topbar {
-        padding: 12px;
+        align-items: flex-start;
+        padding: 3px 2px;
+      }
+
+      .hero-dashboard {
+        grid-template-columns: 1fr;
       }
 
       h1 {
-        font-size: 22px;
+        font-size: 28px;
       }
 
       .tabs {
@@ -1593,13 +1671,24 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       .brand-mark {
-        width: 38px;
-        height: 38px;
-        flex-basis: 38px;
+        width: 48px;
+        height: 48px;
+        flex-basis: 48px;
+      }
+
+      .brand-mark::before {
+        left: 11px;
+        top: 16px;
+      }
+
+      .brand-mark::after {
+        left: 9px;
+        top: 36px;
       }
 
       .brand-subtitle {
-        display: none;
+        max-width: 220px;
+        font-size: 12px;
       }
 
       .status {
@@ -1625,6 +1714,27 @@ MINIAPP_HTML = """<!doctype html>
       </div>
       <div class="status" id="connection">Загрузка</div>
     </div>
+
+    <section class="hero-dashboard" aria-label="Производственный центр">
+      <div class="metric-card primary">
+        <span class="metric-label">Текущая смена</span>
+        <span class="metric-value" id="metricShiftState">Проверяем доступ</span>
+        <span class="metric-note" id="metricShiftTime">Откройте приложение из Telegram</span>
+        <div class="progress-track" aria-hidden="true">
+          <div class="progress-fill" id="metricShiftProgress"></div>
+        </div>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Операции сегодня</span>
+        <span class="metric-value" id="metricReportCount">0</span>
+        <span class="metric-note">строк в текущем отчёте</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Профиль</span>
+        <span class="metric-value" id="metricPosition">-</span>
+        <span class="metric-note" id="metricEmployee">Сотрудник не определён</span>
+      </div>
+    </section>
 
     <nav class="tabs">
       <button class="tab active" data-tab="shift">Смена</button>
@@ -1812,6 +1922,50 @@ MINIAPP_HTML = """<!doctype html>
       return `<p class="empty">${escapeHtml(text)}</p>`;
     }
 
+    function parseTimeToMinutes(value) {
+      const parts = String(value || "").split(":");
+
+      if (parts.length < 2) {
+        return null;
+      }
+
+      const hours = Number(parts[0]);
+      const minutes = Number(parts[1]);
+
+      if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+        return null;
+      }
+
+      return hours * 60 + minutes;
+    }
+
+    function clampPercent(value) {
+      return Math.max(0, Math.min(100, Math.round(value)));
+    }
+
+    function estimateShiftProgress(shift) {
+      if (!shift) {
+        return 0;
+      }
+
+      if (shift.status === "closed") {
+        return 100;
+      }
+
+      const startMinutes = parseTimeToMinutes(shift.start_time);
+
+      if (startMinutes === null) {
+        return 0;
+      }
+
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const elapsed = nowMinutes - startMinutes;
+      const plannedShiftMinutes = 12 * 60;
+
+      return clampPercent((elapsed / plannedShiftMinutes) * 100);
+    }
+
     function item(title, meta = "") {
       return `
         <div class="item">
@@ -1838,10 +1992,15 @@ MINIAPP_HTML = """<!doctype html>
     function renderShift(data) {
       const employee = data.employee;
       const shift = data.shift;
+      let metricShiftState = "Нет доступа";
+      let metricShiftTime = data.message || "Откройте приложение из Telegram";
+      let metricProgress = 0;
 
       setText("employeeName", employee ? employee.full_name : "Нет доступа");
       setText("employeePosition", employee ? employee.position : "-");
       setText("employeeStatus", employee ? employee.status : "-");
+      setText("metricPosition", employee ? employee.position : "-");
+      setText("metricEmployee", employee ? employee.full_name : "Сотрудник не определён");
 
       if (!shift) {
         setText("shiftStatus", "Смена не открыта");
@@ -1849,20 +2008,31 @@ MINIAPP_HTML = """<!doctype html>
         setText("shiftStart", "-");
         setText("shiftEnd", "-");
         setText("shiftTotal", "-");
+        metricShiftState = employee ? "Смена не открыта" : "Нет доступа";
+        metricShiftTime = employee ? "Можно открыть смену" : metricShiftTime;
       } else if (shift.status === "open") {
         setText("shiftStatus", "Смена открыта");
         setText("shiftDate", shift.date);
         setText("shiftStart", shift.start_time);
         setText("shiftEnd", "-");
         setText("shiftTotal", "-");
+        metricShiftState = "В работе";
+        metricShiftTime = `${shift.start_time} — сейчас`;
+        metricProgress = estimateShiftProgress(shift);
       } else {
         setText("shiftStatus", "Смена закрыта");
         setText("shiftDate", shift.date);
         setText("shiftStart", shift.start_time);
         setText("shiftEnd", shift.end_time);
         setText("shiftTotal", shift.total_minutes_text);
+        metricShiftState = "Смена закрыта";
+        metricShiftTime = `${shift.start_time || "-"} — ${shift.end_time || "-"}`;
+        metricProgress = 100;
       }
 
+      setText("metricShiftState", metricShiftState);
+      setText("metricShiftTime", metricShiftTime);
+      $("metricShiftProgress").style.width = `${metricProgress}%`;
       $("message").textContent = data.message || "";
       $("openButton").disabled = state.loading || !data.ok || data.has_open_shift || (shift && shift.status === "closed");
       $("closeButton").disabled = state.loading || !data.ok || !data.has_open_shift;
@@ -1875,6 +2045,7 @@ MINIAPP_HTML = """<!doctype html>
 
       setText("reportShift", shift ? `${shift.date}, ${shift.status === "open" ? "открыта" : "закрыта"}` : "Нет смены");
       setText("reportCount", String(operations.length));
+      setText("metricReportCount", String(operations.length));
 
       $("reportOperations").innerHTML = operations.length
         ? operations.map((row, index) => item(
