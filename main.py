@@ -1085,6 +1085,32 @@ async def admin_menu(message: Message):
     await message.answer("Админ-панель:", reply_markup=admin_keyboard())
 
 
+@dp.message(Command("whoami"))
+async def whoami(message: Message):
+    employee = get_employee_by_telegram_id(message.from_user.id)
+    admin_status = "да" if is_admin(message.from_user.id) else "нет"
+
+    text = (
+        "Проверка доступа:\n\n"
+        f"Telegram ID: {message.from_user.id}\n"
+        f"Администратор: {admin_status}\n"
+    )
+
+    if employee is None:
+        text += "\nСотрудник в базе: нет"
+    else:
+        text += (
+            "\nСотрудник в базе: да\n"
+            f"ID в базе: {employee[0]}\n"
+            f"ФИО: {employee[2]}\n"
+            f"Должность: {employee[3]}\n"
+            f"Роль: {employee[4]}\n"
+            f"Статус: {employee[5]}"
+        )
+
+    await message.answer(text)
+
+
 @dp.errors()
 async def error_handler(event):
     logging.exception("Bot error", exc_info=event.exception)

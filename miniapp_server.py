@@ -145,7 +145,10 @@ def get_shift_state(telegram_id: int, message: str = ""):
         return {
             "ok": False,
             "code": "not_registered",
-            "message": "Вы не зарегистрированы. Вернитесь в бот и нажмите /start.",
+            "message": (
+                "Вы не зарегистрированы или ваша запись не перенесена в новую базу. "
+                f"Ваш Telegram ID: {telegram_id}. Вернитесь в бот и нажмите /start."
+            ),
             "employee": None,
             "shift": None,
         }
