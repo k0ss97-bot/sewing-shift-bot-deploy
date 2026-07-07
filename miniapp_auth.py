@@ -3,7 +3,7 @@ import hmac
 import time
 
 
-AUTH_TOKEN_TTL_SECONDS = 24 * 60 * 60
+AUTH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
 def create_auth_token(telegram_id: int, bot_token: str, ttl_seconds: int = AUTH_TOKEN_TTL_SECONDS):
