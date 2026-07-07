@@ -17,6 +17,7 @@ from database import (
     get_open_shift_for_today,
     get_shift_for_today,
 )
+from miniapp_auth import parse_auth_token
 
 
 AUTH_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
@@ -108,7 +109,12 @@ def authenticate_payload(payload: dict, bot_token: str, debug: bool):
         except (TypeError, ValueError):
             return None
 
-    return parse_telegram_init_data(payload.get("initData", ""), bot_token)
+    telegram_user = parse_telegram_init_data(payload.get("initData", ""), bot_token)
+
+    if telegram_user:
+        return telegram_user
+
+    return parse_auth_token(payload.get("authToken", ""), bot_token)
 
 
 def shift_to_dict(shift):
@@ -436,6 +442,7 @@ MINIAPP_HTML = """<!doctype html>
     const tg = window.Telegram && window.Telegram.WebApp;
     const urlParams = new URLSearchParams(window.location.search);
     const debugTelegramId = urlParams.get("debug_tg_id");
+    const authToken = urlParams.get("auth");
     const state = {
       initData: tg ? tg.initData : "",
       loading: false,
@@ -505,6 +512,7 @@ MINIAPP_HTML = """<!doctype html>
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
             initData: state.initData,
+            authToken,
             telegram_id: debugTelegramId,
           }),
         });

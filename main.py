@@ -5285,7 +5285,7 @@ async def report_menu_button(message: Message):
 
 async def send_miniapp_button(message: Message):
     miniapp_url = os.getenv("MINIAPP_URL") or os.getenv("WEBAPP_URL")
-    reply_markup = miniapp_inline_keyboard()
+    reply_markup = miniapp_inline_keyboard(message.from_user.id)
 
     if not miniapp_url or reply_markup is None:
         await message.answer(
@@ -5295,7 +5295,7 @@ async def send_miniapp_button(message: Message):
         return
 
     await message.answer(
-        "Открывайте миниапп только через кнопку ниже, тогда Telegram передаст доступ.",
+        "Открывайте миниапп через кнопку ниже. Кнопка персональная и действует 24 часа.",
         reply_markup=reply_markup,
     )
 
