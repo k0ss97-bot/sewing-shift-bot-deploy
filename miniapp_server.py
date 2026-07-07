@@ -11,25 +11,47 @@ from urllib.parse import parse_qsl, urlparse
 from database import (
     add_edit_log,
     add_feedback_entry,
+    add_operation,
+    admin_close_shift,
     close_shift,
     complete_route_batch_step,
     create_route_batch,
     create_shift,
+    delete_shift_by_id,
     ensure_admin_employee,
     get_active_route_batches,
     get_all_employees,
+    get_all_operations,
     get_database_status,
     get_employee_by_telegram_id,
+    get_employee_period_operation_totals,
+    get_employee_period_summary,
+    get_employee_shifts_by_period,
+    get_employees_by_status,
     get_feedback_entries_by_shift,
     get_month_employee_summary,
+    get_month_operation_rows,
+    get_month_shift_details,
     get_open_shifts,
     get_open_shift_for_today,
+    get_pending_employees,
+    get_period_employee_summary,
+    get_period_operation_rows,
+    get_period_shift_details,
     get_product_colors,
     get_product_sizes,
     get_recent_shifts,
+    get_recent_edit_logs,
     get_route_batch_by_id,
     get_shift_for_today,
     get_shift_report,
+    get_today_shifts,
+    hide_operation,
+    local_today,
+    restore_operation,
+    update_employee_position,
+    update_employee_status,
+    update_operation_field,
 )
 from catalog import format_color_label
 from miniapp_auth import parse_auth_token
@@ -569,66 +591,548 @@ def get_route_catalog():
     return [route_map_to_dict(product_name) for product_name in PRODUCT_ROUTE_MAPS]
 
 
+ADMIN_MENU = [
+    {
+        "id": "requests",
+        "title": "Заявки",
+        "buttons": ["Заявки"],
+    },
+    {
+        "id": "reports",
+        "title": "Отчёты",
+        "buttons": [
+            "Отчёт за сегодня",
+            "Отчёт за месяц",
+            "Отчёт за период",
+            "Excel за период",
+            "Отчёт по сотруднику",
+            "Править отчёт",
+            "Выгрузить отчёт",
+            "Партии раскроя",
+        ],
+    },
+    {
+        "id": "shifts",
+        "title": "Смены",
+        "buttons": ["Открытые смены", "Последние смены", "Удалить смену"],
+    },
+    {
+        "id": "employees",
+        "title": "Сотрудники",
+        "buttons": [
+            "Список сотрудников",
+            "Активные сотрудники",
+            "Неактивные сотрудники",
+            "Активировать сотрудника",
+            "Отключить сотрудника",
+            "Сменить должность",
+        ],
+    },
+    {
+        "id": "operations",
+        "title": "Операции",
+        "buttons": [
+            "Список операций",
+            "Добавить операцию",
+            "Изменить операцию",
+            "Скрыть операцию",
+            "Вернуть операцию",
+        ],
+    },
+    {
+        "id": "files",
+        "title": "Файлы",
+        "buttons": [
+            "Журнал",
+            "Скачать базу",
+            "Проверка базы",
+            "Загрузить базу",
+            "Создать копию базы",
+            "Ошибки",
+        ],
+    },
+]
+
+POSITIONS = ["Швея", "Упаковщик", "Раскройщик", "Ремонт"]
+
+
+def clean_date(value: str | None, fallback: str):
+    value = (value or "").strip()
+
+    if len(value) == 10 and value[4] == "-" and value[7] == "-":
+        return value
+
+    return fallback
+
+
+def month_bounds():
+    today = local_today()
+    return today.replace(day=1).isoformat(), today.isoformat()
+
+
+def employee_admin_to_dict(employee):
+    employee_id, full_name, position, telegram_id_value, employee_status = employee
+
+    return {
+        "id": employee_id,
+        "full_name": full_name,
+        "position": position or "-",
+        "telegram_id": telegram_id_value,
+        "status": employee_status,
+    }
+
+
+def pending_employee_to_dict(employee):
+    employee_id, full_name, position, telegram_id_value, registered_at = employee
+
+    return {
+        "id": employee_id,
+        "full_name": full_name,
+        "position": position or "-",
+        "telegram_id": telegram_id_value,
+        "registered_at": registered_at,
+    }
+
+
+def open_shift_to_dict(shift):
+    shift_id, full_name, shift_date, start_time = shift
+
+    return {
+        "id": shift_id,
+        "employee": full_name,
+        "date": shift_date,
+        "start_time": start_time,
+    }
+
+
+def recent_shift_to_dict(shift):
+    shift_id, full_name, shift_date, start_time, end_time, shift_status, operation_count = shift
+
+    return {
+        "id": shift_id,
+        "employee": full_name,
+        "date": shift_date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "status": shift_status,
+        "operation_count": operation_count,
+    }
+
+
+def shift_detail_to_dict(row):
+    if len(row) == 7:
+        shift_id, full_name, shift_date, start_time, end_time, total_minutes, shift_status = row
+    else:
+        shift_id = None
+        shift_date, full_name, start_time, end_time, total_minutes, shift_status = row
+
+    return {
+        "id": shift_id,
+        "date": shift_date,
+        "employee": full_name,
+        "start_time": start_time,
+        "end_time": end_time,
+        "total_minutes": total_minutes,
+        "total_time": format_minutes(total_minutes or 0),
+        "status": shift_status,
+    }
+
+
+def employee_summary_to_dict(row):
+    employee_id, full_name, shift_count, total_minutes = row[:4]
+
+    return {
+        "employee_id": employee_id,
+        "full_name": full_name,
+        "shift_count": shift_count,
+        "total_minutes": total_minutes,
+        "total_time": format_minutes(total_minutes or 0),
+    }
+
+
+def operation_summary_to_dict(row):
+    (
+        shift_date,
+        full_name,
+        work_group,
+        operation_name,
+        product_size,
+        product_color,
+        total_quantity,
+        unit,
+    ) = row
+
+    return {
+        "date": shift_date,
+        "employee": full_name,
+        "group": work_group,
+        "operation": operation_name,
+        "size": product_size,
+        "color": format_color_label(product_color),
+        "quantity": total_quantity,
+        "unit": unit,
+    }
+
+
+def employee_operation_total_to_dict(row):
+    operation_name, total_quantity, unit = row
+
+    return {
+        "operation": operation_name,
+        "quantity": total_quantity,
+        "unit": unit,
+    }
+
+
+def operation_admin_to_dict(row):
+    operation_id, number, name, position, operation_group, folder, unit, is_active = row
+
+    return {
+        "id": operation_id,
+        "number": number,
+        "name": name,
+        "position": position or "-",
+        "group": operation_group or "-",
+        "folder": folder or "-",
+        "unit": unit or "шт",
+        "active": bool(is_active),
+    }
+
+
+def edit_log_to_dict(row):
+    changed_at, changed_by, role, action, entity_type, entity_id, details = row
+
+    return {
+        "changed_at": changed_at,
+        "changed_by": changed_by,
+        "role": role,
+        "action": action,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "details": details,
+    }
+
+
 def get_admin_dashboard(telegram_id: int):
     if not is_admin(telegram_id):
         return {"ok": False, "message": "Нет прав администратора."}
 
     employees = get_all_employees()
-    status = get_database_status()
-    month_summary = get_month_employee_summary()
-    open_shifts = get_open_shifts()
-    recent_shifts = get_recent_shifts(12)
-    status_counts = {}
-
-    for employee in employees:
-        status_counts[employee[4]] = status_counts.get(employee[4], 0) + 1
+    month_start, today = month_bounds()
 
     return {
         "ok": True,
-        "database": status,
-        "status_counts": status_counts,
-        "employees": [
-            {
-                "id": employee_id,
-                "full_name": full_name,
-                "position": position,
-                "telegram_id": telegram_id_value,
-                "status": employee_status,
-            }
-            for employee_id, full_name, position, telegram_id_value, employee_status in employees
+        "menu": ADMIN_MENU,
+        "positions": POSITIONS,
+        "period_defaults": {"start_date": month_start, "end_date": today},
+        "employees": [employee_admin_to_dict(employee) for employee in employees],
+        "active_employees": [
+            employee_admin_to_dict(employee) for employee in get_employees_by_status("active")
         ],
-        "open_shifts": [
-            {
-                "id": shift_id,
-                "employee": full_name,
-                "date": shift_date,
-                "start_time": start_time,
-            }
-            for shift_id, full_name, shift_date, start_time in open_shifts
+        "inactive_employees": [
+            employee_admin_to_dict(employee) for employee in get_employees_by_status("inactive")
         ],
-        "recent_shifts": [
-            {
-                "id": shift_id,
-                "employee": full_name,
-                "date": shift_date,
-                "start_time": start_time,
-                "end_time": end_time,
-                "status": shift_status,
-                "operation_count": operation_count,
-            }
-            for shift_id, full_name, shift_date, start_time, end_time, shift_status, operation_count in recent_shifts
+        "pending_employees": [
+            pending_employee_to_dict(employee) for employee in get_pending_employees()
         ],
-        "month_summary": [
-            {
-                "employee_id": employee_id,
-                "full_name": full_name,
-                "shift_count": shift_count,
-                "total_minutes": total_minutes,
-                "total_time": format_minutes(total_minutes),
-            }
-            for employee_id, full_name, shift_count, total_minutes in month_summary
+        "open_shifts": [open_shift_to_dict(shift) for shift in get_open_shifts()],
+        "recent_shifts": [recent_shift_to_dict(shift) for shift in get_recent_shifts(20)],
+        "operations": [
+            operation_admin_to_dict(operation) for operation in get_all_operations()
         ],
+        "files": {
+            "database": get_database_status(),
+            "logs": [edit_log_to_dict(row) for row in get_recent_edit_logs(25)],
+        },
+        "reports": get_admin_report_payload("month", month_start, today),
     }
+
+
+def get_admin_report_payload(
+    report_type: str,
+    start_date: str,
+    end_date: str,
+    employee_id: int | None = None,
+):
+    if report_type == "today":
+        today = local_today().isoformat()
+        return {
+            "type": "today",
+            "title": f"Отчёт за сегодня: {today}",
+            "start_date": today,
+            "end_date": today,
+            "summary": [employee_summary_to_dict(row) for row in get_period_employee_summary(today, today)],
+            "shifts": [shift_detail_to_dict(row) for row in get_today_shifts()],
+            "operations": [operation_summary_to_dict(row) for row in get_period_operation_rows(today, today)],
+        }
+
+    if report_type == "employee" and employee_id:
+        summary = get_employee_period_summary(employee_id, start_date, end_date)
+        return {
+            "type": "employee",
+            "title": f"Отчёт по сотруднику: {start_date} — {end_date}",
+            "start_date": start_date,
+            "end_date": end_date,
+            "employee_summary": (
+                {
+                    "employee_id": summary[0],
+                    "full_name": summary[1],
+                    "position": summary[2],
+                    "shift_count": summary[3],
+                    "total_minutes": summary[4],
+                    "total_time": format_minutes(summary[4] or 0),
+                }
+                if summary
+                else None
+            ),
+            "employee_shifts": [
+                {
+                    "id": row[0],
+                    "date": row[1],
+                    "start_time": row[2],
+                    "end_time": row[3],
+                    "total_minutes": row[4],
+                    "total_time": format_minutes(row[4] or 0),
+                    "status": row[5],
+                }
+                for row in get_employee_shifts_by_period(employee_id, start_date, end_date)
+            ],
+            "employee_operations": [
+                employee_operation_total_to_dict(row)
+                for row in get_employee_period_operation_totals(employee_id, start_date, end_date)
+            ],
+        }
+
+    if report_type == "period":
+        title = f"Отчёт за период: {start_date} — {end_date}"
+        summary_rows = get_period_employee_summary(start_date, end_date)
+        operation_rows = get_period_operation_rows(start_date, end_date)
+        shift_rows = get_period_shift_details(start_date, end_date)
+    else:
+        month_start, today = month_bounds()
+        start_date = month_start
+        end_date = today
+        title = f"Отчёт за месяц: {start_date} — {end_date}"
+        summary_rows = get_month_employee_summary()
+        operation_rows = get_month_operation_rows()
+        shift_rows = get_month_shift_details()
+
+    return {
+        "type": "period" if report_type == "period" else "month",
+        "title": title,
+        "start_date": start_date,
+        "end_date": end_date,
+        "summary": [employee_summary_to_dict(row) for row in summary_rows],
+        "shifts": [shift_detail_to_dict(row) for row in shift_rows],
+        "operations": [operation_summary_to_dict(row) for row in operation_rows],
+    }
+
+
+def get_admin_report_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    month_start, today = month_bounds()
+    report_type = (payload.get("report_type") or "month").strip()
+    start_date = clean_date(payload.get("start_date"), month_start)
+    end_date = clean_date(payload.get("end_date"), today)
+
+    try:
+        employee_id = int(payload.get("employee_id") or 0)
+    except (TypeError, ValueError):
+        employee_id = 0
+
+    return {
+        "ok": True,
+        "report": get_admin_report_payload(
+            report_type,
+            start_date,
+            end_date,
+            employee_id or None,
+        ),
+    }
+
+
+def set_employee_status_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    try:
+        employee_id = int(payload.get("employee_id") or 0)
+    except (TypeError, ValueError):
+        employee_id = 0
+
+    status = (payload.get("status") or "").strip()
+
+    if status not in {"active", "inactive", "pending"}:
+        return {"ok": False, "message": "Некорректный статус."}
+
+    employee = update_employee_status(employee_id, status)
+
+    if employee is None:
+        return {"ok": False, "message": "Сотрудник не найден."}
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        f"Изменил статус сотрудника на {status} из миниаппа",
+        "employee",
+        employee_id,
+        employee[2],
+    )
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["message"] = "Статус сотрудника изменён."
+    return dashboard
+
+
+def set_employee_position_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    try:
+        employee_id = int(payload.get("employee_id") or 0)
+    except (TypeError, ValueError):
+        employee_id = 0
+
+    position = (payload.get("position") or "").strip()
+
+    if position not in POSITIONS:
+        return {"ok": False, "message": "Выберите должность из списка."}
+
+    employee = update_employee_position(employee_id, position)
+
+    if employee is None:
+        return {"ok": False, "message": "Сотрудник не найден."}
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        f"Изменил должность на {position} из миниаппа",
+        "employee",
+        employee_id,
+        employee[2],
+    )
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["message"] = "Должность сотрудника изменена."
+    return dashboard
+
+
+def close_shift_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    try:
+        shift_id = int(payload.get("shift_id") or 0)
+    except (TypeError, ValueError):
+        shift_id = 0
+
+    end_time = (payload.get("end_time") or "").strip()
+
+    if not end_time:
+        return {"ok": False, "message": "Укажите время закрытия в формате 18:00."}
+
+    result = admin_close_shift(shift_id, end_time)
+
+    if result is None:
+        return {"ok": False, "message": "Открытая смена с таким ID не найдена."}
+
+    if result == "bad_time":
+        return {"ok": False, "message": "Время закрытия меньше времени начала."}
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        "Закрыл смену сотрудника из миниаппа",
+        "shift",
+        shift_id,
+        f"Окончание: {result['end_time']}, отработано: {format_minutes(result['total_minutes'])}",
+    )
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["message"] = "Смена закрыта."
+    return dashboard
+
+
+def delete_shift_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    try:
+        shift_id = int(payload.get("shift_id") or 0)
+    except (TypeError, ValueError):
+        shift_id = 0
+
+    shift = delete_shift_by_id(shift_id)
+
+    if shift is None:
+        return {"ok": False, "message": "Смена не найдена."}
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        "Удалил смену из миниаппа",
+        "shift",
+        shift_id,
+        f"{shift[1]} {shift[2]} {shift[3]}-{shift[4] or ''}",
+    )
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["message"] = "Смена удалена."
+    return dashboard
+
+
+def operation_action_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    action = (payload.get("action") or "").strip()
+
+    try:
+        number = int(payload.get("number") or 0)
+    except (TypeError, ValueError):
+        number = 0
+
+    if action == "hide":
+        operation = hide_operation(number)
+        message = "Операция скрыта."
+    elif action == "restore":
+        operation = restore_operation(number)
+        message = "Операция возвращена."
+    elif action == "update":
+        operation = update_operation_field(
+            number,
+            (payload.get("field") or "").strip(),
+            (payload.get("value") or "").strip(),
+        )
+        message = "Операция изменена."
+    elif action == "add":
+        operation = add_operation(
+            (payload.get("name") or "").strip(),
+            (payload.get("position") or "").strip(),
+            (payload.get("operation_group") or "").strip(),
+            (payload.get("folder") or "").strip(),
+        )
+        message = "Операция добавлена."
+    else:
+        return {"ok": False, "message": "Неизвестное действие."}
+
+    if operation is None:
+        return {"ok": False, "message": "Операция не найдена или данные некорректны."}
+
+    operation_log_id = number
+
+    if not operation_log_id and isinstance(operation, dict):
+        operation_log_id = operation.get("id")
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        message,
+        "operation",
+        operation_log_id,
+        json.dumps(operation, ensure_ascii=False),
+    )
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["message"] = message
+    return dashboard
 
 
 def get_app_state(telegram_id: int, message: str = ""):
@@ -935,6 +1439,24 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 12px;
     }
 
+    .pill-button {
+      width: auto;
+      min-height: 34px;
+      padding: 7px 10px;
+      color: var(--text);
+      background: var(--soft);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .pill-button.active {
+      color: var(--accent-text);
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
     @media (max-width: 560px) {
       .tabs {
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1051,24 +1573,31 @@ MINIAPP_HTML = """<!doctype html>
 
     <section class="section" id="section-admin">
       <div class="card">
-        <h2>Админ-сводка</h2>
-        <div class="grid three" id="adminCounters"></div>
+        <h2>Админ меню</h2>
+        <div class="grid three" id="adminMenu"></div>
+        <div class="message" id="adminStatus"></div>
       </div>
       <div class="card">
-        <h3>Открытые смены</h3>
-        <div class="list" id="adminOpenShifts"></div>
+        <h3 id="adminPanelTitle">Раздел</h3>
+        <div class="pill-row" id="adminPanelButtons"></div>
+        <div class="list" id="adminPanelContent"></div>
       </div>
       <div class="card">
-        <h3>Сотрудники</h3>
-        <div class="list" id="adminEmployees"></div>
-      </div>
-      <div class="card">
-        <h3>Сводка за месяц</h3>
-        <div class="list" id="adminMonthSummary"></div>
-      </div>
-      <div class="card">
-        <h3>Последние смены</h3>
-        <div class="list" id="adminRecentShifts"></div>
+        <h3>Блок отчёта</h3>
+        <div class="form">
+          <div class="grid">
+            <button id="adminReportToday">Отчёт за сегодня</button>
+            <button id="adminReportMonth" class="secondary">Отчёт за месяц</button>
+          </div>
+          <div class="grid">
+            <input id="adminReportStart" type="date">
+            <input id="adminReportEnd" type="date">
+          </div>
+          <button id="adminReportPeriod" class="secondary">Отчёт за период</button>
+          <select id="adminEmployeeSelect"></select>
+          <button id="adminEmployeeReport" class="secondary">Отчёт по сотруднику</button>
+        </div>
+        <div class="list" id="adminReportOutput"></div>
       </div>
     </section>
   </main>
@@ -1082,6 +1611,7 @@ MINIAPP_HTML = """<!doctype html>
       initData: tg ? tg.initData : "",
       loading: false,
       tab: "shift",
+      adminSection: "requests",
       data: null,
     };
 
@@ -1282,6 +1812,232 @@ MINIAPP_HTML = """<!doctype html>
       });
     }
 
+    function minutesText(totalMinutes) {
+      const minutes = Number(totalMinutes || 0);
+      const hours = Math.floor(minutes / 60);
+      const tail = String(minutes % 60).padStart(2, "0");
+      return `${hours}:${tail}`;
+    }
+
+    function renderAdminMenu(admin) {
+      $("adminMenu").innerHTML = (admin.menu || []).map((section) => `
+        <button class="${state.adminSection === section.id ? "" : "secondary"}" data-admin-section="${escapeHtml(section.id)}">
+          ${escapeHtml(section.title)}
+        </button>
+      `).join("");
+
+      document.querySelectorAll("[data-admin-section]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.adminSection = button.dataset.adminSection;
+          renderAdmin(state.data.admin);
+        });
+      });
+    }
+
+    function renderAdminSectionButtons(section) {
+      $("adminPanelButtons").innerHTML = (section.buttons || []).map((buttonText) => (
+        `<button class="pill-button" data-admin-tool="${escapeHtml(buttonText)}">${escapeHtml(buttonText)}</button>`
+      )).join("");
+
+      document.querySelectorAll("[data-admin-tool]").forEach((button) => {
+        button.addEventListener("click", () => handleAdminTool(button.dataset.adminTool));
+      });
+    }
+
+    function employeeActions(employee) {
+      return `
+        <div class="grid">
+          <button class="success" data-employee-status="${escapeHtml(employee.id)}" data-status-value="active">Активен</button>
+          <button class="danger" data-employee-status="${escapeHtml(employee.id)}" data-status-value="inactive">Отключить</button>
+          <button class="secondary" data-employee-position="${escapeHtml(employee.id)}">Должность</button>
+        </div>
+      `;
+    }
+
+    function renderEmployeesList(employees) {
+      return employees.length
+        ? employees.map((employee) => `
+            <div class="item">
+              <p class="item-title">${escapeHtml(employee.full_name)}</p>
+              <p class="item-meta">
+                ID: ${escapeHtml(employee.id)}<br>
+                Telegram ID: ${escapeHtml(employee.telegram_id)}<br>
+                Должность: ${escapeHtml(employee.position || "-")}<br>
+                Статус: ${escapeHtml(employee.status)}
+              </p>
+              ${employeeActions(employee)}
+            </div>
+          `).join("")
+        : empty("Сотрудников нет.");
+    }
+
+    function renderOpenShifts(shifts) {
+      return shifts.length
+        ? shifts.map((shift) => `
+            <div class="item">
+              <p class="item-title">#${escapeHtml(shift.id)} ${escapeHtml(shift.employee)}</p>
+              <p class="item-meta">${escapeHtml(shift.date)} с ${escapeHtml(shift.start_time)}</p>
+              <button class="danger" data-admin-close-shift="${escapeHtml(shift.id)}">Закрыть смену</button>
+            </div>
+          `).join("")
+        : empty("Открытых смен нет.");
+    }
+
+    function renderRecentShifts(shifts) {
+      return shifts.length
+        ? shifts.map((shift) => `
+            <div class="item">
+              <p class="item-title">#${escapeHtml(shift.id)} ${escapeHtml(shift.employee)}</p>
+              <p class="item-meta">
+                ${escapeHtml(shift.date)} ${escapeHtml(shift.start_time)}-${escapeHtml(shift.end_time || "")}<br>
+                Статус: ${escapeHtml(shift.status)}<br>
+                Строк отчёта: ${escapeHtml(shift.operation_count)}
+              </p>
+              <button class="danger" data-admin-delete-shift="${escapeHtml(shift.id)}">Удалить смену</button>
+            </div>
+          `).join("")
+        : empty("Смен пока нет.");
+    }
+
+    function renderOperationsList(operations) {
+      const visibleOperations = operations.slice(0, 80);
+      const tailMessage = operations.length > visibleOperations.length
+        ? `<p class="empty">Показаны первые ${visibleOperations.length} из ${operations.length}. Для точного изменения используйте номер операции.</p>`
+        : "";
+
+      return [
+        tailMessage,
+        visibleOperations.length
+          ? visibleOperations.map((operation) => `
+              <div class="item">
+                <p class="item-title">${escapeHtml(operation.name)}</p>
+                <p class="item-meta">
+                  Номер: ${escapeHtml(operation.number)}<br>
+                  Должность: ${escapeHtml(operation.position)}<br>
+                  Группа: ${escapeHtml(operation.group)}<br>
+                  Папка: ${escapeHtml(operation.folder)}<br>
+                  Ед.: ${escapeHtml(operation.unit)}<br>
+                  Статус: ${operation.active ? "активна" : "скрыта"}
+                </p>
+                <div class="grid">
+                  <button class="secondary" data-admin-edit-operation="${escapeHtml(operation.number)}">Изменить</button>
+                  <button class="${operation.active ? "danger" : "success"}" data-admin-toggle-operation="${escapeHtml(operation.number)}" data-operation-action="${operation.active ? "hide" : "restore"}">
+                    ${operation.active ? "Скрыть" : "Вернуть"}
+                  </button>
+                </div>
+              </div>
+            `).join("")
+          : empty("Операций нет."),
+      ].join("");
+    }
+
+    function renderAdminReport(report) {
+      if (!report) {
+        $("adminReportOutput").innerHTML = empty("Выберите отчёт.");
+        return;
+      }
+
+      const summary = report.summary || [];
+      const shifts = report.shifts || report.employee_shifts || [];
+      const operations = report.operations || report.employee_operations || [];
+      const totalShifts = summary.reduce((sum, row) => sum + Number(row.shift_count || 0), 0);
+      const totalMinutes = summary.reduce((sum, row) => sum + Number(row.total_minutes || 0), 0);
+
+      let output = item(report.title || "Отчёт", `Период: ${escapeHtml(report.start_date)} — ${escapeHtml(report.end_date)}`);
+
+      if (report.employee_summary) {
+        const employee = report.employee_summary;
+        output += item(
+          employee.full_name,
+          `Должность: ${escapeHtml(employee.position || "-")}<br>Смен: ${escapeHtml(employee.shift_count)}<br>Часы: ${escapeHtml(employee.total_time)}`
+        );
+      } else if (summary.length) {
+        output += item("Итого", `Смен: ${escapeHtml(totalShifts)}<br>Часы: ${escapeHtml(minutesText(totalMinutes))}`);
+        output += summary.map((row) => item(
+          row.full_name,
+          `Смен: ${escapeHtml(row.shift_count)}<br>Часы: ${escapeHtml(row.total_time)}`
+        )).join("");
+      }
+
+      output += shifts.length
+        ? item("Смены по дням", shifts.slice(0, 40).map((shift) => (
+            `${escapeHtml(shift.date)} — ${escapeHtml(shift.employee || "")} ${escapeHtml(shift.start_time || "")}-${escapeHtml(shift.end_time || "")}, ${escapeHtml(shift.total_time || "")}, ${escapeHtml(shift.status || "")}`
+          )).join("<br>"))
+        : empty("Смен за период нет.");
+
+      output += operations.length
+        ? item("Операции", operations.slice(0, 60).map((row) => {
+            if (row.employee) {
+              return `${escapeHtml(row.date)} — ${escapeHtml(row.employee)} — ${escapeHtml(row.group)} — ${escapeHtml(row.operation)} — ${escapeHtml(row.size || "-")} / ${escapeHtml(row.color || "-")} — ${escapeHtml(row.quantity)} ${escapeHtml(row.unit)}`;
+            }
+
+            return `${escapeHtml(row.operation)} — ${escapeHtml(row.quantity)} ${escapeHtml(row.unit)}`;
+          }).join("<br>"))
+        : empty("Операций за период нет.");
+
+      $("adminReportOutput").innerHTML = output;
+    }
+
+    function renderAdminSection(admin) {
+      const section = (admin.menu || []).find((item) => item.id === state.adminSection) || (admin.menu || [])[0];
+
+      if (!section) {
+        return;
+      }
+
+      $("adminPanelTitle").textContent = section.title;
+      renderAdminSectionButtons(section);
+
+      if (section.id === "requests") {
+        $("adminPanelContent").innerHTML = admin.pending_employees.length
+          ? admin.pending_employees.map((employee) => `
+              <div class="item">
+                <p class="item-title">${escapeHtml(employee.full_name)}</p>
+                <p class="item-meta">
+                  ID: ${escapeHtml(employee.id)}<br>
+                  Telegram ID: ${escapeHtml(employee.telegram_id)}<br>
+                  Должность: ${escapeHtml(employee.position || "-")}<br>
+                  Дата заявки: ${escapeHtml(employee.registered_at)}
+                </p>
+                <div class="grid">
+                  <button class="success" data-employee-status="${escapeHtml(employee.id)}" data-status-value="active">Подтвердить</button>
+                  <button class="danger" data-employee-status="${escapeHtml(employee.id)}" data-status-value="inactive">Отклонить</button>
+                </div>
+              </div>
+            `).join("")
+          : empty("Новых заявок нет.");
+      } else if (section.id === "reports") {
+        $("adminPanelContent").innerHTML = empty("Используйте блок отчёта ниже. Кнопки этого раздела сохранены как в Telegram-боте.");
+      } else if (section.id === "shifts") {
+        $("adminPanelContent").innerHTML = [
+          item("Открытые смены", ""),
+          renderOpenShifts(admin.open_shifts),
+          item("Последние смены", ""),
+          renderRecentShifts(admin.recent_shifts),
+        ].join("");
+      } else if (section.id === "employees") {
+        $("adminPanelContent").innerHTML = renderEmployeesList(admin.employees);
+      } else if (section.id === "operations") {
+        $("adminPanelContent").innerHTML = renderOperationsList(admin.operations);
+      } else if (section.id === "files") {
+        const database = admin.files.database || {};
+        const logs = admin.files.logs || [];
+        $("adminPanelContent").innerHTML = [
+          item(
+            "Проверка базы",
+            `Путь: ${escapeHtml(database.path)}<br>Файл найден: ${database.exists ? "да" : "нет"}<br>Размер: ${escapeHtml(database.size)} байт<br>Папка копий: ${escapeHtml(database.backup_dir)}<br>Копий базы: ${escapeHtml(database.backup_count)}`
+          ),
+          logs.length
+            ? item("Журнал", logs.slice(0, 20).map((log) => (
+                `${escapeHtml(log.changed_at)} — ${escapeHtml(log.action)} — ${escapeHtml(log.details || "")}`
+              )).join("<br>"))
+            : empty("Журнал пока пуст."),
+        ].join("");
+      }
+
+      bindAdminActionButtons();
+    }
+
     function renderAdmin(admin) {
       $("adminTab").hidden = !(state.data && state.data.is_admin);
 
@@ -1289,43 +2045,22 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      const database = admin.database || {};
-      $("adminCounters").innerHTML = [
-        item("Сотрудники", String(database.employees ?? 0)),
-        item("Смены", String(database.shifts ?? 0)),
-        item("Операции в отчётах", String(database.shift_operations ?? 0)),
-        item("Справочник операций", String(database.operations ?? 0)),
-        item("Обратная связь", String(database.feedback_entries ?? 0)),
-        item("Копии базы", String(database.backup_count ?? 0)),
-      ].join("");
+      $("adminStatus").textContent = admin.message || "";
+      renderAdminMenu(admin);
+      renderAdminSection(admin);
 
-      $("adminOpenShifts").innerHTML = admin.open_shifts.length
-        ? admin.open_shifts.map((shift) => item(
-            `#${shift.id} ${shift.employee}`,
-            `${escapeHtml(shift.date)} с ${escapeHtml(shift.start_time)}`
-          )).join("")
-        : empty("Открытых смен нет.");
+      const defaults = admin.period_defaults || {};
+      if (!$("adminReportStart").value) {
+        $("adminReportStart").value = defaults.start_date || "";
+      }
+      if (!$("adminReportEnd").value) {
+        $("adminReportEnd").value = defaults.end_date || "";
+      }
 
-      $("adminEmployees").innerHTML = admin.employees.length
-        ? admin.employees.map((employee) => item(
-            `${employee.full_name}`,
-            `ID: ${escapeHtml(employee.id)}<br>Должность: ${escapeHtml(employee.position || "-")}<br>Статус: ${escapeHtml(employee.status)}`
-          )).join("")
-        : empty("Сотрудников нет.");
-
-      $("adminMonthSummary").innerHTML = admin.month_summary.length
-        ? admin.month_summary.map((row) => item(
-            row.full_name,
-            `Смен: ${escapeHtml(row.shift_count)}<br>Часы: ${escapeHtml(row.total_time)}`
-          )).join("")
-        : empty("Закрытых смен за месяц пока нет.");
-
-      $("adminRecentShifts").innerHTML = admin.recent_shifts.length
-        ? admin.recent_shifts.map((shift) => item(
-            `#${shift.id} ${shift.employee}`,
-            `${escapeHtml(shift.date)} ${escapeHtml(shift.start_time)}-${escapeHtml(shift.end_time || "")}<br>Статус: ${escapeHtml(shift.status)}<br>Строк отчёта: ${escapeHtml(shift.operation_count)}`
-          )).join("")
-        : empty("Смен пока нет.");
+      $("adminEmployeeSelect").innerHTML = optionList(
+        (admin.employees || []).map((employee) => `${employee.id} — ${employee.full_name}`)
+      );
+      renderAdminReport(admin.reports);
     }
 
     function render(data) {
@@ -1396,6 +2131,173 @@ MINIAPP_HTML = """<!doctype html>
       await refreshState(result.message || "");
     }
 
+    function selectedAdminEmployeeId() {
+      const value = $("adminEmployeeSelect").value || "";
+      return value.split(" — ")[0] || "";
+    }
+
+    async function loadAdminReport(reportType) {
+      const result = await api("/api/admin/report", {
+        report_type: reportType,
+        start_date: $("adminReportStart").value,
+        end_date: $("adminReportEnd").value,
+        employee_id: selectedAdminEmployeeId(),
+      });
+
+      if (result.ok) {
+        renderAdminReport(result.report);
+      } else {
+        $("adminReportOutput").innerHTML = empty(result.message || "Не удалось получить отчёт.");
+      }
+    }
+
+    async function updateAdminFromResult(result) {
+      if (!result.ok) {
+        $("adminStatus").textContent = result.message || "Ошибка.";
+        $("adminStatus").className = "message error";
+        return;
+      }
+
+      state.data.admin = result;
+      $("adminStatus").className = "message ok";
+      renderAdmin(result);
+    }
+
+    async function setEmployeeStatus(employeeId, status) {
+      const result = await api("/api/admin/employee/status", {
+        employee_id: employeeId,
+        status,
+      });
+      updateAdminFromResult(result);
+    }
+
+    async function setEmployeePosition(employeeId) {
+      const positions = state.data.admin.positions || [];
+      const position = prompt(`Новая должность: ${positions.join(", ")}`);
+
+      if (!position) {
+        return;
+      }
+
+      const result = await api("/api/admin/employee/position", {
+        employee_id: employeeId,
+        position,
+      });
+      updateAdminFromResult(result);
+    }
+
+    async function closeShiftAsAdmin(shiftId) {
+      const endTime = prompt("Время закрытия смены, например 18:00");
+
+      if (!endTime) {
+        return;
+      }
+
+      const result = await api("/api/admin/shift/close", {
+        shift_id: shiftId,
+        end_time: endTime,
+      });
+      updateAdminFromResult(result);
+    }
+
+    async function deleteShiftAsAdmin(shiftId) {
+      if (!confirm(`Удалить смену #${shiftId}? Это удалит и строки отчёта этой смены.`)) {
+        return;
+      }
+
+      const result = await api("/api/admin/shift/delete", {shift_id: shiftId});
+      updateAdminFromResult(result);
+    }
+
+    async function operationAction(action, number, extra = {}) {
+      const result = await api("/api/admin/operation", {
+        action,
+        number,
+        ...extra,
+      });
+      updateAdminFromResult(result);
+    }
+
+    async function editOperation(number) {
+      const field = prompt("Что изменить: name, position, operation_group, folder");
+
+      if (!field) {
+        return;
+      }
+
+      const value = prompt("Новое значение");
+
+      if (!value) {
+        return;
+      }
+
+      operationAction("update", number, {field, value});
+    }
+
+    async function addOperationFromPrompt() {
+      const name = prompt("Название операции");
+
+      if (!name) {
+        return;
+      }
+
+      const position = prompt("Должность: Швея, Упаковщик, Раскройщик, Ремонт") || "";
+      const operationGroup = prompt("Группа") || "";
+      const folder = prompt("Папка/изделие") || "";
+      operationAction("add", 0, {name, position, operation_group: operationGroup, folder});
+    }
+
+    function handleAdminTool(toolName) {
+      if (toolName === "Отчёт за сегодня") {
+        loadAdminReport("today");
+      } else if (toolName === "Отчёт за месяц" || toolName === "Выгрузить отчёт") {
+        loadAdminReport("month");
+      } else if (toolName === "Отчёт за период" || toolName === "Excel за период") {
+        loadAdminReport("period");
+      } else if (toolName === "Отчёт по сотруднику") {
+        loadAdminReport("employee");
+      } else if (toolName === "Добавить операцию") {
+        addOperationFromPrompt();
+      } else if (toolName === "Скрыть операцию" || toolName === "Вернуть операцию" || toolName === "Изменить операцию" || toolName === "Удалить смену") {
+        $("adminStatus").textContent = "Выберите нужную строку в списке ниже.";
+      } else if (toolName === "Проверка базы" || toolName === "Журнал" || toolName === "Ошибки" || toolName === "Скачать базу" || toolName === "Загрузить базу" || toolName === "Создать копию базы") {
+        state.adminSection = "files";
+        renderAdmin(state.data.admin);
+      } else if (toolName === "Список сотрудников" || toolName === "Активные сотрудники" || toolName === "Неактивные сотрудники" || toolName === "Сменить должность" || toolName === "Активировать сотрудника" || toolName === "Отключить сотрудника") {
+        state.adminSection = "employees";
+        renderAdmin(state.data.admin);
+      } else if (toolName === "Открытые смены" || toolName === "Последние смены") {
+        state.adminSection = "shifts";
+        renderAdmin(state.data.admin);
+      } else if (toolName === "Список операций") {
+        state.adminSection = "operations";
+        renderAdmin(state.data.admin);
+      } else {
+        $("adminStatus").textContent = "Эта команда пока оставлена кнопкой меню. Данные раздела показаны ниже.";
+      }
+    }
+
+    function bindAdminActionButtons() {
+      document.querySelectorAll("[data-employee-status]").forEach((button) => {
+        button.addEventListener("click", () => setEmployeeStatus(button.dataset.employeeStatus, button.dataset.statusValue));
+      });
+      document.querySelectorAll("[data-employee-position]").forEach((button) => {
+        button.addEventListener("click", () => setEmployeePosition(button.dataset.employeePosition));
+      });
+      document.querySelectorAll("[data-admin-close-shift]").forEach((button) => {
+        button.addEventListener("click", () => closeShiftAsAdmin(button.dataset.adminCloseShift));
+      });
+      document.querySelectorAll("[data-admin-delete-shift]").forEach((button) => {
+        button.addEventListener("click", () => deleteShiftAsAdmin(button.dataset.adminDeleteShift));
+      });
+      document.querySelectorAll("[data-admin-toggle-operation]").forEach((button) => {
+        button.addEventListener("click", () => operationAction(button.dataset.operationAction, button.dataset.adminToggleOperation));
+      });
+      document.querySelectorAll("[data-admin-edit-operation]").forEach((button) => {
+        button.addEventListener("click", () => editOperation(button.dataset.adminEditOperation));
+      });
+    }
+
     function activateTab(tabName) {
       state.tab = tabName;
       document.querySelectorAll(".tab").forEach((button) => {
@@ -1417,6 +2319,10 @@ MINIAPP_HTML = """<!doctype html>
     $("routeProductSelect").addEventListener("change", renderSelectedRoute);
     $("batchProductSelect").addEventListener("change", renderBatchOptions);
     $("createBatchButton").addEventListener("click", createBatch);
+    $("adminReportToday").addEventListener("click", () => loadAdminReport("today"));
+    $("adminReportMonth").addEventListener("click", () => loadAdminReport("month"));
+    $("adminReportPeriod").addEventListener("click", () => loadAdminReport("period"));
+    $("adminEmployeeReport").addEventListener("click", () => loadAdminReport("employee"));
 
     refreshState();
   </script>
@@ -1454,6 +2360,12 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/routes/create-batch",
                 "/api/routes/complete",
                 "/api/admin/dashboard",
+                "/api/admin/report",
+                "/api/admin/employee/status",
+                "/api/admin/employee/position",
+                "/api/admin/shift/close",
+                "/api/admin/shift/delete",
+                "/api/admin/operation",
             }
 
             if path not in allowed_paths:
@@ -1503,6 +2415,18 @@ def make_handler(bot_token: str, debug: bool):
                 result = complete_route_task_for_telegram(telegram_id, batch_id)
             elif path == "/api/admin/dashboard":
                 result = get_admin_dashboard(telegram_id)
+            elif path == "/api/admin/report":
+                result = get_admin_report_for_telegram(telegram_id, payload)
+            elif path == "/api/admin/employee/status":
+                result = set_employee_status_for_admin(telegram_id, payload)
+            elif path == "/api/admin/employee/position":
+                result = set_employee_position_for_admin(telegram_id, payload)
+            elif path == "/api/admin/shift/close":
+                result = close_shift_for_admin(telegram_id, payload)
+            elif path == "/api/admin/shift/delete":
+                result = delete_shift_for_admin(telegram_id, payload)
+            elif path == "/api/admin/operation":
+                result = operation_action_for_admin(telegram_id, payload)
             else:
                 result = get_app_state(telegram_id)
 
