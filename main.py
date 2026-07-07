@@ -332,7 +332,21 @@ async def callback_state_is_current(callback: CallbackQuery, state: FSMContext, 
 
 
 def get_admin_ids():
-    return [int(admin_id.strip()) for admin_id in ADMIN_IDS.split(",") if admin_id.strip()]
+    admin_ids = []
+    raw_admin_ids = ADMIN_IDS.replace("ADMIN_IDS=", "")
+
+    for raw_admin_id in raw_admin_ids.split(","):
+        raw_admin_id = raw_admin_id.strip()
+
+        if not raw_admin_id:
+            continue
+
+        try:
+            admin_ids.append(int(raw_admin_id))
+        except ValueError:
+            logging.warning("Invalid ADMIN_IDS item ignored: %s", raw_admin_id)
+
+    return admin_ids
 
 
 def is_admin(telegram_id: int):

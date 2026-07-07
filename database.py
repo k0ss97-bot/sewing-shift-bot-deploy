@@ -865,6 +865,66 @@ def get_employee_by_telegram_id(telegram_id: int):
     return employee
 
 
+def ensure_admin_employee(telegram_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, telegram_id, full_name, position, role, status
+        FROM employees
+        WHERE telegram_id = ?
+        """,
+        (telegram_id,),
+    )
+
+    employee = cursor.fetchone()
+
+    if employee is None:
+        cursor.execute(
+            """
+            INSERT INTO employees (telegram_id, full_name, position, role, status, registered_at)
+            VALUES (?, ?, ?, 'admin', 'active', ?)
+            """,
+            (
+                telegram_id,
+                f"Администратор {telegram_id}",
+                "Администратор",
+                local_now().isoformat(),
+            ),
+        )
+    else:
+        full_name = employee[2] or f"Администратор {telegram_id}"
+        position = employee[3] or "Администратор"
+
+        cursor.execute(
+            """
+            UPDATE employees
+            SET full_name = ?,
+                position = ?,
+                role = 'admin',
+                status = 'active'
+            WHERE telegram_id = ?
+            """,
+            (full_name, position, telegram_id),
+        )
+
+    conn.commit()
+
+    cursor.execute(
+        """
+        SELECT id, telegram_id, full_name, position, role, status
+        FROM employees
+        WHERE telegram_id = ?
+        """,
+        (telegram_id,),
+    )
+
+    employee = cursor.fetchone()
+    conn.close()
+    return employee
+
+
 def create_employee(telegram_id: int, full_name: str, position: str):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()

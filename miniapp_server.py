@@ -12,6 +12,7 @@ from database import (
     add_edit_log,
     close_shift,
     create_shift,
+    ensure_admin_employee,
     get_employee_by_telegram_id,
     get_open_shift_for_today,
     get_shift_for_today,
@@ -19,6 +20,35 @@ from database import (
 
 
 AUTH_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+
+
+def get_admin_ids():
+    admin_ids = []
+    raw_admin_ids = os.getenv("ADMIN_IDS", "").replace("ADMIN_IDS=", "")
+
+    for raw_admin_id in raw_admin_ids.split(","):
+        raw_admin_id = raw_admin_id.strip()
+
+        if not raw_admin_id:
+            continue
+
+        try:
+            admin_ids.append(int(raw_admin_id))
+        except ValueError:
+            logging.warning("Invalid ADMIN_IDS item ignored: %s", raw_admin_id)
+
+    return admin_ids
+
+
+def is_admin(telegram_id: int):
+    return telegram_id in get_admin_ids()
+
+
+def get_employee_for_access(telegram_id: int):
+    if is_admin(telegram_id):
+        return ensure_admin_employee(telegram_id)
+
+    return get_employee_by_telegram_id(telegram_id)
 
 
 def format_minutes(total_minutes: int | None):
@@ -109,7 +139,7 @@ def employee_to_dict(employee):
 
 
 def get_shift_state(telegram_id: int, message: str = ""):
-    employee = get_employee_by_telegram_id(telegram_id)
+    employee = get_employee_for_access(telegram_id)
 
     if employee is None:
         return {
@@ -149,7 +179,7 @@ def get_shift_state(telegram_id: int, message: str = ""):
 
 
 def open_shift_for_telegram(telegram_id: int):
-    employee = get_employee_by_telegram_id(telegram_id)
+    employee = get_employee_for_access(telegram_id)
 
     if employee is None or employee[5] != "active":
         return get_shift_state(telegram_id)
@@ -177,7 +207,7 @@ def open_shift_for_telegram(telegram_id: int):
 
 
 def close_shift_for_telegram(telegram_id: int):
-    employee = get_employee_by_telegram_id(telegram_id)
+    employee = get_employee_for_access(telegram_id)
 
     if employee is None or employee[5] != "active":
         return get_shift_state(telegram_id)
