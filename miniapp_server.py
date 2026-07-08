@@ -833,15 +833,15 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
 
     product_name = (payload.get("product_name") or "").strip()
     task_type = (payload.get("task_type") or "cutting").strip()
-    material_name = (payload.get("material_name") or "Ткань").strip() or "Ткань"
+    material_name = (payload.get("material_name") or "").strip()
     sizes = [str(size).strip() for size in payload.get("sizes", []) if str(size).strip()]
     colors = [str(color).strip() for color in payload.get("colors", []) if str(color).strip()]
 
     if product_name not in PRODUCT_ROUTE_MAPS:
         return {"ok": False, "message": "Выберите изделие."}
 
-    if material_name != "Ткань":
-        return {"ok": False, "message": "Пока доступен только материал: Ткань."}
+    if task_type not in {"cutting", "route"}:
+        return {"ok": False, "message": "Выберите тип задания."}
 
     allowed_sizes = set(get_product_sizes(product_name))
     allowed_colors = set(get_order_color_options())
@@ -856,6 +856,11 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     employee_id = employee[0] if employee else None
 
     if task_type == "cutting":
+        material_name = material_name or "Ткань"
+
+        if material_name != "Ткань":
+            return {"ok": False, "message": "Пока для раскроя доступен только материал: Ткань."}
+
         task = create_production_task(
             product_name,
             sizes,
@@ -935,7 +940,7 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
         created_batches[0]["id"],
         (
             f"{product_name}; {route_step['position']} — {route_step['operation']}; "
-            f"материал: {material_name}; размеры: {', '.join(sizes)}; цвета: {', '.join(colors)}; "
+            f"вход: полуфабрикат; размеры: {', '.join(sizes)}; цвета: {', '.join(colors)}; "
             f"количество на комбинацию: {quantity}; партий: {len(created_batches)}"
         ),
     )
@@ -3997,7 +4002,7 @@ MINIAPP_HTML = """<!doctype html>
           product_name: state.orderProduct,
           task_type: state.orderTaskType,
           route_step_index: state.orderRouteStep,
-          material_name: state.orderMaterial,
+          material_name: state.orderTaskType === "cutting" ? state.orderMaterial : "",
           sizes: state.orderSizes,
           colors: state.orderColors,
           quantity: state.orderQuantity,
@@ -4079,12 +4084,12 @@ MINIAPP_HTML = """<!doctype html>
             <div class="field full"><label>Изделие</label><select id="orderProduct">${catalog.map((item) => `<option value="${escapeHtml(item.product_name)}" ${item.product_name === state.orderProduct ? "selected" : ""}>${escapeHtml(item.product_name)}</option>`).join("")}</select></div>
             <div class="field full"><label>Тип задания</label><select id="orderTaskType"><option value="cutting" ${state.orderTaskType === "cutting" ? "selected" : ""}>Раскрой</option><option value="route" ${state.orderTaskType === "route" ? "selected" : ""}>Операция по маршруту</option></select></div>
             ${state.orderTaskType === "route" ? `<div class="field full"><label>Операция</label><select id="orderRouteStep">${operationOptions || `<option value="">Нет операций</option>`}</select></div>` : ""}
-            <div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>
+            ${state.orderTaskType === "cutting" ? `<div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>` : `<div class="field full"><label>Вход</label><input value="Полуфабрикат" disabled></div>`}
             ${state.orderTaskType === "route" ? `<div class="field full"><label>Количество на каждую комбинацию</label><input id="orderQuantity" type="number" min="1" step="1" value="${escapeHtml(state.orderQuantity || "1")}"></div>` : ""}
           </div>
         </div>
         <div class="card field-card"><label>Размеры</label>${sizes.length ? renderChoiceChips("size", sizes, state.orderSizes) : itemEmpty("У изделия нет размеров.")}</div>
-        <div class="card field-card"><label>Цвета ткани</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
+        <div class="card field-card"><label>${state.orderTaskType === "cutting" ? "Цвета ткани" : "Цвета изделия"}</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
         <div class="button-row"><button class="small-button secondary" data-order-action="cancel">К списку</button><button class="small-button" data-order-action="create">Создать</button></div>
       `;
     }
