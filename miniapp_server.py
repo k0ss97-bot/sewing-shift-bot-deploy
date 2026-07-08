@@ -1,12 +1,13 @@
 import hashlib
 import hmac
+import io
 import json
 import logging
 import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, quote, urlparse
 
 from database import (
     add_fabric_receipt,
@@ -29,17 +30,14 @@ from database import (
     get_active_route_batches,
     get_all_employees,
     get_all_operations,
-    get_database_status,
     get_employee_by_telegram_id,
     get_employee_period_operation_totals,
     get_employee_period_summary,
     get_employee_shifts_by_period,
     get_employees_by_status,
+    get_feedback_entries,
     get_feedback_entries_by_shift,
     get_fabric_stock_rows,
-    get_month_employee_summary,
-    get_month_operation_rows,
-    get_month_shift_details,
     get_open_shifts,
     get_open_shift_for_today,
     get_pending_employees,
@@ -49,7 +47,6 @@ from database import (
     get_product_colors,
     get_product_sizes,
     get_recent_shifts,
-    get_recent_edit_logs,
     get_route_batch_by_id,
     get_shift_for_today,
     get_shift_report,
@@ -914,13 +911,9 @@ ADMIN_MENU = [
         "title": "Отчёты",
         "buttons": [
             "Отчёт за сегодня",
-            "Отчёт за месяц",
             "Отчёт за период",
-            "Excel за период",
             "Отчёт по сотруднику",
             "Править отчёт",
-            "Выгрузить отчёт",
-            "Партии раскроя",
         ],
     },
     {
@@ -949,18 +942,6 @@ ADMIN_MENU = [
             "Изменить операцию",
             "Скрыть операцию",
             "Вернуть операцию",
-        ],
-    },
-    {
-        "id": "files",
-        "title": "Файлы",
-        "buttons": [
-            "Журнал",
-            "Скачать базу",
-            "Проверка базы",
-            "Загрузить базу",
-            "Создать копию базы",
-            "Ошибки",
         ],
     },
 ]
@@ -1086,6 +1067,230 @@ def operation_summary_to_dict(row):
     }
 
 
+def minutes_to_excel_time(total_minutes):
+    if total_minutes is None:
+        return ""
+
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return f"{hours}:{minutes:02d}"
+
+
+def style_excel_sheet(sheet):
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    header_fill = PatternFill("solid", fgColor="F1E1D6")
+    header_font = Font(bold=True)
+
+    if sheet.max_row == 0:
+        return
+
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for column_cells in sheet.columns:
+        max_length = 0
+        column_letter = get_column_letter(column_cells[0].column)
+
+        for cell in column_cells:
+            value = "" if cell.value is None else str(cell.value)
+            max_length = max(max_length, len(value))
+
+        sheet.column_dimensions[column_letter].width = min(max_length + 3, 45)
+
+    sheet.freeze_panes = "A2"
+
+    if not sheet.auto_filter.ref:
+        sheet.auto_filter.ref = sheet.dimensions
+
+
+def append_excel_total_row(sheet, label: str, value, label_column: int = 1, value_column: int = 2):
+    from openpyxl.styles import Font, PatternFill
+
+    row_number = sheet.max_row + 1
+    sheet.cell(row=row_number, column=label_column, value=label)
+    sheet.cell(row=row_number, column=value_column, value=value)
+
+    for cell in sheet[row_number]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="EEF6EE")
+
+
+def set_excel_filter_range(sheet, last_data_row: int | None = None):
+    from openpyxl.utils import get_column_letter
+
+    if sheet.max_row == 0 or sheet.max_column == 0:
+        return
+
+    end_row = last_data_row if last_data_row is not None else sheet.max_row
+    end_column = get_column_letter(sheet.max_column)
+    sheet.auto_filter.ref = f"A1:{end_column}{max(1, end_row)}"
+
+
+def append_excel_filtered_total_row(sheet, label: str, label_column: int, value_column: int):
+    from openpyxl.utils import get_column_letter
+
+    last_data_row = sheet.max_row
+
+    if last_data_row < 2:
+        value = 0
+    else:
+        value_letter = get_column_letter(value_column)
+        value = f"=SUBTOTAL(109,{value_letter}2:{value_letter}{last_data_row})"
+
+    append_excel_total_row(sheet, label, value, label_column=label_column, value_column=value_column)
+    set_excel_filter_range(sheet, last_data_row=last_data_row)
+
+
+def append_excel_operation_rows(sheet, operation_rows):
+    sheet.append(["Дата", "Сотрудник", "Группа", "Операция", "Размер", "Цвет", "Количество", "Ед."])
+
+    for row in operation_rows:
+        shift_date, full_name, work_group, operation_name, product_size, product_color, quantity, unit = row
+        sheet.append([
+            shift_date,
+            full_name,
+            work_group,
+            operation_name,
+            product_size,
+            format_color_label(product_color),
+            quantity,
+            unit,
+        ])
+
+    append_excel_filtered_total_row(sheet, "Итого по фильтру", label_column=6, value_column=7)
+
+
+def append_excel_feedback_rows(sheet, feedback_rows):
+    sheet.append(["Дата", "Время", "Сотрудник", "Должность", "Раздел", "Сообщение", "ID смены"])
+
+    for row in feedback_rows:
+        feedback_date, feedback_time, full_name, position, category, message_text, shift_id = row
+        sheet.append([
+            feedback_date,
+            feedback_time,
+            full_name,
+            position,
+            category,
+            message_text,
+            shift_id or "",
+        ])
+
+
+def append_excel_shift_rows(sheet, shift_rows, employee_name: str | None = None):
+    sheet.append(["Дата", "Сотрудник", "Пришёл", "Ушёл", "Отработано", "Статус"])
+
+    for row in shift_rows:
+        if employee_name is None:
+            shift_date, full_name, start_time, end_time, total_minutes, status = row[-6:]
+        else:
+            _, shift_date, start_time, end_time, total_minutes, status = row
+            full_name = employee_name
+
+        status_text = "Закрыта" if status == "closed" else "Открыта"
+        sheet.append([
+            shift_date,
+            full_name,
+            start_time,
+            end_time or "",
+            minutes_to_excel_time(total_minutes),
+            status_text,
+        ])
+
+
+def workbook_to_bytes(workbook):
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output.getvalue()
+
+
+def create_period_excel_bytes(start_date: str, end_date: str):
+    from openpyxl import Workbook
+
+    employee_summary = get_period_employee_summary(start_date, end_date)
+    operation_rows = get_period_operation_rows(start_date, end_date)
+    shift_rows = get_period_shift_details(start_date, end_date)
+    feedback_rows = get_feedback_entries(start_date, end_date)
+
+    workbook = Workbook()
+
+    summary_sheet = workbook.active
+    summary_sheet.title = "Сводка"
+    summary_sheet.append(["Сотрудник", "Смен", "Часы"])
+    total_shifts = 0
+    total_minutes = 0
+
+    for employee_id, full_name, shift_count, employee_minutes in employee_summary:
+        total_shifts += shift_count or 0
+        total_minutes += employee_minutes or 0
+        summary_sheet.append([full_name, shift_count, minutes_to_excel_time(employee_minutes)])
+
+    append_excel_total_row(summary_sheet, "Итого", total_shifts, label_column=1, value_column=2)
+    summary_sheet.cell(row=summary_sheet.max_row, column=3, value=minutes_to_excel_time(total_minutes))
+
+    shifts_sheet = workbook.create_sheet("Смены по дням", 1)
+    append_excel_shift_rows(shifts_sheet, shift_rows)
+
+    operations_sheet = workbook.create_sheet("Операции")
+    append_excel_operation_rows(operations_sheet, operation_rows)
+
+    feedback_sheet = workbook.create_sheet("Обратная связь")
+    append_excel_feedback_rows(feedback_sheet, feedback_rows)
+
+    for sheet in workbook.worksheets:
+        style_excel_sheet(sheet)
+
+    return workbook_to_bytes(workbook)
+
+
+def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str):
+    from openpyxl import Workbook
+
+    employee_summary = get_employee_period_summary(employee_id, start_date, end_date)
+
+    if employee_summary is None:
+        return None, None
+
+    _, full_name, position, shift_count, total_minutes = employee_summary
+    operations = get_employee_period_operation_totals(employee_id, start_date, end_date)
+    shift_rows = get_employee_shifts_by_period(employee_id, start_date, end_date)
+    feedback_rows = get_feedback_entries(start_date, end_date, employee_id=employee_id)
+
+    workbook = Workbook()
+
+    summary_sheet = workbook.active
+    summary_sheet.title = "Итог"
+    summary_sheet.append(["Показатель", "Значение"])
+    summary_sheet.append(["Сотрудник", full_name])
+    summary_sheet.append(["Должность", position or ""])
+    summary_sheet.append(["Период", f"{start_date} — {end_date}"])
+    summary_sheet.append(["Отработано смен", shift_count])
+    summary_sheet.append(["Отработано часов", minutes_to_excel_time(total_minutes)])
+
+    shifts_sheet = workbook.create_sheet("Смены по дням", 1)
+    append_excel_shift_rows(shifts_sheet, shift_rows, employee_name=full_name)
+
+    operations_sheet = workbook.create_sheet("Операции")
+    operations_sheet.append(["Операция", "Количество", "Ед."])
+
+    for operation_name, quantity, unit in operations:
+        operations_sheet.append([operation_name, quantity, unit])
+
+    append_excel_filtered_total_row(operations_sheet, "Итого по фильтру", label_column=1, value_column=2)
+
+    feedback_sheet = workbook.create_sheet("Обратная связь")
+    append_excel_feedback_rows(feedback_sheet, feedback_rows)
+
+    for sheet in workbook.worksheets:
+        style_excel_sheet(sheet)
+
+    return workbook_to_bytes(workbook), full_name
+
+
 def employee_operation_total_to_dict(row):
     operation_name, total_quantity, unit = row
 
@@ -1108,20 +1313,6 @@ def operation_admin_to_dict(row):
         "folder": folder or "-",
         "unit": unit or "шт",
         "active": bool(is_active),
-    }
-
-
-def edit_log_to_dict(row):
-    changed_at, changed_by, role, action, entity_type, entity_id, details = row
-
-    return {
-        "changed_at": changed_at,
-        "changed_by": changed_by,
-        "role": role,
-        "action": action,
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "details": details,
     }
 
 
@@ -1152,11 +1343,7 @@ def get_admin_dashboard(telegram_id: int):
         "operations": [
             operation_admin_to_dict(operation) for operation in get_all_operations()
         ],
-        "files": {
-            "database": get_database_status(),
-            "logs": [edit_log_to_dict(row) for row in get_recent_edit_logs(25)],
-        },
-        "reports": get_admin_report_payload("month", month_start, today),
+        "reports": get_admin_report_payload("period", month_start, today),
     }
 
 
@@ -1215,22 +1402,13 @@ def get_admin_report_payload(
             ],
         }
 
-    if report_type == "period":
-        title = f"Отчёт за период: {start_date} — {end_date}"
-        summary_rows = get_period_employee_summary(start_date, end_date)
-        operation_rows = get_period_operation_rows(start_date, end_date)
-        shift_rows = get_period_shift_details(start_date, end_date)
-    else:
-        month_start, today = month_bounds()
-        start_date = month_start
-        end_date = today
-        title = f"Отчёт за месяц: {start_date} — {end_date}"
-        summary_rows = get_month_employee_summary()
-        operation_rows = get_month_operation_rows()
-        shift_rows = get_month_shift_details()
+    title = f"Отчёт за период: {start_date} — {end_date}"
+    summary_rows = get_period_employee_summary(start_date, end_date)
+    operation_rows = get_period_operation_rows(start_date, end_date)
+    shift_rows = get_period_shift_details(start_date, end_date)
 
     return {
-        "type": "period" if report_type == "period" else "month",
+        "type": "period",
         "title": title,
         "start_date": start_date,
         "end_date": end_date,
@@ -1245,7 +1423,7 @@ def get_admin_report_for_telegram(telegram_id: int, payload: dict):
         return {"ok": False, "message": "Нет прав администратора."}
 
     month_start, today = month_bounds()
-    report_type = (payload.get("report_type") or "month").strip()
+    report_type = (payload.get("report_type") or "period").strip()
     start_date = clean_date(payload.get("start_date"), month_start)
     end_date = clean_date(payload.get("end_date"), today)
 
@@ -1262,6 +1440,59 @@ def get_admin_report_for_telegram(telegram_id: int, payload: dict):
             end_date,
             employee_id or None,
         ),
+    }
+
+
+def export_admin_report_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    month_start, today = month_bounds()
+    report_type = (payload.get("report_type") or "period").strip()
+    start_date = clean_date(payload.get("start_date"), month_start)
+    end_date = clean_date(payload.get("end_date"), today)
+
+    try:
+        employee_id = int(payload.get("employee_id") or 0)
+    except (TypeError, ValueError):
+        employee_id = 0
+
+    if report_type == "today":
+        start_date = today
+        end_date = today
+        content = create_period_excel_bytes(start_date, end_date)
+        filename = f"report_today_{today}.xlsx"
+    elif report_type == "employee":
+        if employee_id <= 0:
+            return {"ok": False, "message": "Выберите сотрудника для выгрузки."}
+
+        content, employee_name = create_employee_excel_bytes(employee_id, start_date, end_date)
+
+        if content is None:
+            return {"ok": False, "message": "Сотрудник не найден."}
+
+        safe_name = "".join(
+            char if char.isalnum() or char in {"_", "-"} else "_"
+            for char in employee_name
+        ).strip("_")
+        filename = f"employee_{employee_id}_{safe_name}_{start_date}_{end_date}.xlsx"
+    else:
+        content = create_period_excel_bytes(start_date, end_date)
+        filename = f"report_{start_date}_{end_date}.xlsx"
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        "Выгрузил отчёт из миниаппа",
+        "report",
+        None,
+        f"{report_type}: {start_date} — {end_date}",
+    )
+
+    return {
+        "ok": True,
+        "filename": filename,
+        "content": content,
     }
 
 
@@ -1877,6 +2108,80 @@ MINIAPP_HTML = """<!doctype html>
       margin-bottom: 9px;
     }
 
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+    }
+
+    .field {
+      min-width: 0;
+    }
+
+    .field.full {
+      grid-column: 1 / -1;
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid rgba(78,56,42,.13);
+      border-radius: 15px;
+      background: rgba(255,255,255,.56);
+      color: var(--text);
+      padding: 9px 10px;
+      outline: none;
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .button-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+      margin-top: 11px;
+    }
+
+    .small-button {
+      min-width: 0;
+      border: none;
+      border-radius: 15px;
+      padding: 11px 10px;
+      color: white;
+      background: var(--accent);
+      font-size: 12px;
+      font-weight: 950;
+      overflow-wrap: anywhere;
+    }
+
+    .small-button.secondary {
+      color: var(--accent-dark);
+      background: rgba(195,111,85,.12);
+    }
+
+    .report-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 13px;
+    }
+
+    .report-row b {
+      display: block;
+      font-size: 13px;
+      line-height: 1.22;
+    }
+
+    .report-row span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
     .select-row {
       display: grid;
       grid-template-columns: 42px minmax(0, 1fr) auto;
@@ -2117,7 +2422,7 @@ MINIAPP_HTML = """<!doctype html>
       border-top: 1px solid rgba(78,56,42,.11);
       backdrop-filter: blur(18px);
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(var(--nav-count, 5), minmax(0, 1fr));
       gap: 2px;
     }
 
@@ -2227,6 +2532,10 @@ MINIAPP_HTML = """<!doctype html>
       screen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
+      adminReportType: "period",
+      adminStartDate: "",
+      adminEndDate: "",
+      adminEmployeeId: "",
       data: null,
     };
 
@@ -2236,7 +2545,7 @@ MINIAPP_HTML = """<!doctype html>
     const bottomNav = document.getElementById("bottomNav");
     const toast = document.getElementById("toast");
 
-    const nav = [
+    const baseNav = [
       { id: "shift", label: "Главная", icon: "⌂" },
       { id: "operations", label: "Смена", icon: "◷" },
       { id: "report", label: "Отчёт", icon: "＋" },
@@ -2322,8 +2631,18 @@ MINIAPP_HTML = """<!doctype html>
       return shift.status === "open" ? "Смена открыта" : "Смена закрыта";
     }
 
+    function navItems() {
+      const items = [...baseNav];
+      if (state.data && state.data.is_admin) {
+        items.push({ id: "admin", label: "Админ", icon: "◎" });
+      }
+      return items;
+    }
+
     function renderBottomNav() {
-      bottomNav.innerHTML = nav.map((item) => `
+      const items = navItems();
+      bottomNav.style.setProperty("--nav-count", items.length);
+      bottomNav.innerHTML = items.map((item) => `
         <button class="nav-btn ${state.screen === item.id ? "active" : ""}" data-go="${item.id}">
           <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
         </button>
@@ -2341,6 +2660,150 @@ MINIAPP_HTML = """<!doctype html>
       const employee = state.data && state.data.employee;
       if (!employee) return "Нет доступа";
       return employee.position || "Сотрудник";
+    }
+
+    function getAdmin() {
+      return state.data && state.data.admin ? state.data.admin : null;
+    }
+
+    function getAdminReport() {
+      const admin = getAdmin();
+      return admin && admin.reports ? admin.reports : null;
+    }
+
+    function ensureAdminDefaults() {
+      const admin = getAdmin();
+      const report = getAdminReport();
+      const defaults = admin && admin.period_defaults ? admin.period_defaults : {};
+
+      if (!state.adminStartDate) {
+        state.adminStartDate = (report && report.start_date) || defaults.start_date || "";
+      }
+      if (!state.adminEndDate) {
+        state.adminEndDate = (report && report.end_date) || defaults.end_date || "";
+      }
+      if (!state.adminEmployeeId && admin && admin.employees && admin.employees[0]) {
+        state.adminEmployeeId = String(admin.employees[0].id);
+      }
+    }
+
+    function getAdminReportPayload() {
+      ensureAdminDefaults();
+      return {
+        report_type: state.adminReportType,
+        start_date: state.adminStartDate,
+        end_date: state.adminEndDate,
+        employee_id: state.adminEmployeeId,
+      };
+    }
+
+    function adminReportTotals(report) {
+      if (!report) return { shifts: 0, minutes: 0, operations: 0, employees: 0 };
+
+      if (report.type === "employee") {
+        const summary = report.employee_summary || {};
+        return {
+          shifts: summary.shift_count || 0,
+          minutes: summary.total_minutes || 0,
+          operations: (report.employee_operations || []).length,
+          employees: summary.full_name ? 1 : 0,
+        };
+      }
+
+      const summaryRows = report.summary || [];
+      return {
+        shifts: summaryRows.reduce((sum, row) => sum + Number(row.shift_count || 0), 0),
+        minutes: summaryRows.reduce((sum, row) => sum + Number(row.total_minutes || 0), 0),
+        operations: (report.operations || []).length,
+        employees: summaryRows.length,
+      };
+    }
+
+    function minutesLabel(minutes) {
+      const total = Number(minutes || 0);
+      const hours = Math.floor(total / 60);
+      const rest = total % 60;
+      return `${hours}:${String(rest).padStart(2, "0")}`;
+    }
+
+    function syncAdminForm() {
+      const type = document.getElementById("adminReportType");
+      const start = document.getElementById("adminStartDate");
+      const end = document.getElementById("adminEndDate");
+      const employee = document.getElementById("adminEmployeeId");
+
+      if (type) state.adminReportType = type.value;
+      if (start) state.adminStartDate = start.value;
+      if (end) state.adminEndDate = end.value;
+      if (employee) state.adminEmployeeId = employee.value;
+    }
+
+    async function loadAdminReport() {
+      if (!state.data || !state.data.is_admin) return;
+      syncAdminForm();
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/admin/report", getAdminReportPayload());
+        if (!data.ok) {
+          showToast("Отчёт", data.message || "Не удалось загрузить отчёт.");
+          mainButton.disabled = false;
+          return;
+        }
+        state.data.admin = {
+          ...state.data.admin,
+          reports: data.report,
+        };
+        render();
+        showToast("Отчёт", "Данные обновлены.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось загрузить отчёт.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function exportAdminReport() {
+      if (!state.data || !state.data.is_admin) return;
+      syncAdminForm();
+      mainButton.disabled = true;
+
+      try {
+        const response = await fetch("/api/admin/report/export", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            ...getAdminReportPayload(),
+            initData: state.initData,
+            authToken,
+            telegram_id: debugTelegramId,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          showToast("Выгрузка", errorData.message || "Не удалось выгрузить отчёт.");
+          mainButton.disabled = false;
+          return;
+        }
+
+        const blob = await response.blob();
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const match = disposition.match(/filename\\*=UTF-8''([^;]+)/);
+        const filename = match ? decodeURIComponent(match[1]) : "report.xlsx";
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showToast("Выгрузка", "Файл отчёта сформирован.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось выгрузить отчёт.");
+      } finally {
+        mainButton.disabled = false;
+      }
     }
 
     function renderShift() {
@@ -2475,6 +2938,76 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderAdmin() {
+      if (!state.data || !state.data.is_admin) {
+        mainButton.textContent = "Обновить";
+        mainButton.disabled = false;
+        mount.innerHTML = `
+          <div class="screen-head"><div><h2>Админ</h2><p>Раздел доступен только администратору.</p></div></div>
+          <div class="card field-card">${itemEmpty("Нет прав администратора.")}</div>
+        `;
+        return;
+      }
+
+      ensureAdminDefaults();
+      const admin = getAdmin();
+      const report = getAdminReport();
+      const totals = adminReportTotals(report);
+      const employees = admin && admin.employees ? admin.employees : [];
+      const employeeOptions = employees.map((employee) => `
+        <option value="${escapeHtml(employee.id)}" ${String(employee.id) === String(state.adminEmployeeId) ? "selected" : ""}>${escapeHtml(employee.full_name)} · ${escapeHtml(employee.position)}</option>
+      `).join("");
+      const isEmployeeReport = state.adminReportType === "employee";
+
+      mainButton.textContent = "Выгрузить отчёт";
+      mainButton.disabled = false;
+
+      const summaryHtml = report && report.type === "employee" ? `
+        ${report.employee_summary ? `
+          <div class="card report-row"><div><b>${escapeHtml(report.employee_summary.full_name)}</b><span>${escapeHtml(report.employee_summary.position)} · ${escapeHtml(report.employee_summary.shift_count)} смен · ${escapeHtml(report.employee_summary.total_time)}</span></div><span class="status-chip">сотрудник</span></div>
+        ` : itemEmpty("По выбранному сотруднику нет данных.")}
+      ` : `
+        ${(report && report.summary && report.summary.length) ? report.summary.slice(0, 8).map((row) => `
+          <div class="card report-row"><div><b>${escapeHtml(row.full_name)}</b><span>${escapeHtml(row.shift_count)} смен · ${escapeHtml(row.total_time)}</span></div><span class="status-chip gray">ID ${escapeHtml(row.employee_id)}</span></div>
+        `).join("") : itemEmpty("За выбранный период закрытых смен пока нет.")}
+      `;
+
+      const shifts = report && report.type === "employee" ? (report.employee_shifts || []) : (report ? report.shifts || [] : []);
+      const operations = report && report.type === "employee" ? (report.employee_operations || []) : (report ? report.operations || [] : []);
+      const operationsHtml = operations.length ? operations.slice(0, 10).map((operation) => `
+        <div class="card report-row"><div><b>${escapeHtml(operation.operation)}</b><span>${escapeHtml(operation.employee || "")}${operation.employee ? " · " : ""}${escapeHtml(operation.date || "")}${operation.group ? `<br>${escapeHtml(operation.group)} · ${escapeHtml(operation.size || "-")} · ${escapeHtml(operation.color || "-")}` : ""}</span></div><span class="status-chip">${escapeHtml(operation.quantity)} ${escapeHtml(operation.unit)}</span></div>
+      `).join("") : itemEmpty("Операций за выбранный период пока нет.");
+
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Админ отчёты</h2><p>Сегодня, период или конкретный сотрудник.</p></div><div class="date">${escapeHtml(report ? `${report.start_date} — ${report.end_date}` : "период")}</div></div>
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field full"><label>Тип отчёта</label><select id="adminReportType"><option value="today" ${state.adminReportType === "today" ? "selected" : ""}>Сегодня</option><option value="period" ${state.adminReportType === "period" ? "selected" : ""}>Период</option><option value="employee" ${isEmployeeReport ? "selected" : ""}>Сотрудник</option></select></div>
+            <div class="field"><label>Начало</label><input id="adminStartDate" type="date" value="${escapeHtml(state.adminStartDate)}"></div>
+            <div class="field"><label>Окончание</label><input id="adminEndDate" type="date" value="${escapeHtml(state.adminEndDate)}"></div>
+            <div class="field full"><label>Сотрудник</label><select id="adminEmployeeId" ${isEmployeeReport ? "" : "disabled"}>${employeeOptions || `<option value="">Нет сотрудников</option>`}</select></div>
+          </div>
+          <div class="button-row"><button class="small-button secondary" data-admin-action="load-report">Показать</button><button class="small-button" data-admin-action="export-report">Выгрузить</button></div>
+        </div>
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">◷</div></div><strong>${totals.shifts}<small> шт</small></strong><span>Закрытые смены</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(minutesLabel(totals.minutes))}</strong><span>Суммарно отработано</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Операции</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${totals.operations}<small> строк</small></strong><span>Строки отчёта</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Сотрудники</span><div class="kpi-ico">◎</div></div><strong>${totals.employees}<small> чел</small></strong><span>В выборке</span></div>
+        </div>
+        <div class="section-title"><b>${escapeHtml(report ? report.title : "Отчёт")}</b><button data-admin-action="export-report">выгрузить</button></div>
+        <div class="op-list">${summaryHtml}</div>
+        <div class="section-title"><b>Смены</b><span>${shifts.length}</span></div>
+        <div class="op-list">
+          ${shifts.length ? shifts.slice(0, 8).map((shift) => `
+            <div class="card report-row"><div><b>${escapeHtml(shift.employee || "Сотрудник")}</b><span>${escapeHtml(shift.date)} · ${escapeHtml(shift.start_time || "-")} — ${escapeHtml(shift.end_time || "-")}</span></div><span class="status-chip gray">${escapeHtml(shift.total_time || "-")}</span></div>
+          `).join("") : itemEmpty("Смен за выбранный период нет.")}
+        </div>
+        <div class="section-title"><b>Операции</b><span>${operations.length}</span></div>
+        <div class="op-list">${operationsHtml}</div>
+      `;
+    }
+
     function render() {
       if (!state.data) return;
       document.getElementById("roleLabel").textContent = roleLabel();
@@ -2485,6 +3018,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "report") renderReport();
       if (state.screen === "analytics") renderAnalytics();
       if (state.screen === "orders") renderOrders();
+      if (state.screen === "admin") renderAdmin();
       renderBottomNav();
       renderTopTabs();
     }
@@ -2521,6 +3055,13 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const adminAction = event.target.closest("[data-admin-action]");
+      if (adminAction) {
+        if (adminAction.dataset.adminAction === "load-report") loadAdminReport();
+        if (adminAction.dataset.adminAction === "export-report") exportAdminReport();
+        return;
+      }
+
       const op = event.target.closest("[data-select-operation]");
       if (op) {
         state.selectedOperation = Number(op.dataset.selectOperation);
@@ -2546,15 +3087,26 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "report") { refreshState("Отчёт обновлён."); return; }
       if (state.screen === "analytics") { setScreen("orders"); return; }
       if (state.screen === "orders") { refreshState("Статус обновлён."); }
+      if (state.screen === "admin") { exportAdminReport(); }
+    });
+
+    document.addEventListener("change", (event) => {
+      if (!event.target.closest("#adminReportType")) return;
+      syncAdminForm();
+      render();
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
-      const flow = ["shift", "operations", "report", "analytics", "orders"];
+      const flow = ["shift", "operations", "report", "analytics", "orders", "admin"];
       const index = flow.indexOf(state.screen);
       setScreen(flow[Math.max(0, index - 1)]);
     });
 
     document.getElementById("menuBtn").addEventListener("click", () => {
+      if (state.data && state.data.is_admin) {
+        setScreen("admin");
+        return;
+      }
       showToast("Меню", "Настройки профиля и уведомления подключим позже.");
     });
 
@@ -2598,6 +3150,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/routes/complete",
                 "/api/admin/dashboard",
                 "/api/admin/report",
+                "/api/admin/report/export",
                 "/api/admin/employee/status",
                 "/api/admin/employee/position",
                 "/api/admin/shift/close",
@@ -2626,6 +3179,16 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             telegram_id = int(user["id"])
+
+            if path == "/api/admin/report/export":
+                export_result = export_admin_report_for_telegram(telegram_id, payload)
+
+                if not export_result.get("ok"):
+                    self.send_json(export_result, status=400)
+                    return
+
+                self.send_file(export_result["content"], export_result["filename"])
+                return
 
             if path == "/api/app/state":
                 result = get_app_state(telegram_id, payload.get("message", ""))
@@ -2701,6 +3264,22 @@ def make_handler(bot_token: str, debug: bool):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+        def send_file(self, content: bytes, filename: str):
+            safe_filename = quote(filename)
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header(
+                "Content-Disposition",
+                f"attachment; filename*=UTF-8''{safe_filename}",
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(content)
 
         def log_message(self, format_string, *args):
             logging.info("Miniapp: " + format_string, *args)
