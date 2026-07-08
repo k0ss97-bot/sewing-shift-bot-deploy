@@ -2677,7 +2677,6 @@ MINIAPP_HTML = """<!doctype html>
       { id: "report", label: "Отчёт", icon: "＋" },
       { id: "analytics", label: "Аналитика", icon: "▥" },
       { id: "orders", label: "Заказы", icon: "▣" },
-      { id: "feedback", label: "Связь", icon: "✎" },
     ];
 
     if (tg) {
@@ -3196,13 +3195,21 @@ MINIAPP_HTML = """<!doctype html>
             <div class="card field-card"><label>${escapeHtml(row.category)} · ${escapeHtml(row.date)}</label><div class="textarea">${escapeHtml(row.message)}</div></div>
           `).join("") : `<div class="card field-card">${itemEmpty("Сообщений за смену нет.")}</div>`}
         </div>
+        <div class="card field-card">
+          <label>Написать администратору</label>
+          <div class="form-grid">
+            <div class="field full"><label>Раздел</label><select id="feedbackCategory"><option value="Производство">Производство</option><option value="Бытовое">Бытовое</option></select></div>
+            <div class="field full"><label>Сообщение</label><textarea id="feedbackMessage" placeholder="Напишите сообщение"></textarea></div>
+          </div>
+          <div class="button-row"><button class="small-button secondary" data-history-action="load">Обновить историю</button><button class="small-button" data-feedback-action="send">Отправить</button></div>
+        </div>
         <div class="section-title"><b>Моя история</b><button data-history-action="load">показать</button></div>
         <div class="card field-card">
           <div class="form-grid">
             <div class="field"><label>Начало</label><input id="userStartDate" type="date" value="${escapeHtml(state.userStartDate)}"></div>
             <div class="field"><label>Окончание</label><input id="userEndDate" type="date" value="${escapeHtml(state.userEndDate)}"></div>
           </div>
-          <div class="button-row"><button class="small-button secondary" data-history-action="load">Показать</button><button class="small-button" data-go="feedback">Написать связь</button></div>
+          <div class="button-row"><button class="small-button secondary" data-history-action="load">Показать</button></div>
         </div>
         <div class="kpi-grid">
           <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">◷</div></div><strong>${historySummary ? historySummary.shift_count : 0}<small> шт</small></strong><span>За выбранный период</span></div>
@@ -3281,29 +3288,6 @@ MINIAPP_HTML = """<!doctype html>
         <div class="op-list">
           <div class="card shift-card"><div><b>Остатки ткани</b><span>${fabricRows.length} позиций</span></div><span class="status-chip gray">склад</span></div>
           <div class="card shift-card"><div><b>Обратная связь</b><span>${feedback.length} сообщений за смену</span></div><span class="status-chip gray">связь</span></div>
-        </div>
-      `;
-    }
-
-    function renderFeedback() {
-      const feedback = getFeedbackRows();
-      mainButton.textContent = "Отправить сообщение";
-      mainButton.disabled = false;
-
-      mount.innerHTML = `
-        <div class="screen-head"><div><h2>Связь</h2><p>Сообщение администратору по производству или бытовому вопросу.</p></div><div class="date">${feedback.length} сообщений</div></div>
-        <div class="card field-card">
-          <div class="form-grid">
-            <div class="field full"><label>Раздел</label><select id="feedbackCategory"><option value="Производство">Производство</option><option value="Бытовое">Бытовое</option></select></div>
-            <div class="field full"><label>Сообщение</label><textarea id="feedbackMessage" placeholder="Напишите сообщение"></textarea></div>
-          </div>
-          <div class="button-row"><button class="small-button secondary" data-go="report">К отчёту</button><button class="small-button" data-feedback-action="send">Отправить</button></div>
-        </div>
-        <div class="section-title"><b>Мои сообщения</b><span>${feedback.length}</span></div>
-        <div class="op-list">
-          ${feedback.length ? feedback.map((row) => `
-            <div class="card report-row"><div><b>${escapeHtml(row.category)} · ${escapeHtml(row.date)}</b><span>${escapeHtml(row.message)}</span></div><span class="status-chip gray">${escapeHtml(row.time || "")}</span></div>
-          `).join("") : itemEmpty("Сообщений по текущей смене пока нет.")}
         </div>
       `;
     }
@@ -3507,7 +3491,6 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "report") renderReport();
       if (state.screen === "analytics") renderAnalytics();
       if (state.screen === "orders") renderOrders();
-      if (state.screen === "feedback") renderFeedback();
       if (state.screen === "admin") renderAdmin();
       renderBottomNav();
       renderTopTabs();
@@ -3604,7 +3587,6 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "report") { refreshState("Отчёт обновлён."); return; }
       if (state.screen === "analytics") { setScreen("orders"); return; }
       if (state.screen === "orders") { refreshState("Статус обновлён."); }
-      if (state.screen === "feedback") { sendFeedback(); return; }
       if (state.screen === "admin") {
         if (state.adminSection === "reports") { exportAdminReport(); return; }
         if (state.adminSection === "feedback") { loadAdminFeedback(); return; }
@@ -3619,7 +3601,7 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
-      const flow = ["shift", "operations", "report", "feedback", "analytics", "orders", "admin"];
+      const flow = ["shift", "operations", "report", "analytics", "orders", "admin"];
       const index = flow.indexOf(state.screen);
       setScreen(flow[Math.max(0, index - 1)]);
     });
