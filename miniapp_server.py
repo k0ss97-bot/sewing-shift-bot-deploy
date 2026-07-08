@@ -1474,861 +1474,736 @@ MINIAPP_HTML = """<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Шагаем вместе</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
       color-scheme: light;
-      --bg: #edf2fb;
-      --surface: rgba(255, 255, 255, 0.74);
-      --surface-strong: rgba(255, 255, 255, 0.92);
-      --glass-blue: rgba(238, 243, 255, 0.78);
-      --text: #12182b;
-      --muted: #687287;
-      --accent: #4458ff;
-      --accent-strong: #2f3fe8;
-      --accent-soft: rgba(68, 88, 255, 0.13);
-      --danger: #dd4f5d;
-      --danger-soft: rgba(221, 79, 93, 0.12);
-      --success: #31a86b;
-      --success-soft: rgba(49, 168, 107, 0.14);
-      --warning: #f2a23a;
-      --border: rgba(109, 124, 158, 0.22);
-      --soft: rgba(255, 255, 255, 0.56);
-      --shadow: 0 24px 58px rgba(35, 48, 88, 0.20);
-      --shadow-soft: 0 12px 28px rgba(35, 48, 88, 0.12);
-      --blue-shadow: 0 16px 32px rgba(68, 88, 255, 0.24);
-      --font-main: "Anthropic Serif", ui-serif, Georgia, "Times New Roman", serif;
+      --bg: #f4eee6;
+      --text: #241b16;
+      --muted: #7b6d62;
+      --soft: rgba(255, 250, 243, .78);
+      --line: rgba(78, 56, 42, .13);
+      --accent: #c36f55;
+      --accent-dark: #a95640;
+      --sage: #8f9f7f;
+      --sage-dark: #6f805f;
+      --cream: #fffaf3;
+      --danger: #bd6758;
+      --good: #789265;
+      --shadow: 0 26px 80px rgba(55, 39, 29, .18);
+      --inset-shadow: inset 0 1px 0 rgba(255,255,255,.72);
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Arial, sans-serif;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
-    body {
+    html, body {
       margin: 0;
-      min-height: 100vh;
-      background:
-        linear-gradient(120deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 249, 255, 0.92) 32%, rgba(218, 225, 245, 0.72) 70%, rgba(128, 140, 169, 0.62) 100%),
-        repeating-linear-gradient(90deg, rgba(68, 88, 255, 0.045) 0 1px, transparent 1px 86px),
-        repeating-linear-gradient(0deg, rgba(68, 88, 255, 0.035) 0 1px, transparent 1px 86px);
+      min-height: 100%;
+      font-family: var(--font);
       color: var(--text);
-      font-family: var(--font-main);
+      background:
+        radial-gradient(circle at 8% 8%, rgba(195,111,85,.18), transparent 28%),
+        radial-gradient(circle at 92% 4%, rgba(143,159,127,.22), transparent 30%),
+        linear-gradient(135deg, #fff8ee 0%, #f4eee6 48%, #eadfd2 100%);
+      overflow-x: hidden;
     }
 
-    .page {
-      width: min(1040px, 100%);
-      margin: 0 auto;
-      padding: 14px 14px 96px;
+    button, input, select, textarea {
+      font: inherit;
     }
 
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 10px;
-      padding: 4px 2px;
+    button {
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
     }
 
-    .brand {
-      display: flex;
-      align-items: center;
-      min-width: 0;
-      gap: 10px;
-    }
-
-    .brand-mark {
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    .app {
+      min-height: 100vh;
+      padding: 12px 12px 118px;
+      background:
+        radial-gradient(circle at 20% 0%, rgba(195,111,85,.12), transparent 33%),
+        radial-gradient(circle at 90% 0%, rgba(143,159,127,.15), transparent 31%),
+        var(--cream);
       position: relative;
-      width: 44px;
-      height: 44px;
-      flex: 0 0 44px;
-      border-radius: 8px;
-      color: #ffffff;
       overflow: hidden;
-      background: linear-gradient(135deg, #6378ff 0%, #3d4dff 52%, #2832d7 100%);
-      border: 1px solid rgba(255, 255, 255, 0.70);
-      box-shadow:
-        var(--blue-shadow),
-        inset 0 1px 0 rgba(255, 255, 255, 0.28);
     }
 
-    .brand-mark svg {
-      display: block;
-      width: 34px;
-      height: 34px;
-      filter: drop-shadow(0 1px 1px rgba(18, 24, 63, 0.18));
+    .app::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(195,111,85,.10) 1px, transparent 1.7px);
+      background-size: 22px 22px;
+      opacity: .22;
+      pointer-events: none;
     }
 
-    .brand-text {
-      min-width: 0;
+    .appbar {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: 42px 1fr 42px;
+      gap: 8px;
+      align-items: center;
+      padding: 4px 4px 12px;
     }
 
-    .brand-subtitle {
-      margin: 3px 0 0;
+    .icon-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-radius: 16px;
+      background: rgba(255,255,255,.58);
+      box-shadow: var(--inset-shadow);
       color: var(--muted);
-      font-size: 12px;
-      line-height: 1.25;
+      display: grid;
+      place-items: center;
+      font-size: 22px;
     }
 
-    h1, h2, h3, p {
-      margin-top: 0;
+    .app-title {
+      text-align: center;
+      font-size: 16px;
+      font-weight: 950;
+      line-height: 1.05;
       letter-spacing: 0;
     }
 
-    h1 {
-      margin-bottom: 0;
-      font-size: 24px;
-      line-height: 1.2;
-      color: #151b31;
-      font-weight: 900;
+    .app-title small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 850;
     }
 
-    h2 {
-      margin-bottom: 12px;
-      font-size: 19px;
-      color: #151b31;
-    }
-
-    h3 {
-      margin-bottom: 8px;
-      font-size: 15px;
-      color: #151b31;
-    }
-
-    .status {
-      padding: 9px 13px;
-      border: 1px solid rgba(119, 133, 171, 0.22);
-      border-radius: 999px;
-      color: #28315b;
-      background: rgba(255, 255, 255, 0.66);
-      font-size: 13px;
-      font-weight: 800;
-      white-space: nowrap;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82), var(--shadow-soft);
-      backdrop-filter: blur(18px);
-    }
-
-    .visually-hidden {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
+    .body {
+      position: relative;
+      z-index: 2;
     }
 
     .tabs {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 14px;
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      padding: 6px;
-      overflow-x: auto;
-      scrollbar-width: none;
-      background: rgba(255, 255, 255, 0.72);
-      border: 1px solid rgba(255, 255, 255, 0.82);
-      border-radius: 8px;
-      box-shadow: var(--shadow-soft);
-      backdrop-filter: blur(24px);
-    }
-
-    .tabs::-webkit-scrollbar {
-      display: none;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 5px;
+      padding: 5px;
+      margin: 3px 0 16px;
+      background: rgba(255,255,255,.52);
+      border: 1px solid rgba(78,56,42,.11);
+      border-radius: 17px;
     }
 
     .tab {
-      width: auto;
-      min-width: 92px;
-      flex: 0 0 auto;
-      min-height: 42px;
-      padding: 8px;
-      color: #47526b;
+      min-width: 0;
+      min-height: 36px;
+      border: none;
       background: transparent;
-      border: 1px solid transparent;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 800;
-      line-height: 1.08;
-      white-space: normal;
+      color: var(--muted);
+      border-radius: 13px;
+      padding: 8px 4px;
+      font-size: 10.5px;
+      line-height: 1.05;
+      font-weight: 900;
       overflow-wrap: anywhere;
       word-break: break-word;
     }
 
     .tab.active {
-      color: #ffffff;
-      background: linear-gradient(135deg, #5d72ff, var(--accent-strong));
-      border-color: rgba(255, 255, 255, 0.34);
-      box-shadow: var(--blue-shadow);
+      color: white;
+      background: var(--accent);
+      box-shadow: 0 9px 18px rgba(195,111,85,.20);
     }
 
-    .tab[hidden] {
-      display: none;
+    .screen-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-end;
+      margin: 4px 0 14px;
     }
 
-    .section {
-      display: none;
+    .screen-head h2 {
+      margin: 0;
+      font-size: 25px;
+      letter-spacing: 0;
+      line-height: 1;
     }
 
-    .section.active {
-      display: block;
+    .screen-head p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .date {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      padding: 8px 10px;
+      border-radius: 99px;
+      background: rgba(255,255,255,.54);
+      white-space: nowrap;
     }
 
     .card {
-      position: relative;
-      overflow: hidden;
-      background:
-        linear-gradient(145deg, rgba(255, 255, 255, 0.86), rgba(234, 239, 255, 0.56)),
-        var(--surface);
-      border: 1px solid rgba(255, 255, 255, 0.78);
-      border-radius: 8px;
-      padding: 16px;
-      margin-bottom: 12px;
-      box-shadow: var(--shadow-soft);
-      backdrop-filter: blur(24px);
+      border: 1px solid rgba(78,56,42,.11);
+      background: rgba(255,250,244,.76);
+      border-radius: 22px;
+      box-shadow: 0 10px 24px rgba(80,55,36,.055), var(--inset-shadow);
     }
 
-    .card::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      right: 0;
-      top: 0;
-      height: 1px;
-      background: rgba(255, 255, 255, 0.9);
-      pointer-events: none;
-    }
-
-    .label {
-      margin: 0 0 5px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    .value {
-      margin: 0;
-      font-size: 21px;
-      font-weight: 800;
-      line-height: 1.25;
-      color: #11162a;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 12px;
-    }
-
-    .three {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    button, select, input, textarea {
-      width: 100%;
-      border-radius: 8px;
-      font: inherit;
-    }
-
-    button {
-      min-height: 46px;
-      border: 0;
-      padding: 11px 12px;
-      font-weight: 800;
-      color: #ffffff;
-      background: linear-gradient(135deg, #5d72ff, var(--accent-strong));
-      box-shadow: var(--blue-shadow);
-    }
-
-    button.secondary {
-      color: #27304a;
-      background: rgba(255, 255, 255, 0.58);
-      border: 1px solid rgba(255, 255, 255, 0.76);
-      box-shadow: none;
-    }
-
-    button.danger {
-      background: linear-gradient(135deg, #f16f78, var(--danger));
-      box-shadow: 0 12px 24px rgba(221, 79, 93, 0.22);
-    }
-
-    button.success {
-      background: linear-gradient(135deg, #42c983, var(--success));
-      box-shadow: 0 12px 24px rgba(49, 168, 107, 0.22);
-    }
-
-    button:disabled {
-      opacity: 0.42;
-      box-shadow: none;
-    }
-
-    select, input, textarea {
-      min-height: 44px;
-      padding: 10px;
-      border: 1px solid rgba(129, 143, 178, 0.24);
-      color: var(--text);
-      background: rgba(255, 255, 255, 0.72);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
-    }
-
-    textarea {
-      min-height: 118px;
-      resize: vertical;
-    }
-
-    select[multiple] {
-      min-height: 148px;
-    }
-
-    .message {
-      margin-top: 10px;
-      color: var(--muted);
-      font-size: 14px;
-      line-height: 1.35;
-    }
-
-    .message.ok {
-      color: var(--success);
-    }
-
-    .message.error {
-      color: var(--danger);
-    }
-
-    .rows {
-      display: grid;
-      gap: 9px;
-      margin-top: 12px;
-    }
-
-    .row {
+    .shift-card {
+      padding: 14px;
       display: flex;
       justify-content: space-between;
-      gap: 16px;
-      padding-top: 9px;
-      border-top: 1px solid rgba(109, 124, 158, 0.16);
-      color: var(--muted);
-      font-size: 14px;
+      align-items: flex-start;
+      gap: 12px;
     }
 
-    .row strong {
-      color: var(--text);
-      text-align: right;
-      overflow-wrap: anywhere;
-    }
-
-    .list {
-      display: grid;
-      gap: 8px;
-    }
-
-    .item {
-      padding: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.78);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.62);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
-    }
-
-    .item-title {
-      margin: 0 0 5px;
-      font-weight: 800;
-      line-height: 1.3;
-    }
-
-    .item-meta {
-      margin: 0;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.35;
-    }
-
-    .empty {
-      color: var(--muted);
-      font-size: 14px;
-      line-height: 1.35;
-    }
-
-    .form {
-      display: grid;
-      gap: 10px;
-    }
-
-    .pill-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-
-    .pill {
-      padding: 5px 8px;
-      border: 1px solid rgba(255, 255, 255, 0.76);
-      border-radius: 999px;
-      color: var(--muted);
-      background: rgba(255, 255, 255, 0.58);
-      font-size: 12px;
-    }
-
-    .pill-button {
-      width: auto;
-      min-height: 34px;
-      padding: 7px 10px;
-      color: #27304a;
-      background: rgba(255, 255, 255, 0.58);
-      border: 1px solid rgba(255, 255, 255, 0.76);
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 800;
-      box-shadow: none;
-    }
-
-    .pill-button.active {
-      color: #ffffff;
-      background: var(--accent);
-      border-color: var(--accent);
-    }
-
-    .matrix {
-      display: grid;
-      gap: 8px;
-    }
-
-    .matrix-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 104px;
-      gap: 8px;
-      align-items: center;
-      padding: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.78);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.58);
-    }
-
-    .matrix-row input {
-      min-height: 38px;
-      text-align: right;
-    }
-
-    .metric-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 12px;
-    }
-
-    .metric {
-      min-height: 106px;
-      padding: 13px;
-      border: 1px solid rgba(255, 255, 255, 0.78);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.62);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
-    }
-
-    .metric strong {
+    .shift-card b {
       display: block;
-      margin-top: 10px;
-      color: var(--text);
-      font-size: 26px;
-      line-height: 1.05;
+      font-size: 15px;
+      margin-bottom: 5px;
     }
 
-    .metric span {
+    .shift-card span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--sage-dark);
+      background: rgba(143,159,127,.16);
+      border: 1px solid rgba(143,159,127,.18);
+      border-radius: 99px;
+      padding: 7px 9px;
+      font-size: 10.5px;
+      font-weight: 950;
+      white-space: nowrap;
+    }
+
+    .status-chip.warn {
+      color: var(--accent-dark);
+      background: rgba(195,111,85,.12);
+      border-color: rgba(195,111,85,.18);
+    }
+
+    .status-chip.gray {
+      color: var(--muted);
+      background: rgba(120,96,76,.10);
+      border-color: rgba(120,96,76,.10);
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 12px 0;
+    }
+
+    .kpi {
+      padding: 13px;
+      min-height: 104px;
+    }
+
+    .kpi-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .kpi-ico {
+      width: 34px;
+      height: 34px;
+      border-radius: 13px;
+      background: rgba(195,111,85,.13);
+      color: var(--accent-dark);
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+    }
+
+    .kpi.good .kpi-ico {
+      background: rgba(143,159,127,.15);
+      color: var(--sage-dark);
+    }
+
+    .kpi strong {
+      display: block;
+      margin-top: 12px;
+      font-size: 26px;
+      letter-spacing: 0;
+    }
+
+    .kpi strong small {
+      font-size: 12px;
+      letter-spacing: 0;
+      color: var(--muted);
+    }
+
+    .kpi span {
       display: block;
       margin-top: 4px;
       color: var(--muted);
-      font-size: 12px;
-      line-height: 1.25;
+      font-size: 11px;
+      line-height: 1.3;
     }
 
-    .progress-line {
-      height: 8px;
-      margin-top: 10px;
+    .progress {
+      height: 7px;
+      border-radius: 99px;
+      background: rgba(120,96,76,.12);
       overflow: hidden;
-      border-radius: 999px;
-      background: rgba(109, 124, 158, 0.16);
+      margin-top: 10px;
     }
 
-    .progress-line i {
+    .progress i {
       display: block;
       height: 100%;
-      width: var(--w, 0%);
-      border-radius: 999px;
-      background: linear-gradient(135deg, #5d72ff, var(--accent-strong));
+      width: var(--w, 70%);
+      border-radius: 99px;
+      background: var(--accent);
     }
 
-    @media (max-width: 560px) {
-      .page {
-        padding: 10px 10px 92px;
+    .progress.sage i {
+      background: var(--sage);
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 17px 0 10px;
+    }
+
+    .section-title b {
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .section-title button, .section-title span {
+      border: none;
+      background: transparent;
+      color: var(--accent-dark);
+      font-weight: 900;
+      font-size: 11px;
+    }
+
+    .op-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 16px;
+      background: rgba(195,111,85,.13);
+      display: grid;
+      place-items: center;
+      color: var(--accent-dark);
+      flex: 0 0 auto;
+    }
+
+    .active-operation,
+    .op-row,
+    .order-head {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 11px;
+    }
+
+    .active-operation b,
+    .op-meta b,
+    .order-head b {
+      display: block;
+      font-size: 13px;
+      line-height: 1.18;
+    }
+
+    .active-operation span,
+    .op-meta span,
+    .order-head span,
+    .item-meta {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .op-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .op-row.selected {
+      border-color: rgba(195,111,85,.44);
+      box-shadow: 0 12px 28px rgba(195,111,85,.12), var(--inset-shadow);
+    }
+
+    .op-num {
+      text-align: right;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 900;
+    }
+
+    .op-num strong {
+      display: block;
+      color: var(--text);
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .field-card {
+      padding: 13px;
+      margin-bottom: 10px;
+    }
+
+    .field-card label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      margin-bottom: 9px;
+    }
+
+    .select-row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .select-row b {
+      display: block;
+      font-size: 13px;
+    }
+
+    .select-row span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-top: 11px;
+    }
+
+    .detail-box {
+      border-radius: 15px;
+      background: rgba(255,255,255,.48);
+      padding: 10px;
+    }
+
+    .detail-box span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .detail-box strong {
+      display: block;
+      margin-top: 5px;
+      font-size: 13px;
+    }
+
+    .order-card {
+      padding: 12px;
+    }
+
+    .order-foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .order-detail {
+      padding: 14px;
+      background: linear-gradient(135deg, rgba(195,111,85,.12), rgba(143,159,127,.10));
+    }
+
+    .chart-card {
+      padding: 14px;
+    }
+
+    .chart-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+
+    .chart-top b {
+      display: block;
+      font-size: 14px;
+    }
+
+    .chart-top strong {
+      display: block;
+      font-size: 27px;
+      letter-spacing: 0;
+      margin-top: 6px;
+    }
+
+    .chart-top small {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .ring {
+      --p: 72;
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(195,111,85,.13) 0);
+      display: grid;
+      place-items: center;
+      position: relative;
+      flex: 0 0 auto;
+    }
+
+    .ring::before {
+      content: "";
+      position: absolute;
+      inset: 8px;
+      border-radius: 50%;
+      background: var(--cream);
+      box-shadow: inset 0 1px 2px rgba(80,55,36,.08);
+    }
+
+    .ring strong {
+      position: relative;
+      z-index: 1;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .chart {
+      width: 100%;
+      height: 150px;
+    }
+
+    .mini-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .mini-metric {
+      padding: 10px 8px;
+      text-align: center;
+    }
+
+    .mini-metric .ring {
+      width: 52px;
+      height: 52px;
+      margin: 0 auto 8px;
+    }
+
+    .mini-metric .ring::before {
+      inset: 7px;
+    }
+
+    .mini-metric .ring strong {
+      font-size: 12px;
+    }
+
+    .mini-metric b {
+      display: block;
+      font-size: 11px;
+    }
+
+    .mini-metric span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 9.5px;
+    }
+
+    .empty {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+      padding: 13px;
+    }
+
+    .toast {
+      position: fixed;
+      z-index: 50;
+      left: 50%;
+      bottom: 88px;
+      transform: translate(-50%, 26px);
+      opacity: 0;
+      min-width: min(360px, calc(100% - 32px));
+      border: 1px solid rgba(255,255,255,.42);
+      border-radius: 20px;
+      background: rgba(36,27,22,.88);
+      color: white;
+      padding: 14px 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.24);
+      backdrop-filter: blur(20px);
+      transition: .24s ease;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      transform: translate(-50%, 0);
+      opacity: 1;
+    }
+
+    .toast b {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 3px;
+    }
+
+    .toast span {
+      color: rgba(255,255,255,.72);
+      font-size: 12px;
+    }
+
+    .main-button {
+      position: fixed;
+      z-index: 6;
+      left: 16px;
+      right: 16px;
+      bottom: 78px;
+      border: none;
+      border-radius: 18px;
+      padding: 15px 16px;
+      color: white;
+      background: linear-gradient(135deg, var(--accent), #d27c5e);
+      font-size: 15px;
+      font-weight: 950;
+      box-shadow: 0 18px 36px rgba(195,111,85,.30);
+    }
+
+    .main-button:disabled {
+      opacity: .48;
+      box-shadow: none;
+    }
+
+    .bottom-nav {
+      position: fixed;
+      z-index: 5;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 9px 12px 12px;
+      background: rgba(255,250,243,.88);
+      border-top: 1px solid rgba(78,56,42,.11);
+      backdrop-filter: blur(18px);
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 2px;
+    }
+
+    .nav-btn {
+      min-width: 0;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 16px;
+      padding: 8px 3px 6px;
+      display: grid;
+      gap: 4px;
+      place-items: center;
+      font-size: 10px;
+      line-height: 1.05;
+      font-weight: 850;
+    }
+
+    .nav-btn span:last-child {
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      text-align: center;
+    }
+
+    .nav-ico {
+      width: 24px;
+      height: 24px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-size: 14px;
+    }
+
+    .nav-btn.active {
+      color: var(--accent-dark);
+    }
+
+    .nav-btn.active .nav-ico {
+      background: rgba(195,111,85,.12);
+    }
+
+    @media (min-width: 680px) {
+      .app {
+        width: min(430px, 100%);
+        min-height: 880px;
+        margin: 22px auto;
+        border-radius: 38px;
+        box-shadow: var(--shadow);
       }
 
-      .topbar {
-        align-items: flex-start;
-        padding: 3px 2px;
+      .main-button,
+      .bottom-nav {
+        left: 50%;
+        width: min(430px, 100%);
+        transform: translateX(-50%);
       }
 
-      h1 {
-        font-size: 22px;
-      }
-
-      .tabs {
-        position: fixed;
-        left: 10px;
-        right: 10px;
-        top: auto;
-        bottom: 10px;
-        margin: 0;
-        z-index: 10;
-      }
-
-      .tab {
-        min-width: 78px;
-        min-height: 44px;
-        padding: 6px;
-        font-size: 10.5px;
-      }
-
-      .brand-mark {
-        width: 40px;
-        height: 40px;
-        flex-basis: 40px;
-      }
-
-      .brand-mark svg {
-        width: 31px;
-        height: 31px;
-      }
-
-      .brand-subtitle {
-        max-width: 240px;
-        font-size: 11px;
-      }
-
-      .grid, .three {
-        grid-template-columns: 1fr;
-      }
-
-      .metric-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .matrix-row {
-        grid-template-columns: minmax(0, 1fr) 92px;
+      .toast {
+        bottom: 104px;
       }
     }
   </style>
 </head>
 <body>
-  <main class="page">
-    <div class="topbar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 64 64" focusable="false">
-            <path fill="currentColor" d="M11 47h42c2.2 0 4 1.8 4 4v3H7v-3c0-2.2 1.8-4 4-4Z"/>
-            <path fill="currentColor" d="M15 24h25c7.7 0 14 6.3 14 14v9H15V24Z"/>
-            <path fill="currentColor" d="M15 17h10v8H15v-8Z"/>
-            <path fill="currentColor" d="M42 19h9v10h-9V19Z"/>
-            <path fill="#303cff" d="M23 32h14v5H23z"/>
-            <circle cx="31" cy="43" r="3.8" fill="#303cff"/>
-          </svg>
-        </div>
-        <div class="brand-text">
-          <h1>Шагаем вместе</h1>
-          <p class="brand-subtitle">Управление производством швейной фабрики</p>
-        </div>
-      </div>
-      <div class="visually-hidden" id="connection">Загрузка</div>
+  <main class="app">
+    <div class="appbar">
+      <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
+      <div class="app-title">Шагаем вместе<small id="roleLabel">Загрузка</small></div>
+      <button class="icon-btn" id="menuBtn" aria-label="Меню">⋯</button>
     </div>
 
-    <nav class="tabs">
-      <button class="tab active" data-tab="home">Главная</button>
-      <button class="tab" data-tab="shift">Смена</button>
-      <button class="tab" data-tab="report">Отчёт</button>
-      <button class="tab" data-tab="production">Производство</button>
-      <button class="tab" data-tab="orders">Заказы</button>
-      <button class="tab" data-tab="analytics">Аналитика</button>
-      <button class="tab" data-tab="routes" id="routesTab" hidden>Маршруты</button>
-      <button class="tab" data-tab="admin" id="adminTab" hidden>Админ</button>
-      <button class="tab" data-tab="feedback">Связь</button>
-    </nav>
-
-    <section class="section active" id="section-home">
-      <div class="card">
-        <p class="label">Сегодня</p>
-        <p class="value" id="homeTitle">Производство</p>
-        <div class="message" id="homeSubtitle">Смена, отчёты, задания и аналитика.</div>
-        <div class="metric-grid">
-          <div class="metric">
-            <p class="label">Смена</p>
-            <strong id="homeShiftMetric">-</strong>
-            <span id="homeShiftMeta">-</span>
-          </div>
-          <div class="metric">
-            <p class="label">Отчёт</p>
-            <strong id="homeReportMetric">0</strong>
-            <span>строк за текущую смену</span>
-          </div>
-          <div class="metric">
-            <p class="label">Задания</p>
-            <strong id="homeProductionMetric">0</strong>
-            <span>активных производственных заданий</span>
-          </div>
-          <div class="metric">
-            <p class="label">Контуры</p>
-            <strong id="homeContourMetric">0</strong>
-            <span>доступно раскройщику</span>
-          </div>
-        </div>
+    <div class="body">
+      <div class="tabs" id="topTabs">
+        <button class="tab active" data-go="shift">Главная</button>
+        <button class="tab" data-go="operations">Смена</button>
+        <button class="tab" data-go="orders">Заказы</button>
+        <button class="tab" data-go="analytics">Аналитика</button>
       </div>
-      <div class="card">
-        <h3>Быстрые действия</h3>
-        <div class="grid">
-          <button data-tab-action="shift">Смена</button>
-          <button data-tab-action="report" class="secondary">Отчёт</button>
-          <button data-tab-action="production" class="secondary">Производство</button>
-          <button data-tab-action="orders" class="secondary">Заказы</button>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Активность</h3>
-        <div class="list" id="homeActivityList"></div>
-      </div>
-    </section>
-
-    <section class="section" id="section-shift">
-      <div class="card">
-        <p class="label">Сотрудник</p>
-        <p class="value" id="employeeName">Проверяем доступ</p>
-        <div class="rows">
-          <div class="row"><span>Должность</span><strong id="employeePosition">-</strong></div>
-          <div class="row"><span>Статус профиля</span><strong id="employeeStatus">-</strong></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <p class="label">Смена</p>
-        <p class="value" id="shiftStatus">-</p>
-        <div class="rows">
-          <div class="row"><span>Дата</span><strong id="shiftDate">-</strong></div>
-          <div class="row"><span>Начало</span><strong id="shiftStart">-</strong></div>
-          <div class="row"><span>Окончание</span><strong id="shiftEnd">-</strong></div>
-          <div class="row"><span>Отработано</span><strong id="shiftTotal">-</strong></div>
-        </div>
-        <div class="grid">
-          <button id="openButton">Открыть смену</button>
-          <button id="closeButton" class="danger">Закрыть смену</button>
-          <button id="refreshButton" class="secondary">Обновить</button>
-        </div>
-        <div class="message" id="message"></div>
-      </div>
-    </section>
-
-    <section class="section" id="section-report">
-      <div class="card">
-        <h2>Текущий отчёт</h2>
-        <div class="rows">
-          <div class="row"><span>Смена</span><strong id="reportShift">-</strong></div>
-          <div class="row"><span>Строк операций</span><strong id="reportCount">0</strong></div>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Операции</h3>
-        <div class="list" id="reportOperations"></div>
-      </div>
-      <div class="card">
-        <h3>Обратная связь за смену</h3>
-        <div class="list" id="reportFeedback"></div>
-      </div>
-    </section>
-
-    <section class="section" id="section-production">
-      <div class="card" id="productionSummaryCard">
-        <h2>Производство</h2>
-        <div class="rows">
-          <div class="row"><span>Активные задания</span><strong id="productionTaskCount">0</strong></div>
-          <div class="row"><span>Задания на контуры</span><strong id="productionContourCount">0</strong></div>
-        </div>
-        <div class="message" id="productionMessage"></div>
-      </div>
-
-      <div id="productionAdminArea">
-        <div class="card">
-          <h3>Приход ткани</h3>
-          <div class="form">
-            <input id="fabricMaterialInput" placeholder="Материал">
-            <select id="fabricColorSelect"></select>
-            <input id="fabricQuantityInput" inputmode="decimal" placeholder="Количество, м">
-            <button id="fabricReceiptButton">Сохранить приход</button>
-          </div>
-          <div class="message" id="fabricReceiptStatus"></div>
-        </div>
-
-        <div class="card">
-          <h3>Остатки ткани</h3>
-          <div class="list" id="fabricStockList"></div>
-        </div>
-
-        <div class="card">
-          <h3>Создать задание на раскрой</h3>
-          <div class="form">
-            <select id="productionProductSelect"></select>
-            <select id="productionSizeSelect" multiple></select>
-            <select id="productionColorSelect" multiple></select>
-            <button id="productionTaskCreateButton">Создать задание</button>
-          </div>
-          <div class="message" id="productionTaskStatus"></div>
-        </div>
-
-        <div class="card">
-          <h3>Производственные задания</h3>
-          <div class="list" id="productionTaskList"></div>
-        </div>
-      </div>
-
-      <div id="productionWorkArea">
-        <div class="card">
-          <h3>Задания на раскрой</h3>
-          <div class="form">
-            <select id="productionContourTaskSelect"></select>
-            <div class="matrix" id="productionContourMatrix"></div>
-            <button id="productionContourSubmitButton" class="success">Сохранить контуры</button>
-          </div>
-          <div class="message" id="productionContourStatus"></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" id="section-orders">
-      <div class="card">
-        <h2>Заказы</h2>
-        <div class="rows">
-          <div class="row"><span>Активные</span><strong id="ordersActiveCount">0</strong></div>
-          <div class="row"><span>В раскрое</span><strong id="ordersCuttingCount">0</strong></div>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Очередь производства</h3>
-        <div class="list" id="ordersList"></div>
-      </div>
-      <div class="card">
-        <h3>Детали</h3>
-        <div class="list" id="ordersDetail"></div>
-      </div>
-    </section>
-
-    <section class="section" id="section-analytics">
-      <div class="card">
-        <h2>Аналитика</h2>
-        <div class="metric-grid">
-          <div class="metric">
-            <p class="label">Операции</p>
-            <strong id="analyticsOperations">0</strong>
-            <span>строк в текущем отчёте</span>
-          </div>
-          <div class="metric">
-            <p class="label">Обратная связь</p>
-            <strong id="analyticsFeedback">0</strong>
-            <span>сообщений за смену</span>
-          </div>
-          <div class="metric">
-            <p class="label">Ткань</p>
-            <strong id="analyticsFabric">0</strong>
-            <span>позиций в остатках</span>
-          </div>
-          <div class="metric">
-            <p class="label">Задания</p>
-            <strong id="analyticsTasks">0</strong>
-            <span>активных в производстве</span>
-          </div>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Статус производства</h3>
-        <div class="list" id="analyticsStatusList"></div>
-      </div>
-    </section>
-
-    <section class="section" id="section-routes">
-      <div class="card">
-        <h2>Маршрутные карты</h2>
-        <div class="form">
-          <select id="routeProductSelect"></select>
-          <div class="list" id="routeSteps"></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Создать партию</h2>
-        <div class="form">
-          <select id="batchProductSelect"></select>
-          <select id="batchSizeSelect"></select>
-          <select id="batchColorSelect"></select>
-          <input id="batchQuantityInput" inputmode="numeric" placeholder="Количество">
-          <button id="createBatchButton">Создать партию</button>
-        </div>
-        <div class="message" id="routeCreateStatus"></div>
-      </div>
-
-      <div class="card">
-        <h2>Доступные задания</h2>
-        <div class="list" id="routeTasks"></div>
-      </div>
-    </section>
-
-    <section class="section" id="section-admin">
-      <div class="card">
-        <h2>Админ меню</h2>
-        <div class="grid three" id="adminMenu"></div>
-        <div class="message" id="adminStatus"></div>
-      </div>
-      <div class="card">
-        <h3 id="adminPanelTitle">Раздел</h3>
-        <div class="pill-row" id="adminPanelButtons"></div>
-        <div class="list" id="adminPanelContent"></div>
-      </div>
-      <div class="card">
-        <h3>Блок отчёта</h3>
-        <div class="form">
-          <div class="grid">
-            <button id="adminReportToday">Отчёт за сегодня</button>
-            <button id="adminReportMonth" class="secondary">Отчёт за месяц</button>
-          </div>
-          <div class="grid">
-            <input id="adminReportStart" type="date">
-            <input id="adminReportEnd" type="date">
-          </div>
-          <button id="adminReportPeriod" class="secondary">Отчёт за период</button>
-          <select id="adminEmployeeSelect"></select>
-          <button id="adminEmployeeReport" class="secondary">Отчёт по сотруднику</button>
-        </div>
-        <div class="list" id="adminReportOutput"></div>
-      </div>
-    </section>
-
-    <section class="section" id="section-feedback">
-      <div class="card">
-        <h2>Обратная связь</h2>
-        <div class="form">
-          <select id="feedbackCategory">
-            <option value="Производство">Производство</option>
-            <option value="Бытовое">Бытовое</option>
-          </select>
-          <textarea id="feedbackMessage" placeholder="Напишите сообщение"></textarea>
-          <button id="sendFeedbackButton">Отправить</button>
-        </div>
-        <div class="message" id="feedbackStatus"></div>
-      </div>
-    </section>
+      <div id="mount"></div>
+    </div>
   </main>
+
+  <button class="main-button" id="mainButton">Загрузка</button>
+  <nav class="bottom-nav" id="bottomNav" aria-label="Навигация миниаппа"></nav>
+  <div class="toast" id="toast"><b></b><span></span></div>
 
   <script>
     const tg = window.Telegram && window.Telegram.WebApp;
@@ -2349,18 +2224,30 @@ MINIAPP_HTML = """<!doctype html>
     const authToken = queryAuthToken || storedAuthToken;
     const state = {
       initData: tg ? tg.initData : "",
-      loading: false,
-      tab: "home",
-      adminSection: "requests",
+      screen: "shift",
+      selectedOperation: 0,
+      selectedOrder: 0,
       data: null,
     };
+
+    const mount = document.getElementById("mount");
+    const mainButton = document.getElementById("mainButton");
+    const topTabs = document.getElementById("topTabs");
+    const bottomNav = document.getElementById("bottomNav");
+    const toast = document.getElementById("toast");
+
+    const nav = [
+      { id: "shift", label: "Главная", icon: "⌂" },
+      { id: "operations", label: "Смена", icon: "◷" },
+      { id: "report", label: "Отчёт", icon: "＋" },
+      { id: "analytics", label: "Аналитика", icon: "▥" },
+      { id: "orders", label: "Заказы", icon: "▣" },
+    ];
 
     if (tg) {
       tg.ready();
       tg.expand();
     }
-
-    const $ = (id) => document.getElementById(id);
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -2369,33 +2256,6 @@ MINIAPP_HTML = """<!doctype html>
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
-    }
-
-    function setText(id, value) {
-      $(id).textContent = value || "-";
-    }
-
-    function setLoading(isLoading) {
-      state.loading = isLoading;
-      $("connection").textContent = isLoading ? "Обновление" : "Готово";
-      document.querySelectorAll("button").forEach((button) => {
-        if (!button.classList.contains("tab")) {
-          button.disabled = isLoading;
-        }
-      });
-    }
-
-    function empty(text) {
-      return `<p class="empty">${escapeHtml(text)}</p>`;
-    }
-
-    function item(title, meta = "") {
-      return `
-        <div class="item">
-          <p class="item-title">${escapeHtml(title)}</p>
-          ${meta ? `<p class="item-meta">${meta}</p>` : ""}
-        </div>
-      `;
     }
 
     async function api(path, payload = {}) {
@@ -2412,1011 +2272,291 @@ MINIAPP_HTML = """<!doctype html>
       return await response.json();
     }
 
-    function renderShift(data) {
-      const employee = data.employee;
-      const shift = data.shift;
-
-      setText("employeeName", employee ? employee.full_name : "Нет доступа");
-      setText("employeePosition", employee ? employee.position : "-");
-      setText("employeeStatus", employee ? employee.status : "-");
-
-      if (!shift) {
-        setText("shiftStatus", "Смена не открыта");
-        setText("shiftDate", "-");
-        setText("shiftStart", "-");
-        setText("shiftEnd", "-");
-        setText("shiftTotal", "-");
-      } else if (shift.status === "open") {
-        setText("shiftStatus", "Смена открыта");
-        setText("shiftDate", shift.date);
-        setText("shiftStart", shift.start_time);
-        setText("shiftEnd", "-");
-        setText("shiftTotal", "-");
-      } else {
-        setText("shiftStatus", "Смена закрыта");
-        setText("shiftDate", shift.date);
-        setText("shiftStart", shift.start_time);
-        setText("shiftEnd", shift.end_time);
-        setText("shiftTotal", shift.total_minutes_text);
-      }
-
-      $("message").textContent = data.message || "";
-      $("openButton").disabled = state.loading || !data.ok || data.has_open_shift || (shift && shift.status === "closed");
-      $("closeButton").disabled = state.loading || !data.ok || !data.has_open_shift;
+    function showToast(title, text) {
+      toast.querySelector("b").textContent = title;
+      toast.querySelector("span").textContent = text;
+      toast.classList.add("show");
+      clearTimeout(window.toastTimer);
+      window.toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
     }
 
-    function renderReport(report) {
-      const shift = report && report.shift;
-      const operations = report && report.operations ? report.operations : [];
-      const feedback = report && report.feedback ? report.feedback : [];
-
-      setText("reportShift", shift ? `${shift.date}, ${shift.status === "open" ? "открыта" : "закрыта"}` : "Нет смены");
-      setText("reportCount", String(operations.length));
-
-      $("reportOperations").innerHTML = operations.length
-        ? operations.map((row, index) => item(
-            `${index + 1}. ${row.operation_name}`,
-            [
-              row.product_size && row.product_size !== "без размера" ? `Размер: ${escapeHtml(row.product_size)}` : "",
-              row.product_color && row.product_color !== "без цвета" ? `Цвет: ${escapeHtml(row.product_color)}` : "",
-              `Количество: ${escapeHtml(row.quantity)} ${escapeHtml(row.unit)}`
-            ].filter(Boolean).join("<br>")
-          )).join("")
-        : empty(report && report.message ? report.message : "Операции ещё не добавлены.");
-
-      $("reportFeedback").innerHTML = feedback.length
-        ? feedback.map((row) => item(
-            `${row.category} — ${row.date} ${row.time}`,
-            escapeHtml(row.message)
-          )).join("")
-        : empty("Сообщений по этой смене нет.");
+    function sewingIcon() {
+      return `<svg viewBox="0 0 32 32" aria-hidden="true" width="25" height="25"><path d="M7 22h18v4H7z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 22V8h9a5 5 0 0 1 5 5v2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 14h5M19 15h8v7M13 8V5M22 15v-3M15 22v-5M13 17h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
     }
 
-    function shiftStatusText(shift) {
-      if (!shift) {
-        return "не открыта";
-      }
-
-      return shift.status === "open" ? "открыта" : "закрыта";
+    function itemEmpty(text) {
+      return `<p class="empty">${escapeHtml(text)}</p>`;
     }
 
-    function renderHome(data) {
-      const employee = data.employee;
-      const shift = data.shift;
-      const report = data.report || {};
-      const operations = report.operations || [];
-      const feedback = report.feedback || [];
-      const production = data.production || {};
-      const tasks = production.tasks || [];
-      const contourTasks = production.contour_tasks || [];
-
-      setText("homeTitle", employee ? employee.full_name : "Нет доступа");
-      $("homeSubtitle").textContent = employee
-        ? `${employee.position || "-"} · профиль ${employee.status || "-"}`
-        : "Откройте приложение из Telegram.";
-      setText("homeShiftMetric", shiftStatusText(shift));
-      $("homeShiftMeta").textContent = shift
-        ? `${shift.date || "-"} · ${shift.start_time || "-"}-${shift.end_time || ""}`
-        : "сегодня смена не открыта";
-      setText("homeReportMetric", String(operations.length));
-      setText("homeProductionMetric", String(tasks.length));
-      setText("homeContourMetric", String(contourTasks.length));
-
-      const activity = [];
-
-      if (shift) {
-        activity.push(item("Смена", `${escapeHtml(shift.date)} · ${escapeHtml(shiftStatusText(shift))}`));
-      }
-
-      operations.slice(0, 2).forEach((row) => {
-        activity.push(item(
-          row.operation_name,
-          `Количество: ${escapeHtml(row.quantity)} ${escapeHtml(row.unit)}`
-        ));
-      });
-
-      tasks.slice(0, 3).forEach((task) => {
-        activity.push(item(`#${task.id} ${task.product_name}`, taskMeta(task)));
-      });
-
-      feedback.slice(0, 1).forEach((row) => {
-        activity.push(item(`${row.category} · ${row.date}`, escapeHtml(row.message)));
-      });
-
-      $("homeActivityList").innerHTML = activity.length
-        ? activity.join("")
-        : empty("Пока нет активности за смену.");
-    }
-
-    function orderProgress(task) {
-      if (!task) {
-        return 0;
-      }
-
-      if (task.status === "formed") {
-        return 100;
-      }
-
-      if (task.status === "in_cutting") {
-        return 70;
-      }
-
-      if (task.status === "contours_done") {
-        return 35;
-      }
-
+    function progressForTask(task) {
+      if (!task) return 0;
+      if (task.status === "formed") return 100;
+      if (task.status === "in_cutting") return 70;
+      if (task.status === "contours_done") return 40;
       return 12;
     }
 
-    function renderOrders(production) {
-      production = production || {};
-      const tasks = production.tasks || [];
-      const inCutting = tasks.filter((task) => task.status === "in_cutting" || task.status === "contours_done").length;
-
-      setText("ordersActiveCount", String(tasks.length));
-      setText("ordersCuttingCount", String(inCutting));
-
-      $("ordersList").innerHTML = tasks.length
-        ? tasks.map((task) => {
-            const progress = orderProgress(task);
-            return `
-              <div class="item">
-                <p class="item-title">#${escapeHtml(task.id)} ${escapeHtml(task.product_name)}</p>
-                <p class="item-meta">
-                  ${taskMeta(task)}
-                  <span class="progress-line"><i style="--w:${progress}%"></i></span>
-                </p>
-              </div>
-            `;
-          }).join("")
-        : empty("Производственных заказов пока нет.");
-
-      $("ordersDetail").innerHTML = tasks.length
-        ? tasks.slice(0, 3).map((task) => item(
-            `Заказ #${task.id}`,
-            [
-              `Изделие: ${escapeHtml(task.product_name)}`,
-              `Статус: ${escapeHtml(task.status_text || task.status)}`,
-              `Размеры: ${escapeHtml((task.sizes || []).join(", ") || "-")}`,
-              `Цвета: ${escapeHtml((task.color_labels || task.colors || []).join(", ") || "-")}`,
-            ].join("<br>")
-          )).join("")
-        : empty("Детали появятся после создания задания.");
+    function getReportOperations() {
+      return state.data && state.data.report && state.data.report.operations ? state.data.report.operations : [];
     }
 
-    function renderAnalytics(data) {
-      const report = data.report || {};
-      const production = data.production || {};
-      const operations = report.operations || [];
-      const feedback = report.feedback || [];
-      const tasks = production.tasks || [];
-      const fabricRows = production.fabric_stock || [];
-      const formedCount = tasks.filter((task) => task.status === "formed").length;
-      const cuttingCount = tasks.filter((task) => task.status === "in_cutting" || task.status === "contours_done").length;
-      const activeCount = tasks.filter((task) => task.status === "active").length;
-
-      setText("analyticsOperations", String(operations.length));
-      setText("analyticsFeedback", String(feedback.length));
-      setText("analyticsFabric", String(fabricRows.length));
-      setText("analyticsTasks", String(tasks.length));
-
-      $("analyticsStatusList").innerHTML = [
-        item("Ожидают контуров", `${activeCount} заданий<div class="progress-line"><i style="--w:${tasks.length ? Math.round(activeCount / tasks.length * 100) : 0}%"></i></div>`),
-        item("В раскрое", `${cuttingCount} заданий<div class="progress-line"><i style="--w:${tasks.length ? Math.round(cuttingCount / tasks.length * 100) : 0}%"></i></div>`),
-        item("Готовый крой", `${formedCount} заданий<div class="progress-line"><i style="--w:${tasks.length ? Math.round(formedCount / tasks.length * 100) : 0}%"></i></div>`),
-      ].join("");
+    function getFeedbackRows() {
+      return state.data && state.data.report && state.data.report.feedback ? state.data.report.feedback : [];
     }
 
-    function getSelectedRouteProduct() {
-      const catalog = state.data && state.data.routes ? state.data.routes.catalog : [];
-      return catalog.find((product) => product.product_name === $("routeProductSelect").value) || catalog[0];
+    function getProduction() {
+      return state.data && state.data.production ? state.data.production : {};
     }
 
-    function optionList(items, selectedValue = "") {
-      return items.map((itemValue) => {
-        const selected = itemValue === selectedValue ? " selected" : "";
-        return `<option value="${escapeHtml(itemValue)}"${selected}>${escapeHtml(itemValue)}</option>`;
-      }).join("");
+    function getTasks() {
+      return getProduction().tasks || [];
     }
 
-    function renderRouteSelectors() {
-      const catalog = state.data && state.data.routes ? state.data.routes.catalog : [];
-
-      if (!catalog.length) {
-        $("routeProductSelect").innerHTML = "";
-        $("batchProductSelect").innerHTML = "";
-        $("routeSteps").innerHTML = empty("Маршрутные карты пока не настроены.");
-        return;
-      }
-
-      const currentProduct = $("routeProductSelect").value || catalog[0].product_name;
-      const batchProduct = $("batchProductSelect").value || catalog[0].product_name;
-      $("routeProductSelect").innerHTML = optionList(catalog.map((product) => product.product_name), currentProduct);
-      $("batchProductSelect").innerHTML = optionList(catalog.map((product) => product.product_name), batchProduct);
-      renderSelectedRoute();
-      renderBatchOptions();
+    function getContourTasks() {
+      return getProduction().contour_tasks || [];
     }
 
-    function renderSelectedRoute() {
-      const product = getSelectedRouteProduct();
-
-      if (!product) {
-        $("routeSteps").innerHTML = empty("Выберите изделие.");
-        return;
-      }
-
-      $("routeSteps").innerHTML = product.steps.map((step) => item(
-        `${step.number}. ${step.operation}`,
-        `Кто делает: ${escapeHtml(step.position)}<br>После этапа: ${escapeHtml(step.status_after)}`
-      )).join("");
+    function shiftText() {
+      const shift = state.data && state.data.shift;
+      if (!shift) return "Смена не открыта";
+      return shift.status === "open" ? "Смена открыта" : "Смена закрыта";
     }
 
-    function renderBatchOptions() {
-      const catalog = state.data && state.data.routes ? state.data.routes.catalog : [];
-      const product = catalog.find((item) => item.product_name === $("batchProductSelect").value) || catalog[0];
-
-      if (!product) {
-        return;
-      }
-
-      $("batchSizeSelect").innerHTML = optionList(product.sizes.length ? product.sizes : ["без размера"]);
-      $("batchColorSelect").innerHTML = optionList(product.raw_colors.length ? product.raw_colors : ["без цвета"]);
-    }
-
-    function renderRoutes(routes) {
-      renderRouteSelectors();
-      const tasks = routes && routes.tasks ? routes.tasks : [];
-
-      $("routeTasks").innerHTML = tasks.length
-        ? tasks.map((task) => `
-            <div class="item">
-              <p class="item-title">#${escapeHtml(task.id)} ${escapeHtml(task.operation)}</p>
-              <p class="item-meta">
-                ${escapeHtml(task.identity)}<br>
-                Сейчас: ${escapeHtml(task.current_status)}<br>
-                Кто делает: ${escapeHtml(task.position)}<br>
-                После этапа: ${escapeHtml(task.status_after)}
-              </p>
-              <button class="success" data-complete-route="${escapeHtml(task.id)}">Завершить этап</button>
-            </div>
-          `).join("")
-        : empty("Доступных маршрутных заданий пока нет.");
-
-      document.querySelectorAll("[data-complete-route]").forEach((button) => {
-        button.addEventListener("click", () => completeRouteTask(button.dataset.completeRoute));
-      });
-    }
-
-    function selectedOptions(selectId) {
-      return Array.from($(selectId).selectedOptions).map((option) => option.value);
-    }
-
-    function allProductionColors(catalog) {
-      const seen = new Set();
-      const rows = [];
-
-      catalog.forEach((product) => {
-        (product.colors || []).forEach((color, index) => {
-          if (!seen.has(color)) {
-            seen.add(color);
-            rows.push({
-              value: color,
-              label: (product.color_labels || [])[index] || color,
-            });
-          }
-        });
-      });
-
-      return rows.sort((a, b) => a.label.localeCompare(b.label, "ru"));
-    }
-
-    function optionListRows(rows, selectedValues = []) {
-      const selectedSet = new Set(Array.isArray(selectedValues) ? selectedValues : [selectedValues]);
-
-      return rows.map((row) => {
-        const selected = selectedSet.has(row.value) ? " selected" : "";
-        return `<option value="${escapeHtml(row.value)}"${selected}>${escapeHtml(row.label)}</option>`;
-      }).join("");
-    }
-
-    function getProductionCatalogProduct() {
-      const production = state.data && state.data.production ? state.data.production : {};
-      const catalog = production.catalog || [];
-      return catalog.find((product) => product.product_name === $("productionProductSelect").value) || catalog[0];
-    }
-
-    function renderProductionTaskOptions() {
-      const product = getProductionCatalogProduct();
-
-      if (!product) {
-        $("productionSizeSelect").innerHTML = "";
-        $("productionColorSelect").innerHTML = "";
-        return;
-      }
-
-      $("productionSizeSelect").innerHTML = optionListRows(
-        (product.sizes || []).map((size) => ({value: size, label: size}))
-      );
-      $("productionColorSelect").innerHTML = optionListRows(
-        (product.colors || []).map((color, index) => ({
-          value: color,
-          label: (product.color_labels || [])[index] || color,
-        }))
-      );
-    }
-
-    function taskMeta(task) {
-      return [
-        `Статус: ${escapeHtml(task.status_text || task.status)}`,
-        `Размеры: ${escapeHtml((task.sizes || []).join(", ") || "-")}`,
-        `Цвета: ${escapeHtml((task.color_labels || task.colors || []).join(", ") || "-")}`,
-      ].join("<br>");
-    }
-
-    function renderProductionTasks(tasks) {
-      $("productionTaskList").innerHTML = tasks.length
-        ? tasks.map((task) => item(`#${task.id} ${task.product_name}`, taskMeta(task))).join("")
-        : empty("Активных производственных заданий пока нет.");
-    }
-
-    function getSelectedContourTask() {
-      const production = state.data && state.data.production ? state.data.production : {};
-      const tasks = production.contour_tasks || [];
-      const selectedId = Number($("productionContourTaskSelect").value || 0);
-      return tasks.find((task) => Number(task.id) === selectedId) || tasks[0];
-    }
-
-    function renderProductionContourMatrix() {
-      const task = getSelectedContourTask();
-
-      if (!task) {
-        $("productionContourMatrix").innerHTML = empty("Заданий на контуры пока нет.");
-        $("productionContourSubmitButton").disabled = true;
-        return;
-      }
-
-      $("productionContourSubmitButton").disabled = state.loading;
-      $("productionContourMatrix").innerHTML = (task.colors || []).map((color, colorIndex) => (
-        (task.sizes || []).map((size) => {
-          const colorLabel = (task.color_labels || [])[colorIndex] || color;
-          const key = `${size}|${color}`;
-          return `
-            <label class="matrix-row">
-              <span>${escapeHtml(size)} / ${escapeHtml(colorLabel)}</span>
-              <input data-contour-key="${escapeHtml(key)}" inputmode="numeric" placeholder="0">
-            </label>
-          `;
-        }).join("")
-      )).join("");
-    }
-
-    function renderProduction(production) {
-      production = production || {};
-      const catalog = production.catalog || [];
-      const tasks = production.tasks || [];
-      const contourTasks = production.contour_tasks || [];
-      const showAdmin = Boolean(production.can_admin);
-      const showWork = Boolean(production.can_contours);
-
-      setText("productionTaskCount", String(tasks.length));
-      setText("productionContourCount", String(contourTasks.length));
-      $("productionAdminArea").hidden = !showAdmin;
-      $("productionWorkArea").hidden = !showWork;
-      $("productionMessage").textContent = showAdmin || showWork
-        ? ""
-        : "Для вашей должности пока нет производственных действий.";
-
-      const colors = allProductionColors(catalog);
-      const selectedFabricColor = $("fabricColorSelect").value;
-      $("fabricColorSelect").innerHTML = optionListRows(colors, selectedFabricColor);
-
-      const selectedProduct = $("productionProductSelect").value;
-      $("productionProductSelect").innerHTML = optionListRows(
-        catalog.map((product) => ({value: product.product_name, label: product.product_name})),
-        selectedProduct
-      );
-      renderProductionTaskOptions();
-
-      $("fabricStockList").innerHTML = (production.fabric_stock || []).length
-        ? production.fabric_stock.map((row) => item(
-            `${row.material_name}, ${row.product_color_label}`,
-            `Остаток: ${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}`
-          )).join("")
-        : empty("Остатков ткани пока нет.");
-
-      renderProductionTasks(tasks);
-
-      $("productionContourTaskSelect").innerHTML = contourTasks.length
-        ? optionListRows(contourTasks.map((task) => ({
-            value: String(task.id),
-            label: `#${task.id} ${task.product_name}`,
-          })), $("productionContourTaskSelect").value)
-        : "";
-      renderProductionContourMatrix();
-    }
-
-    function minutesText(totalMinutes) {
-      const minutes = Number(totalMinutes || 0);
-      const hours = Math.floor(minutes / 60);
-      const tail = String(minutes % 60).padStart(2, "0");
-      return `${hours}:${tail}`;
-    }
-
-    function renderAdminMenu(admin) {
-      $("adminMenu").innerHTML = (admin.menu || []).map((section) => `
-        <button class="${state.adminSection === section.id ? "" : "secondary"}" data-admin-section="${escapeHtml(section.id)}">
-          ${escapeHtml(section.title)}
+    function renderBottomNav() {
+      bottomNav.innerHTML = nav.map((item) => `
+        <button class="nav-btn ${state.screen === item.id ? "active" : ""}" data-go="${item.id}">
+          <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
         </button>
       `).join("");
+    }
 
-      document.querySelectorAll("[data-admin-section]").forEach((button) => {
-        button.addEventListener("click", () => {
-          state.adminSection = button.dataset.adminSection;
-          renderAdmin(state.data.admin);
-        });
+    function renderTopTabs() {
+      [...topTabs.querySelectorAll(".tab")].forEach((button) => {
+        const isActive = button.dataset.go === state.screen || (state.screen === "report" && button.dataset.go === "operations");
+        button.classList.toggle("active", isActive);
       });
     }
 
-    function renderAdminSectionButtons(section) {
-      $("adminPanelButtons").innerHTML = (section.buttons || []).map((buttonText) => (
-        `<button class="pill-button" data-admin-tool="${escapeHtml(buttonText)}">${escapeHtml(buttonText)}</button>`
-      )).join("");
-
-      document.querySelectorAll("[data-admin-tool]").forEach((button) => {
-        button.addEventListener("click", () => handleAdminTool(button.dataset.adminTool));
-      });
+    function roleLabel() {
+      const employee = state.data && state.data.employee;
+      if (!employee) return "Нет доступа";
+      return employee.position || "Сотрудник";
     }
 
-    function employeeActions(employee) {
-      return `
-        <div class="grid">
-          <button class="success" data-employee-status="${escapeHtml(employee.id)}" data-status-value="active">Активен</button>
-          <button class="danger" data-employee-status="${escapeHtml(employee.id)}" data-status-value="inactive">Отключить</button>
-          <button class="secondary" data-employee-position="${escapeHtml(employee.id)}">Должность</button>
+    function renderShift() {
+      const employee = state.data && state.data.employee;
+      const shift = state.data && state.data.shift;
+      const operations = getReportOperations();
+      const tasks = getTasks();
+      const contourTasks = getContourTasks();
+      const fabricRows = getProduction().fabric_stock || [];
+      const hasOpen = state.data && state.data.has_open_shift;
+
+      mainButton.textContent = hasOpen ? "Закрыть смену" : "Открыть смену";
+      mainButton.disabled = Boolean(shift && shift.status === "closed");
+
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Сегодня</h2><p>${escapeHtml(employee ? employee.full_name : "Откройте приложение из Telegram")}</p></div><div class="date">${escapeHtml(shift ? shift.date : "сегодня")}</div></div>
+        <div class="card shift-card"><div><b>${escapeHtml(shiftText())}</b><span>${escapeHtml(employee ? employee.position : "-")} · профиль ${escapeHtml(employee ? employee.status : "-")}<br>${escapeHtml(shift ? `${shift.start_time || "-"}-${shift.end_time || ""}` : "Начните смену, чтобы вести отчёт")}</span></div><span class="status-chip ${hasOpen ? "" : "gray"}">● ${hasOpen ? "в процессе" : "ожидает"}</span></div>
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>Отчёт</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${operations.length}<small> строк</small></strong><span>Операции текущей смены</span><div class="progress"><i style="--w:${Math.min(100, operations.length * 12)}%"></i></div></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Задания</span><div class="kpi-ico">✓</div></div><strong>${tasks.length}<small> акт.</small></strong><span>Производственные задания</span><div class="progress sage"><i style="--w:${Math.min(100, tasks.length * 18)}%"></i></div></div>
+          <div class="card kpi"><div class="kpi-top"><span>Контуры</span><div class="kpi-ico">▣</div></div><strong>${contourTasks.length}<small> шт</small></strong><span>Доступно раскройщику</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Ткань</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз.</small></strong><span>Остатки ткани</span></div>
+        </div>
+        <div class="section-title"><b>Активная операция</b><button data-go="operations">все операции</button></div>
+        ${operations.length ? `
+          <div class="card active-operation" data-go="report"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(operations[0].operation_name)}</b><span>${escapeHtml(operations[0].product_size || "-")} · ${escapeHtml(operations[0].product_color || "-")}<br>${escapeHtml(operations[0].quantity)} ${escapeHtml(operations[0].unit)}</span></div><span class="status-chip">отчёт</span></div>
+        ` : `<div class="card shift-card"><div><b>Операций пока нет</b><span>Когда появятся строки отчёта, они будут здесь.</span></div><span class="status-chip gray">пусто</span></div>`}
+      `;
+    }
+
+    function renderOperations() {
+      const operations = getReportOperations();
+      const selected = operations[state.selectedOperation] || operations[0];
+      mainButton.textContent = selected ? "Открыть отчёт" : "Обновить";
+      mainButton.disabled = false;
+
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Операции смены</h2><p>Строки текущего отчёта сотрудника.</p></div><div class="date">${operations.length} строк</div></div>
+        <div class="op-list">
+          ${operations.length ? operations.map((op, index) => `
+            <div class="card op-row ${index === state.selectedOperation ? "selected" : ""}" data-select-operation="${index}">
+              <div class="op-icon">${sewingIcon()}</div>
+              <div class="op-meta"><b>${escapeHtml(op.operation_name)}</b><span>${escapeHtml(op.product_size || "-")} · ${escapeHtml(op.product_color || "-")}<br>${escapeHtml(op.quantity)} ${escapeHtml(op.unit)}</span><div class="progress ${Number(op.quantity || 0) > 0 ? "sage" : ""}"><i style="--w:${Math.min(100, Number(op.quantity || 0))}%"></i></div></div>
+              <div class="op-num"><strong>${escapeHtml(op.quantity)}</strong>${escapeHtml(op.unit)}</div>
+            </div>
+          `).join("") : itemEmpty("Операций за текущую смену пока нет.")}
         </div>
       `;
     }
 
-    function renderEmployeesList(employees) {
-      return employees.length
-        ? employees.map((employee) => `
-            <div class="item">
-              <p class="item-title">${escapeHtml(employee.full_name)}</p>
-              <p class="item-meta">
-                ID: ${escapeHtml(employee.id)}<br>
-                Telegram ID: ${escapeHtml(employee.telegram_id)}<br>
-                Должность: ${escapeHtml(employee.position || "-")}<br>
-                Статус: ${escapeHtml(employee.status)}
-              </p>
-              ${employeeActions(employee)}
+    function renderReport() {
+      const operations = getReportOperations();
+      const feedback = getFeedbackRows();
+      const op = operations[state.selectedOperation] || operations[0];
+      mainButton.textContent = "Обновить отчёт";
+      mainButton.disabled = false;
+
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Отчёт по операции</h2><p>Просмотр данных текущей смены.</p></div><div class="date">${operations.length} строк</div></div>
+        ${op ? `
+          <div class="card field-card"><label>Операция</label><div class="select-row" data-go="operations"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(op.operation_name)}</b><span>${escapeHtml(op.product_size || "-")} · ${escapeHtml(op.product_color || "-")}</span></div><span>›</span></div></div>
+          <div class="card field-card"><label>Количество</label><div class="select-row"><div class="op-icon">✓</div><div><b>${escapeHtml(op.quantity)} ${escapeHtml(op.unit)}</b><span>Сохранено в сменном отчёте</span></div><span class="status-chip">принято</span></div></div>
+        ` : `<div class="card field-card">${itemEmpty("В текущей смене пока нет строк отчёта.")}</div>`}
+        <div class="section-title"><b>Обратная связь</b><span>${feedback.length}</span></div>
+        <div class="op-list">
+          ${feedback.length ? feedback.map((row) => `
+            <div class="card field-card"><label>${escapeHtml(row.category)} · ${escapeHtml(row.date)}</label><div class="textarea">${escapeHtml(row.message)}</div></div>
+          `).join("") : `<div class="card field-card">${itemEmpty("Сообщений за смену нет.")}</div>`}
+        </div>
+      `;
+    }
+
+    function renderOrders() {
+      const tasks = getTasks();
+      const current = tasks[state.selectedOrder] || tasks[0];
+      mainButton.textContent = "Обновить статус";
+      mainButton.disabled = false;
+
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Заказы в работе</h2><p>Очередь производства и статусы.</p></div><div class="date">${tasks.length} активных</div></div>
+        <div class="op-list">
+          ${tasks.length ? tasks.map((task, index) => `
+            <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
+              <div class="order-head"><div class="op-icon">▣</div><div><b>Задание #${escapeHtml(task.id)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip ${task.status === "active" ? "warn" : ""}">${escapeHtml(task.status_text || task.status)}</span></div>
+              <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
+              <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || "-")}</span><span>${progressForTask(task)}%</span></div>
             </div>
-          `).join("")
-        : empty("Сотрудников нет.");
+          `).join("") : itemEmpty("Производственных заданий пока нет.")}
+        </div>
+        <div class="section-title"><b>Детали выбранного</b><span>${current ? progressForTask(current) : 0}%</span></div>
+        ${current ? `
+          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.status_text || current.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || current.status)}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
+        ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
+      `;
     }
 
-    function renderOpenShifts(shifts) {
-      return shifts.length
-        ? shifts.map((shift) => `
-            <div class="item">
-              <p class="item-title">#${escapeHtml(shift.id)} ${escapeHtml(shift.employee)}</p>
-              <p class="item-meta">${escapeHtml(shift.date)} с ${escapeHtml(shift.start_time)}</p>
-              <button class="danger" data-admin-close-shift="${escapeHtml(shift.id)}">Закрыть смену</button>
-            </div>
-          `).join("")
-        : empty("Открытых смен нет.");
+    function renderAnalytics() {
+      const operations = getReportOperations();
+      const feedback = getFeedbackRows();
+      const tasks = getTasks();
+      const fabricRows = getProduction().fabric_stock || [];
+      const formed = tasks.filter((task) => task.status === "formed").length;
+      const inCutting = tasks.filter((task) => task.status === "in_cutting" || task.status === "contours_done").length;
+      const active = tasks.filter((task) => task.status === "active").length;
+      const total = Math.max(tasks.length, 1);
+      const donePercent = Math.round(formed / total * 100);
+
+      mainButton.textContent = "Открыть заказы";
+      mainButton.disabled = false;
+
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Статус производства</h2><p>Аналитика по текущим данным миниаппа.</p></div><div class="date">сейчас</div></div>
+        <div class="card chart-card">
+          <div class="chart-top"><div><b>Готовый крой</b><strong>${formed}<small> из ${tasks.length}</small></strong><small>сформированные задания</small></div><div class="ring" style="--p:${donePercent}"><strong>${donePercent}%</strong></div></div>
+          <svg class="chart" viewBox="0 0 330 150" role="img" aria-label="График производства">
+            <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#c36f55" stop-opacity=".28"/><stop offset="1" stop-color="#c36f55" stop-opacity="0"/></linearGradient></defs>
+            <path d="M10 130H320" stroke="rgba(80,55,36,.16)"/><path d="M10 95H320" stroke="rgba(80,55,36,.12)"/><path d="M10 60H320" stroke="rgba(80,55,36,.12)"/><path d="M10 25H320" stroke="rgba(80,55,36,.12)"/>
+            <path d="M12 126 C45 108,54 106,78 92 C103 78,110 85,132 70 C155 52,168 64,190 48 C215 32,232 54,258 42 C282 31,296 30,318 22 L318 136 L12 136 Z" fill="url(#area)"/>
+            <path d="M12 126 C45 108,54 106,78 92 C103 78,110 85,132 70 C155 52,168 64,190 48 C215 32,232 54,258 42 C282 31,296 30,318 22" fill="none" stroke="#c36f55" stroke-width="4" stroke-linecap="round"/>
+          </svg>
+          <div class="mini-metrics">
+            <div class="card mini-metric"><div class="ring" style="--p:${Math.round(operations.length / Math.max(operations.length, 1) * 100)}"><strong>${operations.length}</strong></div><b>Операции</b><span>в отчёте</span></div>
+            <div class="card mini-metric"><div class="ring" style="--p:${Math.round(inCutting / total * 100)}"><strong>${inCutting}</strong></div><b>В раскрое</b><span>заданий</span></div>
+            <div class="card mini-metric"><div class="ring" style="--p:${Math.round(active / total * 100)}"><strong>${active}</strong></div><b>Ожидают</b><span>контуры</span></div>
+          </div>
+        </div>
+        <div class="section-title"><b>Показатели</b><button data-go="orders">все заказы</button></div>
+        <div class="op-list">
+          <div class="card shift-card"><div><b>Остатки ткани</b><span>${fabricRows.length} позиций</span></div><span class="status-chip gray">склад</span></div>
+          <div class="card shift-card"><div><b>Обратная связь</b><span>${feedback.length} сообщений за смену</span></div><span class="status-chip gray">связь</span></div>
+        </div>
+      `;
     }
 
-    function renderRecentShifts(shifts) {
-      return shifts.length
-        ? shifts.map((shift) => `
-            <div class="item">
-              <p class="item-title">#${escapeHtml(shift.id)} ${escapeHtml(shift.employee)}</p>
-              <p class="item-meta">
-                ${escapeHtml(shift.date)} ${escapeHtml(shift.start_time)}-${escapeHtml(shift.end_time || "")}<br>
-                Статус: ${escapeHtml(shift.status)}<br>
-                Строк отчёта: ${escapeHtml(shift.operation_count)}
-              </p>
-              <button class="danger" data-admin-delete-shift="${escapeHtml(shift.id)}">Удалить смену</button>
-            </div>
-          `).join("")
-        : empty("Смен пока нет.");
+    function render() {
+      if (!state.data) return;
+      document.getElementById("roleLabel").textContent = roleLabel();
+      renderBottomNav();
+      renderTopTabs();
+      if (state.screen === "shift") renderShift();
+      if (state.screen === "operations") renderOperations();
+      if (state.screen === "report") renderReport();
+      if (state.screen === "analytics") renderAnalytics();
+      if (state.screen === "orders") renderOrders();
+      renderBottomNav();
+      renderTopTabs();
     }
 
-    function renderOperationsList(operations) {
-      const visibleOperations = operations.slice(0, 80);
-      const tailMessage = operations.length > visibleOperations.length
-        ? `<p class="empty">Показаны первые ${visibleOperations.length} из ${operations.length}. Для точного изменения используйте номер операции.</p>`
-        : "";
-
-      return [
-        tailMessage,
-        visibleOperations.length
-          ? visibleOperations.map((operation) => `
-              <div class="item">
-                <p class="item-title">${escapeHtml(operation.name)}</p>
-                <p class="item-meta">
-                  Номер: ${escapeHtml(operation.number)}<br>
-                  Должность: ${escapeHtml(operation.position)}<br>
-                  Группа: ${escapeHtml(operation.group)}<br>
-                  Папка: ${escapeHtml(operation.folder)}<br>
-                  Ед.: ${escapeHtml(operation.unit)}<br>
-                  Статус: ${operation.active ? "активна" : "скрыта"}
-                </p>
-                <div class="grid">
-                  <button class="secondary" data-admin-edit-operation="${escapeHtml(operation.number)}">Изменить</button>
-                  <button class="${operation.active ? "danger" : "success"}" data-admin-toggle-operation="${escapeHtml(operation.number)}" data-operation-action="${operation.active ? "hide" : "restore"}">
-                    ${operation.active ? "Скрыть" : "Вернуть"}
-                  </button>
-                </div>
-              </div>
-            `).join("")
-          : empty("Операций нет."),
-      ].join("");
-    }
-
-    function renderAdminReport(report) {
-      if (!report) {
-        $("adminReportOutput").innerHTML = empty("Выберите отчёт.");
-        return;
-      }
-
-      const summary = report.summary || [];
-      const shifts = report.shifts || report.employee_shifts || [];
-      const operations = report.operations || report.employee_operations || [];
-      const totalShifts = summary.reduce((sum, row) => sum + Number(row.shift_count || 0), 0);
-      const totalMinutes = summary.reduce((sum, row) => sum + Number(row.total_minutes || 0), 0);
-
-      let output = item(report.title || "Отчёт", `Период: ${escapeHtml(report.start_date)} — ${escapeHtml(report.end_date)}`);
-
-      if (report.employee_summary) {
-        const employee = report.employee_summary;
-        output += item(
-          employee.full_name,
-          `Должность: ${escapeHtml(employee.position || "-")}<br>Смен: ${escapeHtml(employee.shift_count)}<br>Часы: ${escapeHtml(employee.total_time)}`
-        );
-      } else if (summary.length) {
-        output += item("Итого", `Смен: ${escapeHtml(totalShifts)}<br>Часы: ${escapeHtml(minutesText(totalMinutes))}`);
-        output += summary.map((row) => item(
-          row.full_name,
-          `Смен: ${escapeHtml(row.shift_count)}<br>Часы: ${escapeHtml(row.total_time)}`
-        )).join("");
-      }
-
-      output += shifts.length
-        ? item("Смены по дням", shifts.slice(0, 40).map((shift) => (
-            `${escapeHtml(shift.date)} — ${escapeHtml(shift.employee || "")} ${escapeHtml(shift.start_time || "")}-${escapeHtml(shift.end_time || "")}, ${escapeHtml(shift.total_time || "")}, ${escapeHtml(shift.status || "")}`
-          )).join("<br>"))
-        : empty("Смен за период нет.");
-
-      output += operations.length
-        ? item("Операции", operations.slice(0, 60).map((row) => {
-            if (row.employee) {
-              return `${escapeHtml(row.date)} — ${escapeHtml(row.employee)} — ${escapeHtml(row.group)} — ${escapeHtml(row.operation)} — ${escapeHtml(row.size || "-")} / ${escapeHtml(row.color || "-")} — ${escapeHtml(row.quantity)} ${escapeHtml(row.unit)}`;
-            }
-
-            return `${escapeHtml(row.operation)} — ${escapeHtml(row.quantity)} ${escapeHtml(row.unit)}`;
-          }).join("<br>"))
-        : empty("Операций за период нет.");
-
-      $("adminReportOutput").innerHTML = output;
-    }
-
-    function renderAdminSection(admin) {
-      const section = (admin.menu || []).find((item) => item.id === state.adminSection) || (admin.menu || [])[0];
-
-      if (!section) {
-        return;
-      }
-
-      $("adminPanelTitle").textContent = section.title;
-      renderAdminSectionButtons(section);
-
-      if (section.id === "requests") {
-        $("adminPanelContent").innerHTML = admin.pending_employees.length
-          ? admin.pending_employees.map((employee) => `
-              <div class="item">
-                <p class="item-title">${escapeHtml(employee.full_name)}</p>
-                <p class="item-meta">
-                  ID: ${escapeHtml(employee.id)}<br>
-                  Telegram ID: ${escapeHtml(employee.telegram_id)}<br>
-                  Должность: ${escapeHtml(employee.position || "-")}<br>
-                  Дата заявки: ${escapeHtml(employee.registered_at)}
-                </p>
-                <div class="grid">
-                  <button class="success" data-employee-status="${escapeHtml(employee.id)}" data-status-value="active">Подтвердить</button>
-                  <button class="danger" data-employee-status="${escapeHtml(employee.id)}" data-status-value="inactive">Отклонить</button>
-                </div>
-              </div>
-            `).join("")
-          : empty("Новых заявок нет.");
-      } else if (section.id === "reports") {
-        $("adminPanelContent").innerHTML = empty("Используйте блок отчёта ниже. Кнопки этого раздела сохранены как в Telegram-боте.");
-      } else if (section.id === "shifts") {
-        $("adminPanelContent").innerHTML = [
-          item("Открытые смены", ""),
-          renderOpenShifts(admin.open_shifts),
-          item("Последние смены", ""),
-          renderRecentShifts(admin.recent_shifts),
-        ].join("");
-      } else if (section.id === "employees") {
-        $("adminPanelContent").innerHTML = renderEmployeesList(admin.employees);
-      } else if (section.id === "operations") {
-        $("adminPanelContent").innerHTML = renderOperationsList(admin.operations);
-      } else if (section.id === "files") {
-        const database = admin.files.database || {};
-        const logs = admin.files.logs || [];
-        $("adminPanelContent").innerHTML = [
-          item(
-            "Проверка базы",
-            `Путь: ${escapeHtml(database.path)}<br>Файл найден: ${database.exists ? "да" : "нет"}<br>Размер: ${escapeHtml(database.size)} байт<br>Папка копий: ${escapeHtml(database.backup_dir)}<br>Копий базы: ${escapeHtml(database.backup_count)}`
-          ),
-          logs.length
-            ? item("Журнал", logs.slice(0, 20).map((log) => (
-                `${escapeHtml(log.changed_at)} — ${escapeHtml(log.action)} — ${escapeHtml(log.details || "")}`
-              )).join("<br>"))
-            : empty("Журнал пока пуст."),
-        ].join("");
-      }
-
-      bindAdminActionButtons();
-    }
-
-    function renderAdmin(admin) {
-      $("adminTab").hidden = !(state.data && state.data.is_admin);
-
-      if (!admin || !admin.ok) {
-        return;
-      }
-
-      $("adminStatus").textContent = admin.message || "";
-      renderAdminMenu(admin);
-      renderAdminSection(admin);
-
-      const defaults = admin.period_defaults || {};
-      if (!$("adminReportStart").value) {
-        $("adminReportStart").value = defaults.start_date || "";
-      }
-      if (!$("adminReportEnd").value) {
-        $("adminReportEnd").value = defaults.end_date || "";
-      }
-
-      $("adminEmployeeSelect").innerHTML = optionList(
-        (admin.employees || []).map((employee) => `${employee.id} — ${employee.full_name}`)
-      );
-      renderAdminReport(admin.reports);
-    }
-
-    function render(data) {
-      state.data = data;
-      $("routesTab").hidden = !(data.features && data.features.routes_enabled);
-      if (state.tab === "routes" && $("routesTab").hidden) {
-        activateTab("home");
-      }
-      renderHome(data);
-      renderShift(data);
-      renderReport(data.report);
-      renderOrders(data.production);
-      renderAnalytics(data);
-      if (data.features && data.features.routes_enabled) {
-        renderRoutes(data.routes);
-      }
-      renderProduction(data.production);
-      renderAdmin(data.admin);
+    function setScreen(screen) {
+      state.screen = screen;
+      render();
     }
 
     async function refreshState(message = "") {
-      setLoading(true);
-
+      mainButton.disabled = true;
       try {
         const data = await api("/api/app/state", {message});
-        setLoading(false);
-        render(data);
+        state.data = data;
+        if (message) showToast("Готово", message);
+        render();
       } catch (error) {
-        setLoading(false);
-        $("connection").textContent = "Ошибка";
-        $("message").textContent = "Не удалось связаться с сервером.";
+        showToast("Ошибка", "Не удалось связаться с сервером.");
       }
     }
 
     async function shiftAction(action) {
-      setLoading(true);
+      mainButton.disabled = true;
       const data = await api(`/api/shift/${action}`);
-      setLoading(false);
-      render(data);
+      state.data = data;
+      render();
+      showToast("Смена", data.message || "Данные обновлены.");
     }
 
-    async function sendFeedback() {
-      const result = await api("/api/feedback/send", {
-        category: $("feedbackCategory").value,
-        message: $("feedbackMessage").value,
-      });
-
-      $("feedbackStatus").textContent = result.message || "";
-      $("feedbackStatus").className = `message ${result.ok ? "ok" : "error"}`;
-
-      if (result.ok) {
-        $("feedbackMessage").value = "";
-        await refreshState(result.message);
-      }
-    }
-
-    async function createBatch() {
-      const result = await api("/api/routes/create-batch", {
-        product_name: $("batchProductSelect").value,
-        product_size: $("batchSizeSelect").value,
-        product_color: $("batchColorSelect").value,
-        quantity: $("batchQuantityInput").value,
-      });
-
-      $("routeCreateStatus").textContent = result.message || "";
-      $("routeCreateStatus").className = `message ${result.ok ? "ok" : "error"}`;
-
-      if (result.ok) {
-        $("batchQuantityInput").value = "";
-        await refreshState(result.message);
-      }
-    }
-
-    async function completeRouteTask(batchId) {
-      const result = await api("/api/routes/complete", {batch_id: batchId});
-      $("routeCreateStatus").textContent = result.message || "";
-      $("routeCreateStatus").className = `message ${result.ok ? "ok" : "error"}`;
-      await refreshState(result.message || "");
-    }
-
-    async function saveFabricReceipt() {
-      const result = await api("/api/production/fabric-receipt", {
-        material_name: $("fabricMaterialInput").value,
-        product_color: $("fabricColorSelect").value,
-        quantity: $("fabricQuantityInput").value,
-      });
-
-      $("fabricReceiptStatus").textContent = result.message || "";
-      $("fabricReceiptStatus").className = `message ${result.ok ? "ok" : "error"}`;
-
-      if (result.ok) {
-        $("fabricQuantityInput").value = "";
-        await refreshState(result.message);
-      }
-    }
-
-    async function createProductionTask() {
-      const result = await api("/api/production/create-task", {
-        product_name: $("productionProductSelect").value,
-        sizes: selectedOptions("productionSizeSelect"),
-        colors: selectedOptions("productionColorSelect"),
-      });
-
-      $("productionTaskStatus").textContent = result.message || "";
-      $("productionTaskStatus").className = `message ${result.ok ? "ok" : "error"}`;
-
-      if (result.ok) {
-        await refreshState(result.message);
-      }
-    }
-
-    async function submitProductionContours() {
-      const task = getSelectedContourTask();
-      const quantities = {};
-
-      document.querySelectorAll("[data-contour-key]").forEach((input) => {
-        quantities[input.dataset.contourKey] = input.value || "0";
-      });
-
-      const result = await api("/api/production/submit-contours", {
-        task_id: task ? task.id : 0,
-        quantities,
-      });
-
-      $("productionContourStatus").textContent = result.message || "";
-      $("productionContourStatus").className = `message ${result.ok ? "ok" : "error"}`;
-
-      if (result.ok) {
-        await refreshState(result.message);
-      }
-    }
-
-    function selectedAdminEmployeeId() {
-      const value = $("adminEmployeeSelect").value || "";
-      return value.split(" — ")[0] || "";
-    }
-
-    async function loadAdminReport(reportType) {
-      const result = await api("/api/admin/report", {
-        report_type: reportType,
-        start_date: $("adminReportStart").value,
-        end_date: $("adminReportEnd").value,
-        employee_id: selectedAdminEmployeeId(),
-      });
-
-      if (result.ok) {
-        renderAdminReport(result.report);
-      } else {
-        $("adminReportOutput").innerHTML = empty(result.message || "Не удалось получить отчёт.");
-      }
-    }
-
-    async function updateAdminFromResult(result) {
-      if (!result.ok) {
-        $("adminStatus").textContent = result.message || "Ошибка.";
-        $("adminStatus").className = "message error";
+    document.addEventListener("click", (event) => {
+      const go = event.target.closest("[data-go]");
+      if (go) {
+        setScreen(go.dataset.go);
         return;
       }
 
-      state.data.admin = result;
-      $("adminStatus").className = "message ok";
-      renderAdmin(result);
-    }
-
-    async function setEmployeeStatus(employeeId, status) {
-      const result = await api("/api/admin/employee/status", {
-        employee_id: employeeId,
-        status,
-      });
-      updateAdminFromResult(result);
-    }
-
-    async function setEmployeePosition(employeeId) {
-      const positions = state.data.admin.positions || [];
-      const position = prompt(`Новая должность: ${positions.join(", ")}`);
-
-      if (!position) {
+      const op = event.target.closest("[data-select-operation]");
+      if (op) {
+        state.selectedOperation = Number(op.dataset.selectOperation);
+        setScreen("operations");
         return;
       }
 
-      const result = await api("/api/admin/employee/position", {
-        employee_id: employeeId,
-        position,
-      });
-      updateAdminFromResult(result);
-    }
-
-    async function closeShiftAsAdmin(shiftId) {
-      const endTime = prompt("Время закрытия смены, например 18:00");
-
-      if (!endTime) {
-        return;
+      const order = event.target.closest("[data-select-order]");
+      if (order) {
+        state.selectedOrder = Number(order.dataset.selectOrder);
+        setScreen("orders");
       }
-
-      const result = await api("/api/admin/shift/close", {
-        shift_id: shiftId,
-        end_time: endTime,
-      });
-      updateAdminFromResult(result);
-    }
-
-    async function deleteShiftAsAdmin(shiftId) {
-      if (!confirm(`Удалить смену #${shiftId}? Это удалит и строки отчёта этой смены.`)) {
-        return;
-      }
-
-      const result = await api("/api/admin/shift/delete", {shift_id: shiftId});
-      updateAdminFromResult(result);
-    }
-
-    async function operationAction(action, number, extra = {}) {
-      const result = await api("/api/admin/operation", {
-        action,
-        number,
-        ...extra,
-      });
-      updateAdminFromResult(result);
-    }
-
-    async function editOperation(number) {
-      const field = prompt("Что изменить: name, position, operation_group, folder");
-
-      if (!field) {
-        return;
-      }
-
-      const value = prompt("Новое значение");
-
-      if (!value) {
-        return;
-      }
-
-      operationAction("update", number, {field, value});
-    }
-
-    async function addOperationFromPrompt() {
-      const name = prompt("Название операции");
-
-      if (!name) {
-        return;
-      }
-
-      const position = prompt("Должность: Швея, Упаковщик, Раскройщик, Ремонт") || "";
-      const operationGroup = prompt("Группа") || "";
-      const folder = prompt("Папка/изделие") || "";
-      operationAction("add", 0, {name, position, operation_group: operationGroup, folder});
-    }
-
-    function handleAdminTool(toolName) {
-      if (toolName === "Отчёт за сегодня") {
-        loadAdminReport("today");
-      } else if (toolName === "Отчёт за месяц" || toolName === "Выгрузить отчёт") {
-        loadAdminReport("month");
-      } else if (toolName === "Отчёт за период" || toolName === "Excel за период") {
-        loadAdminReport("period");
-      } else if (toolName === "Отчёт по сотруднику") {
-        loadAdminReport("employee");
-      } else if (toolName === "Добавить операцию") {
-        addOperationFromPrompt();
-      } else if (toolName === "Скрыть операцию" || toolName === "Вернуть операцию" || toolName === "Изменить операцию" || toolName === "Удалить смену") {
-        $("adminStatus").textContent = "Выберите нужную строку в списке ниже.";
-      } else if (toolName === "Проверка базы" || toolName === "Журнал" || toolName === "Ошибки" || toolName === "Скачать базу" || toolName === "Загрузить базу" || toolName === "Создать копию базы") {
-        state.adminSection = "files";
-        renderAdmin(state.data.admin);
-      } else if (toolName === "Список сотрудников" || toolName === "Активные сотрудники" || toolName === "Неактивные сотрудники" || toolName === "Сменить должность" || toolName === "Активировать сотрудника" || toolName === "Отключить сотрудника") {
-        state.adminSection = "employees";
-        renderAdmin(state.data.admin);
-      } else if (toolName === "Открытые смены" || toolName === "Последние смены") {
-        state.adminSection = "shifts";
-        renderAdmin(state.data.admin);
-      } else if (toolName === "Список операций") {
-        state.adminSection = "operations";
-        renderAdmin(state.data.admin);
-      } else {
-        $("adminStatus").textContent = "Эта команда пока оставлена кнопкой меню. Данные раздела показаны ниже.";
-      }
-    }
-
-    function bindAdminActionButtons() {
-      document.querySelectorAll("[data-employee-status]").forEach((button) => {
-        button.addEventListener("click", () => setEmployeeStatus(button.dataset.employeeStatus, button.dataset.statusValue));
-      });
-      document.querySelectorAll("[data-employee-position]").forEach((button) => {
-        button.addEventListener("click", () => setEmployeePosition(button.dataset.employeePosition));
-      });
-      document.querySelectorAll("[data-admin-close-shift]").forEach((button) => {
-        button.addEventListener("click", () => closeShiftAsAdmin(button.dataset.adminCloseShift));
-      });
-      document.querySelectorAll("[data-admin-delete-shift]").forEach((button) => {
-        button.addEventListener("click", () => deleteShiftAsAdmin(button.dataset.adminDeleteShift));
-      });
-      document.querySelectorAll("[data-admin-toggle-operation]").forEach((button) => {
-        button.addEventListener("click", () => operationAction(button.dataset.operationAction, button.dataset.adminToggleOperation));
-      });
-      document.querySelectorAll("[data-admin-edit-operation]").forEach((button) => {
-        button.addEventListener("click", () => editOperation(button.dataset.adminEditOperation));
-      });
-    }
-
-    function activateTab(tabName) {
-      state.tab = tabName;
-      document.querySelectorAll(".tab").forEach((button) => {
-        button.classList.toggle("active", button.dataset.tab === tabName);
-      });
-      document.querySelectorAll(".section").forEach((section) => {
-        section.classList.toggle("active", section.id === `section-${tabName}`);
-      });
-    }
-
-    document.querySelectorAll(".tab").forEach((button) => {
-      button.addEventListener("click", () => activateTab(button.dataset.tab));
     });
 
-    document.querySelectorAll("[data-tab-action]").forEach((button) => {
-      button.addEventListener("click", () => activateTab(button.dataset.tabAction));
+    mainButton.addEventListener("click", () => {
+      if (!state.data) return;
+      if (state.screen === "shift") {
+        if (state.data.shift && state.data.shift.status === "closed") return;
+        shiftAction(state.data.has_open_shift ? "close" : "open");
+        return;
+      }
+      if (state.screen === "operations") { setScreen("report"); return; }
+      if (state.screen === "report") { refreshState("Отчёт обновлён."); return; }
+      if (state.screen === "analytics") { setScreen("orders"); return; }
+      if (state.screen === "orders") { refreshState("Статус обновлён."); }
     });
 
-    $("openButton").addEventListener("click", () => shiftAction("open"));
-    $("closeButton").addEventListener("click", () => shiftAction("close"));
-    $("refreshButton").addEventListener("click", () => refreshState());
-    $("sendFeedbackButton").addEventListener("click", sendFeedback);
-    $("routeProductSelect").addEventListener("change", renderSelectedRoute);
-    $("batchProductSelect").addEventListener("change", renderBatchOptions);
-    $("createBatchButton").addEventListener("click", createBatch);
-    $("productionProductSelect").addEventListener("change", renderProductionTaskOptions);
-    $("productionContourTaskSelect").addEventListener("change", renderProductionContourMatrix);
-    $("fabricReceiptButton").addEventListener("click", saveFabricReceipt);
-    $("productionTaskCreateButton").addEventListener("click", createProductionTask);
-    $("productionContourSubmitButton").addEventListener("click", submitProductionContours);
-    $("adminReportToday").addEventListener("click", () => loadAdminReport("today"));
-    $("adminReportMonth").addEventListener("click", () => loadAdminReport("month"));
-    $("adminReportPeriod").addEventListener("click", () => loadAdminReport("period"));
-    $("adminEmployeeReport").addEventListener("click", () => loadAdminReport("employee"));
+    document.getElementById("backBtn").addEventListener("click", () => {
+      const flow = ["shift", "operations", "report", "analytics", "orders"];
+      const index = flow.indexOf(state.screen);
+      setScreen(flow[Math.max(0, index - 1)]);
+    });
+
+    document.getElementById("menuBtn").addEventListener("click", () => {
+      showToast("Меню", "Настройки профиля и уведомления подключим позже.");
+    });
 
     refreshState();
   </script>
