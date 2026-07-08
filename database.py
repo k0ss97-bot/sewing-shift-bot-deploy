@@ -1820,6 +1820,35 @@ def get_route_batch_by_id(batch_id: int):
     return batch
 
 
+def cancel_route_batch(batch_id: int):
+    batch = get_route_batch_by_id(batch_id)
+
+    if batch is None or batch["status"] != "active":
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    cursor.execute(
+        """
+        UPDATE route_batches
+        SET status = 'cancelled',
+            updated_at = ?,
+            completed_at = ?
+        WHERE id = ?
+          AND status = 'active'
+        """,
+        (now, now, batch_id),
+    )
+
+    changed = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+
+    return get_route_batch_by_id(batch_id) if changed else None
+
+
 def get_active_route_batches():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -3033,6 +3062,48 @@ def get_production_task_by_id(task_id: int):
     task = production_task_from_row(cursor.fetchone())
     conn.close()
     return task
+
+
+def cancel_production_task(task_id: int):
+    task = get_production_task_by_id(task_id)
+
+    if task is None or task["status"] not in {"active", "contours_done", "in_cutting"}:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    cursor.execute(
+        """
+        UPDATE production_tasks
+        SET status = 'cancelled',
+            updated_at = ?,
+            completed_at = ?
+        WHERE id = ?
+          AND status IN ('active', 'contours_done', 'in_cutting')
+        """,
+        (now, now, task_id),
+    )
+
+    changed = cursor.rowcount > 0
+
+    if changed:
+        cursor.execute(
+            """
+            UPDATE cutting_batches
+            SET status = 'cancelled',
+                updated_at = ?
+            WHERE production_task_id = ?
+              AND status IN ('contours_done', 'layout_done', 'cutting_in_progress', 'cutting_done')
+            """,
+            (now, task_id),
+        )
+
+    conn.commit()
+    conn.close()
+
+    return get_production_task_by_id(task_id) if changed else None
 
 
 def get_production_task_options(task_id: int):

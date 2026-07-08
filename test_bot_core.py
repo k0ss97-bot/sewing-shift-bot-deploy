@@ -294,6 +294,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
     def test_miniapp_admin_creates_order_tasks(self):
         os.environ["ADMIN_IDS"] = "9001"
         miniapp_server = importlib.import_module("miniapp_server")
+        self.database.add_fabric_receipt("Ткань", "Фуксия", 12, None)
 
         cutting_result = miniapp_server.create_order_task_for_telegram(
             9001,
@@ -302,12 +303,13 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "task_type": "cutting",
                 "material_name": "Ткань",
                 "sizes": ["80", "92"],
-                "colors": ["Бежевый", "Синий"],
+                "colors": ["Бежевый", "Фуксия"],
             },
         )
 
         self.assertTrue(cutting_result["ok"], cutting_result)
         self.assertEqual(len(self.database.get_active_production_tasks()), 1)
+        self.assertEqual(set(self.database.get_production_task_options(1)[1]), {"Бежевый", "Фуксия"})
 
         route_result = miniapp_server.create_order_task_for_telegram(
             9001,
@@ -317,7 +319,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "route_step_index": len(miniapp_server.CUTTING_ROUTE),
                 "material_name": "Ткань",
                 "sizes": ["80", "92"],
-                "colors": ["Бежевый", "Синий"],
+                "colors": ["Бежевый", "Фуксия"],
                 "quantity": "7",
             },
         )
@@ -328,6 +330,55 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual({batch["quantity"] for batch in batches}, {7})
         self.assertEqual({batch["route_step_index"] for batch in batches}, {len(miniapp_server.CUTTING_ROUTE)})
         self.assertIn("Сборка шорт на оверлоке", {task["operation"] for task in route_result["routes"]["tasks"]})
+
+    def test_miniapp_admin_deletes_order_tasks(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+
+        cutting_result = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Шорты",
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["80"],
+                "colors": ["Бежевый"],
+            },
+        )
+        self.assertTrue(cutting_result["ok"], cutting_result)
+
+        route_result = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Шорты",
+                "task_type": "route",
+                "route_step_index": len(miniapp_server.CUTTING_ROUTE),
+                "material_name": "Ткань",
+                "sizes": ["80"],
+                "colors": ["Бежевый"],
+                "quantity": "3",
+            },
+        )
+        self.assertTrue(route_result["ok"], route_result)
+
+        production_id = self.database.get_active_production_tasks()[0][0]
+        route_id = self.database.get_active_route_batches()[0]["id"]
+
+        delete_production = miniapp_server.delete_order_task_for_telegram(
+            9001,
+            {"task_kind": "production", "task_id": production_id},
+        )
+        self.assertTrue(delete_production["ok"], delete_production)
+        self.assertEqual(self.database.get_production_task_by_id(production_id)["status"], "cancelled")
+        self.assertEqual(self.database.get_active_production_tasks(), [])
+
+        delete_route = miniapp_server.delete_order_task_for_telegram(
+            9001,
+            {"task_kind": "route", "task_id": route_id},
+        )
+        self.assertTrue(delete_route["ok"], delete_route)
+        self.assertEqual(self.database.get_route_batch_by_id(route_id)["status"], "cancelled")
+        self.assertEqual(self.database.get_active_route_batches(), [])
 
     def test_zero_quantity_is_not_saved_or_reported(self):
         self.database.create_employee(2002, "Тест Швея", "Швея")

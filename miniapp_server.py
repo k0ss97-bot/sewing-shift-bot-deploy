@@ -16,6 +16,8 @@ from database import (
     add_operation,
     add_shift_operation,
     admin_close_shift,
+    cancel_production_task,
+    cancel_route_batch,
     close_shift,
     complete_route_batch_step,
     create_cutting_contour_batch_for_task,
@@ -28,6 +30,7 @@ from database import (
     get_active_production_tasks,
     get_active_production_tasks_for_contours,
     get_active_route_batches,
+    get_all_product_colors,
     get_all_employees,
     get_all_operations,
     get_employee_by_telegram_id,
@@ -48,6 +51,7 @@ from database import (
     get_product_sizes,
     get_recent_shifts,
     get_route_batch_by_id,
+    get_production_task_by_id,
     get_shift_for_today,
     get_shift_report,
     get_today_shifts,
@@ -635,6 +639,20 @@ def parse_positive_float(value):
     return parsed
 
 
+def get_order_color_options():
+    colors = []
+
+    for color in get_all_product_colors():
+        if color not in colors:
+            colors.append(color)
+
+    for _material_name, product_color, _quantity, _unit, _updated_at in get_fabric_stock_rows():
+        if product_color not in colors:
+            colors.append(product_color)
+
+    return colors
+
+
 def production_catalog_to_dict():
     return [
         {
@@ -704,6 +722,8 @@ def get_production_state_for_telegram(telegram_id: int):
 
     return {
         "catalog": production_catalog_to_dict(),
+        "order_colors": get_order_color_options(),
+        "order_color_labels": [format_color_label(color) for color in get_order_color_options()],
         "fabric_stock": [fabric_stock_to_dict(row) for row in get_fabric_stock_rows()] if is_admin_user else [],
         "tasks": [production_task_to_dict(row) for row in get_active_production_tasks()] if is_admin_user else [],
         "contour_tasks": [
@@ -772,7 +792,7 @@ def create_production_task_for_telegram(telegram_id: int, payload: dict):
         return {"ok": False, "message": "Выберите изделие."}
 
     allowed_sizes = set(get_product_sizes(product_name))
-    allowed_colors = set(get_product_colors(product_name))
+    allowed_colors = set(get_order_color_options())
 
     if not sizes or any(size not in allowed_sizes for size in sizes):
         return {"ok": False, "message": "Выберите размеры из списка."}
@@ -824,7 +844,7 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
         return {"ok": False, "message": "Пока доступен только материал: Ткань."}
 
     allowed_sizes = set(get_product_sizes(product_name))
-    allowed_colors = set(get_product_colors(product_name))
+    allowed_colors = set(get_order_color_options())
 
     if not sizes or any(size not in allowed_sizes for size in sizes):
         return {"ok": False, "message": "Выберите размеры из списка."}
@@ -923,6 +943,75 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     return {
         "ok": True,
         "message": f"Создано маршрутных заданий: {len(created_batches)}.",
+        "production": get_production_state_for_telegram(telegram_id),
+        "routes": {
+            "enabled": ROUTES_MINIAPP_ENABLED,
+            "catalog": get_route_catalog(),
+            "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
+        },
+    }
+
+
+def delete_order_task_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    task_kind = (payload.get("task_kind") or "").strip()
+
+    try:
+        task_id = int(payload.get("task_id") or 0)
+    except (TypeError, ValueError):
+        task_id = 0
+
+    if task_id <= 0:
+        return {"ok": False, "message": "Выберите задание."}
+
+    if task_kind == "production":
+        task = get_production_task_by_id(task_id)
+
+        if task is None:
+            return {"ok": False, "message": "Задание не найдено."}
+
+        cancelled_task = cancel_production_task(task_id)
+
+        if cancelled_task is None:
+            return {"ok": False, "message": "Это задание уже нельзя удалить."}
+
+        add_edit_log(
+            telegram_id,
+            "admin",
+            "Удалил производственное задание из миниаппа",
+            "production_task",
+            task_id,
+            f"{task['product_name']}; прежний статус: {task['status']}",
+        )
+        message = f"Задание #{task_id} удалено."
+    elif task_kind == "route":
+        batch = get_route_batch_by_id(task_id)
+
+        if batch is None:
+            return {"ok": False, "message": "Маршрутное задание не найдено."}
+
+        cancelled_batch = cancel_route_batch(task_id)
+
+        if cancelled_batch is None:
+            return {"ok": False, "message": "Это маршрутное задание уже нельзя удалить."}
+
+        add_edit_log(
+            telegram_id,
+            "admin",
+            "Удалил маршрутное задание из миниаппа",
+            "route_batch",
+            task_id,
+            route_batch_identity(batch),
+        )
+        message = f"Маршрутное задание #{task_id} удалено."
+    else:
+        return {"ok": False, "message": "Неизвестный тип задания."}
+
+    return {
+        "ok": True,
+        "message": message,
         "production": get_production_state_for_telegram(telegram_id),
         "routes": {
             "enabled": ROUTES_MINIAPP_ENABLED,
@@ -3158,6 +3247,19 @@ MINIAPP_HTML = """<!doctype html>
       return state.data && state.data.routes && state.data.routes.tasks ? state.data.routes.tasks : [];
     }
 
+    function getOrderColors() {
+      const colors = getProduction().order_colors || [];
+      if (colors.length) return colors;
+
+      const fallbackColors = [];
+      getRouteCatalog().forEach((product) => {
+        (product.raw_colors || []).forEach((color) => {
+          if (!fallbackColors.includes(color)) fallbackColors.push(color);
+        });
+      });
+      return fallbackColors;
+    }
+
     function routeProduct(productName) {
       return getRouteCatalog().find((item) => item.product_name === productName) || getRouteCatalog()[0] || null;
     }
@@ -3837,7 +3939,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       const availableSizes = product.sizes || [];
-      const availableColors = product.raw_colors || [];
+      const availableColors = getOrderColors();
       state.orderSizes = state.orderSizes.filter((size) => availableSizes.includes(size));
       state.orderColors = state.orderColors.filter((color) => availableColors.includes(color));
 
@@ -3918,12 +4020,51 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function deleteOrderTask() {
+      if (!state.data || !state.data.is_admin) return;
+      const productionTasks = getTasks().map((task) => ({...task, task_kind: "production"}));
+      const routeRows = getRouteTasks().map((task) => ({...task, task_kind: "route"}));
+      const current = [...productionTasks, ...routeRows][state.selectedOrder] || [...productionTasks, ...routeRows][0];
+
+      if (!current) {
+        showToast("Задание", "Выберите задание.");
+        return;
+      }
+
+      const confirmed = window.confirm(`Удалить задание #${current.id}?`);
+      if (!confirmed) return;
+
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/production/delete-order-task", {
+          task_kind: current.task_kind,
+          task_id: current.id,
+        });
+
+        if (!data.ok) {
+          showToast("Задание", data.message || "Не удалось удалить задание.");
+          mainButton.disabled = false;
+          return;
+        }
+
+        state.data.production = data.production || state.data.production;
+        if (data.routes) state.data.routes = data.routes;
+        state.selectedOrder = 0;
+        render();
+        showToast("Задание", data.message || "Задание удалено.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось удалить задание.");
+        mainButton.disabled = false;
+      }
+    }
+
     function renderOrderCreate() {
       const product = ensureOrderDraftDefaults();
       const catalog = getRouteCatalog();
       const operations = routeOperations(product);
       const sizes = product ? product.sizes || [] : [];
-      const colors = product ? product.raw_colors || [] : [];
+      const colors = getOrderColors();
       const operationOptions = operations.map((operation) => `
         <option value="${operation.index}" ${String(operation.index) === String(state.orderRouteStep) ? "selected" : ""}>${escapeHtml(operation.position)} — ${escapeHtml(operation.operation)}</option>
       `).join("");
@@ -3992,6 +4133,7 @@ MINIAPP_HTML = """<!doctype html>
         ` : current ? `
           <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Маршрут #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.position)}</span></div><div class="detail-grid"><div class="detail-box"><span>Операция</span><strong>${escapeHtml(current.operation)}</strong></div><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div></div></div>
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
+        ${state.data && state.data.is_admin && current ? `<div class="button-row"><button class="small-button danger" data-order-action="delete">Удалить задание</button></div>` : ""}
       `;
     }
 
@@ -4277,6 +4419,9 @@ MINIAPP_HTML = """<!doctype html>
         if (orderAction.dataset.orderAction === "create") {
           createOrderTask();
         }
+        if (orderAction.dataset.orderAction === "delete") {
+          deleteOrderTask();
+        }
         return;
       }
 
@@ -4477,6 +4622,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/production/fabric-receipt",
                 "/api/production/create-task",
                 "/api/production/create-order-task",
+                "/api/production/delete-order-task",
                 "/api/production/submit-contours",
                 "/api/routes/create-batch",
                 "/api/routes/complete",
@@ -4545,6 +4691,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = create_production_task_for_telegram(telegram_id, payload)
             elif path == "/api/production/create-order-task":
                 result = create_order_task_for_telegram(telegram_id, payload)
+            elif path == "/api/production/delete-order-task":
+                result = delete_order_task_for_telegram(telegram_id, payload)
             elif path == "/api/production/submit-contours":
                 result = submit_production_contours_for_telegram(telegram_id, payload)
             elif path == "/api/routes/create-batch":
