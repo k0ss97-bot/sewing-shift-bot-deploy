@@ -374,6 +374,45 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(period_rows[0][6], shift["id"])
         self.assertEqual(status["feedback_entries"], 1)
 
+    def test_admins_are_excluded_from_employee_reports(self):
+        self.database.create_employee(5001, "Тест Рабочий", "Швея")
+        employee = self.database.get_employee_by_telegram_id(5001)
+        employee_id = employee[0]
+        self.database.update_employee_status(employee_id, "active")
+        admin = self.database.ensure_admin_employee(9001)
+        admin_id = admin[0]
+
+        employee_shift = self.database.create_shift(employee_id)
+        admin_shift = self.database.create_shift(admin_id)
+        today = self.database.local_today().isoformat()
+
+        open_shift_names = {row[1] for row in self.database.get_open_shifts()}
+        self.assertIn("Тест Рабочий", open_shift_names)
+        self.assertNotIn(admin[2], open_shift_names)
+
+        operation = self.database.get_active_operations(
+            position="Швея",
+            folder="Брюки-джоггеры",
+        )[0]
+        operation_id = operation[0]
+
+        self.database.add_shift_operation(employee_shift["id"], employee_id, operation_id, "86", "Капучино", 5)
+        self.database.add_shift_operation(admin_shift["id"], admin_id, operation_id, "86", "Капучино", 99)
+        self.database.add_feedback_entry(employee_id, employee_shift["id"], "Производство", "Рабочее сообщение")
+        self.database.add_feedback_entry(admin_id, admin_shift["id"], "Производство", "Админское сообщение")
+        self.database.close_shift(employee_shift["id"])
+        self.database.close_shift(admin_shift["id"])
+
+        self.assertEqual([row[1] for row in self.database.get_all_employees()], ["Тест Рабочий"])
+        self.assertEqual([row[1] for row in self.database.get_employees_by_status("active")], ["Тест Рабочий"])
+        self.assertEqual([row[1] for row in self.database.get_period_employee_summary(today, today)], ["Тест Рабочий"])
+        self.assertEqual([row[1] for row in self.database.get_period_shift_details(today, today)], ["Тест Рабочий"])
+        self.assertEqual({row[1] for row in self.database.get_period_operation_rows(today, today)}, {"Тест Рабочий"})
+        self.assertEqual([row[2] for row in self.database.get_feedback_entries(today, today)], ["Тест Рабочий"])
+        self.assertEqual([row[1] for row in self.database.get_recent_shifts(10)], ["Тест Рабочий"])
+        self.assertIsNone(self.database.get_employee_period_summary(admin_id, today, today))
+        self.assertEqual(self.database.get_employee_period_operation_totals(admin_id, today, today), [])
+
     def test_admin_can_update_and_rollback_cutting_batch(self):
         batch_id = self._create_layout_done_batch()
 

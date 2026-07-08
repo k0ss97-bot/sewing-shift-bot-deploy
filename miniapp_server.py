@@ -2024,6 +2024,11 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 22px;
     }
 
+    .icon-btn:hover {
+      background: rgba(255,255,255,.78);
+      color: var(--accent-dark);
+    }
+
     .app-title {
       text-align: center;
       font-size: 16px;
@@ -2079,6 +2084,11 @@ MINIAPP_HTML = """<!doctype html>
       color: white;
       background: var(--accent);
       box-shadow: 0 9px 18px rgba(195,111,85,.20);
+    }
+
+    .tab:hover:not(.active) {
+      color: var(--accent-dark);
+      background: rgba(195,111,85,.10);
     }
 
     .screen-head {
@@ -2402,6 +2412,11 @@ MINIAPP_HTML = """<!doctype html>
       color: white;
     }
 
+    .segment-button:hover:not(.active) {
+      color: var(--accent-dark);
+      background: rgba(195,111,85,.10);
+    }
+
     .button-row {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2428,6 +2443,68 @@ MINIAPP_HTML = """<!doctype html>
 
     .small-button.danger {
       background: var(--danger);
+    }
+
+    .small-button:hover {
+      filter: brightness(1.03);
+      box-shadow: 0 10px 18px rgba(195,111,85,.15);
+    }
+
+    button,
+    [data-go],
+    [data-admin-home-period],
+    [data-admin-home-view],
+    [data-admin-home-employee],
+    [data-admin-section],
+    [data-admin-action],
+    [data-history-action],
+    [data-feedback-action],
+    [data-select-operation],
+    [data-select-order] {
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .card[data-go],
+    .card[data-admin-home-view],
+    .card[data-admin-home-employee],
+    .card[data-select-operation],
+    .card[data-select-order] {
+      border-color: rgba(195,111,85,.24);
+      box-shadow: 0 9px 22px rgba(95,67,48,.07);
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    }
+
+    .card[data-go]:hover,
+    .card[data-admin-home-view]:hover,
+    .card[data-admin-home-employee]:hover,
+    .card[data-select-operation]:hover,
+    .card[data-select-order]:hover {
+      transform: translateY(-1px);
+      border-color: rgba(195,111,85,.52);
+      background: rgba(255,255,255,.72);
+      box-shadow: 0 14px 28px rgba(195,111,85,.16);
+    }
+
+    .card[data-go]:active,
+    .card[data-admin-home-view]:active,
+    .card[data-admin-home-employee]:active,
+    .card[data-select-operation]:active,
+    .card[data-select-order]:active {
+      transform: translateY(0);
+      box-shadow: 0 7px 16px rgba(195,111,85,.12);
+    }
+
+    .card[data-go] .status-chip.gray,
+    .card[data-admin-home-view] .status-chip.gray,
+    .card[data-admin-home-employee] .status-chip.gray,
+    .card[data-select-operation] .status-chip.gray,
+    .card[data-select-order] .status-chip.gray {
+      color: var(--accent-dark);
+      background: rgba(195,111,85,.13);
+      border-color: rgba(195,111,85,.18);
     }
 
     .report-row {
@@ -2733,6 +2810,14 @@ MINIAPP_HTML = """<!doctype html>
 
     .nav-btn.active .nav-ico {
       background: rgba(195,111,85,.12);
+    }
+
+    .nav-btn:hover {
+      color: var(--accent-dark);
+    }
+
+    .nav-btn:hover .nav-ico {
+      background: rgba(195,111,85,.10);
     }
 
     @media (min-width: 680px) {

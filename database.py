@@ -1082,6 +1082,7 @@ def get_all_employees():
         """
         SELECT id, full_name, position, telegram_id, status
         FROM employees
+        WHERE role != 'admin'
         ORDER BY id ASC
         """
     )
@@ -1100,6 +1101,7 @@ def get_employees_by_status(status: str):
         SELECT id, full_name, position, telegram_id, status
         FROM employees
         WHERE status = ?
+          AND role != 'admin'
         ORDER BY id ASC
         """,
         (status,)
@@ -1261,6 +1263,7 @@ def get_feedback_entries(start_date: str, end_date: str, employee_id: int | None
         FROM feedback_entries
         JOIN employees ON employees.id = feedback_entries.employee_id
         WHERE feedback_entries.feedback_date BETWEEN ? AND ?
+          AND employees.role != 'admin'
           {employee_filter}
         ORDER BY feedback_entries.feedback_date ASC, feedback_entries.created_at ASC
         """,
@@ -1289,6 +1292,7 @@ def get_feedback_entries_by_shift(shift_id: int):
         FROM feedback_entries
         JOIN employees ON employees.id = feedback_entries.employee_id
         WHERE feedback_entries.shift_id = ?
+          AND employees.role != 'admin'
         ORDER BY feedback_entries.created_at ASC
         """,
         (shift_id,)
@@ -3207,6 +3211,7 @@ def get_open_shifts():
         FROM shifts
         JOIN employees ON employees.id = shifts.employee_id
         WHERE shifts.status = 'open'
+          AND employees.role != 'admin'
         ORDER BY shifts.shift_date ASC, shifts.start_time ASC
         """
     )
@@ -3233,6 +3238,7 @@ def get_recent_shifts(limit: int = 20):
         FROM shifts
         JOIN employees ON employees.id = shifts.employee_id
         LEFT JOIN shift_operations ON shift_operations.shift_id = shifts.id
+        WHERE employees.role != 'admin'
         GROUP BY
             shifts.id,
             employees.full_name,
@@ -3393,6 +3399,7 @@ def get_today_shifts():
         FROM shifts
         JOIN employees ON employees.id = shifts.employee_id
         WHERE shifts.shift_date = ?
+          AND employees.role != 'admin'
         ORDER BY shifts.start_time ASC
         """,
         (today,)
@@ -3421,6 +3428,7 @@ def get_month_employee_summary():
         JOIN employees ON employees.id = shifts.employee_id
         WHERE shifts.shift_date BETWEEN ? AND ?
           AND shifts.status = 'closed'
+          AND employees.role != 'admin'
         GROUP BY employees.id, employees.full_name
         ORDER BY employees.full_name ASC
         """,
@@ -3447,6 +3455,7 @@ def get_period_employee_summary(start_date: str, end_date: str):
         JOIN employees ON employees.id = shifts.employee_id
         WHERE shifts.shift_date BETWEEN ? AND ?
           AND shifts.status = 'closed'
+          AND employees.role != 'admin'
         GROUP BY employees.id, employees.full_name
         ORDER BY employees.full_name ASC
         """,
@@ -3475,6 +3484,7 @@ def get_employee_period_summary(employee_id: int, start_date: str, end_date: str
             AND shifts.shift_date BETWEEN ? AND ?
             AND shifts.status = 'closed'
         WHERE employees.id = ?
+          AND employees.role != 'admin'
         GROUP BY employees.id, employees.full_name, employees.position
         """,
         (start_date, end_date, employee_id)
@@ -3500,8 +3510,10 @@ def get_employee_period_operation_totals(employee_id: int, start_date: str, end_
             operations.unit
         FROM shift_operations
         JOIN shifts ON shifts.id = shift_operations.shift_id
+        JOIN employees ON employees.id = shifts.employee_id
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.employee_id = ?
+          AND employees.role != 'admin'
           AND shifts.shift_date BETWEEN ? AND ?
           AND shift_operations.quantity > 0
         GROUP BY
@@ -3539,8 +3551,10 @@ def get_month_operations_by_employee(employee_id: int):
             operations.unit
         FROM shift_operations
         JOIN shifts ON shifts.id = shift_operations.shift_id
+        JOIN employees ON employees.id = shifts.employee_id
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.employee_id = ?
+          AND employees.role != 'admin'
           AND shifts.shift_date BETWEEN ? AND ?
           AND shift_operations.quantity > 0
         GROUP BY
@@ -3577,8 +3591,10 @@ def get_period_operations_by_employee(employee_id: int, start_date: str, end_dat
             operations.unit
         FROM shift_operations
         JOIN shifts ON shifts.id = shift_operations.shift_id
+        JOIN employees ON employees.id = shifts.employee_id
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.employee_id = ?
+          AND employees.role != 'admin'
           AND shifts.shift_date BETWEEN ? AND ?
           AND shift_operations.quantity > 0
         GROUP BY
@@ -3630,6 +3646,7 @@ def get_month_operation_rows():
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.shift_date BETWEEN ? AND ?
           AND shift_operations.quantity > 0
+          AND employees.role != 'admin'
         GROUP BY
             shifts.shift_date,
             employees.id,
@@ -3680,6 +3697,7 @@ def get_period_operation_rows(start_date: str, end_date: str):
         JOIN operations ON operations.id = shift_operations.operation_id
         WHERE shifts.shift_date BETWEEN ? AND ?
           AND shift_operations.quantity > 0
+          AND employees.role != 'admin'
         GROUP BY
             shifts.shift_date,
             employees.id,
@@ -3720,6 +3738,7 @@ def get_month_shift_details():
         FROM shifts
         JOIN employees ON employees.id = shifts.employee_id
         WHERE shifts.shift_date BETWEEN ? AND ?
+          AND employees.role != 'admin'
         ORDER BY shifts.shift_date ASC, employees.full_name ASC
         """,
         (month_start, today)
@@ -3746,6 +3765,7 @@ def get_period_shift_details(start_date: str, end_date: str):
         FROM shifts
         JOIN employees ON employees.id = shifts.employee_id
         WHERE shifts.shift_date BETWEEN ? AND ?
+          AND employees.role != 'admin'
         ORDER BY shifts.shift_date ASC, employees.full_name ASC
         """,
         (start_date, end_date)
