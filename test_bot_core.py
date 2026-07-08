@@ -291,6 +291,44 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(self.database.get_production_task_by_id(task_id)["status"], "contours_done")
         self.assertEqual(len(self.database.get_shift_report(shift["id"])), 2)
 
+    def test_miniapp_admin_creates_order_tasks(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+
+        cutting_result = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Шорты",
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["80", "92"],
+                "colors": ["Бежевый", "Синий"],
+            },
+        )
+
+        self.assertTrue(cutting_result["ok"], cutting_result)
+        self.assertEqual(len(self.database.get_active_production_tasks()), 1)
+
+        route_result = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Шорты",
+                "task_type": "route",
+                "route_step_index": len(miniapp_server.CUTTING_ROUTE),
+                "material_name": "Ткань",
+                "sizes": ["80", "92"],
+                "colors": ["Бежевый", "Синий"],
+                "quantity": "7",
+            },
+        )
+
+        self.assertTrue(route_result["ok"], route_result)
+        batches = self.database.get_active_route_batches()
+        self.assertEqual(len(batches), 4)
+        self.assertEqual({batch["quantity"] for batch in batches}, {7})
+        self.assertEqual({batch["route_step_index"] for batch in batches}, {len(miniapp_server.CUTTING_ROUTE)})
+        self.assertIn("Сборка шорт на оверлоке", {task["operation"] for task in route_result["routes"]["tasks"]})
+
     def test_zero_quantity_is_not_saved_or_reported(self):
         self.database.create_employee(2002, "Тест Швея", "Швея")
         employee = self.database.get_employee_by_telegram_id(2002)

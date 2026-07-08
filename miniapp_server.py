@@ -60,7 +60,7 @@ from database import (
 )
 from catalog import format_color_label
 from miniapp_auth import parse_auth_token
-from route_maps import PRODUCT_ROUTE_MAPS
+from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 
 
 AUTH_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
@@ -804,6 +804,131 @@ def create_production_task_for_telegram(telegram_id: int, payload: dict):
         "ok": True,
         "message": f"Задание #{task['id']} создано.",
         "production": get_production_state_for_telegram(telegram_id),
+    }
+
+
+def create_order_task_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    product_name = (payload.get("product_name") or "").strip()
+    task_type = (payload.get("task_type") or "cutting").strip()
+    material_name = (payload.get("material_name") or "Ткань").strip() or "Ткань"
+    sizes = [str(size).strip() for size in payload.get("sizes", []) if str(size).strip()]
+    colors = [str(color).strip() for color in payload.get("colors", []) if str(color).strip()]
+
+    if product_name not in PRODUCT_ROUTE_MAPS:
+        return {"ok": False, "message": "Выберите изделие."}
+
+    if material_name != "Ткань":
+        return {"ok": False, "message": "Пока доступен только материал: Ткань."}
+
+    allowed_sizes = set(get_product_sizes(product_name))
+    allowed_colors = set(get_product_colors(product_name))
+
+    if not sizes or any(size not in allowed_sizes for size in sizes):
+        return {"ok": False, "message": "Выберите размеры из списка."}
+
+    if not colors or any(color not in allowed_colors for color in colors):
+        return {"ok": False, "message": "Выберите цвета из списка."}
+
+    employee = get_employee_for_access(telegram_id)
+    employee_id = employee[0] if employee else None
+
+    if task_type == "cutting":
+        task = create_production_task(
+            product_name,
+            sizes,
+            colors,
+            employee_id,
+            f"Материал: {material_name}",
+        )
+
+        if task is None:
+            return {"ok": False, "message": "Не удалось создать задание на раскрой."}
+
+        add_edit_log(
+            telegram_id,
+            "admin",
+            "Создал задание на раскрой из миниаппа",
+            "production_task",
+            task["id"],
+            f"{task['product_name']}; материал: {material_name}; размеры: {', '.join(sizes)}; цвета: {', '.join(colors)}",
+        )
+
+        return {
+            "ok": True,
+            "message": f"Задание на раскрой #{task['id']} создано.",
+            "production": get_production_state_for_telegram(telegram_id),
+            "routes": {
+                "enabled": ROUTES_MINIAPP_ENABLED,
+                "catalog": get_route_catalog(),
+                "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
+            },
+        }
+
+    try:
+        route_step_index = int(payload.get("route_step_index"))
+    except (TypeError, ValueError):
+        route_step_index = -1
+
+    route_step = get_route_step(product_name, route_step_index)
+
+    if route_step is None:
+        return {"ok": False, "message": "Выберите операцию маршрута."}
+
+    if route_step_index < len(CUTTING_ROUTE):
+        return {"ok": False, "message": "Для раскроя используйте тип задания «Раскрой»."}
+
+    try:
+        quantity = int(payload.get("quantity") or 0)
+    except (TypeError, ValueError):
+        quantity = 0
+
+    if quantity <= 0:
+        return {"ok": False, "message": "Введите количество больше 0."}
+
+    created_batches = []
+
+    for product_size in sizes:
+        for product_color in colors:
+            batch = create_route_batch(
+                product_name,
+                product_size,
+                product_color,
+                quantity,
+                employee_id,
+                route_step_index=route_step_index,
+            )
+
+            if batch is not None:
+                created_batches.append(batch)
+
+    if not created_batches:
+        return {"ok": False, "message": "Не удалось создать маршрутные задания."}
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        "Создал маршрутные задания из миниаппа",
+        "route_batch",
+        created_batches[0]["id"],
+        (
+            f"{product_name}; {route_step['position']} — {route_step['operation']}; "
+            f"материал: {material_name}; размеры: {', '.join(sizes)}; цвета: {', '.join(colors)}; "
+            f"количество на комбинацию: {quantity}; партий: {len(created_batches)}"
+        ),
+    )
+
+    return {
+        "ok": True,
+        "message": f"Создано маршрутных заданий: {len(created_batches)}.",
+        "production": get_production_state_for_telegram(telegram_id),
+        "routes": {
+            "enabled": ROUTES_MINIAPP_ENABLED,
+            "catalog": get_route_catalog(),
+            "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
+        },
     }
 
 
@@ -2457,6 +2582,9 @@ MINIAPP_HTML = """<!doctype html>
     [data-admin-home-employee],
     [data-admin-section],
     [data-admin-action],
+    [data-order-action],
+    [data-order-size],
+    [data-order-color],
     [data-history-action],
     [data-feedback-action],
     [data-select-operation],
@@ -2468,6 +2596,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .card[data-go],
+    .card[data-order-action],
     .card[data-admin-home-view],
     .card[data-admin-home-employee],
     .card[data-select-operation],
@@ -2478,6 +2607,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .card[data-go]:hover,
+    .card[data-order-action]:hover,
     .card[data-admin-home-view]:hover,
     .card[data-admin-home-employee]:hover,
     .card[data-select-operation]:hover,
@@ -2489,6 +2619,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .card[data-go]:active,
+    .card[data-order-action]:active,
     .card[data-admin-home-view]:active,
     .card[data-admin-home-employee]:active,
     .card[data-select-operation]:active,
@@ -2498,6 +2629,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .card[data-go] .status-chip.gray,
+    .card[data-order-action] .status-chip.gray,
     .card[data-admin-home-view] .status-chip.gray,
     .card[data-admin-home-employee] .status-chip.gray,
     .card[data-select-operation] .status-chip.gray,
@@ -2505,6 +2637,35 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--accent-dark);
       background: rgba(195,111,85,.13);
       border-color: rgba(195,111,85,.18);
+    }
+
+    .choice-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .choice-chip {
+      min-width: 0;
+      min-height: 38px;
+      border: 1px solid rgba(78,56,42,.13);
+      border-radius: 14px;
+      background: rgba(255,255,255,.54);
+      color: var(--muted);
+      padding: 9px 10px;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1.12;
+      overflow-wrap: anywhere;
+      transition: .16s ease;
+    }
+
+    .choice-chip.active,
+    .choice-chip:hover {
+      color: var(--accent-dark);
+      border-color: rgba(195,111,85,.44);
+      background: rgba(195,111,85,.12);
+      box-shadow: 0 8px 18px rgba(195,111,85,.10);
     }
 
     .report-row {
@@ -2882,6 +3043,14 @@ MINIAPP_HTML = """<!doctype html>
       screen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
+      orderMode: "list",
+      orderProduct: "",
+      orderTaskType: "cutting",
+      orderRouteStep: "",
+      orderMaterial: "Ткань",
+      orderSizes: [],
+      orderColors: [],
+      orderQuantity: "1",
       adminSection: "reports",
       adminReportType: "period",
       adminStartDate: "",
@@ -2979,6 +3148,25 @@ MINIAPP_HTML = """<!doctype html>
 
     function getContourTasks() {
       return getProduction().contour_tasks || [];
+    }
+
+    function getRouteCatalog() {
+      return state.data && state.data.routes && state.data.routes.catalog ? state.data.routes.catalog : [];
+    }
+
+    function getRouteTasks() {
+      return state.data && state.data.routes && state.data.routes.tasks ? state.data.routes.tasks : [];
+    }
+
+    function routeProduct(productName) {
+      return getRouteCatalog().find((item) => item.product_name === productName) || getRouteCatalog()[0] || null;
+    }
+
+    function routeOperations(product) {
+      if (!product || !product.steps) return [];
+      return product.steps
+        .map((step, index) => ({...step, index}))
+        .filter((step) => step.position !== "Раскройщик");
     }
 
     function shiftText() {
@@ -3626,26 +3814,183 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
-    function renderOrders() {
-      const tasks = getTasks();
-      const current = tasks[state.selectedOrder] || tasks[0];
-      mainButton.textContent = "Обновить статус";
+    function resetOrderDraft() {
+      const firstProduct = getRouteCatalog()[0];
+      state.orderMode = "create";
+      state.orderProduct = firstProduct ? firstProduct.product_name : "";
+      state.orderTaskType = "cutting";
+      state.orderRouteStep = "";
+      state.orderMaterial = "Ткань";
+      state.orderSizes = [];
+      state.orderColors = [];
+      state.orderQuantity = "1";
+    }
+
+    function ensureOrderDraftDefaults() {
+      const catalog = getRouteCatalog();
+      if (!catalog.length) return null;
+
+      let product = routeProduct(state.orderProduct);
+      if (!product) {
+        product = catalog[0];
+        state.orderProduct = product.product_name;
+      }
+
+      const availableSizes = product.sizes || [];
+      const availableColors = product.raw_colors || [];
+      state.orderSizes = state.orderSizes.filter((size) => availableSizes.includes(size));
+      state.orderColors = state.orderColors.filter((color) => availableColors.includes(color));
+
+      const operations = routeOperations(product);
+      if (state.orderTaskType === "route" && !operations.some((operation) => String(operation.index) === String(state.orderRouteStep))) {
+        state.orderRouteStep = operations[0] ? String(operations[0].index) : "";
+      }
+
+      return product;
+    }
+
+    function syncOrderDraft() {
+      const product = document.getElementById("orderProduct");
+      const taskType = document.getElementById("orderTaskType");
+      const routeStep = document.getElementById("orderRouteStep");
+      const material = document.getElementById("orderMaterial");
+      const quantity = document.getElementById("orderQuantity");
+      const previousProduct = state.orderProduct;
+
+      if (product) state.orderProduct = product.value;
+      if (taskType) state.orderTaskType = taskType.value;
+      if (routeStep) state.orderRouteStep = routeStep.value;
+      if (material) state.orderMaterial = material.value;
+      if (quantity) state.orderQuantity = quantity.value;
+
+      if (previousProduct && previousProduct !== state.orderProduct) {
+        state.orderSizes = [];
+        state.orderColors = [];
+        state.orderRouteStep = "";
+      }
+
+      ensureOrderDraftDefaults();
+    }
+
+    function toggleOrderValue(kind, value) {
+      const key = kind === "size" ? "orderSizes" : "orderColors";
+      const values = state[key];
+      state[key] = values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+      render();
+    }
+
+    function renderChoiceChips(kind, values, selectedValues) {
+      return `<div class="choice-grid">${values.map((value) => `
+        <button class="choice-chip ${selectedValues.includes(value) ? "active" : ""}" data-order-${kind}="${escapeHtml(value)}">${escapeHtml(value)}</button>
+      `).join("")}</div>`;
+    }
+
+    async function createOrderTask() {
+      if (!state.data || !state.data.is_admin) return;
+      syncOrderDraft();
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/production/create-order-task", {
+          product_name: state.orderProduct,
+          task_type: state.orderTaskType,
+          route_step_index: state.orderRouteStep,
+          material_name: state.orderMaterial,
+          sizes: state.orderSizes,
+          colors: state.orderColors,
+          quantity: state.orderQuantity,
+        });
+
+        if (!data.ok) {
+          showToast("Задание", data.message || "Не удалось создать задание.");
+          mainButton.disabled = false;
+          return;
+        }
+
+        state.data.production = data.production || state.data.production;
+        if (data.routes) state.data.routes = data.routes;
+        state.orderMode = "list";
+        render();
+        showToast("Задание", data.message || "Задание создано.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось создать задание.");
+        mainButton.disabled = false;
+      }
+    }
+
+    function renderOrderCreate() {
+      const product = ensureOrderDraftDefaults();
+      const catalog = getRouteCatalog();
+      const operations = routeOperations(product);
+      const sizes = product ? product.sizes || [] : [];
+      const colors = product ? product.raw_colors || [] : [];
+      const operationOptions = operations.map((operation) => `
+        <option value="${operation.index}" ${String(operation.index) === String(state.orderRouteStep) ? "selected" : ""}>${escapeHtml(operation.position)} — ${escapeHtml(operation.operation)}</option>
+      `).join("");
+
+      mainButton.textContent = "Создать задание";
       mainButton.disabled = false;
 
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Заказы в работе</h2><p>Очередь производства и статусы.</p></div><div class="date">${tasks.length} активных</div></div>
+        <div class="screen-head"><div><h2>Создать задание</h2><p>Массовое задание по размерам и цветам.</p></div><div class="date">админ</div></div>
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field full"><label>Изделие</label><select id="orderProduct">${catalog.map((item) => `<option value="${escapeHtml(item.product_name)}" ${item.product_name === state.orderProduct ? "selected" : ""}>${escapeHtml(item.product_name)}</option>`).join("")}</select></div>
+            <div class="field full"><label>Тип задания</label><select id="orderTaskType"><option value="cutting" ${state.orderTaskType === "cutting" ? "selected" : ""}>Раскрой</option><option value="route" ${state.orderTaskType === "route" ? "selected" : ""}>Операция по маршруту</option></select></div>
+            ${state.orderTaskType === "route" ? `<div class="field full"><label>Операция</label><select id="orderRouteStep">${operationOptions || `<option value="">Нет операций</option>`}</select></div>` : ""}
+            <div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>
+            ${state.orderTaskType === "route" ? `<div class="field full"><label>Количество на каждую комбинацию</label><input id="orderQuantity" type="number" min="1" step="1" value="${escapeHtml(state.orderQuantity || "1")}"></div>` : ""}
+          </div>
+        </div>
+        <div class="card field-card"><label>Размеры</label>${sizes.length ? renderChoiceChips("size", sizes, state.orderSizes) : itemEmpty("У изделия нет размеров.")}</div>
+        <div class="card field-card"><label>Цвета ткани</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
+        <div class="button-row"><button class="small-button secondary" data-order-action="cancel">К списку</button><button class="small-button" data-order-action="create">Создать</button></div>
+      `;
+    }
+
+    function renderOrders() {
+      if (state.data && state.data.is_admin && state.orderMode === "create") {
+        renderOrderCreate();
+        return;
+      }
+
+      const productionTasks = state.data && state.data.is_admin ? getTasks() : getContourTasks();
+      const routeTasks = getRouteTasks();
+      const tasks = productionTasks.map((task) => ({...task, task_kind: "production"}));
+      const routeRows = routeTasks.map((task) => ({...task, task_kind: "route"}));
+      const allTasks = [...tasks, ...routeRows];
+      const current = allTasks[state.selectedOrder] || allTasks[0];
+      mainButton.textContent = state.data && state.data.is_admin ? "Создать задание" : "Обновить статус";
+      mainButton.disabled = false;
+
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Заказы в работе</h2><p>${state.data && state.data.is_admin ? "Создание и контроль заданий." : "Доступные задания для вашей должности."}</p></div><div class="date">${allTasks.length} активных</div></div>
+        ${state.data && state.data.is_admin ? `<div class="card shift-card" data-order-action="new"><div><b>Создать задание</b><span>Раскрой, пошив и другие операции по маршруту.</span></div><span class="status-chip">+</span></div>` : ""}
         <div class="op-list">
-          ${tasks.length ? tasks.map((task, index) => `
+          ${allTasks.length ? `
+          ${tasks.map((task, index) => `
             <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
               <div class="order-head"><div class="op-icon">▣</div><div><b>Задание #${escapeHtml(task.id)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip ${task.status === "active" ? "warn" : ""}">${escapeHtml(task.status_text || task.status)}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
               <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || "-")}</span><span>${progressForTask(task)}%</span></div>
             </div>
-          `).join("") : itemEmpty("Производственных заданий пока нет.")}
+          `).join("")}
+          ${routeRows.map((task, routeIndex) => {
+            const index = tasks.length + routeIndex;
+            return `
+              <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
+                <div class="order-head"><div class="op-icon">▣</div><div><b>Маршрут #${escapeHtml(task.id)}</b><span>${escapeHtml(task.product_name)} · ${escapeHtml(task.position)}</span></div><span class="status-chip gray">${escapeHtml(task.operation)}</span></div>
+                <div class="order-foot"><span>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</span><span>${escapeHtml(task.quantity)} шт</span></div>
+              </div>
+            `;
+          }).join("")}
+          ` : itemEmpty("Активных заданий пока нет.")}
         </div>
         <div class="section-title"><b>Детали выбранного</b><span>${current ? progressForTask(current) : 0}%</span></div>
-        ${current ? `
+        ${current && current.task_kind === "production" ? `
           <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.status_text || current.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || current.status)}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
+        ` : current ? `
+          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Маршрут #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.position)}</span></div><div class="detail-grid"><div class="detail-box"><span>Операция</span><strong>${escapeHtml(current.operation)}</strong></div><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div></div></div>
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
       `;
     }
@@ -3918,6 +4263,37 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     document.addEventListener("click", (event) => {
+      const orderAction = event.target.closest("[data-order-action]");
+      if (orderAction) {
+        syncOrderDraft();
+        if (orderAction.dataset.orderAction === "new") {
+          resetOrderDraft();
+          render();
+        }
+        if (orderAction.dataset.orderAction === "cancel") {
+          state.orderMode = "list";
+          render();
+        }
+        if (orderAction.dataset.orderAction === "create") {
+          createOrderTask();
+        }
+        return;
+      }
+
+      const orderSize = event.target.closest("[data-order-size]");
+      if (orderSize) {
+        syncOrderDraft();
+        toggleOrderValue("size", orderSize.dataset.orderSize);
+        return;
+      }
+
+      const orderColor = event.target.closest("[data-order-color]");
+      if (orderColor) {
+        syncOrderDraft();
+        toggleOrderValue("color", orderColor.dataset.orderColor);
+        return;
+      }
+
       const adminHomePeriod = event.target.closest("[data-admin-home-period]");
       if (adminHomePeriod) {
         state.adminHomePeriod = adminHomePeriod.dataset.adminHomePeriod;
@@ -4011,7 +4387,13 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "operations") { setScreen("report"); return; }
       if (state.screen === "report") { refreshState("Отчёт обновлён."); return; }
       if (state.screen === "analytics") { setScreen("orders"); return; }
-      if (state.screen === "orders") { refreshState("Статус обновлён."); }
+      if (state.screen === "orders" && state.data && state.data.is_admin) {
+        if (state.orderMode === "create") { createOrderTask(); return; }
+        resetOrderDraft();
+        render();
+        return;
+      }
+      if (state.screen === "orders") { refreshState("Статус обновлён."); return; }
       if (state.screen === "admin") {
         if (state.adminSection === "reports") { exportAdminReport(); return; }
         if (state.adminSection === "feedback") { loadAdminFeedback(); return; }
@@ -4020,6 +4402,12 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
+      if (event.target.closest("#orderProduct") || event.target.closest("#orderTaskType") || event.target.closest("#orderRouteStep") || event.target.closest("#orderMaterial") || event.target.closest("#orderQuantity")) {
+        syncOrderDraft();
+        render();
+        return;
+      }
+
       if (!event.target.closest("#adminReportType")) return;
       syncAdminForm();
       render();
@@ -4029,6 +4417,12 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "shift" && state.data && state.data.is_admin && state.adminHomeView !== "overview") {
         state.adminHomeView = state.adminHomeView === "employee" ? "employees" : "overview";
         state.adminHomeEmployee = "";
+        render();
+        return;
+      }
+
+      if (state.screen === "orders" && state.orderMode === "create") {
+        state.orderMode = "list";
         render();
         return;
       }
@@ -4082,6 +4476,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/feedback/send",
                 "/api/production/fabric-receipt",
                 "/api/production/create-task",
+                "/api/production/create-order-task",
                 "/api/production/submit-contours",
                 "/api/routes/create-batch",
                 "/api/routes/complete",
@@ -4148,6 +4543,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = add_fabric_receipt_for_telegram(telegram_id, payload)
             elif path == "/api/production/create-task":
                 result = create_production_task_for_telegram(telegram_id, payload)
+            elif path == "/api/production/create-order-task":
+                result = create_order_task_for_telegram(telegram_id, payload)
             elif path == "/api/production/submit-contours":
                 result = submit_production_contours_for_telegram(telegram_id, payload)
             elif path == "/api/routes/create-batch":
