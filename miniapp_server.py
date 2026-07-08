@@ -963,6 +963,12 @@ def month_bounds():
     return today.replace(day=1).isoformat(), today.isoformat()
 
 
+def quarter_bounds():
+    today = local_today()
+    quarter_start_month = ((today.month - 1) // 3) * 3 + 1
+    return today.replace(month=quarter_start_month, day=1).isoformat(), today.isoformat()
+
+
 def employee_admin_to_dict(employee):
     employee_id, full_name, position, telegram_id_value, employee_status = employee
 
@@ -1330,11 +1336,148 @@ def operation_admin_to_dict(row):
     }
 
 
+def quantity_as_float(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def quantity_text(value):
+    return format_number(quantity_as_float(value))
+
+
+def get_admin_home_period_payload(
+    period_id: str,
+    title: str,
+    start_date: str,
+    end_date: str,
+    employees: list[dict],
+    open_shifts: list[dict],
+):
+    report = get_admin_report_payload("period", start_date, end_date)
+    employee_by_name = {employee["full_name"]: employee for employee in employees}
+    rows_by_name = {}
+
+    def ensure_employee(full_name: str):
+        employee = employee_by_name.get(full_name, {})
+        if full_name not in rows_by_name:
+            rows_by_name[full_name] = {
+                "name": full_name,
+                "position": employee.get("position") or "-",
+                "plan": 0,
+                "plan_text": "0",
+                "fact": 0,
+                "fact_text": "0",
+                "shift_count": 0,
+                "on_shift": False,
+                "status": "",
+                "operations": [],
+            }
+        return rows_by_name[full_name]
+
+    for shift in report.get("shifts", []):
+        employee = ensure_employee(shift.get("employee") or "Сотрудник")
+        employee["shift_count"] += 1
+        if shift.get("status") == "open":
+            employee["on_shift"] = True
+        employee["status"] = shift.get("status") or employee["status"]
+
+    if period_id == "today":
+        for shift in open_shifts:
+            employee = ensure_employee(shift.get("employee") or "Сотрудник")
+            employee["on_shift"] = True
+            employee["status"] = "open"
+            employee["start_time"] = shift.get("start_time") or ""
+            employee["date"] = shift.get("date") or start_date
+
+    fact_total = 0.0
+
+    for operation in report.get("operations", []):
+        employee = ensure_employee(operation.get("employee") or "Сотрудник")
+        operation_quantity = quantity_as_float(operation.get("quantity"))
+        fact_total += operation_quantity
+        employee["fact"] += operation_quantity
+        employee["operations"].append(
+            {
+                "operation": operation.get("operation") or "-",
+                "stage": operation.get("group") or "-",
+                "date": operation.get("date") or "",
+                "size": operation.get("size") or "-",
+                "color": operation.get("color") or "-",
+                "quantity": operation_quantity,
+                "quantity_text": quantity_text(operation_quantity),
+                "unit": operation.get("unit") or "шт",
+            }
+        )
+
+    for employee in rows_by_name.values():
+        employee["fact_text"] = quantity_text(employee["fact"])
+        employee["operations"].sort(key=lambda row: (row["date"], row["operation"], row["size"], row["color"]))
+
+    employee_rows = sorted(
+        rows_by_name.values(),
+        key=lambda row: (not row["on_shift"], -row["fact"], row["name"]),
+    )
+
+    return {
+        "id": period_id,
+        "title": title,
+        "start_date": start_date,
+        "end_date": end_date,
+        "plan": 0,
+        "plan_text": "0",
+        "fact": fact_total,
+        "fact_text": quantity_text(fact_total),
+        "defect_count": 0,
+        "employees": employee_rows,
+        "defects": [],
+        "defect_fields": ["Изделие", "Этап", "Причина"],
+    }
+
+
+def get_admin_home_payload(employees: list[dict], open_shifts: list[dict]):
+    today = local_today().isoformat()
+    month_start, month_end = month_bounds()
+    quarter_start, quarter_end = quarter_bounds()
+
+    return {
+        "periods": {
+            "today": get_admin_home_period_payload(
+                "today",
+                "Сегодня",
+                today,
+                today,
+                employees,
+                open_shifts,
+            ),
+            "month": get_admin_home_period_payload(
+                "month",
+                "Текущий месяц",
+                month_start,
+                month_end,
+                employees,
+                open_shifts,
+            ),
+            "quarter": get_admin_home_period_payload(
+                "quarter",
+                "Текущий квартал",
+                quarter_start,
+                quarter_end,
+                employees,
+                open_shifts,
+            ),
+        }
+    }
+
+
 def get_admin_dashboard(telegram_id: int):
     if not is_admin(telegram_id):
         return {"ok": False, "message": "Нет прав администратора."}
 
     employees = get_all_employees()
+    employee_rows = [employee_admin_to_dict(employee) for employee in employees]
+    open_shift_rows = [open_shift_to_dict(shift) for shift in get_open_shifts()]
     month_start, today = month_bounds()
 
     return {
@@ -1342,7 +1485,7 @@ def get_admin_dashboard(telegram_id: int):
         "menu": ADMIN_MENU,
         "positions": POSITIONS,
         "period_defaults": {"start_date": month_start, "end_date": today},
-        "employees": [employee_admin_to_dict(employee) for employee in employees],
+        "employees": employee_rows,
         "active_employees": [
             employee_admin_to_dict(employee) for employee in get_employees_by_status("active")
         ],
@@ -1352,12 +1495,13 @@ def get_admin_dashboard(telegram_id: int):
         "pending_employees": [
             pending_employee_to_dict(employee) for employee in get_pending_employees()
         ],
-        "open_shifts": [open_shift_to_dict(shift) for shift in get_open_shifts()],
+        "open_shifts": open_shift_rows,
         "recent_shifts": [recent_shift_to_dict(shift) for shift in get_recent_shifts(20)],
         "operations": [
             operation_admin_to_dict(operation) for operation in get_all_operations()
         ],
         "reports": get_admin_report_payload("period", month_start, today),
+        "home": get_admin_home_payload(employee_rows, open_shift_rows),
         "feedback": [
             feedback_row_to_dict(row)
             for row in get_feedback_entries(month_start, today)
@@ -1903,13 +2047,17 @@ MINIAPP_HTML = """<!doctype html>
 
     .tabs {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(var(--tab-count, 3), minmax(0, 1fr));
       gap: 5px;
       padding: 5px;
       margin: 3px 0 16px;
       background: rgba(255,255,255,.52);
       border: 1px solid rgba(78,56,42,.11);
       border-radius: 17px;
+    }
+
+    .tabs[hidden] {
+      display: none;
     }
 
     .tab {
@@ -2618,11 +2766,7 @@ MINIAPP_HTML = """<!doctype html>
     </div>
 
     <div class="body">
-      <div class="tabs" id="topTabs">
-        <button class="tab active" data-go="shift">Главная</button>
-        <button class="tab" data-go="orders">Заказы</button>
-        <button class="tab" data-go="analytics">Аналитика</button>
-      </div>
+      <div class="tabs" id="topTabs" hidden></div>
       <div id="mount"></div>
     </div>
   </main>
@@ -2659,6 +2803,9 @@ MINIAPP_HTML = """<!doctype html>
       adminEndDate: "",
       adminEmployeeId: "",
       adminShiftEndTime: "",
+      adminHomePeriod: "today",
+      adminHomeView: "overview",
+      adminHomeEmployee: "",
       userStartDate: "",
       userEndDate: "",
       data: null,
@@ -2774,11 +2921,26 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderTopTabs() {
-      [...topTabs.querySelectorAll(".tab")].forEach((button) => {
-        const activeScreen = state.screen === "report" ? "shift" : state.screen;
-        const isActive = button.dataset.go === activeScreen;
-        button.classList.toggle("active", isActive);
-      });
+      let tabs = [];
+
+      if (state.screen === "shift" && state.data && state.data.is_admin) {
+        tabs = [
+          ["today", "Сегодня"],
+          ["month", "Месяц"],
+          ["quarter", "Квартал"],
+        ].map(([id, label]) => ({
+          id,
+          label,
+          attr: "data-admin-home-period",
+          active: state.adminHomePeriod === id,
+        }));
+      }
+
+      topTabs.hidden = tabs.length === 0;
+      topTabs.style.setProperty("--tab-count", tabs.length || 1);
+      topTabs.innerHTML = tabs.map((tab) => `
+        <button class="tab ${tab.active ? "active" : ""}" ${tab.attr}="${tab.id}">${tab.label}</button>
+      `).join("");
     }
 
     function roleLabel() {
@@ -2909,51 +3071,148 @@ MINIAPP_HTML = """<!doctype html>
       showToast("Админ", data.message || fallbackMessage || "Данные обновлены.");
     }
 
-    function renderAdminHome() {
+    function getAdminHomePeriod() {
       const admin = getAdmin() || {};
-      const report = admin.reports || {};
-      const totals = adminReportTotals(report);
-      const openShifts = admin.open_shifts || [];
-      const recentShifts = admin.recent_shifts || [];
-      const feedback = admin.feedback || [];
-      const activeEmployees = admin.active_employees || [];
-      const pendingEmployees = admin.pending_employees || [];
-      const todayLabel = admin.period_defaults && admin.period_defaults.end_date ? admin.period_defaults.end_date : "сегодня";
+      const periods = admin.home && admin.home.periods ? admin.home.periods : {};
+      return periods[state.adminHomePeriod] || periods.today || {
+        id: state.adminHomePeriod,
+        title: "Главная",
+        start_date: "",
+        end_date: "",
+        plan_text: "0",
+        fact_text: "0",
+        defect_count: 0,
+        employees: [],
+        defects: [],
+      };
+    }
+
+    function periodDateLabel(period) {
+      if (!period) return "";
+      if (!period.start_date || period.start_date === period.end_date) return period.start_date || "";
+      return `${period.start_date} — ${period.end_date}`;
+    }
+
+    function homeEmployeeTitle(period) {
+      if (period && period.id === "today") return "Сотрудники на смене";
+      if (period && period.id === "quarter") return "Сотрудники за квартал";
+      return "Сотрудники за месяц";
+    }
+
+    function renderPlanFactCards(entity) {
+      return `
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>План</span><div class="kpi-ico">◎</div></div><strong>${escapeHtml(entity.plan_text || "0")}</strong><span>Плановое количество</span><div class="progress"><i style="--w:0%"></i></div></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Факт</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(entity.fact_text || "0")}</strong><span>Сделано по отчётам</span><div class="progress sage"><i style="--w:${Math.min(100, Number(entity.fact || 0))}%"></i></div></div>
+        </div>
+      `;
+    }
+
+    function renderAdminHomeOverview(period) {
+      const employees = period.employees || [];
+      const title = period.id === "today" ? "Текущая смена" : period.title;
+
+      return `
+        <div class="screen-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(period.title)} · план/факт.</p></div><div class="date">${escapeHtml(periodDateLabel(period))}</div></div>
+        <div class="card shift-card" data-admin-home-view="planfact">
+          <div><b>План / факт</b><span>План ${escapeHtml(period.plan_text || "0")} · факт ${escapeHtml(period.fact_text || "0")}</span></div>
+          <span class="status-chip">открыть</span>
+        </div>
+        <div class="op-list">
+          <div class="card report-row" data-admin-home-view="employees"><div><b>${escapeHtml(homeEmployeeTitle(period))}</b><span>${escapeHtml(employees.length)} сотрудников · план/факт по каждому</span></div><span class="status-chip gray">›</span></div>
+          <div class="card report-row" data-admin-home-view="defects"><div><b>Брак</b><span>${escapeHtml(period.defect_count || 0)} записей · изделие, этап, причина</span></div><span class="status-chip gray">›</span></div>
+        </div>
+      `;
+    }
+
+    function renderAdminHomePlanFact(period) {
+      return `
+        <div class="screen-head"><div><h2>План / факт</h2><p>${escapeHtml(period.title)}</p></div><div class="date">${escapeHtml(periodDateLabel(period))}</div></div>
+        ${renderPlanFactCards(period)}
+      `;
+    }
+
+    function renderAdminHomeEmployees(period) {
+      const employees = period.employees || [];
+
+      return `
+        <div class="screen-head"><div><h2>${escapeHtml(homeEmployeeTitle(period))}</h2><p>${escapeHtml(period.title)} · сотрудник, должность, план/факт.</p></div><div class="date">${escapeHtml(employees.length)} чел</div></div>
+        <div class="op-list">
+          ${employees.length ? employees.map((employee, index) => `
+            <div class="card report-row" data-admin-home-employee="${index}">
+              <div><b>${escapeHtml(employee.name)}</b><span>${escapeHtml(employee.position)}${employee.on_shift ? ` · на смене${employee.start_time ? ` с ${escapeHtml(employee.start_time)}` : ""}` : ""}<br>План ${escapeHtml(employee.plan_text || "0")} · факт ${escapeHtml(employee.fact_text || "0")}</span></div>
+              <span class="status-chip gray">›</span>
+            </div>
+          `).join("") : itemEmpty(period.id === "today" ? "Сотрудников на смене пока нет." : "За период сотрудников с отчётами пока нет.")}
+        </div>
+      `;
+    }
+
+    function renderAdminHomeEmployee(period) {
+      const employees = period.employees || [];
+      const employee = employees[Number(state.adminHomeEmployee)] || employees[0];
+
+      if (!employee) {
+        state.adminHomeView = "employees";
+        return renderAdminHomeEmployees(period);
+      }
+
+      return `
+        <div class="screen-head"><div><h2>${escapeHtml(employee.name)}</h2><p>${escapeHtml(employee.position)} · ${escapeHtml(period.title)}</p></div><div class="date">${escapeHtml(periodDateLabel(period))}</div></div>
+        ${renderPlanFactCards(employee)}
+        <div class="section-title"><b>Задания / факт</b><span>${(employee.operations || []).length}</span></div>
+        <div class="op-list">
+          ${(employee.operations || []).length ? employee.operations.map((operation) => `
+            <div class="card report-row"><div><b>${escapeHtml(operation.operation)}</b><span>${escapeHtml(operation.stage)} · ${escapeHtml(operation.date || "")}<br>${escapeHtml(operation.size)} · ${escapeHtml(operation.color)}</span></div><span class="status-chip">${escapeHtml(operation.quantity_text)} ${escapeHtml(operation.unit)}</span></div>
+          `).join("") : itemEmpty("Фактических операций за период пока нет.")}
+        </div>
+      `;
+    }
+
+    function renderAdminHomeDefects(period) {
+      const defects = period.defects || [];
 
       mainButton.textContent = "Обновить главную";
       mainButton.disabled = false;
 
-      mount.innerHTML = `
-        <div class="screen-head"><div><h2>Сегодня</h2><p>Общая сводка по сменам фабрики.</p></div><div class="date">${escapeHtml(todayLabel)}</div></div>
-        <div class="card shift-card">
-          <div><b>${openShifts.length ? `Открыто смен: ${openShifts.length}` : "Открытых смен нет"}</b><span>${escapeHtml(activeEmployees.length)} активных сотрудников · ${escapeHtml(pendingEmployees.length)} заявок на подтверждение<br>Последние данные из админ-панели миниаппа</span></div>
-          <span class="status-chip ${openShifts.length ? "" : "gray"}">● ${openShifts.length ? "идёт смена" : "спокойно"}</span>
-        </div>
-        <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Открытые</span><div class="kpi-ico">◷</div></div><strong>${openShifts.length}<small> смен</small></strong><span>Сейчас в работе</span><div class="progress"><i style="--w:${Math.min(100, openShifts.length * 18)}%"></i></div></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(minutesLabel(totals.minutes))}</strong><span>За выбранный период</span><div class="progress sage"><i style="--w:${Math.min(100, Math.round(totals.minutes / 6))}%"></i></div></div>
-          <div class="card kpi"><div class="kpi-top"><span>Отчёт</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${totals.operations}<small> строк</small></strong><span>Операции в отчётах</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Сотрудники</span><div class="kpi-ico">◎</div></div><strong>${activeEmployees.length}<small> чел</small></strong><span>Активные профили</span></div>
-        </div>
-        <div class="section-title"><b>Открытые смены</b><button data-admin-home="shifts">управлять</button></div>
+      return `
+        <div class="screen-head"><div><h2>Брак</h2><p>${escapeHtml(period.title)} · изделие, этап, причина.</p></div><div class="date">${escapeHtml(defects.length)} записей</div></div>
         <div class="op-list">
-          ${openShifts.length ? openShifts.slice(0, 4).map((shift) => `
-            <div class="card report-row"><div><b>${escapeHtml(shift.employee)}</b><span>${escapeHtml(shift.date)} · начало ${escapeHtml(shift.start_time || "-")}</span></div><span class="status-chip">open</span></div>
-          `).join("") : itemEmpty("Сейчас никто не открыл смену.")}
-        </div>
-        <div class="section-title"><b>Последние смены</b><button data-admin-home="reports">отчёты</button></div>
-        <div class="op-list">
-          ${recentShifts.length ? recentShifts.slice(0, 5).map((shift) => `
-            <div class="card report-row"><div><b>${escapeHtml(shift.employee)}</b><span>${escapeHtml(shift.date)} · ${escapeHtml(shift.start_time || "-")} — ${escapeHtml(shift.end_time || "-")}<br>Операций: ${escapeHtml(shift.operation_count || 0)}</span></div><span class="status-chip gray">${escapeHtml(shift.status)}</span></div>
-          `).join("") : itemEmpty("Последних смен пока нет.")}
-        </div>
-        <div class="section-title"><b>Связь</b><button data-admin-home="feedback">сообщения</button></div>
-        <div class="op-list">
-          ${feedback.length ? feedback.slice(0, 3).map((row) => `
-            <div class="card report-row"><div><b>${escapeHtml(row.employee)} · ${escapeHtml(row.category)}</b><span>${escapeHtml(row.date)} ${escapeHtml(row.time || "")}<br>${escapeHtml(row.message)}</span></div><span class="status-chip gray">${row.shift_id ? `#${escapeHtml(row.shift_id)}` : "-"}</span></div>
-          `).join("") : itemEmpty("Новых сообщений за период нет.")}
+          ${defects.length ? defects.map((defect) => `
+            <div class="card report-row"><div><b>${escapeHtml(defect.product || "-")}</b><span>${escapeHtml(defect.stage || "-")}<br>${escapeHtml(defect.reason || "Причина не указана")}</span></div><span class="status-chip gray">${escapeHtml(defect.date || "")}</span></div>
+          `).join("") : `
+            <div class="card field-card">
+              <div class="report-row"><div><b>Изделие</b><span>Этап<br>Причина</span></div><span class="status-chip gray">0</span></div>
+            </div>
+          `}
         </div>
       `;
+    }
+
+    function renderAdminHome() {
+      const period = getAdminHomePeriod();
+
+      mainButton.textContent = "Обновить главную";
+      mainButton.disabled = false;
+
+      if (state.adminHomeView === "planfact") {
+        mount.innerHTML = renderAdminHomePlanFact(period);
+        return;
+      }
+      if (state.adminHomeView === "employees") {
+        mount.innerHTML = renderAdminHomeEmployees(period);
+        return;
+      }
+      if (state.adminHomeView === "employee") {
+        mount.innerHTML = renderAdminHomeEmployee(period);
+        return;
+      }
+      if (state.adminHomeView === "defects") {
+        mount.innerHTML = renderAdminHomeDefects(period);
+        return;
+      }
+
+      mount.innerHTML = renderAdminHomeOverview(period);
     }
 
     async function loadHistory() {
@@ -3574,6 +3833,31 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     document.addEventListener("click", (event) => {
+      const adminHomePeriod = event.target.closest("[data-admin-home-period]");
+      if (adminHomePeriod) {
+        state.adminHomePeriod = adminHomePeriod.dataset.adminHomePeriod;
+        state.adminHomeView = "overview";
+        state.adminHomeEmployee = "";
+        render();
+        return;
+      }
+
+      const adminHomeView = event.target.closest("[data-admin-home-view]");
+      if (adminHomeView) {
+        state.adminHomeView = adminHomeView.dataset.adminHomeView;
+        state.adminHomeEmployee = "";
+        render();
+        return;
+      }
+
+      const adminHomeEmployee = event.target.closest("[data-admin-home-employee]");
+      if (adminHomeEmployee) {
+        state.adminHomeEmployee = adminHomeEmployee.dataset.adminHomeEmployee;
+        state.adminHomeView = "employee";
+        render();
+        return;
+      }
+
       const go = event.target.closest("[data-go]");
       if (go) {
         setScreen(go.dataset.go);
@@ -3584,13 +3868,6 @@ MINIAPP_HTML = """<!doctype html>
       if (adminSection) {
         state.adminSection = adminSection.dataset.adminSection;
         render();
-        return;
-      }
-
-      const adminHome = event.target.closest("[data-admin-home]");
-      if (adminHome) {
-        state.adminSection = adminHome.dataset.adminHome;
-        setScreen("admin");
         return;
       }
 
@@ -3664,6 +3941,13 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
+      if (state.screen === "shift" && state.data && state.data.is_admin && state.adminHomeView !== "overview") {
+        state.adminHomeView = state.adminHomeView === "employee" ? "employees" : "overview";
+        state.adminHomeEmployee = "";
+        render();
+        return;
+      }
+
       const flow = ["shift", "report", "analytics", "orders", "admin"];
       const index = flow.indexOf(state.screen);
       setScreen(flow[Math.max(0, index - 1)]);
