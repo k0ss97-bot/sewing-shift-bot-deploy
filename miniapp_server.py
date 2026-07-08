@@ -3152,6 +3152,88 @@ MINIAPP_HTML = """<!doctype html>
       box-shadow: 0 8px 18px rgba(195,111,85,.10);
     }
 
+    .stock-picker {
+      display: grid;
+      gap: 9px;
+      margin-top: 10px;
+    }
+
+    .stock-picker-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      line-height: 1.25;
+    }
+
+    .stock-picker-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stock-pick-row {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) 92px;
+      gap: 10px;
+      align-items: center;
+      padding: 11px;
+      border: 1px solid rgba(49,39,33,.10);
+      border-radius: 18px;
+      background: rgba(255,255,255,.58);
+      transition: .16s ease;
+    }
+
+    .stock-pick-row.active,
+    .stock-pick-row:hover {
+      border-color: rgba(195,111,85,.42);
+      background: rgba(195,111,85,.10);
+      box-shadow: 0 8px 18px rgba(195,111,85,.10);
+    }
+
+    .stock-pick-row input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      accent-color: var(--accent);
+    }
+
+    .stock-pick-main b {
+      display: block;
+      font-size: 13px;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+
+    .stock-pick-main span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.32;
+    }
+
+    .stock-pick-qty input {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid rgba(49,39,33,.12);
+      border-radius: 14px;
+      background: rgba(255,255,255,.78);
+      padding: 0 10px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 900;
+      outline: none;
+    }
+
+    .stock-pick-qty input:focus {
+      border-color: rgba(195,111,85,.48);
+      box-shadow: 0 0 0 3px rgba(195,111,85,.12);
+    }
+
     .report-row {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -3479,6 +3561,14 @@ MINIAPP_HTML = """<!doctype html>
         left: 50%;
         width: min(430px, 100%);
         transform: translateX(-50%);
+      }
+
+      .stock-pick-row {
+        grid-template-columns: 24px minmax(0, 1fr);
+      }
+
+      .stock-pick-qty {
+        grid-column: 2;
       }
 
       .toast {
@@ -4421,6 +4511,47 @@ MINIAPP_HTML = """<!doctype html>
       `).join("")}</div>`;
     }
 
+    function stockQuantity(row) {
+      const current = Number(state.orderStockQuantities[row.id] || 0);
+      const max = Number(row.quantity || 0);
+      if (!Number.isFinite(current) || current <= 0) return 0;
+      if (!Number.isFinite(max) || max <= 0) return current;
+      return Math.min(current, max);
+    }
+
+    function renderStockPicker(stockRows, selectedOperation) {
+      const selectedRows = stockRows.filter((row) => stockQuantity(row) > 0);
+      const selectedTotal = selectedRows.reduce((total, row) => total + stockQuantity(row), 0);
+      const stockHtml = stockRows.length ? stockRows.map((row) => {
+        const quantity = stockQuantity(row);
+        const isSelected = quantity > 0;
+
+        return `
+          <div class="stock-pick-row ${isSelected ? "active" : ""}">
+            <input data-stock-toggle="${escapeHtml(row.id)}" type="checkbox" ${isSelected ? "checked" : ""} aria-label="Выбрать полуфабрикат">
+            <div class="stock-pick-main">
+              <b>${escapeHtml(row.product_name)} — ${escapeHtml(row.stage_name || "После раскроя")}</b>
+              <span>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}<br>Для: ${escapeHtml(row.ready_for_position)} · доступно ${escapeHtml(row.quantity_text || row.quantity)} ${escapeHtml(row.unit || "шт")}</span>
+            </div>
+            <div class="stock-pick-qty">
+              <input data-stock-quantity="${escapeHtml(row.id)}" type="number" min="0" max="${escapeHtml(row.quantity)}" step="1" value="${escapeHtml(quantity || "")}" placeholder="0">
+            </div>
+          </div>
+        `;
+      }).join("") : itemEmpty(`На складе нет полуфабрикатов после раскроя${selectedOperation ? ` для ${selectedOperation.position}` : ""}.`);
+
+      return `
+        <div class="card field-card">
+          <label>Вход</label>
+          <div class="stock-picker">
+            <div class="stock-picker-head"><span>Полуфабрикаты после раскроя</span><span>${selectedRows.length} поз. · ${selectedTotal} шт</span></div>
+            ${stockRows.length ? `<div class="stock-picker-actions"><button class="small-button secondary" data-stock-action="clear">Очистить</button><button class="small-button" data-stock-action="all">Взять всё</button></div>` : ""}
+            ${stockHtml}
+          </div>
+        </div>
+      `;
+    }
+
     async function createOrderTask() {
       if (!state.data || !state.data.is_admin) return;
       syncOrderDraft();
@@ -4623,12 +4754,6 @@ MINIAPP_HTML = """<!doctype html>
         row.product_name === state.orderProduct &&
         row.ready_for_position === selectedOperation.position
       ) : [];
-      const stockHtml = stockRows.length ? stockRows.map((row) => `
-        <div class="card report-row">
-          <div><b>${escapeHtml(row.product_name)} — ${escapeHtml(row.stage_name)}</b><span>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}<br>Доступно: ${escapeHtml(row.quantity_text || row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>
-          <input data-stock-quantity="${escapeHtml(row.id)}" type="number" min="0" max="${escapeHtml(row.quantity)}" step="1" value="${escapeHtml(state.orderStockQuantities[row.id] || "")}" placeholder="0">
-        </div>
-      `).join("") : itemEmpty("На складе нет полуфабрикатов для этой операции.");
 
       mainButton.textContent = "Создать задание";
       mainButton.disabled = false;
@@ -4640,15 +4765,14 @@ MINIAPP_HTML = """<!doctype html>
             <div class="field full"><label>Изделие</label><select id="orderProduct">${catalog.map((item) => `<option value="${escapeHtml(item.product_name)}" ${item.product_name === state.orderProduct ? "selected" : ""}>${escapeHtml(item.product_name)}</option>`).join("")}</select></div>
             <div class="field full"><label>Тип задания</label><select id="orderTaskType"><option value="cutting" ${state.orderTaskType === "cutting" ? "selected" : ""}>Раскрой</option><option value="route" ${state.orderTaskType === "route" ? "selected" : ""}>Операция</option></select></div>
             ${state.orderTaskType === "route" ? `<div class="field full"><label>Операция</label><select id="orderRouteStep">${operationOptions || `<option value="">Нет операций</option>`}</select></div>` : ""}
-            ${state.orderTaskType === "cutting" ? `<div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>` : `<div class="field full"><label>Вход</label><input value="Полуфабрикат" disabled></div>`}
+            ${state.orderTaskType === "cutting" ? `<div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>` : ""}
           </div>
         </div>
         ${state.orderTaskType === "cutting" ? `
           <div class="card field-card"><label>Размеры</label>${sizes.length ? renderChoiceChips("size", sizes, state.orderSizes) : itemEmpty("У изделия нет размеров.")}</div>
           <div class="card field-card"><label>Цвета ткани</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
         ` : `
-          <div class="section-title"><b>Полуфабрикаты со склада</b><span>${stockRows.length}</span></div>
-          <div class="op-list">${stockHtml}</div>
+          ${renderStockPicker(stockRows, selectedOperation)}
         `}
         <div class="button-row"><button class="small-button secondary" data-order-action="cancel">К списку</button><button class="small-button" data-order-action="create">Создать</button></div>
       `;
@@ -5058,6 +5182,17 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const stockAction = event.target.closest("[data-stock-action]");
+      if (stockAction) {
+        syncOrderDraft();
+        document.querySelectorAll("[data-stock-quantity]").forEach((input) => {
+          input.value = stockAction.dataset.stockAction === "all" ? input.max || "1" : "";
+          state.orderStockQuantities[input.dataset.stockQuantity] = input.value;
+        });
+        render();
+        return;
+      }
+
       const adminHomePeriod = event.target.closest("[data-admin-home-period]");
       if (adminHomePeriod) {
         state.adminHomePeriod = adminHomePeriod.dataset.adminHomePeriod;
@@ -5173,8 +5308,28 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
+      const stockToggle = event.target.closest("[data-stock-toggle]");
+      if (stockToggle) {
+        const input = document.querySelector(`[data-stock-quantity="${stockToggle.dataset.stockToggle}"]`);
+        if (input) {
+          input.value = stockToggle.checked ? (Number(input.value || 0) > 0 ? input.value : input.max || "1") : "";
+          state.orderStockQuantities[input.dataset.stockQuantity] = input.value;
+        }
+        syncOrderDraft();
+        render();
+        return;
+      }
+
       if (event.target.closest("#orderProduct") || event.target.closest("#orderTaskType") || event.target.closest("#orderRouteStep") || event.target.closest("#orderMaterial") || event.target.closest("#orderQuantity") || event.target.closest("[data-stock-quantity]")) {
         syncOrderDraft();
+        const stockQuantity = event.target.closest("[data-stock-quantity]");
+        if (stockQuantity) {
+          const row = stockQuantity.closest(".stock-pick-row");
+          const toggle = document.querySelector(`[data-stock-toggle="${stockQuantity.dataset.stockQuantity}"]`);
+          const hasQuantity = Number(stockQuantity.value || 0) > 0;
+          if (toggle) toggle.checked = hasQuantity;
+          if (row) row.classList.toggle("active", hasQuantity);
+        }
         if (!event.target.closest("[data-stock-quantity]")) render();
         return;
       }
