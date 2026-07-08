@@ -3536,7 +3536,7 @@ MINIAPP_HTML = """<!doctype html>
       orderColors: [],
       orderQuantity: "1",
       orderStockQuantities: {},
-      adminSection: "warehouse",
+      adminSection: "reports",
       adminReportType: "period",
       adminStartDate: "",
       adminEndDate: "",
@@ -3696,11 +3696,16 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function navItems() {
-      const items = [...baseNav];
       if (state.data && state.data.is_admin) {
-        items.push({ id: "admin", label: "Админ", icon: "◎" });
+        return [
+          { id: "shift", label: "Главная", icon: "⌂" },
+          { id: "warehouse", label: "Склад", icon: "▦" },
+          { id: "analytics", label: "Аналитика", icon: "▥" },
+          { id: "orders", label: "Заказы", icon: "▣" },
+          { id: "admin", label: "Админ", icon: "◎" },
+        ];
       }
-      return items;
+      return [...baseNav];
     }
 
     function renderBottomNav() {
@@ -4737,7 +4742,6 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderAdminTabs() {
       const sections = [
-        ["warehouse", "Склад"],
         ["reports", "Отчёты"],
         ["employees", "Сотрудники"],
         ["shifts", "Смены"],
@@ -4749,7 +4753,7 @@ MINIAPP_HTML = """<!doctype html>
       `).join("")}</div>`;
     }
 
-    function renderAdminWarehouse() {
+    function renderAdminWarehouse(includeTabs = false) {
       const fabricRows = getProduction().fabric_stock || [];
       const warehouseRows = getWarehouseStock();
       const semifinished = warehouseRows.filter((row) => row.item_type === "semifinished");
@@ -4769,7 +4773,7 @@ MINIAPP_HTML = """<!doctype html>
 
       return `
         <div class="screen-head"><div><h2>Склад</h2><p>Материалы, полуфабрикаты и готовая продукция.</p></div><div class="date">${warehouseRows.length + fabricRows.length} поз.</div></div>
-        ${renderAdminTabs()}
+        ${includeTabs ? renderAdminTabs() : ""}
         <div class="kpi-grid">
           <div class="card kpi"><div class="kpi-top"><span>Материалы</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз</small></strong><span>Ткань и материалы</span></div>
           <div class="card kpi"><div class="kpi-top"><span>Полуфабрикаты</span><div class="kpi-ico">▣</div></div><strong>${semifinished.length}<small> поз</small></strong><span>После этапов</span></div>
@@ -4786,6 +4790,20 @@ MINIAPP_HTML = """<!doctype html>
         <div class="section-title"><b>Готовая продукция</b><span>${finished.length}</span></div>
         <div class="op-list">${stockList(finished)}</div>
       `;
+    }
+
+    function renderWarehouse() {
+      if (!state.data || !state.data.is_admin) {
+        mainButton.textContent = "Обновить";
+        mainButton.disabled = false;
+        mount.innerHTML = `
+          <div class="screen-head"><div><h2>Склад</h2><p>Раздел доступен только администратору.</p></div></div>
+          <div class="card field-card">${itemEmpty("Нет прав администратора.")}</div>
+        `;
+        return;
+      }
+
+      mount.innerHTML = renderAdminWarehouse(false);
     }
 
     function renderAdminReports(admin) {
@@ -4948,11 +4966,6 @@ MINIAPP_HTML = """<!doctype html>
       const admin = getAdmin();
       mainButton.disabled = false;
 
-      if (state.adminSection === "warehouse") {
-        mount.innerHTML = renderAdminWarehouse();
-        return;
-      }
-
       if (state.adminSection === "employees") {
         mount.innerHTML = renderAdminEmployees(admin);
         return;
@@ -4977,6 +4990,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "shift") renderShift();
       if (state.screen === "operations") renderOperations();
       if (state.screen === "report") renderReport();
+      if (state.screen === "warehouse") renderWarehouse();
       if (state.screen === "analytics") renderAnalytics();
       if (state.screen === "orders") renderOrders();
       if (state.screen === "admin") renderAdmin();
@@ -5136,6 +5150,7 @@ MINIAPP_HTML = """<!doctype html>
       }
       if (state.screen === "operations") { setScreen("report"); return; }
       if (state.screen === "report") { refreshState("Отчёт обновлён."); return; }
+      if (state.screen === "warehouse") { refreshAdminDashboard("Склад обновлён."); return; }
       if (state.screen === "analytics") { setScreen("orders"); return; }
       if (state.screen === "orders" && state.data && state.data.is_admin) {
         if (state.orderMode === "create") { createOrderTask(); return; }
@@ -5183,7 +5198,9 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      const flow = ["shift", "report", "analytics", "orders", "admin"];
+      const flow = state.data && state.data.is_admin
+        ? ["shift", "warehouse", "analytics", "orders", "admin"]
+        : ["shift", "report", "analytics", "orders", "admin"];
       const index = flow.indexOf(state.screen);
       setScreen(flow[Math.max(0, index - 1)]);
     });
