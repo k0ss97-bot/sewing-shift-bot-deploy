@@ -1903,7 +1903,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .tabs {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 5px;
       padding: 5px;
       margin: 3px 0 16px;
@@ -2620,7 +2620,6 @@ MINIAPP_HTML = """<!doctype html>
     <div class="body">
       <div class="tabs" id="topTabs">
         <button class="tab active" data-go="shift">Главная</button>
-        <button class="tab" data-go="operations">Смена</button>
         <button class="tab" data-go="orders">Заказы</button>
         <button class="tab" data-go="analytics">Аналитика</button>
       </div>
@@ -2673,7 +2672,6 @@ MINIAPP_HTML = """<!doctype html>
 
     const baseNav = [
       { id: "shift", label: "Главная", icon: "⌂" },
-      { id: "operations", label: "Смена", icon: "◷" },
       { id: "report", label: "Отчёт", icon: "＋" },
       { id: "analytics", label: "Аналитика", icon: "▥" },
       { id: "orders", label: "Заказы", icon: "▣" },
@@ -2777,12 +2775,14 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderTopTabs() {
       [...topTabs.querySelectorAll(".tab")].forEach((button) => {
-        const isActive = button.dataset.go === state.screen || (state.screen === "report" && button.dataset.go === "operations");
+        const activeScreen = state.screen === "report" ? "shift" : state.screen;
+        const isActive = button.dataset.go === activeScreen;
         button.classList.toggle("active", isActive);
       });
     }
 
     function roleLabel() {
+      if (state.data && state.data.is_admin) return "Администратор";
       const employee = state.data && state.data.employee;
       if (!employee) return "Нет доступа";
       return employee.position || "Сотрудник";
@@ -2907,6 +2907,53 @@ MINIAPP_HTML = """<!doctype html>
       state.data.admin = data;
       render();
       showToast("Админ", data.message || fallbackMessage || "Данные обновлены.");
+    }
+
+    function renderAdminHome() {
+      const admin = getAdmin() || {};
+      const report = admin.reports || {};
+      const totals = adminReportTotals(report);
+      const openShifts = admin.open_shifts || [];
+      const recentShifts = admin.recent_shifts || [];
+      const feedback = admin.feedback || [];
+      const activeEmployees = admin.active_employees || [];
+      const pendingEmployees = admin.pending_employees || [];
+      const todayLabel = admin.period_defaults && admin.period_defaults.end_date ? admin.period_defaults.end_date : "сегодня";
+
+      mainButton.textContent = "Обновить главную";
+      mainButton.disabled = false;
+
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Сегодня</h2><p>Общая сводка по сменам фабрики.</p></div><div class="date">${escapeHtml(todayLabel)}</div></div>
+        <div class="card shift-card">
+          <div><b>${openShifts.length ? `Открыто смен: ${openShifts.length}` : "Открытых смен нет"}</b><span>${escapeHtml(activeEmployees.length)} активных сотрудников · ${escapeHtml(pendingEmployees.length)} заявок на подтверждение<br>Последние данные из админ-панели миниаппа</span></div>
+          <span class="status-chip ${openShifts.length ? "" : "gray"}">● ${openShifts.length ? "идёт смена" : "спокойно"}</span>
+        </div>
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>Открытые</span><div class="kpi-ico">◷</div></div><strong>${openShifts.length}<small> смен</small></strong><span>Сейчас в работе</span><div class="progress"><i style="--w:${Math.min(100, openShifts.length * 18)}%"></i></div></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(minutesLabel(totals.minutes))}</strong><span>За выбранный период</span><div class="progress sage"><i style="--w:${Math.min(100, Math.round(totals.minutes / 6))}%"></i></div></div>
+          <div class="card kpi"><div class="kpi-top"><span>Отчёт</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${totals.operations}<small> строк</small></strong><span>Операции в отчётах</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Сотрудники</span><div class="kpi-ico">◎</div></div><strong>${activeEmployees.length}<small> чел</small></strong><span>Активные профили</span></div>
+        </div>
+        <div class="section-title"><b>Открытые смены</b><button data-admin-home="shifts">управлять</button></div>
+        <div class="op-list">
+          ${openShifts.length ? openShifts.slice(0, 4).map((shift) => `
+            <div class="card report-row"><div><b>${escapeHtml(shift.employee)}</b><span>${escapeHtml(shift.date)} · начало ${escapeHtml(shift.start_time || "-")}</span></div><span class="status-chip">open</span></div>
+          `).join("") : itemEmpty("Сейчас никто не открыл смену.")}
+        </div>
+        <div class="section-title"><b>Последние смены</b><button data-admin-home="reports">отчёты</button></div>
+        <div class="op-list">
+          ${recentShifts.length ? recentShifts.slice(0, 5).map((shift) => `
+            <div class="card report-row"><div><b>${escapeHtml(shift.employee)}</b><span>${escapeHtml(shift.date)} · ${escapeHtml(shift.start_time || "-")} — ${escapeHtml(shift.end_time || "-")}<br>Операций: ${escapeHtml(shift.operation_count || 0)}</span></div><span class="status-chip gray">${escapeHtml(shift.status)}</span></div>
+          `).join("") : itemEmpty("Последних смен пока нет.")}
+        </div>
+        <div class="section-title"><b>Связь</b><button data-admin-home="feedback">сообщения</button></div>
+        <div class="op-list">
+          ${feedback.length ? feedback.slice(0, 3).map((row) => `
+            <div class="card report-row"><div><b>${escapeHtml(row.employee)} · ${escapeHtml(row.category)}</b><span>${escapeHtml(row.date)} ${escapeHtml(row.time || "")}<br>${escapeHtml(row.message)}</span></div><span class="status-chip gray">${row.shift_id ? `#${escapeHtml(row.shift_id)}` : "-"}</span></div>
+          `).join("") : itemEmpty("Новых сообщений за период нет.")}
+        </div>
+      `;
     }
 
     async function loadHistory() {
@@ -3123,6 +3170,11 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderShift() {
+      if (state.data && state.data.is_admin) {
+        renderAdminHome();
+        return;
+      }
+
       const employee = state.data && state.data.employee;
       const shift = state.data && state.data.shift;
       const operations = getReportOperations();
@@ -3143,7 +3195,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card kpi"><div class="kpi-top"><span>Контуры</span><div class="kpi-ico">▣</div></div><strong>${contourTasks.length}<small> шт</small></strong><span>Доступно раскройщику</span></div>
           <div class="card kpi"><div class="kpi-top"><span>Ткань</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз.</small></strong><span>Остатки ткани</span></div>
         </div>
-        <div class="section-title"><b>Активная операция</b><button data-go="operations">все операции</button></div>
+        <div class="section-title"><b>Активная операция</b><button data-go="report">отчёт</button></div>
         ${operations.length ? `
           <div class="card active-operation" data-go="report"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(operations[0].operation_name)}</b><span>${escapeHtml(operations[0].product_size || "-")} · ${escapeHtml(operations[0].product_color || "-")}<br>${escapeHtml(operations[0].quantity)} ${escapeHtml(operations[0].unit)}</span></div><span class="status-chip">отчёт</span></div>
         ` : `<div class="card shift-card"><div><b>Операций пока нет</b><span>Когда появятся строки отчёта, они будут здесь.</span></div><span class="status-chip gray">пусто</span></div>`}
@@ -3186,7 +3238,7 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Отчёт по операции</h2><p>Просмотр данных текущей смены.</p></div><div class="date">${operations.length} строк</div></div>
         ${op ? `
-          <div class="card field-card"><label>Операция</label><div class="select-row" data-go="operations"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(op.operation_name)}</b><span>${escapeHtml(op.product_size || "-")} · ${escapeHtml(op.product_color || "-")}</span></div><span>›</span></div></div>
+          <div class="card field-card"><label>Операция</label><div class="select-row"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(op.operation_name)}</b><span>${escapeHtml(op.product_size || "-")} · ${escapeHtml(op.product_color || "-")}</span></div><span>✓</span></div></div>
           <div class="card field-card"><label>Количество</label><div class="select-row"><div class="op-icon">✓</div><div><b>${escapeHtml(op.quantity)} ${escapeHtml(op.unit)}</b><span>Сохранено в сменном отчёте</span></div><span class="status-chip">принято</span></div></div>
         ` : `<div class="card field-card">${itemEmpty("В текущей смене пока нет строк отчёта.")}</div>`}
         <div class="section-title"><b>Обратная связь</b><span>${feedback.length}</span></div>
@@ -3535,6 +3587,13 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const adminHome = event.target.closest("[data-admin-home]");
+      if (adminHome) {
+        state.adminSection = adminHome.dataset.adminHome;
+        setScreen("admin");
+        return;
+      }
+
       const adminAction = event.target.closest("[data-admin-action]");
       if (adminAction) {
         syncAdminForm();
@@ -3579,6 +3638,10 @@ MINIAPP_HTML = """<!doctype html>
     mainButton.addEventListener("click", () => {
       if (!state.data) return;
       if (state.screen === "shift") {
+        if (state.data.is_admin) {
+          refreshAdminDashboard("Главная обновлена.");
+          return;
+        }
         if (state.data.shift && state.data.shift.status === "closed") return;
         shiftAction(state.data.has_open_shift ? "close" : "open");
         return;
@@ -3601,7 +3664,7 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
-      const flow = ["shift", "operations", "report", "analytics", "orders", "admin"];
+      const flow = ["shift", "report", "analytics", "orders", "admin"];
       const index = flow.indexOf(state.screen);
       setScreen(flow[Math.max(0, index - 1)]);
     });
