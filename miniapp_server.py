@@ -1626,14 +1626,15 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .tabs {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+      display: flex;
       gap: 8px;
       margin-bottom: 14px;
       position: sticky;
       top: 0;
       z-index: 2;
       padding: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
       background: rgba(255, 255, 255, 0.72);
       border: 1px solid rgba(255, 255, 255, 0.82);
       border-radius: 8px;
@@ -1641,15 +1642,26 @@ MINIAPP_HTML = """<!doctype html>
       backdrop-filter: blur(24px);
     }
 
+    .tabs::-webkit-scrollbar {
+      display: none;
+    }
+
     .tab {
+      width: auto;
+      min-width: 92px;
+      flex: 0 0 auto;
       min-height: 42px;
       padding: 8px;
       color: #47526b;
       background: transparent;
       border: 1px solid transparent;
       border-radius: 8px;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 800;
+      line-height: 1.08;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .tab.active {
@@ -1906,6 +1918,54 @@ MINIAPP_HTML = """<!doctype html>
       text-align: right;
     }
 
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      min-height: 106px;
+      padding: 13px;
+      border: 1px solid rgba(255, 255, 255, 0.78);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.62);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 10px;
+      color: var(--text);
+      font-size: 26px;
+      line-height: 1.05;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.25;
+    }
+
+    .progress-line {
+      height: 8px;
+      margin-top: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(109, 124, 158, 0.16);
+    }
+
+    .progress-line i {
+      display: block;
+      height: 100%;
+      width: var(--w, 0%);
+      border-radius: 999px;
+      background: linear-gradient(135deg, #5d72ff, var(--accent-strong));
+    }
+
     @media (max-width: 560px) {
       .page {
         padding: 10px 10px 92px;
@@ -1926,15 +1986,15 @@ MINIAPP_HTML = """<!doctype html>
         right: 10px;
         top: auto;
         bottom: 10px;
-        grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
         margin: 0;
         z-index: 10;
       }
 
       .tab {
+        min-width: 78px;
         min-height: 44px;
-        padding: 6px 4px;
-        font-size: 11px;
+        padding: 6px;
+        font-size: 10.5px;
       }
 
       .brand-mark {
@@ -1954,6 +2014,10 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       .grid, .three {
+        grid-template-columns: 1fr;
+      }
+
+      .metric-grid {
         grid-template-columns: 1fr;
       }
 
@@ -1986,15 +2050,61 @@ MINIAPP_HTML = """<!doctype html>
     </div>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="shift">Смена</button>
+      <button class="tab active" data-tab="home">Главная</button>
+      <button class="tab" data-tab="shift">Смена</button>
       <button class="tab" data-tab="report">Отчёт</button>
       <button class="tab" data-tab="production">Производство</button>
+      <button class="tab" data-tab="orders">Заказы</button>
+      <button class="tab" data-tab="analytics">Аналитика</button>
       <button class="tab" data-tab="routes" id="routesTab" hidden>Маршруты</button>
       <button class="tab" data-tab="admin" id="adminTab" hidden>Админ</button>
       <button class="tab" data-tab="feedback">Связь</button>
     </nav>
 
-    <section class="section active" id="section-shift">
+    <section class="section active" id="section-home">
+      <div class="card">
+        <p class="label">Сегодня</p>
+        <p class="value" id="homeTitle">Производство</p>
+        <div class="message" id="homeSubtitle">Смена, отчёты, задания и аналитика.</div>
+        <div class="metric-grid">
+          <div class="metric">
+            <p class="label">Смена</p>
+            <strong id="homeShiftMetric">-</strong>
+            <span id="homeShiftMeta">-</span>
+          </div>
+          <div class="metric">
+            <p class="label">Отчёт</p>
+            <strong id="homeReportMetric">0</strong>
+            <span>строк за текущую смену</span>
+          </div>
+          <div class="metric">
+            <p class="label">Задания</p>
+            <strong id="homeProductionMetric">0</strong>
+            <span>активных производственных заданий</span>
+          </div>
+          <div class="metric">
+            <p class="label">Контуры</p>
+            <strong id="homeContourMetric">0</strong>
+            <span>доступно раскройщику</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Быстрые действия</h3>
+        <div class="grid">
+          <button data-tab-action="shift">Смена</button>
+          <button data-tab-action="report" class="secondary">Отчёт</button>
+          <button data-tab-action="production" class="secondary">Производство</button>
+          <button data-tab-action="orders" class="secondary">Заказы</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Активность</h3>
+        <div class="list" id="homeActivityList"></div>
+      </div>
+    </section>
+
+    <section class="section" id="section-shift">
       <div class="card">
         <p class="label">Сотрудник</p>
         <p class="value" id="employeeName">Проверяем доступ</p>
@@ -2097,6 +2207,56 @@ MINIAPP_HTML = """<!doctype html>
       </div>
     </section>
 
+    <section class="section" id="section-orders">
+      <div class="card">
+        <h2>Заказы</h2>
+        <div class="rows">
+          <div class="row"><span>Активные</span><strong id="ordersActiveCount">0</strong></div>
+          <div class="row"><span>В раскрое</span><strong id="ordersCuttingCount">0</strong></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Очередь производства</h3>
+        <div class="list" id="ordersList"></div>
+      </div>
+      <div class="card">
+        <h3>Детали</h3>
+        <div class="list" id="ordersDetail"></div>
+      </div>
+    </section>
+
+    <section class="section" id="section-analytics">
+      <div class="card">
+        <h2>Аналитика</h2>
+        <div class="metric-grid">
+          <div class="metric">
+            <p class="label">Операции</p>
+            <strong id="analyticsOperations">0</strong>
+            <span>строк в текущем отчёте</span>
+          </div>
+          <div class="metric">
+            <p class="label">Обратная связь</p>
+            <strong id="analyticsFeedback">0</strong>
+            <span>сообщений за смену</span>
+          </div>
+          <div class="metric">
+            <p class="label">Ткань</p>
+            <strong id="analyticsFabric">0</strong>
+            <span>позиций в остатках</span>
+          </div>
+          <div class="metric">
+            <p class="label">Задания</p>
+            <strong id="analyticsTasks">0</strong>
+            <span>активных в производстве</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Статус производства</h3>
+        <div class="list" id="analyticsStatusList"></div>
+      </div>
+    </section>
+
     <section class="section" id="section-routes">
       <div class="card">
         <h2>Маршрутные карты</h2>
@@ -2190,7 +2350,7 @@ MINIAPP_HTML = """<!doctype html>
     const state = {
       initData: tg ? tg.initData : "",
       loading: false,
-      tab: "shift",
+      tab: "home",
       adminSection: "requests",
       data: null,
     };
@@ -2310,6 +2470,141 @@ MINIAPP_HTML = """<!doctype html>
             escapeHtml(row.message)
           )).join("")
         : empty("Сообщений по этой смене нет.");
+    }
+
+    function shiftStatusText(shift) {
+      if (!shift) {
+        return "не открыта";
+      }
+
+      return shift.status === "open" ? "открыта" : "закрыта";
+    }
+
+    function renderHome(data) {
+      const employee = data.employee;
+      const shift = data.shift;
+      const report = data.report || {};
+      const operations = report.operations || [];
+      const feedback = report.feedback || [];
+      const production = data.production || {};
+      const tasks = production.tasks || [];
+      const contourTasks = production.contour_tasks || [];
+
+      setText("homeTitle", employee ? employee.full_name : "Нет доступа");
+      $("homeSubtitle").textContent = employee
+        ? `${employee.position || "-"} · профиль ${employee.status || "-"}`
+        : "Откройте приложение из Telegram.";
+      setText("homeShiftMetric", shiftStatusText(shift));
+      $("homeShiftMeta").textContent = shift
+        ? `${shift.date || "-"} · ${shift.start_time || "-"}-${shift.end_time || ""}`
+        : "сегодня смена не открыта";
+      setText("homeReportMetric", String(operations.length));
+      setText("homeProductionMetric", String(tasks.length));
+      setText("homeContourMetric", String(contourTasks.length));
+
+      const activity = [];
+
+      if (shift) {
+        activity.push(item("Смена", `${escapeHtml(shift.date)} · ${escapeHtml(shiftStatusText(shift))}`));
+      }
+
+      operations.slice(0, 2).forEach((row) => {
+        activity.push(item(
+          row.operation_name,
+          `Количество: ${escapeHtml(row.quantity)} ${escapeHtml(row.unit)}`
+        ));
+      });
+
+      tasks.slice(0, 3).forEach((task) => {
+        activity.push(item(`#${task.id} ${task.product_name}`, taskMeta(task)));
+      });
+
+      feedback.slice(0, 1).forEach((row) => {
+        activity.push(item(`${row.category} · ${row.date}`, escapeHtml(row.message)));
+      });
+
+      $("homeActivityList").innerHTML = activity.length
+        ? activity.join("")
+        : empty("Пока нет активности за смену.");
+    }
+
+    function orderProgress(task) {
+      if (!task) {
+        return 0;
+      }
+
+      if (task.status === "formed") {
+        return 100;
+      }
+
+      if (task.status === "in_cutting") {
+        return 70;
+      }
+
+      if (task.status === "contours_done") {
+        return 35;
+      }
+
+      return 12;
+    }
+
+    function renderOrders(production) {
+      production = production || {};
+      const tasks = production.tasks || [];
+      const inCutting = tasks.filter((task) => task.status === "in_cutting" || task.status === "contours_done").length;
+
+      setText("ordersActiveCount", String(tasks.length));
+      setText("ordersCuttingCount", String(inCutting));
+
+      $("ordersList").innerHTML = tasks.length
+        ? tasks.map((task) => {
+            const progress = orderProgress(task);
+            return `
+              <div class="item">
+                <p class="item-title">#${escapeHtml(task.id)} ${escapeHtml(task.product_name)}</p>
+                <p class="item-meta">
+                  ${taskMeta(task)}
+                  <span class="progress-line"><i style="--w:${progress}%"></i></span>
+                </p>
+              </div>
+            `;
+          }).join("")
+        : empty("Производственных заказов пока нет.");
+
+      $("ordersDetail").innerHTML = tasks.length
+        ? tasks.slice(0, 3).map((task) => item(
+            `Заказ #${task.id}`,
+            [
+              `Изделие: ${escapeHtml(task.product_name)}`,
+              `Статус: ${escapeHtml(task.status_text || task.status)}`,
+              `Размеры: ${escapeHtml((task.sizes || []).join(", ") || "-")}`,
+              `Цвета: ${escapeHtml((task.color_labels || task.colors || []).join(", ") || "-")}`,
+            ].join("<br>")
+          )).join("")
+        : empty("Детали появятся после создания задания.");
+    }
+
+    function renderAnalytics(data) {
+      const report = data.report || {};
+      const production = data.production || {};
+      const operations = report.operations || [];
+      const feedback = report.feedback || [];
+      const tasks = production.tasks || [];
+      const fabricRows = production.fabric_stock || [];
+      const formedCount = tasks.filter((task) => task.status === "formed").length;
+      const cuttingCount = tasks.filter((task) => task.status === "in_cutting" || task.status === "contours_done").length;
+      const activeCount = tasks.filter((task) => task.status === "active").length;
+
+      setText("analyticsOperations", String(operations.length));
+      setText("analyticsFeedback", String(feedback.length));
+      setText("analyticsFabric", String(fabricRows.length));
+      setText("analyticsTasks", String(tasks.length));
+
+      $("analyticsStatusList").innerHTML = [
+        item("Ожидают контуров", `${activeCount} заданий<div class="progress-line"><i style="--w:${tasks.length ? Math.round(activeCount / tasks.length * 100) : 0}%"></i></div>`),
+        item("В раскрое", `${cuttingCount} заданий<div class="progress-line"><i style="--w:${tasks.length ? Math.round(cuttingCount / tasks.length * 100) : 0}%"></i></div>`),
+        item("Готовый крой", `${formedCount} заданий<div class="progress-line"><i style="--w:${tasks.length ? Math.round(formedCount / tasks.length * 100) : 0}%"></i></div>`),
+      ].join("");
     }
 
     function getSelectedRouteProduct() {
@@ -2794,8 +3089,14 @@ MINIAPP_HTML = """<!doctype html>
     function render(data) {
       state.data = data;
       $("routesTab").hidden = !(data.features && data.features.routes_enabled);
+      if (state.tab === "routes" && $("routesTab").hidden) {
+        activateTab("home");
+      }
+      renderHome(data);
       renderShift(data);
       renderReport(data.report);
+      renderOrders(data.production);
+      renderAnalytics(data);
       if (data.features && data.features.routes_enabled) {
         renderRoutes(data.routes);
       }
@@ -3094,6 +3395,10 @@ MINIAPP_HTML = """<!doctype html>
 
     document.querySelectorAll(".tab").forEach((button) => {
       button.addEventListener("click", () => activateTab(button.dataset.tab));
+    });
+
+    document.querySelectorAll("[data-tab-action]").forEach((button) => {
+      button.addEventListener("click", () => activateTab(button.dataset.tabAction));
     });
 
     $("openButton").addEventListener("click", () => shiftAction("open"));
