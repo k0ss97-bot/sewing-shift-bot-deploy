@@ -14,11 +14,12 @@ class IsolatedDatabaseTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_dir = os.environ.get("DB_DIR")
+        self.old_admin_ids = os.environ.get("ADMIN_IDS")
         self.old_cwd = os.getcwd()
         os.environ["DB_DIR"] = self.temp_dir.name
         os.chdir(self.temp_dir.name)
 
-        for module_name in ["database", "catalog", "route_maps"]:
+        for module_name in ["database", "catalog", "route_maps", "miniapp_server"]:
             sys.modules.pop(module_name, None)
 
         sys.path.insert(0, str(PROJECT_DIR))
@@ -31,11 +32,16 @@ class IsolatedDatabaseTest(unittest.TestCase):
         else:
             os.environ["DB_DIR"] = self.old_db_dir
 
+        if self.old_admin_ids is None:
+            os.environ.pop("ADMIN_IDS", None)
+        else:
+            os.environ["ADMIN_IDS"] = self.old_admin_ids
+
         if str(PROJECT_DIR) in sys.path:
             sys.path.remove(str(PROJECT_DIR))
 
         os.chdir(self.old_cwd)
-        for module_name in ["database", "catalog", "route_maps"]:
+        for module_name in ["database", "catalog", "route_maps", "miniapp_server"]:
             sys.modules.pop(module_name, None)
 
         self.temp_dir.cleanup()
@@ -234,6 +240,56 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ],
         )
         conn.close()
+
+    def test_miniapp_production_creates_task_and_submits_contours(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+
+        self.database.create_employee(9002, "Тест Раскройщик Миниапп", "Раскройщик")
+        cutter = self.database.get_employee_by_telegram_id(9002)
+        cutter_id = cutter[0]
+        self.database.update_employee_status(cutter_id, "active")
+        shift = self.database.create_shift(cutter_id)
+
+        fabric_result = miniapp_server.add_fabric_receipt_for_telegram(
+            9001,
+            {
+                "material_name": "Футер",
+                "product_color": "Бежевый",
+                "quantity": "12.5",
+            },
+        )
+        self.assertTrue(fabric_result["ok"], fabric_result)
+        self.assertEqual(len(fabric_result["production"]["fabric_stock"]), 1)
+
+        task_result = miniapp_server.create_production_task_for_telegram(
+            9001,
+            {
+                "product_name": "Шорты",
+                "sizes": ["80", "92"],
+                "colors": ["Бежевый"],
+            },
+        )
+        self.assertTrue(task_result["ok"], task_result)
+
+        task_id = self.database.get_active_production_tasks()[0][0]
+        cutter_state = miniapp_server.get_production_state_for_telegram(9002)
+        self.assertTrue(cutter_state["can_contours"])
+        self.assertEqual(cutter_state["contour_tasks"][0]["id"], task_id)
+
+        contour_result = miniapp_server.submit_production_contours_for_telegram(
+            9002,
+            {
+                "task_id": task_id,
+                "quantities": {
+                    "80|Бежевый": "4",
+                    "92|Бежевый": "6",
+                },
+            },
+        )
+        self.assertTrue(contour_result["ok"], contour_result)
+        self.assertEqual(self.database.get_production_task_by_id(task_id)["status"], "contours_done")
+        self.assertEqual(len(self.database.get_shift_report(shift["id"])), 2)
 
     def test_zero_quantity_is_not_saved_or_reported(self):
         self.database.create_employee(2002, "Тест Швея", "Швея")

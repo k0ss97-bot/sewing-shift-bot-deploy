@@ -9,16 +9,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlparse
 
 from database import (
+    add_fabric_receipt,
     add_edit_log,
     add_feedback_entry,
     add_operation,
+    add_shift_operation,
     admin_close_shift,
     close_shift,
     complete_route_batch_step,
+    create_cutting_contour_batch_for_task,
+    create_production_task,
     create_route_batch,
     create_shift,
     delete_shift_by_id,
     ensure_admin_employee,
+    get_active_operations,
+    get_active_production_tasks,
+    get_active_production_tasks_for_contours,
     get_active_route_batches,
     get_all_employees,
     get_all_operations,
@@ -29,6 +36,7 @@ from database import (
     get_employee_shifts_by_period,
     get_employees_by_status,
     get_feedback_entries_by_shift,
+    get_fabric_stock_rows,
     get_month_employee_summary,
     get_month_operation_rows,
     get_month_shift_details,
@@ -59,6 +67,8 @@ from route_maps import PRODUCT_ROUTE_MAPS
 
 
 AUTH_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+ROUTES_MINIAPP_ENABLED = False
+CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
 
 
 def get_admin_ids():
@@ -589,6 +599,308 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
 
 def get_route_catalog():
     return [route_map_to_dict(product_name) for product_name in PRODUCT_ROUTE_MAPS]
+
+
+def sort_size_key(value: str):
+    value_text = str(value)
+
+    if value_text.isdigit():
+        return (0, int(value_text))
+
+    return (1, value_text)
+
+
+def split_group_concat(value: str | None, *, sort_sizes: bool = False):
+    items = [item for item in (value or "").split(",") if item]
+
+    if sort_sizes:
+        return sorted(items, key=sort_size_key)
+
+    return sorted(items)
+
+
+def format_number(value: float):
+    if float(value).is_integer():
+        return str(int(value))
+
+    return str(value).rstrip("0").rstrip(".")
+
+
+def parse_positive_float(value):
+    try:
+        parsed = float(str(value or "").replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+    if parsed <= 0:
+        return None
+
+    return parsed
+
+
+def production_catalog_to_dict():
+    return [
+        {
+            "product_name": product_name,
+            "sizes": get_product_sizes(product_name),
+            "colors": get_product_colors(product_name),
+            "color_labels": [format_color_label(color) for color in get_product_colors(product_name)],
+        }
+        for product_name in PRODUCT_ROUTE_MAPS
+    ]
+
+
+def production_task_to_dict(row):
+    task_id, product_name, status, created_at, sizes_text, colors_text = row
+    colors = split_group_concat(colors_text)
+
+    return {
+        "id": task_id,
+        "product_name": product_name,
+        "status": status,
+        "status_text": {
+            "active": "ожидает контуров",
+            "contours_done": "контуры нанесены",
+            "in_cutting": "в раскрое",
+            "formed": "готовый крой сформирован",
+            "cancelled": "отменено",
+        }.get(status, status),
+        "created_at": created_at,
+        "sizes": split_group_concat(sizes_text, sort_sizes=True),
+        "colors": colors,
+        "color_labels": [format_color_label(color) for color in colors],
+    }
+
+
+def fabric_stock_to_dict(row):
+    material_name, product_color, quantity, unit, updated_at = row
+
+    return {
+        "material_name": material_name,
+        "product_color": product_color,
+        "product_color_label": format_color_label(product_color),
+        "quantity": quantity,
+        "quantity_text": format_number(quantity),
+        "unit": unit,
+        "updated_at": updated_at,
+    }
+
+
+def get_cutting_contour_operation(product_name: str):
+    operations = get_active_operations("Раскройщик", product_name, "Раскрой изделий")
+
+    for operation_id, _number, name, unit in operations:
+        if name == CUTTING_CONTOUR_OPERATION:
+            return {
+                "id": operation_id,
+                "name": f"{product_name}: {name}",
+                "unit": unit,
+            }
+
+    return None
+
+
+def get_production_state_for_telegram(telegram_id: int):
+    employee = get_employee_for_access(telegram_id)
+    is_admin_user = is_admin(telegram_id)
+    can_work_contours = bool(employee and employee[5] == "active" and employee[3] == "Раскройщик")
+
+    return {
+        "catalog": production_catalog_to_dict(),
+        "fabric_stock": [fabric_stock_to_dict(row) for row in get_fabric_stock_rows()] if is_admin_user else [],
+        "tasks": [production_task_to_dict(row) for row in get_active_production_tasks()] if is_admin_user else [],
+        "contour_tasks": [
+            production_task_to_dict(row)
+            for row in get_active_production_tasks_for_contours()
+        ] if can_work_contours else [],
+        "can_admin": is_admin_user,
+        "can_contours": can_work_contours,
+    }
+
+
+def add_fabric_receipt_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    material_name = (payload.get("material_name") or "").strip()
+    product_color = (payload.get("product_color") or "").strip()
+    quantity = parse_positive_float(payload.get("quantity"))
+
+    if not material_name:
+        return {"ok": False, "message": "Введите материал."}
+
+    if not product_color:
+        return {"ok": False, "message": "Выберите цвет."}
+
+    if quantity is None:
+        return {"ok": False, "message": "Введите количество больше 0."}
+
+    employee = get_employee_for_access(telegram_id)
+    row = add_fabric_receipt(
+        material_name,
+        product_color,
+        quantity,
+        employee[0] if employee else None,
+    )
+
+    if row is None:
+        return {"ok": False, "message": "Не удалось сохранить приход ткани."}
+
+    stock_id, stock_material, stock_color, total_quantity, unit, _updated_at = row
+    add_edit_log(
+        telegram_id,
+        "admin",
+        "Добавил приход ткани из миниаппа",
+        "fabric_stock",
+        stock_id,
+        f"{stock_material}, {stock_color}: +{format_number(quantity)} {unit}, остаток {format_number(total_quantity)} {unit}",
+    )
+
+    return {
+        "ok": True,
+        "message": "Приход ткани сохранён.",
+        "production": get_production_state_for_telegram(telegram_id),
+    }
+
+
+def create_production_task_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    product_name = (payload.get("product_name") or "").strip()
+    sizes = [str(size).strip() for size in payload.get("sizes", []) if str(size).strip()]
+    colors = [str(color).strip() for color in payload.get("colors", []) if str(color).strip()]
+
+    if product_name not in PRODUCT_ROUTE_MAPS:
+        return {"ok": False, "message": "Выберите изделие."}
+
+    allowed_sizes = set(get_product_sizes(product_name))
+    allowed_colors = set(get_product_colors(product_name))
+
+    if not sizes or any(size not in allowed_sizes for size in sizes):
+        return {"ok": False, "message": "Выберите размеры из списка."}
+
+    if not colors or any(color not in allowed_colors for color in colors):
+        return {"ok": False, "message": "Выберите цвета из списка."}
+
+    employee = get_employee_for_access(telegram_id)
+    task = create_production_task(
+        product_name,
+        sizes,
+        colors,
+        employee[0] if employee else None,
+    )
+
+    if task is None:
+        return {"ok": False, "message": "Не удалось создать задание."}
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        "Создал производственное задание из миниаппа",
+        "production_task",
+        task["id"],
+        f"{task['product_name']}; размеры: {', '.join(sizes)}; цвета: {', '.join(colors)}",
+    )
+
+    return {
+        "ok": True,
+        "message": f"Задание #{task['id']} создано.",
+        "production": get_production_state_for_telegram(telegram_id),
+    }
+
+
+def submit_production_contours_for_telegram(telegram_id: int, payload: dict):
+    employee = get_employee_for_access(telegram_id)
+
+    if employee is None or employee[5] != "active":
+        return {"ok": False, "message": "Нет активного профиля."}
+
+    if employee[3] != "Раскройщик" and not is_admin(telegram_id):
+        return {"ok": False, "message": "Задания на раскрой доступны раскройщику."}
+
+    shift = get_open_shift_for_today(employee[0])
+
+    if shift is None:
+        return {"ok": False, "message": "Откройте смену перед выполнением задания."}
+
+    try:
+        task_id = int(payload.get("task_id") or 0)
+    except (TypeError, ValueError):
+        task_id = 0
+
+    task_rows = [row for row in get_active_production_tasks_for_contours() if row[0] == task_id]
+
+    if not task_rows:
+        return {"ok": False, "message": "Задание уже недоступно."}
+
+    task = production_task_to_dict(task_rows[0])
+    operation = get_cutting_contour_operation(task["product_name"])
+
+    if operation is None:
+        return {"ok": False, "message": "Для изделия не найдена операция контуров."}
+
+    raw_quantities = payload.get("quantities") or {}
+    matrix_quantities = {}
+
+    for color in task["colors"]:
+        for product_size in task["sizes"]:
+            key = f"{product_size}|{color}"
+            try:
+                quantity = int(raw_quantities.get(key) or 0)
+            except (TypeError, ValueError):
+                return {"ok": False, "message": "Количество должно быть целым числом."}
+
+            if quantity < 0:
+                return {"ok": False, "message": "Количество не может быть отрицательным."}
+
+            matrix_quantities[(product_size, color)] = quantity
+
+    positive_rows = [
+        (product_size, color, quantity)
+        for (product_size, color), quantity in matrix_quantities.items()
+        if quantity > 0
+    ]
+
+    if not positive_rows:
+        return {"ok": False, "message": "Укажите количество хотя бы в одной строке."}
+
+    batch_id = create_cutting_contour_batch_for_task(
+        task_id,
+        task["product_name"],
+        shift[0],
+        employee[0],
+        operation["id"],
+        matrix_quantities,
+    )
+
+    if batch_id is None:
+        return {"ok": False, "message": "Не удалось создать партию раскроя."}
+
+    for product_size, color, quantity in positive_rows:
+        add_shift_operation(
+            shift[0],
+            employee[0],
+            operation["id"],
+            product_size,
+            color,
+            quantity,
+        )
+
+    add_edit_log(
+        telegram_id,
+        "employee",
+        "Выполнил контуры по производственному заданию из миниаппа",
+        "production_task",
+        task_id,
+        f"Партия раскроя {batch_id}, строк добавлено: {len(positive_rows)}",
+    )
+
+    return {
+        "ok": True,
+        "message": f"Контуры сохранены. Партия раскроя #{batch_id}.",
+        "production": get_production_state_for_telegram(telegram_id),
+    }
 
 
 ADMIN_MENU = [
@@ -1144,13 +1456,16 @@ def get_app_state(telegram_id: int, message: str = ""):
         "is_admin": is_admin(telegram_id),
         "report": get_current_report_for_telegram(telegram_id),
         "routes": {
+            "enabled": ROUTES_MINIAPP_ENABLED,
             "catalog": get_route_catalog(),
             "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
         },
+        "production": get_production_state_for_telegram(telegram_id),
         "admin": get_admin_dashboard(telegram_id) if is_admin(telegram_id) else None,
         "features": {
             "can_work": bool(employee and employee.get("status") == "active"),
             "can_admin": is_admin(telegram_id),
+            "routes_enabled": ROUTES_MINIAPP_ENABLED,
         },
     }
 
@@ -1458,6 +1773,10 @@ MINIAPP_HTML = """<!doctype html>
       resize: vertical;
     }
 
+    select[multiple] {
+      min-height: 148px;
+    }
+
     .message {
       margin-top: 10px;
       color: var(--muted);
@@ -1566,6 +1885,27 @@ MINIAPP_HTML = """<!doctype html>
       border-color: var(--accent);
     }
 
+    .matrix {
+      display: grid;
+      gap: 8px;
+    }
+
+    .matrix-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 104px;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.78);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.58);
+    }
+
+    .matrix-row input {
+      min-height: 38px;
+      text-align: right;
+    }
+
     @media (max-width: 560px) {
       .page {
         padding: 10px 10px 92px;
@@ -1616,6 +1956,10 @@ MINIAPP_HTML = """<!doctype html>
       .grid, .three {
         grid-template-columns: 1fr;
       }
+
+      .matrix-row {
+        grid-template-columns: minmax(0, 1fr) 92px;
+      }
     }
   </style>
 </head>
@@ -1644,7 +1988,8 @@ MINIAPP_HTML = """<!doctype html>
     <nav class="tabs">
       <button class="tab active" data-tab="shift">Смена</button>
       <button class="tab" data-tab="report">Отчёт</button>
-      <button class="tab" data-tab="routes">Маршруты</button>
+      <button class="tab" data-tab="production">Производство</button>
+      <button class="tab" data-tab="routes" id="routesTab" hidden>Маршруты</button>
       <button class="tab" data-tab="admin" id="adminTab" hidden>Админ</button>
       <button class="tab" data-tab="feedback">Связь</button>
     </nav>
@@ -1692,6 +2037,63 @@ MINIAPP_HTML = """<!doctype html>
       <div class="card">
         <h3>Обратная связь за смену</h3>
         <div class="list" id="reportFeedback"></div>
+      </div>
+    </section>
+
+    <section class="section" id="section-production">
+      <div class="card" id="productionSummaryCard">
+        <h2>Производство</h2>
+        <div class="rows">
+          <div class="row"><span>Активные задания</span><strong id="productionTaskCount">0</strong></div>
+          <div class="row"><span>Задания на контуры</span><strong id="productionContourCount">0</strong></div>
+        </div>
+        <div class="message" id="productionMessage"></div>
+      </div>
+
+      <div id="productionAdminArea">
+        <div class="card">
+          <h3>Приход ткани</h3>
+          <div class="form">
+            <input id="fabricMaterialInput" placeholder="Материал">
+            <select id="fabricColorSelect"></select>
+            <input id="fabricQuantityInput" inputmode="decimal" placeholder="Количество, м">
+            <button id="fabricReceiptButton">Сохранить приход</button>
+          </div>
+          <div class="message" id="fabricReceiptStatus"></div>
+        </div>
+
+        <div class="card">
+          <h3>Остатки ткани</h3>
+          <div class="list" id="fabricStockList"></div>
+        </div>
+
+        <div class="card">
+          <h3>Создать задание на раскрой</h3>
+          <div class="form">
+            <select id="productionProductSelect"></select>
+            <select id="productionSizeSelect" multiple></select>
+            <select id="productionColorSelect" multiple></select>
+            <button id="productionTaskCreateButton">Создать задание</button>
+          </div>
+          <div class="message" id="productionTaskStatus"></div>
+        </div>
+
+        <div class="card">
+          <h3>Производственные задания</h3>
+          <div class="list" id="productionTaskList"></div>
+        </div>
+      </div>
+
+      <div id="productionWorkArea">
+        <div class="card">
+          <h3>Задания на раскрой</h3>
+          <div class="form">
+            <select id="productionContourTaskSelect"></select>
+            <div class="matrix" id="productionContourMatrix"></div>
+            <button id="productionContourSubmitButton" class="success">Сохранить контуры</button>
+          </div>
+          <div class="message" id="productionContourStatus"></div>
+        </div>
       </div>
     </section>
 
@@ -1990,6 +2392,154 @@ MINIAPP_HTML = """<!doctype html>
       });
     }
 
+    function selectedOptions(selectId) {
+      return Array.from($(selectId).selectedOptions).map((option) => option.value);
+    }
+
+    function allProductionColors(catalog) {
+      const seen = new Set();
+      const rows = [];
+
+      catalog.forEach((product) => {
+        (product.colors || []).forEach((color, index) => {
+          if (!seen.has(color)) {
+            seen.add(color);
+            rows.push({
+              value: color,
+              label: (product.color_labels || [])[index] || color,
+            });
+          }
+        });
+      });
+
+      return rows.sort((a, b) => a.label.localeCompare(b.label, "ru"));
+    }
+
+    function optionListRows(rows, selectedValues = []) {
+      const selectedSet = new Set(Array.isArray(selectedValues) ? selectedValues : [selectedValues]);
+
+      return rows.map((row) => {
+        const selected = selectedSet.has(row.value) ? " selected" : "";
+        return `<option value="${escapeHtml(row.value)}"${selected}>${escapeHtml(row.label)}</option>`;
+      }).join("");
+    }
+
+    function getProductionCatalogProduct() {
+      const production = state.data && state.data.production ? state.data.production : {};
+      const catalog = production.catalog || [];
+      return catalog.find((product) => product.product_name === $("productionProductSelect").value) || catalog[0];
+    }
+
+    function renderProductionTaskOptions() {
+      const product = getProductionCatalogProduct();
+
+      if (!product) {
+        $("productionSizeSelect").innerHTML = "";
+        $("productionColorSelect").innerHTML = "";
+        return;
+      }
+
+      $("productionSizeSelect").innerHTML = optionListRows(
+        (product.sizes || []).map((size) => ({value: size, label: size}))
+      );
+      $("productionColorSelect").innerHTML = optionListRows(
+        (product.colors || []).map((color, index) => ({
+          value: color,
+          label: (product.color_labels || [])[index] || color,
+        }))
+      );
+    }
+
+    function taskMeta(task) {
+      return [
+        `Статус: ${escapeHtml(task.status_text || task.status)}`,
+        `Размеры: ${escapeHtml((task.sizes || []).join(", ") || "-")}`,
+        `Цвета: ${escapeHtml((task.color_labels || task.colors || []).join(", ") || "-")}`,
+      ].join("<br>");
+    }
+
+    function renderProductionTasks(tasks) {
+      $("productionTaskList").innerHTML = tasks.length
+        ? tasks.map((task) => item(`#${task.id} ${task.product_name}`, taskMeta(task))).join("")
+        : empty("Активных производственных заданий пока нет.");
+    }
+
+    function getSelectedContourTask() {
+      const production = state.data && state.data.production ? state.data.production : {};
+      const tasks = production.contour_tasks || [];
+      const selectedId = Number($("productionContourTaskSelect").value || 0);
+      return tasks.find((task) => Number(task.id) === selectedId) || tasks[0];
+    }
+
+    function renderProductionContourMatrix() {
+      const task = getSelectedContourTask();
+
+      if (!task) {
+        $("productionContourMatrix").innerHTML = empty("Заданий на контуры пока нет.");
+        $("productionContourSubmitButton").disabled = true;
+        return;
+      }
+
+      $("productionContourSubmitButton").disabled = state.loading;
+      $("productionContourMatrix").innerHTML = (task.colors || []).map((color, colorIndex) => (
+        (task.sizes || []).map((size) => {
+          const colorLabel = (task.color_labels || [])[colorIndex] || color;
+          const key = `${size}|${color}`;
+          return `
+            <label class="matrix-row">
+              <span>${escapeHtml(size)} / ${escapeHtml(colorLabel)}</span>
+              <input data-contour-key="${escapeHtml(key)}" inputmode="numeric" placeholder="0">
+            </label>
+          `;
+        }).join("")
+      )).join("");
+    }
+
+    function renderProduction(production) {
+      production = production || {};
+      const catalog = production.catalog || [];
+      const tasks = production.tasks || [];
+      const contourTasks = production.contour_tasks || [];
+      const showAdmin = Boolean(production.can_admin);
+      const showWork = Boolean(production.can_contours);
+
+      setText("productionTaskCount", String(tasks.length));
+      setText("productionContourCount", String(contourTasks.length));
+      $("productionAdminArea").hidden = !showAdmin;
+      $("productionWorkArea").hidden = !showWork;
+      $("productionMessage").textContent = showAdmin || showWork
+        ? ""
+        : "Для вашей должности пока нет производственных действий.";
+
+      const colors = allProductionColors(catalog);
+      const selectedFabricColor = $("fabricColorSelect").value;
+      $("fabricColorSelect").innerHTML = optionListRows(colors, selectedFabricColor);
+
+      const selectedProduct = $("productionProductSelect").value;
+      $("productionProductSelect").innerHTML = optionListRows(
+        catalog.map((product) => ({value: product.product_name, label: product.product_name})),
+        selectedProduct
+      );
+      renderProductionTaskOptions();
+
+      $("fabricStockList").innerHTML = (production.fabric_stock || []).length
+        ? production.fabric_stock.map((row) => item(
+            `${row.material_name}, ${row.product_color_label}`,
+            `Остаток: ${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}`
+          )).join("")
+        : empty("Остатков ткани пока нет.");
+
+      renderProductionTasks(tasks);
+
+      $("productionContourTaskSelect").innerHTML = contourTasks.length
+        ? optionListRows(contourTasks.map((task) => ({
+            value: String(task.id),
+            label: `#${task.id} ${task.product_name}`,
+          })), $("productionContourTaskSelect").value)
+        : "";
+      renderProductionContourMatrix();
+    }
+
     function minutesText(totalMinutes) {
       const minutes = Number(totalMinutes || 0);
       const hours = Math.floor(minutes / 60);
@@ -2243,9 +2793,13 @@ MINIAPP_HTML = """<!doctype html>
 
     function render(data) {
       state.data = data;
+      $("routesTab").hidden = !(data.features && data.features.routes_enabled);
       renderShift(data);
       renderReport(data.report);
-      renderRoutes(data.routes);
+      if (data.features && data.features.routes_enabled) {
+        renderRoutes(data.routes);
+      }
+      renderProduction(data.production);
       renderAdmin(data.admin);
     }
 
@@ -2307,6 +2861,58 @@ MINIAPP_HTML = """<!doctype html>
       $("routeCreateStatus").textContent = result.message || "";
       $("routeCreateStatus").className = `message ${result.ok ? "ok" : "error"}`;
       await refreshState(result.message || "");
+    }
+
+    async function saveFabricReceipt() {
+      const result = await api("/api/production/fabric-receipt", {
+        material_name: $("fabricMaterialInput").value,
+        product_color: $("fabricColorSelect").value,
+        quantity: $("fabricQuantityInput").value,
+      });
+
+      $("fabricReceiptStatus").textContent = result.message || "";
+      $("fabricReceiptStatus").className = `message ${result.ok ? "ok" : "error"}`;
+
+      if (result.ok) {
+        $("fabricQuantityInput").value = "";
+        await refreshState(result.message);
+      }
+    }
+
+    async function createProductionTask() {
+      const result = await api("/api/production/create-task", {
+        product_name: $("productionProductSelect").value,
+        sizes: selectedOptions("productionSizeSelect"),
+        colors: selectedOptions("productionColorSelect"),
+      });
+
+      $("productionTaskStatus").textContent = result.message || "";
+      $("productionTaskStatus").className = `message ${result.ok ? "ok" : "error"}`;
+
+      if (result.ok) {
+        await refreshState(result.message);
+      }
+    }
+
+    async function submitProductionContours() {
+      const task = getSelectedContourTask();
+      const quantities = {};
+
+      document.querySelectorAll("[data-contour-key]").forEach((input) => {
+        quantities[input.dataset.contourKey] = input.value || "0";
+      });
+
+      const result = await api("/api/production/submit-contours", {
+        task_id: task ? task.id : 0,
+        quantities,
+      });
+
+      $("productionContourStatus").textContent = result.message || "";
+      $("productionContourStatus").className = `message ${result.ok ? "ok" : "error"}`;
+
+      if (result.ok) {
+        await refreshState(result.message);
+      }
     }
 
     function selectedAdminEmployeeId() {
@@ -2497,6 +3103,11 @@ MINIAPP_HTML = """<!doctype html>
     $("routeProductSelect").addEventListener("change", renderSelectedRoute);
     $("batchProductSelect").addEventListener("change", renderBatchOptions);
     $("createBatchButton").addEventListener("click", createBatch);
+    $("productionProductSelect").addEventListener("change", renderProductionTaskOptions);
+    $("productionContourTaskSelect").addEventListener("change", renderProductionContourMatrix);
+    $("fabricReceiptButton").addEventListener("click", saveFabricReceipt);
+    $("productionTaskCreateButton").addEventListener("click", createProductionTask);
+    $("productionContourSubmitButton").addEventListener("click", submitProductionContours);
     $("adminReportToday").addEventListener("click", () => loadAdminReport("today"));
     $("adminReportMonth").addEventListener("click", () => loadAdminReport("month"));
     $("adminReportPeriod").addEventListener("click", () => loadAdminReport("period"));
@@ -2535,6 +3146,9 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/shift/open",
                 "/api/shift/close",
                 "/api/feedback/send",
+                "/api/production/fabric-receipt",
+                "/api/production/create-task",
+                "/api/production/submit-contours",
                 "/api/routes/create-batch",
                 "/api/routes/complete",
                 "/api/admin/dashboard",
@@ -2582,6 +3196,12 @@ def make_handler(bot_token: str, debug: bool):
                     payload.get("category", ""),
                     payload.get("message", ""),
                 )
+            elif path == "/api/production/fabric-receipt":
+                result = add_fabric_receipt_for_telegram(telegram_id, payload)
+            elif path == "/api/production/create-task":
+                result = create_production_task_for_telegram(telegram_id, payload)
+            elif path == "/api/production/submit-contours":
+                result = submit_production_contours_for_telegram(telegram_id, payload)
             elif path == "/api/routes/create-batch":
                 result = create_route_batch_for_telegram(telegram_id, payload)
             elif path == "/api/routes/complete":
