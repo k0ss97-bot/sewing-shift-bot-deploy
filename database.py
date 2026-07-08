@@ -72,6 +72,16 @@ ROUTE_BATCH_COLUMNS = [
     "updated_at",
     "completed_at",
 ]
+PRODUCTION_TASK_COLUMNS = [
+    "id",
+    "product_name",
+    "status",
+    "created_by_employee_id",
+    "created_at",
+    "updated_at",
+    "completed_at",
+    "note",
+]
 
 
 def get_database_dir():
@@ -128,6 +138,13 @@ def route_batch_from_row(row):
         return None
 
     return dict(zip(ROUTE_BATCH_COLUMNS, row))
+
+
+def production_task_from_row(row):
+    if row is None:
+        return None
+
+    return dict(zip(PRODUCTION_TASK_COLUMNS, row))
 
 
 from catalog import (
@@ -643,6 +660,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS cutting_batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_name TEXT NOT NULL,
+            production_task_id INTEGER,
             status TEXT NOT NULL DEFAULT 'contours_done',
             contour_shift_id INTEGER,
             contour_operation_id INTEGER,
@@ -665,6 +683,12 @@ def init_db():
         )
     """)
 
+    cursor.execute("PRAGMA table_info(cutting_batches)")
+    cutting_batch_columns = [column[1] for column in cursor.fetchall()]
+
+    if "production_task_id" not in cutting_batch_columns:
+        cursor.execute("ALTER TABLE cutting_batches ADD COLUMN production_task_id INTEGER")
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS cutting_batch_sizes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -684,6 +708,92 @@ def init_db():
             layers INTEGER NOT NULL,
             UNIQUE(batch_id, product_color),
             FOREIGN KEY (batch_id) REFERENCES cutting_batches (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cutting_batch_matrix (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            product_size TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            UNIQUE(batch_id, product_size, product_color),
+            FOREIGN KEY (batch_id) REFERENCES cutting_batches (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fabric_stock (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            material_name TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            quantity REAL NOT NULL DEFAULT 0,
+            unit TEXT NOT NULL DEFAULT 'м',
+            updated_at TEXT NOT NULL,
+            UNIQUE(material_name, product_color, unit)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fabric_stock_movements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            material_name TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            unit TEXT NOT NULL DEFAULT 'м',
+            movement_type TEXT NOT NULL,
+            comment TEXT,
+            created_by_employee_id INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (created_by_employee_id) REFERENCES employees (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS production_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_by_employee_id INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            note TEXT,
+            FOREIGN KEY (created_by_employee_id) REFERENCES employees (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS production_task_sizes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            product_size TEXT NOT NULL,
+            UNIQUE(task_id, product_size),
+            FOREIGN KEY (task_id) REFERENCES production_tasks (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS production_task_colors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            product_color TEXT NOT NULL,
+            UNIQUE(task_id, product_color),
+            FOREIGN KEY (task_id) REFERENCES production_tasks (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS production_task_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            product_size TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            contour_quantity INTEGER NOT NULL DEFAULT 0,
+            formed_quantity INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(task_id, product_size, product_color),
+            FOREIGN KEY (task_id) REFERENCES production_tasks (id)
         )
     """)
 
@@ -725,10 +835,15 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_employee ON shift_operations (employee_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_operations_navigation ON operations (position, operation_group, folder, is_active)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batches_product_status ON cutting_batches (product_name, status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batches_task ON cutting_batches (production_task_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batch_matrix_batch ON cutting_batch_matrix (batch_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_date ON feedback_entries (feedback_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_employee_date ON feedback_entries (employee_id, feedback_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batches_status_step ON route_batches (status, route_step_index)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_history_batch ON route_batch_history (batch_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fabric_stock_color ON fabric_stock (product_color)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_tasks_status ON production_tasks (status, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_items_task ON production_task_items (task_id)")
 
     cursor.execute("SELECT COUNT(*) FROM operations")
     count = cursor.fetchone()[0]
@@ -1736,14 +1851,20 @@ def create_route_batch(
     product_color: str,
     quantity: int,
     employee_id: int | None,
+    route_step_index: int = 0,
+    status: str = "active",
 ):
     if quantity <= 0:
+        return None
+
+    if status not in {"active", "done"}:
         return None
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     now = local_now().isoformat()
+    completed_at = now if status == "done" else None
 
     cursor.execute(
         """
@@ -1756,11 +1877,23 @@ def create_route_batch(
             status,
             created_by_employee_id,
             created_at,
-            updated_at
+            updated_at,
+            completed_at
         )
-        VALUES (?, ?, ?, ?, 0, 'active', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (product_name, product_size, product_color, quantity, employee_id, now, now)
+        (
+            product_name,
+            product_size,
+            product_color,
+            quantity,
+            route_step_index,
+            status,
+            employee_id,
+            now,
+            now,
+            completed_at,
+        )
     )
 
     batch_id = cursor.lastrowid
@@ -2037,6 +2170,108 @@ def create_cutting_contour_batch(
     return batch_id
 
 
+def create_cutting_contour_batch_for_task(
+    task_id: int,
+    product_name: str,
+    shift_id: int,
+    employee_id: int,
+    operation_id: int,
+    matrix_quantities: dict[tuple[str, str], int],
+):
+    positive_matrix = {
+        (str(product_size), str(product_color)): quantity
+        for (product_size, product_color), quantity in matrix_quantities.items()
+        if quantity > 0
+    }
+
+    if not positive_matrix:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM production_tasks
+        WHERE id = ?
+          AND status = 'active'
+        """,
+        (task_id,),
+    )
+
+    if cursor.fetchone() is None:
+        conn.close()
+        return None
+
+    now = local_now()
+    now_text = now.isoformat()
+
+    cursor.execute(
+        """
+        INSERT INTO cutting_batches (
+            product_name, production_task_id, status,
+            contour_shift_id, contour_operation_id, contour_employee_id, contour_date,
+            created_at, updated_at
+        )
+        VALUES (?, ?, 'contours_done', ?, ?, ?, ?, ?, ?)
+        """,
+        (product_name, task_id, shift_id, operation_id, employee_id, now.date().isoformat(), now_text, now_text),
+    )
+    batch_id = cursor.lastrowid
+
+    size_totals: dict[str, int] = {}
+    for product_size, _product_color in positive_matrix:
+        size_totals[product_size] = size_totals.get(product_size, 0) + positive_matrix[(product_size, _product_color)]
+
+    cursor.executemany(
+        """
+        INSERT INTO cutting_batch_sizes (batch_id, product_size, quantity)
+        VALUES (?, ?, ?)
+        """,
+        [(batch_id, product_size, quantity) for product_size, quantity in size_totals.items()],
+    )
+
+    cursor.executemany(
+        """
+        INSERT INTO cutting_batch_matrix (batch_id, product_size, product_color, quantity)
+        VALUES (?, ?, ?, ?)
+        """,
+        [
+            (batch_id, product_size, product_color, quantity)
+            for (product_size, product_color), quantity in positive_matrix.items()
+        ],
+    )
+
+    cursor.executemany(
+        """
+        UPDATE production_task_items
+        SET contour_quantity = ?
+        WHERE task_id = ?
+          AND product_size = ?
+          AND product_color = ?
+        """,
+        [
+            (quantity, task_id, product_size, product_color)
+            for (product_size, product_color), quantity in positive_matrix.items()
+        ],
+    )
+
+    cursor.execute(
+        """
+        UPDATE production_tasks
+        SET status = 'contours_done',
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (now_text, task_id),
+    )
+
+    conn.commit()
+    conn.close()
+    return batch_id
+
+
 def get_cutting_batches_for_layout(product_name: str):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -2047,14 +2282,22 @@ def get_cutting_batches_for_layout(product_name: str):
             cutting_batches.id,
             cutting_batches.product_name,
             cutting_batches.contour_date,
+            cutting_batches.production_task_id,
             employees.full_name,
-            GROUP_CONCAT(cutting_batch_sizes.product_size || ' - ' || cutting_batch_sizes.quantity, ', ') AS sizes_text
+            GROUP_CONCAT(DISTINCT cutting_batch_sizes.product_size || ' - ' || cutting_batch_sizes.quantity) AS sizes_text,
+            GROUP_CONCAT(DISTINCT cutting_batch_matrix.product_color) AS colors_text
         FROM cutting_batches
         LEFT JOIN employees ON employees.id = cutting_batches.contour_employee_id
         LEFT JOIN cutting_batch_sizes ON cutting_batch_sizes.batch_id = cutting_batches.id
+        LEFT JOIN cutting_batch_matrix ON cutting_batch_matrix.batch_id = cutting_batches.id
         WHERE cutting_batches.product_name = ?
           AND cutting_batches.status = 'contours_done'
-        GROUP BY cutting_batches.id, cutting_batches.product_name, cutting_batches.contour_date, employees.full_name
+        GROUP BY
+            cutting_batches.id,
+            cutting_batches.product_name,
+            cutting_batches.contour_date,
+            cutting_batches.production_task_id,
+            employees.full_name
         ORDER BY cutting_batches.contour_date ASC, cutting_batches.id ASC
         """,
         (product_name,)
@@ -2106,6 +2349,21 @@ def add_cutting_layout(
         """,
         [(batch_id, product_color, layers) for product_color, layers in color_layers.items()]
     )
+
+    cursor.execute("SELECT production_task_id FROM cutting_batches WHERE id = ?", (batch_id,))
+    task_row = cursor.fetchone()
+
+    if task_row and task_row[0] is not None:
+        cursor.execute(
+            """
+            UPDATE production_tasks
+            SET status = 'in_cutting',
+                updated_at = ?
+            WHERE id = ?
+              AND status IN ('active', 'contours_done')
+            """,
+            (now_text, task_row[0]),
+        )
 
     conn.commit()
     conn.close()
@@ -2175,6 +2433,23 @@ def update_cutting_batch_progress(
     )
 
     changed = cursor.rowcount > 0
+
+    if changed:
+        cursor.execute("SELECT production_task_id FROM cutting_batches WHERE id = ?", (batch_id,))
+        task_row = cursor.fetchone()
+
+        if task_row and task_row[0] is not None:
+            cursor.execute(
+                """
+                UPDATE production_tasks
+                SET status = 'in_cutting',
+                    updated_at = ?
+                WHERE id = ?
+                  AND status IN ('active', 'contours_done', 'in_cutting')
+                """,
+                (now_text, task_row[0]),
+            )
+
     conn.commit()
     conn.close()
     return changed
@@ -2208,6 +2483,32 @@ def get_cutting_batches_for_formation(product_name: str):
 def get_cutting_batch_result_rows(batch_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
+    has_matrix = cursor.fetchone()[0] > 0
+
+    if has_matrix:
+        cursor.execute(
+            """
+            SELECT
+                cutting_batch_matrix.product_size,
+                cutting_batch_matrix.product_color,
+                cutting_batch_matrix.quantity * cutting_batch_colors.layers AS quantity
+            FROM cutting_batch_matrix
+            JOIN cutting_batch_colors
+                ON cutting_batch_colors.batch_id = cutting_batch_matrix.batch_id
+               AND cutting_batch_colors.product_color = cutting_batch_matrix.product_color
+            WHERE cutting_batch_matrix.batch_id = ?
+            ORDER BY
+                CAST(cutting_batch_matrix.product_size AS INTEGER),
+                cutting_batch_matrix.product_color
+            """,
+            (batch_id,),
+        )
+
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
 
     cursor.execute(
         """
@@ -2254,6 +2555,80 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
     )
 
     changed = cursor.rowcount > 0
+
+    if changed:
+        cursor.execute(
+            """
+            SELECT production_task_id
+            FROM cutting_batches
+            WHERE id = ?
+            """,
+            (batch_id,),
+        )
+        task_row = cursor.fetchone()
+        task_id = task_row[0] if task_row else None
+
+        if task_id is not None:
+            cursor.execute("SELECT COUNT(*) FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
+            has_matrix = cursor.fetchone()[0] > 0
+
+            if has_matrix:
+                cursor.execute(
+                    """
+                    SELECT
+                        cutting_batch_matrix.product_size,
+                        cutting_batch_matrix.product_color,
+                        cutting_batch_matrix.quantity * cutting_batch_colors.layers AS quantity
+                    FROM cutting_batch_matrix
+                    JOIN cutting_batch_colors
+                        ON cutting_batch_colors.batch_id = cutting_batch_matrix.batch_id
+                       AND cutting_batch_colors.product_color = cutting_batch_matrix.product_color
+                    WHERE cutting_batch_matrix.batch_id = ?
+                    """,
+                    (batch_id,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT
+                        cutting_batch_sizes.product_size,
+                        cutting_batch_colors.product_color,
+                        cutting_batch_sizes.quantity * cutting_batch_colors.layers AS quantity
+                    FROM cutting_batch_sizes
+                    CROSS JOIN cutting_batch_colors
+                    WHERE cutting_batch_sizes.batch_id = ?
+                      AND cutting_batch_colors.batch_id = ?
+                    """,
+                    (batch_id, batch_id),
+                )
+
+            result_rows = cursor.fetchall()
+
+            cursor.executemany(
+                """
+                UPDATE production_task_items
+                SET formed_quantity = ?
+                WHERE task_id = ?
+                  AND product_size = ?
+                  AND product_color = ?
+                """,
+                [
+                    (quantity, task_id, product_size, product_color)
+                    for product_size, product_color, quantity in result_rows
+                ],
+            )
+
+            cursor.execute(
+                """
+                UPDATE production_tasks
+                SET status = 'formed',
+                    updated_at = ?,
+                    completed_at = ?
+                WHERE id = ?
+                """,
+                (now_text, now_text, task_id),
+            )
+
     conn.commit()
     conn.close()
     return changed
@@ -2325,6 +2700,7 @@ def delete_cutting_batch(batch_id: int):
 
     cursor.execute("DELETE FROM cutting_batch_colors WHERE batch_id = ?", (batch_id,))
     cursor.execute("DELETE FROM cutting_batch_sizes WHERE batch_id = ?", (batch_id,))
+    cursor.execute("DELETE FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
     cursor.execute("DELETE FROM cutting_batches WHERE id = ?", (batch_id,))
 
     conn.commit()
@@ -2490,6 +2866,280 @@ def admin_update_cutting_batch_progress(batch_id: int, progress: int):
         "old_progress": old_progress,
         "new_progress": progress,
     }
+
+
+def add_fabric_receipt(
+    material_name: str,
+    product_color: str,
+    quantity: float,
+    employee_id: int | None,
+    unit: str = "м",
+    comment: str = "",
+):
+    material_name = material_name.strip()
+    product_color = product_color.strip()
+    unit = unit.strip() or "м"
+
+    if not material_name or not product_color or quantity <= 0:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    cursor.execute(
+        """
+        INSERT INTO fabric_stock (material_name, product_color, quantity, unit, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(material_name, product_color, unit)
+        DO UPDATE SET
+            quantity = quantity + excluded.quantity,
+            updated_at = excluded.updated_at
+        """,
+        (material_name, product_color, quantity, unit, now),
+    )
+
+    cursor.execute(
+        """
+        INSERT INTO fabric_stock_movements (
+            material_name, product_color, quantity, unit, movement_type, comment,
+            created_by_employee_id, created_at
+        )
+        VALUES (?, ?, ?, ?, 'receipt', ?, ?, ?)
+        """,
+        (material_name, product_color, quantity, unit, comment, employee_id, now),
+    )
+
+    conn.commit()
+
+    cursor.execute(
+        """
+        SELECT id, material_name, product_color, quantity, unit, updated_at
+        FROM fabric_stock
+        WHERE material_name = ?
+          AND product_color = ?
+          AND unit = ?
+        """,
+        (material_name, product_color, unit),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def get_fabric_stock_rows():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT material_name, product_color, quantity, unit, updated_at
+        FROM fabric_stock
+        WHERE quantity > 0
+        ORDER BY material_name ASC, product_color ASC
+        """
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def create_production_task(
+    product_name: str,
+    sizes: list[str],
+    colors: list[str],
+    employee_id: int | None,
+    note: str = "",
+):
+    product_name = product_name.strip()
+    sizes = [str(size).strip() for size in sizes if str(size).strip()]
+    colors = [str(color).strip() for color in colors if str(color).strip()]
+
+    if not product_name or not sizes or not colors:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    cursor.execute(
+        """
+        INSERT INTO production_tasks (
+            product_name, status, created_by_employee_id, created_at, updated_at, note
+        )
+        VALUES (?, 'active', ?, ?, ?, ?)
+        """,
+        (product_name, employee_id, now, now, note.strip()),
+    )
+    task_id = cursor.lastrowid
+
+    cursor.executemany(
+        """
+        INSERT INTO production_task_sizes (task_id, product_size)
+        VALUES (?, ?)
+        """,
+        [(task_id, product_size) for product_size in sizes],
+    )
+    cursor.executemany(
+        """
+        INSERT INTO production_task_colors (task_id, product_color)
+        VALUES (?, ?)
+        """,
+        [(task_id, product_color) for product_color in colors],
+    )
+    cursor.executemany(
+        """
+        INSERT INTO production_task_items (task_id, product_size, product_color)
+        VALUES (?, ?, ?)
+        """,
+        [
+            (task_id, product_size, product_color)
+            for product_color in colors
+            for product_size in sizes
+        ],
+    )
+
+    conn.commit()
+    conn.close()
+    return get_production_task_by_id(task_id)
+
+
+def get_production_task_by_id(task_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            product_name,
+            status,
+            created_by_employee_id,
+            created_at,
+            updated_at,
+            completed_at,
+            note
+        FROM production_tasks
+        WHERE id = ?
+        """,
+        (task_id,),
+    )
+
+    task = production_task_from_row(cursor.fetchone())
+    conn.close()
+    return task
+
+
+def get_production_task_options(task_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT product_size
+        FROM production_task_sizes
+        WHERE task_id = ?
+        ORDER BY CAST(product_size AS INTEGER), product_size
+        """,
+        (task_id,),
+    )
+    sizes = [row[0] for row in cursor.fetchall()]
+
+    cursor.execute(
+        """
+        SELECT product_color
+        FROM production_task_colors
+        WHERE task_id = ?
+        ORDER BY product_color
+        """,
+        (task_id,),
+    )
+    colors = [row[0] for row in cursor.fetchall()]
+
+    conn.close()
+    return sizes, colors
+
+
+def get_active_production_tasks():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            production_tasks.id,
+            production_tasks.product_name,
+            production_tasks.status,
+            production_tasks.created_at,
+            COALESCE(GROUP_CONCAT(DISTINCT production_task_sizes.product_size), '') AS sizes_text,
+            COALESCE(GROUP_CONCAT(DISTINCT production_task_colors.product_color), '') AS colors_text
+        FROM production_tasks
+        LEFT JOIN production_task_sizes ON production_task_sizes.task_id = production_tasks.id
+        LEFT JOIN production_task_colors ON production_task_colors.task_id = production_tasks.id
+        WHERE production_tasks.status IN ('active', 'contours_done', 'in_cutting')
+        GROUP BY
+            production_tasks.id,
+            production_tasks.product_name,
+            production_tasks.status,
+            production_tasks.created_at
+        ORDER BY production_tasks.created_at ASC, production_tasks.id ASC
+        """
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_active_production_tasks_for_contours():
+    return [row for row in get_active_production_tasks() if row[2] == "active"]
+
+
+def get_cutting_batch_task_options(batch_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT production_task_id
+        FROM cutting_batches
+        WHERE id = ?
+        """,
+        (batch_id,),
+    )
+    row = cursor.fetchone()
+
+    if row is None or row[0] is None:
+        conn.close()
+        return [], []
+
+    task_id = row[0]
+
+    cursor.execute(
+        """
+        SELECT product_size
+        FROM production_task_sizes
+        WHERE task_id = ?
+        ORDER BY CAST(product_size AS INTEGER), product_size
+        """,
+        (task_id,),
+    )
+    sizes = [option[0] for option in cursor.fetchall()]
+
+    cursor.execute(
+        """
+        SELECT product_color
+        FROM production_task_colors
+        WHERE task_id = ?
+        ORDER BY product_color
+        """,
+        (task_id,),
+    )
+    colors = [option[0] for option in cursor.fetchall()]
+
+    conn.close()
+    return sizes, colors
 
 
 def close_shift(shift_id: int):

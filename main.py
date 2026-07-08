@@ -24,6 +24,7 @@ from openpyxl.utils import get_column_letter
 
 from database import (
     DB_NAME,
+    add_fabric_receipt,
     add_feedback_entry,
     add_operation,
     add_shift_operation,
@@ -34,20 +35,26 @@ from database import (
     close_shift,
     complete_route_batch_step,
     create_cutting_contour_batch,
+    create_cutting_contour_batch_for_task,
     create_employee,
+    create_production_task,
     create_route_batch,
     create_shift,
     delete_cutting_batch,
     delete_shift_by_id,
     delete_shift_operation,
+    get_active_production_tasks,
+    get_active_production_tasks_for_contours,
     get_active_route_batches,
     get_active_operation_groups,
     get_active_operation_folders,
     get_active_operations,
     get_all_employees,
+    get_all_product_colors,
     get_all_operations,
     get_admin_cutting_batches,
     get_cutting_batch_result_rows,
+    get_cutting_batch_task_options,
     get_cutting_batches_for_cutting,
     get_cutting_batches_for_formation,
     get_cutting_batches_for_layout,
@@ -62,6 +69,7 @@ from database import (
     get_employees_by_status,
     get_feedback_entries,
     get_feedback_entries_by_shift,
+    get_fabric_stock_rows,
     get_month_employee_summary,
     get_month_feedback_entries,
     get_month_operation_rows,
@@ -108,6 +116,7 @@ from keyboards import (
     admin_files_keyboard,
     admin_keyboard,
     admin_operations_keyboard,
+    admin_production_keyboard,
     admin_reports_keyboard,
     admin_shifts_keyboard,
     choice_keyboard,
@@ -121,7 +130,7 @@ from keyboards import (
     report_keyboard,
 )
 from miniapp_server import start_miniapp_server
-from route_maps import PRODUCT_ROUTE_MAPS
+from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 
 
 load_dotenv(".env")
@@ -181,6 +190,22 @@ class RouteMapView(StatesGroup):
     waiting_for_batch_quantity = State()
     waiting_for_task = State()
     waiting_for_task_action = State()
+
+
+class ProductionAdmin(StatesGroup):
+    waiting_for_menu = State()
+    waiting_for_fabric_material = State()
+    waiting_for_fabric_color = State()
+    waiting_for_fabric_quantity = State()
+    waiting_for_task_product = State()
+    waiting_for_task_sizes = State()
+    waiting_for_task_colors = State()
+
+
+class ProductionWork(StatesGroup):
+    waiting_for_task = State()
+    waiting_for_task_action = State()
+    waiting_for_contour_quantity = State()
 
 
 class EmployeeAdmin(StatesGroup):
@@ -243,6 +268,14 @@ ROUTE_MAP_MENU_OPTIONS = {
     "1": "Посмотреть карту",
     "2": "Создать пробную партию",
     "3": "Доступные задания",
+    "4": "Задания на раскрой",
+}
+
+PRODUCTION_ADMIN_MENU_OPTIONS = {
+    "1": "Приход ткани",
+    "2": "Остатки ткани",
+    "3": "Создать задание на раскрой",
+    "4": "Производственные задания",
 }
 
 CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
@@ -355,6 +388,10 @@ def get_admin_ids():
 
 def is_admin(telegram_id: int):
     return telegram_id in get_admin_ids()
+
+
+def get_message_actor_id(message: Message):
+    return message.chat.id
 
 
 def format_minutes(total_minutes: int):
@@ -631,6 +668,31 @@ def format_cutting_batch_result(rows):
     return text
 
 
+def create_route_batches_from_cutting_result(product_name: str, result_rows, employee_id: int | None):
+    route_steps = PRODUCT_ROUTE_MAPS.get(product_name, [])
+    next_route_step_index = len(CUTTING_ROUTE)
+
+    if next_route_step_index >= len(route_steps):
+        return []
+
+    created_batches = []
+
+    for product_size, product_color, quantity in result_rows:
+        batch = create_route_batch(
+            product_name,
+            product_size,
+            product_color,
+            quantity,
+            employee_id,
+            route_step_index=next_route_step_index,
+        )
+
+        if batch is not None:
+            created_batches.append(batch)
+
+    return created_batches
+
+
 async def send_cutting_batch_step(message: Message, state: FSMContext):
     data = await state.get_data()
     selected_folder = data["selected_folder"]
@@ -658,10 +720,14 @@ async def send_cutting_batch_step(message: Message, state: FSMContext):
 
     for index, batch in enumerate(batches, start=1):
         if cutting_mode == CUTTING_MODE_LAYOUT:
-            batch_id, product_name, contour_date, employee_name, sizes_text = batch
+            batch_id, product_name, contour_date, production_task_id, employee_name, sizes_text, colors_text = batch
             line = f"{CUTTING_CONTOUR_OPERATION} {contour_date} — {product_name}"
+            if production_task_id:
+                line += f"\n   задание: ID {production_task_id}"
             if sizes_text:
                 line += f"\n   размеры: {sizes_text}"
+            if colors_text:
+                line += f"\n   цвета: {colors_text}"
             if employee_name:
                 line += f"\n   сотрудник: {employee_name}"
         elif cutting_mode == CUTTING_MODE_CUT:
@@ -681,6 +747,7 @@ async def send_cutting_batch_step(message: Message, state: FSMContext):
 
         batch_map[str(index)] = {
             "id": batch_id,
+            "product_name": product_name,
             "name": line.replace("\n", " "),
         }
         text += f"{index}. {line}\n\n"
@@ -1000,11 +1067,20 @@ async def reset_state_if_command(message: Message, state: FSMContext):
         await send_route_map_menu_step(message, state)
         return True
 
+    if message.text == "Производство" and is_admin(message.from_user.id):
+        await state.clear()
+        await send_production_admin_menu(message, state)
+        return True
+
     if message.text == "Назад":
         if current_state and current_state.startswith("RouteMapView:"):
             await go_back_in_route_maps(message, state, current_state)
         elif current_state and current_state.startswith("Report:"):
             await go_back_in_report(message, state, current_state)
+        elif current_state and current_state.startswith("ProductionAdmin:"):
+            await go_back_in_production_admin(message, state, current_state)
+        elif current_state and current_state.startswith("ProductionWork:"):
+            await go_back_in_production_work(message, state, current_state)
         else:
             await state.clear()
             await message.answer("Основное меню:", reply_markup=employee_keyboard())
@@ -1053,6 +1129,16 @@ async def process_navigation_button(callback: CallbackQuery, state: FSMContext):
     if current_state and current_state.startswith("RouteMapView:"):
         await callback.answer("Назад")
         await go_back_in_route_maps(callback.message, state, current_state)
+        return
+
+    if current_state and current_state.startswith("ProductionAdmin:"):
+        await callback.answer("Назад")
+        await go_back_in_production_admin(callback.message, state, current_state)
+        return
+
+    if current_state and current_state.startswith("ProductionWork:"):
+        await callback.answer("Назад")
+        await go_back_in_production_work(callback.message, state, current_state)
         return
 
     if current_state and current_state.startswith("AdminEditReport:"):
@@ -4063,9 +4149,14 @@ async def select_cutting_batch(message: Message, state: FSMContext, selected_num
     )
 
     if cutting_mode == CUTTING_MODE_LAYOUT:
+        _task_sizes, task_colors = get_cutting_batch_task_options(batch["id"])
+        color_options = task_colors or list(data.get("color_map", {}).values())
+        color_map = get_numbered_options(color_options)
+
         await state.update_data(
             selected_size="без размера",
             selected_sizes=["без размера"],
+            color_map=color_map,
             selected_color_numbers=[],
             selected_colors=[],
         )
@@ -4100,6 +4191,12 @@ async def select_cutting_batch(message: Message, state: FSMContext, selected_num
             await state.clear()
             return
 
+        created_route_batches = create_route_batches_from_cutting_result(
+            batch["product_name"],
+            result_rows,
+            data["employee_id"],
+        )
+
         added_count = 0
         for product_size, product_color, quantity in result_rows:
             add_shift_operation(
@@ -4113,7 +4210,7 @@ async def select_cutting_batch(message: Message, state: FSMContext, selected_num
             added_count += 1
 
         add_edit_log(
-            message.from_user.id,
+            get_message_actor_id(message),
             "employee",
             "Сформировал готовый крой",
             "shift",
@@ -4126,6 +4223,7 @@ async def select_cutting_batch(message: Message, state: FSMContext, selected_num
             f"Готовый крой сформирован. Строк добавлено: {added_count}\n\n"
             "Расчёт партии:\n"
             f"{format_cutting_batch_result(result_rows)}\n"
+            f"Маршрутных партий создано: {len(created_route_batches)}\n\n"
             "Текущий отчёт за смену:\n\n"
         )
 
@@ -5384,6 +5482,511 @@ def get_route_step(product_name: str, step_index: int):
     return steps[step_index]
 
 
+def format_production_task_status(status: str):
+    statuses = {
+        "active": "ожидает нанесения контуров",
+        "contours_done": "контуры нанесены",
+        "in_cutting": "в раскрое",
+        "formed": "готовый крой сформирован",
+        "cancelled": "отменено",
+    }
+    return statuses.get(status, status)
+
+
+def format_number(value: float):
+    if float(value).is_integer():
+        return str(int(value))
+
+    return str(value).rstrip("0").rstrip(".")
+
+
+def size_sort_key(value: str):
+    value_text = str(value)
+
+    if value_text.isdigit():
+        return (0, int(value_text))
+
+    return (1, value_text)
+
+
+def parse_positive_float(text: str):
+    cleaned = (text or "").strip().replace(",", ".")
+
+    try:
+        value = float(cleaned)
+    except ValueError:
+        return None
+
+    if value <= 0:
+        return None
+
+    return value
+
+
+def format_production_task_line(task_row):
+    task_id, product_name, status, created_at, sizes_text, colors_text = task_row
+    sizes = ", ".join(sorted((sizes_text or "").split(","), key=size_sort_key))
+    colors = ", ".join(color for color in (colors_text or "").split(",") if color)
+    created_date = created_at[:10] if created_at else "-"
+    return (
+        f"ID {task_id} — {product_name}\n"
+        f"   статус: {format_production_task_status(status)}\n"
+        f"   дата: {created_date}\n"
+        f"   размеры: {sizes or '-'}\n"
+        f"   цвета: {colors or '-'}"
+    )
+
+
+def get_cutting_contour_operation(product_name: str):
+    operations = get_active_operations("Раскройщик", product_name, "Раскрой изделий")
+
+    for operation_id, _number, name, unit in operations:
+        if name == CUTTING_CONTOUR_OPERATION:
+            return {
+                "id": operation_id,
+                "name": f"{product_name}: {name}",
+                "unit": unit,
+            }
+
+    return None
+
+
+async def send_production_admin_menu(message: Message, state: FSMContext):
+    actor_id = get_message_actor_id(message)
+
+    if not is_admin(actor_id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    await state.set_state(ProductionAdmin.waiting_for_menu)
+    await message.answer(
+        "Производство\n\nВыберите действие:",
+        reply_markup=choice_keyboard("production_admin_menu", PRODUCTION_ADMIN_MENU_OPTIONS),
+    )
+
+
+async def send_fabric_material_step(message: Message, state: FSMContext):
+    await state.set_state(ProductionAdmin.waiting_for_fabric_material)
+    await message.answer(
+        "Приход ткани\n\nВведите название ткани или материала.\n"
+        "Например: Футер, кулирка, рибана.",
+        reply_markup=navigation_keyboard(),
+    )
+
+
+async def send_fabric_color_step(message: Message, state: FSMContext):
+    color_map = get_numbered_options(get_all_product_colors())
+    await state.update_data(fabric_color_map=color_map)
+    await state.set_state(ProductionAdmin.waiting_for_fabric_color)
+
+    if not color_map:
+        await message.answer("Введите цвет ткани:", reply_markup=navigation_keyboard())
+        return
+
+    text = "Выберите цвет ткани или напишите цвет текстом:\n\n"
+
+    for number, color in color_map.items():
+        text += f"{number}. {color}\n"
+
+    await message.answer(text, reply_markup=choice_keyboard("fabric_color", color_map))
+
+
+async def send_fabric_quantity_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(ProductionAdmin.waiting_for_fabric_quantity)
+    await message.answer(
+        "Приход ткани\n\n"
+        f"Материал: {data['fabric_material']}\n"
+        f"Цвет: {data['fabric_color']}\n\n"
+        "Введите количество в метрах. Например: 125 или 125.5",
+        reply_markup=navigation_keyboard(),
+    )
+
+
+async def send_fabric_stock_report(message: Message):
+    rows = get_fabric_stock_rows()
+
+    if not rows:
+        await message.answer("Остатков ткани пока нет.", reply_markup=admin_production_keyboard())
+        return
+
+    text = "Остатки ткани:\n\n"
+
+    for index, (material_name, color, quantity, unit, _updated_at) in enumerate(rows, start=1):
+        text += f"{index}. {material_name}, {color}: {format_number(quantity)} {unit}\n"
+
+    await send_long_text(message, text, reply_markup=admin_production_keyboard())
+
+
+async def send_production_task_product_step(message: Message, state: FSMContext):
+    await state.set_state(ProductionAdmin.waiting_for_task_product)
+    await message.answer(
+        "Создание задания на раскрой\n\nВыберите изделие:",
+        reply_markup=choice_keyboard("production_task_product", get_route_map_product_options()),
+    )
+
+
+async def send_production_task_sizes_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    product_name = data["production_task_product"]
+    sizes = get_product_sizes(product_name)
+
+    if not sizes:
+        await message.answer("У изделия нет размеров в справочнике.", reply_markup=admin_production_keyboard())
+        await state.clear()
+        return
+
+    size_map = get_numbered_options(sizes)
+    await state.update_data(production_task_size_map=size_map, production_task_size_numbers=[])
+    await state.set_state(ProductionAdmin.waiting_for_task_sizes)
+    await message.answer(
+        f"Изделие: {product_name}\n\n"
+        "Выберите размеры для задания, затем нажмите «Далее».",
+        reply_markup=multi_choice_keyboard("production_task_size_multi", size_map, []),
+    )
+
+
+async def send_production_task_colors_step(message: Message, state: FSMContext):
+    data = await state.get_data()
+    product_name = data["production_task_product"]
+    colors = get_product_colors(product_name)
+
+    if not colors:
+        await message.answer("У изделия нет цветов в справочнике.", reply_markup=admin_production_keyboard())
+        await state.clear()
+        return
+
+    color_map = get_numbered_options(colors)
+    await state.update_data(production_task_color_map=color_map, production_task_color_numbers=[])
+    await state.set_state(ProductionAdmin.waiting_for_task_colors)
+    await message.answer(
+        f"Изделие: {product_name}\n"
+        f"Размеры: {', '.join(data['production_task_sizes'])}\n\n"
+        "Выберите цвета для задания, затем нажмите «Далее».",
+        reply_markup=multi_choice_keyboard("production_task_color_multi", color_map, []),
+    )
+
+
+async def finish_production_task_creation(message: Message, state: FSMContext):
+    data = await state.get_data()
+    actor_id = get_message_actor_id(message)
+    employee = get_employee_by_telegram_id(actor_id)
+    task = create_production_task(
+        data["production_task_product"],
+        data["production_task_sizes"],
+        data["production_task_colors"],
+        employee[0] if employee else None,
+    )
+
+    if task is None:
+        await state.clear()
+        await message.answer("Не удалось создать задание.", reply_markup=admin_production_keyboard())
+        return
+
+    add_edit_log(
+        actor_id,
+        "admin",
+        "Создал производственное задание",
+        "production_task",
+        task["id"],
+        (
+            f"{task['product_name']}; размеры: {', '.join(data['production_task_sizes'])}; "
+            f"цвета: {', '.join(data['production_task_colors'])}"
+        ),
+    )
+
+    await state.clear()
+    await message.answer(
+        "Задание создано.\n\n"
+        f"ID: {task['id']}\n"
+        f"Изделие: {task['product_name']}\n"
+        f"Размеры: {', '.join(data['production_task_sizes'])}\n"
+        f"Цвета: {', '.join(data['production_task_colors'])}\n\n"
+        "Теперь раскройщик увидит его в «Маршрутные карты» → «Задания на раскрой».",
+        reply_markup=admin_production_keyboard(),
+    )
+
+
+async def send_production_tasks_admin_report(message: Message):
+    tasks = get_active_production_tasks()
+
+    if not tasks:
+        await message.answer("Активных производственных заданий пока нет.", reply_markup=admin_production_keyboard())
+        return
+
+    text = "Производственные задания:\n\n"
+
+    for index, task in enumerate(tasks, start=1):
+        text += f"{index}. {format_production_task_line(task)}\n\n"
+
+    await send_long_text(message, text, reply_markup=admin_production_keyboard())
+
+
+async def send_production_cutting_tasks_step(message: Message, state: FSMContext):
+    actor_id = get_message_actor_id(message)
+    employee = get_employee_by_telegram_id(actor_id)
+
+    if not is_admin(actor_id):
+        if employee is None or employee[5] != "active":
+            await message.answer("Сначала нужно зарегистрироваться и дождаться подтверждения.")
+            return
+
+        if employee[3] != "Раскройщик":
+            await message.answer("Производственные задания на раскрой доступны должности «Раскройщик».")
+            return
+
+    tasks = get_active_production_tasks_for_contours()
+
+    if not tasks:
+        await state.clear()
+        await message.answer("Заданий на нанесение контуров пока нет.", reply_markup=employee_keyboard())
+        return
+
+    task_map = {}
+    text = "Задания на раскрой\n\nВыберите задание:\n\n"
+
+    for index, task in enumerate(tasks, start=1):
+        task_id = task[0]
+        task_map[str(index)] = {
+            "id": task_id,
+            "name": f"ID {task_id} — {task[1]}",
+        }
+        text += f"{index}. {format_production_task_line(task)}\n\n"
+
+    await state.update_data(production_work_task_map=task_map)
+    await state.set_state(ProductionWork.waiting_for_task)
+    await send_long_text(message, text, reply_markup=choice_keyboard("production_work_task", task_map))
+
+
+async def select_production_work_task(message: Message, state: FSMContext, selected_number: str):
+    data = await state.get_data()
+    task_map = data.get("production_work_task_map", {})
+
+    if selected_number not in task_map:
+        await message.answer("Выберите номер задания из списка.")
+        return
+
+    task_id = task_map[selected_number]["id"]
+    await state.update_data(production_work_task_id=task_id)
+    await state.set_state(ProductionWork.waiting_for_task_action)
+    await message.answer(
+        f"Задание {task_map[selected_number]['name']}\n\n"
+        "Начать нанесение контуров лекал на ткань?",
+        reply_markup=choice_keyboard("production_work_action", {"1": "Начать"}),
+    )
+
+
+async def start_production_contours(message: Message, state: FSMContext):
+    actor_id = get_message_actor_id(message)
+    employee = get_employee_by_telegram_id(actor_id)
+
+    if employee is None or employee[5] != "active":
+        await message.answer("Сначала нужно зарегистрироваться и дождаться подтверждения.")
+        return
+
+    shift = get_open_shift_for_today(employee[0])
+
+    if shift is None:
+        await message.answer("У вас нет открытой смены. Нажмите /start, чтобы открыть смену.")
+        return
+
+    data = await state.get_data()
+    task_id = data["production_work_task_id"]
+    task = get_active_production_tasks_for_contours()
+    task_rows = [row for row in task if row[0] == task_id]
+
+    if not task_rows:
+        await state.clear()
+        await message.answer("Это задание уже недоступно.", reply_markup=employee_keyboard())
+        return
+
+    product_name = task_rows[0][1]
+    operation = get_cutting_contour_operation(product_name)
+
+    if operation is None:
+        await state.clear()
+        await message.answer("Для изделия не найдена операция нанесения контуров.", reply_markup=employee_keyboard())
+        return
+
+    sizes_text = task_rows[0][4] or ""
+    colors_text = task_rows[0][5] or ""
+    sizes = sorted((size for size in sizes_text.split(",") if size), key=size_sort_key)
+    colors = [color for color in colors_text.split(",") if color]
+    combinations = [(product_size, color) for color in colors for product_size in sizes]
+
+    if not combinations:
+        await state.clear()
+        await message.answer("В задании нет размеров или цветов.", reply_markup=employee_keyboard())
+        return
+
+    await state.update_data(
+        shift_id=shift[0],
+        employee_id=employee[0],
+        employee_position=employee[3],
+        production_task_id=task_id,
+        production_task_product=product_name,
+        production_task_combinations=combinations,
+        production_task_quantity_index=0,
+        production_task_quantities={},
+        operation_id=operation["id"],
+        operation_name=operation["name"],
+    )
+    await ask_production_contour_quantity(message, state)
+
+
+async def ask_production_contour_quantity(message: Message, state: FSMContext):
+    data = await state.get_data()
+    combinations = data["production_task_combinations"]
+    quantity_index = data.get("production_task_quantity_index", 0)
+    product_size, product_color = combinations[quantity_index]
+    await state.set_state(ProductionWork.waiting_for_contour_quantity)
+    await message.answer(
+        f"Задание ID {data['production_task_id']}: {data['production_task_product']}\n"
+        f"Операция: Нанесение контуров лекал на ткань\n"
+        f"Позиция {quantity_index + 1} из {len(combinations)}\n\n"
+        f"Размер: {product_size}\n"
+        f"Цвет: {format_color_label(product_color)}\n\n"
+        "Введите количество. Можно поставить 0, тогда строка не попадёт в отчёт.",
+        reply_markup=navigation_keyboard(),
+    )
+
+
+async def finish_production_contour_quantity(message: Message, state: FSMContext, quantity: int):
+    data = await state.get_data()
+    combinations = data["production_task_combinations"]
+    quantity_index = data.get("production_task_quantity_index", 0)
+    product_size, product_color = combinations[quantity_index]
+    quantities = data.get("production_task_quantities", {})
+    quantities[f"{product_size}|{product_color}"] = quantity
+    next_index = quantity_index + 1
+
+    if next_index < len(combinations):
+        await state.update_data(
+            production_task_quantity_index=next_index,
+            production_task_quantities=quantities,
+        )
+        await ask_production_contour_quantity(message, state)
+        return
+
+    matrix_quantities = {}
+    for combination_size, combination_color in combinations:
+        key = f"{combination_size}|{combination_color}"
+        matrix_quantities[(combination_size, combination_color)] = quantities.get(key, 0)
+
+    positive_rows = [
+        (combination_size, combination_color, row_quantity)
+        for (combination_size, combination_color), row_quantity in matrix_quantities.items()
+        if row_quantity > 0
+    ]
+
+    if not positive_rows:
+        await state.clear()
+        await message.answer(
+            "Все количества указаны как 0. Партия раскроя не создана.",
+            reply_markup=employee_keyboard(),
+        )
+        return
+
+    batch_id = create_cutting_contour_batch_for_task(
+        data["production_task_id"],
+        data["production_task_product"],
+        data["shift_id"],
+        data["employee_id"],
+        data["operation_id"],
+        matrix_quantities,
+    )
+
+    if batch_id is None:
+        await state.clear()
+        await message.answer("Не удалось создать партию по заданию.", reply_markup=employee_keyboard())
+        return
+
+    added_count = 0
+    for combination_size, combination_color, row_quantity in positive_rows:
+        add_shift_operation(
+            data["shift_id"],
+            data["employee_id"],
+            data["operation_id"],
+            combination_size,
+            combination_color,
+            row_quantity,
+        )
+        added_count += 1
+
+    add_edit_log(
+        get_message_actor_id(message),
+        "employee",
+        "Выполнил нанесение контуров по заданию",
+        "production_task",
+        data["production_task_id"],
+        f"Партия раскроя {batch_id}, строк добавлено: {added_count}",
+    )
+
+    quantity_text = "\n".join(
+        f"- размер {combination_size}, цвет {format_color_label(combination_color)}: {row_quantity} шт"
+        for combination_size, combination_color, row_quantity in positive_rows
+    )
+
+    await state.clear()
+    await send_long_text(
+        message,
+        f"Контуры по заданию сохранены. Партия раскроя ID {batch_id}\n\n"
+        f"Количество:\n{quantity_text}\n\n"
+        "Теперь эту партию можно выбрать в операции «Формирование настила».",
+        reply_markup=employee_keyboard(),
+    )
+
+
+async def go_back_in_production_admin(message: Message, state: FSMContext, current_state: str):
+    if current_state == ProductionAdmin.waiting_for_menu.state:
+        await state.clear()
+        await message.answer("Админ-панель:", reply_markup=admin_keyboard())
+        return
+
+    if current_state in {
+        ProductionAdmin.waiting_for_fabric_material.state,
+        ProductionAdmin.waiting_for_task_product.state,
+    }:
+        await send_production_admin_menu(message, state)
+        return
+
+    if current_state == ProductionAdmin.waiting_for_fabric_color.state:
+        await send_fabric_material_step(message, state)
+        return
+
+    if current_state == ProductionAdmin.waiting_for_fabric_quantity.state:
+        await send_fabric_color_step(message, state)
+        return
+
+    if current_state == ProductionAdmin.waiting_for_task_sizes.state:
+        await send_production_task_product_step(message, state)
+        return
+
+    if current_state == ProductionAdmin.waiting_for_task_colors.state:
+        await send_production_task_sizes_step(message, state)
+        return
+
+    await state.clear()
+    await message.answer("Раздел производства:", reply_markup=admin_production_keyboard())
+
+
+async def go_back_in_production_work(message: Message, state: FSMContext, current_state: str):
+    if current_state == ProductionWork.waiting_for_task.state:
+        await send_route_map_menu_step(message, state)
+        return
+
+    if current_state == ProductionWork.waiting_for_task_action.state:
+        await send_production_cutting_tasks_step(message, state)
+        return
+
+    if current_state == ProductionWork.waiting_for_contour_quantity.state:
+        await send_production_cutting_tasks_step(message, state)
+        return
+
+    await state.clear()
+    await message.answer("Основное меню:", reply_markup=employee_keyboard())
+
+
 def get_route_previous_status(batch: dict):
     if batch["status"] == "done":
         steps = PRODUCT_ROUTE_MAPS.get(batch["product_name"], [])
@@ -5595,7 +6198,11 @@ async def select_route_map_menu(message: Message, state: FSMContext, selected_te
         await send_route_batch_product_step(message, state)
         return
 
-    await send_route_tasks_step(message, state)
+    if selected_text == "3":
+        await send_route_tasks_step(message, state)
+        return
+
+    await send_production_cutting_tasks_step(message, state)
 
 
 async def select_route_map_product(message: Message, state: FSMContext, selected_text: str):
@@ -5955,6 +6562,397 @@ async def process_route_task_action_button(callback: CallbackQuery, state: FSMCo
 
     await callback.answer()
     await complete_selected_route_task(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(lambda message: message.text == "Производство")
+async def production_admin_button(message: Message, state: FSMContext):
+    await send_production_admin_menu(message, state)
+
+
+@dp.message(lambda message: message.text == "Приход ткани")
+async def fabric_receipt_button(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    await send_fabric_material_step(message, state)
+
+
+@dp.message(lambda message: message.text == "Остатки ткани")
+async def fabric_stock_button(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    await send_fabric_stock_report(message)
+
+
+@dp.message(lambda message: message.text == "Создать задание на раскрой")
+async def create_production_task_button(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    await send_production_task_product_step(message, state)
+
+
+@dp.message(lambda message: message.text == "Производственные задания")
+async def production_tasks_admin_button(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    await send_production_tasks_admin_report(message)
+
+
+async def select_production_admin_menu(message: Message, state: FSMContext, selected_number: str):
+    selected_number = selected_number.strip()
+
+    if selected_number not in PRODUCTION_ADMIN_MENU_OPTIONS:
+        await message.answer("Выберите действие из списка.")
+        return
+
+    if selected_number == "1":
+        await send_fabric_material_step(message, state)
+        return
+
+    if selected_number == "2":
+        await state.clear()
+        await send_fabric_stock_report(message)
+        return
+
+    if selected_number == "3":
+        await send_production_task_product_step(message, state)
+        return
+
+    await state.clear()
+    await send_production_tasks_admin_report(message)
+
+
+@dp.message(ProductionAdmin.waiting_for_menu)
+async def process_production_admin_menu(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_production_admin_menu(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("production_admin_menu:"))
+async def process_production_admin_menu_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, ProductionAdmin.waiting_for_menu):
+        return
+
+    await callback.answer()
+    await select_production_admin_menu(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(ProductionAdmin.waiting_for_fabric_material)
+async def process_fabric_material(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    material_name = (message.text or "").strip()
+
+    if not material_name:
+        await message.answer("Введите название ткани или материала.")
+        return
+
+    await state.update_data(fabric_material=material_name)
+    await send_fabric_color_step(message, state)
+
+
+async def select_fabric_color(message: Message, state: FSMContext, selected_text: str):
+    data = await state.get_data()
+    color_map = data.get("fabric_color_map", {})
+    selected_text = selected_text.strip()
+    selected_color = color_map.get(selected_text, selected_text)
+
+    if not selected_color:
+        await message.answer("Введите цвет ткани.")
+        return
+
+    await state.update_data(fabric_color=selected_color)
+    await send_fabric_quantity_step(message, state)
+
+
+@dp.message(ProductionAdmin.waiting_for_fabric_color)
+async def process_fabric_color(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_fabric_color(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("fabric_color:"))
+async def process_fabric_color_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, ProductionAdmin.waiting_for_fabric_color):
+        return
+
+    await callback.answer()
+    await select_fabric_color(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(ProductionAdmin.waiting_for_fabric_quantity)
+async def process_fabric_quantity(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    quantity = parse_positive_float(message.text or "")
+
+    if quantity is None:
+        await message.answer("Введите количество положительным числом. Например: 125 или 125.5")
+        return
+
+    employee = get_employee_by_telegram_id(message.from_user.id)
+    data = await state.get_data()
+    row = add_fabric_receipt(
+        data["fabric_material"],
+        data["fabric_color"],
+        quantity,
+        employee[0] if employee else None,
+    )
+
+    if row is None:
+        await state.clear()
+        await message.answer("Не удалось сохранить приход ткани.", reply_markup=admin_production_keyboard())
+        return
+
+    _stock_id, material_name, color, total_quantity, unit, _updated_at = row
+    add_edit_log(
+        message.from_user.id,
+        "admin",
+        "Добавил приход ткани",
+        "fabric_stock",
+        _stock_id,
+        f"{material_name}, {color}: +{format_number(quantity)} {unit}, остаток {format_number(total_quantity)} {unit}",
+    )
+
+    await state.clear()
+    await message.answer(
+        "Приход ткани сохранён.\n\n"
+        f"Материал: {material_name}\n"
+        f"Цвет: {color}\n"
+        f"Приход: {format_number(quantity)} {unit}\n"
+        f"Остаток: {format_number(total_quantity)} {unit}",
+        reply_markup=admin_production_keyboard(),
+    )
+
+
+async def select_production_task_product(message: Message, state: FSMContext, selected_text: str):
+    product_name = find_route_map_product(selected_text)
+
+    if product_name is None:
+        await message.answer("Выберите изделие из списка.")
+        return
+
+    await state.update_data(production_task_product=product_name)
+    await send_production_task_sizes_step(message, state)
+
+
+@dp.message(ProductionAdmin.waiting_for_task_product)
+async def process_production_task_product(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_production_task_product(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("production_task_product:"))
+async def process_production_task_product_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, ProductionAdmin.waiting_for_task_product):
+        return
+
+    await callback.answer()
+    await select_production_task_product(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+async def finish_production_task_size_selection(message: Message, state: FSMContext):
+    data = await state.get_data()
+    size_map = data.get("production_task_size_map", {})
+    selected_numbers = data.get("production_task_size_numbers", [])
+
+    if not selected_numbers:
+        await message.answer("Выберите хотя бы один размер.")
+        return
+
+    await state.update_data(
+        production_task_sizes=[size_map[number] for number in selected_numbers],
+    )
+    await send_production_task_colors_step(message, state)
+
+
+@dp.message(ProductionAdmin.waiting_for_task_sizes)
+async def process_production_task_sizes(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    data = await state.get_data()
+    size_map = data.get("production_task_size_map", {})
+    selected_numbers = parse_multiple_numbers(message.text or "", set(size_map.keys()))
+
+    if not selected_numbers:
+        await message.answer("Напишите номера размеров через пробел или выберите кнопками.")
+        return
+
+    await state.update_data(production_task_size_numbers=selected_numbers)
+    await finish_production_task_size_selection(message, state)
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("production_task_size_multi_toggle:"))
+async def process_production_task_size_toggle(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, ProductionAdmin.waiting_for_task_sizes):
+        return
+
+    data = await state.get_data()
+    size_map = data.get("production_task_size_map", {})
+    selected_numbers = data.get("production_task_size_numbers", [])
+    selected_number = callback.data.rsplit(":", 1)[1]
+
+    if selected_number not in size_map:
+        await callback.answer("Такого размера нет")
+        return
+
+    if selected_number in selected_numbers:
+        selected_numbers = [number for number in selected_numbers if number != selected_number]
+    else:
+        selected_numbers.append(selected_number)
+
+    await state.update_data(production_task_size_numbers=selected_numbers)
+    await callback.answer()
+    await callback.message.edit_reply_markup(
+        reply_markup=multi_choice_keyboard("production_task_size_multi", size_map, selected_numbers)
+    )
+
+
+@dp.callback_query(lambda callback: callback.data == "production_task_size_multi_done")
+async def process_production_task_size_done(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, ProductionAdmin.waiting_for_task_sizes):
+        return
+
+    await callback.answer()
+    await finish_production_task_size_selection(callback.message, state)
+
+
+async def finish_production_task_color_selection(message: Message, state: FSMContext):
+    data = await state.get_data()
+    color_map = data.get("production_task_color_map", {})
+    selected_numbers = data.get("production_task_color_numbers", [])
+
+    if not selected_numbers:
+        await message.answer("Выберите хотя бы один цвет.")
+        return
+
+    await state.update_data(
+        production_task_colors=[color_map[number] for number in selected_numbers],
+    )
+    await finish_production_task_creation(message, state)
+
+
+@dp.message(ProductionAdmin.waiting_for_task_colors)
+async def process_production_task_colors(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    data = await state.get_data()
+    color_map = data.get("production_task_color_map", {})
+    selected_numbers = parse_multiple_numbers(message.text or "", set(color_map.keys()))
+
+    if not selected_numbers:
+        await message.answer("Напишите номера цветов через пробел или выберите кнопками.")
+        return
+
+    await state.update_data(production_task_color_numbers=selected_numbers)
+    await finish_production_task_color_selection(message, state)
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("production_task_color_multi_toggle:"))
+async def process_production_task_color_toggle(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, ProductionAdmin.waiting_for_task_colors):
+        return
+
+    data = await state.get_data()
+    color_map = data.get("production_task_color_map", {})
+    selected_numbers = data.get("production_task_color_numbers", [])
+    selected_number = callback.data.rsplit(":", 1)[1]
+
+    if selected_number not in color_map:
+        await callback.answer("Такого цвета нет")
+        return
+
+    if selected_number in selected_numbers:
+        selected_numbers = [number for number in selected_numbers if number != selected_number]
+    else:
+        selected_numbers.append(selected_number)
+
+    await state.update_data(production_task_color_numbers=selected_numbers)
+    await callback.answer()
+    await callback.message.edit_reply_markup(
+        reply_markup=multi_choice_keyboard("production_task_color_multi", color_map, selected_numbers)
+    )
+
+
+@dp.callback_query(lambda callback: callback.data == "production_task_color_multi_done")
+async def process_production_task_color_done(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, ProductionAdmin.waiting_for_task_colors):
+        return
+
+    await callback.answer()
+    await finish_production_task_color_selection(callback.message, state)
+
+
+@dp.message(ProductionWork.waiting_for_task)
+async def process_production_work_task(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    await select_production_work_task(message, state, message.text or "")
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("production_work_task:"))
+async def process_production_work_task_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, ProductionWork.waiting_for_task):
+        return
+
+    await callback.answer()
+    await select_production_work_task(callback.message, state, callback.data.rsplit(":", 1)[1])
+
+
+@dp.message(ProductionWork.waiting_for_task_action)
+async def process_production_work_action(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    if (message.text or "").strip() != "1":
+        await message.answer("Выберите действие из списка.")
+        return
+
+    await start_production_contours(message, state)
+
+
+@dp.callback_query(lambda callback: callback.data and callback.data.startswith("production_work_action:"))
+async def process_production_work_action_button(callback: CallbackQuery, state: FSMContext):
+    if not await callback_state_is_current(callback, state, ProductionWork.waiting_for_task_action):
+        return
+
+    await callback.answer()
+
+    if callback.data.rsplit(":", 1)[1] != "1":
+        await callback.message.answer("Выберите действие из списка.")
+        return
+
+    await start_production_contours(callback.message, state)
+
+
+@dp.message(ProductionWork.waiting_for_contour_quantity)
+async def process_production_contour_quantity(message: Message, state: FSMContext):
+    if await reset_state_if_command(message, state):
+        return
+
+    if not message.text or not message.text.isdigit():
+        await message.answer("Введите количество целым числом. Можно 0.")
+        return
+
+    await finish_production_contour_quantity(message, state, int(message.text))
 
 
 async def send_feedback_category_step(message: Message, state: FSMContext):

@@ -59,6 +59,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("idx_feedback_entries_employee_date", indexes)
         self.assertIn("idx_route_batches_status_step", indexes)
         self.assertIn("idx_route_batch_history_batch", indexes)
+        self.assertIn("idx_cutting_batches_task", indexes)
+        self.assertIn("idx_cutting_batch_matrix_batch", indexes)
+        self.assertIn("idx_fabric_stock_color", indexes)
+        self.assertIn("idx_production_tasks_status", indexes)
+        self.assertIn("idx_production_task_items_task", indexes)
 
     def test_catalog_seed_contains_expected_operations(self):
         operations = self.database.get_active_operations(position="Упаковщик", folder="Нарезание резинки")
@@ -152,6 +157,83 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 ("86", "Синий", 15),
             ],
         )
+
+    def test_production_task_creates_matrix_cutting_batch(self):
+        task = self.database.create_production_task(
+            "Шорты",
+            ["80", "92"],
+            ["Бежевый", "Синий"],
+            None,
+        )
+        self.assertIsNotNone(task)
+
+        batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"],
+            "Шорты",
+            1,
+            1,
+            1,
+            {
+                ("80", "Бежевый"): 2,
+                ("92", "Бежевый"): 3,
+                ("80", "Синий"): 4,
+                ("92", "Синий"): 0,
+            },
+        )
+
+        self.assertIsNotNone(batch_id)
+        self.assertEqual(self.database.get_production_task_by_id(task["id"])["status"], "contours_done")
+        self.assertEqual(
+            self.database.get_cutting_batch_task_options(batch_id),
+            (["80", "92"], ["Бежевый", "Синий"]),
+        )
+        self.assertEqual(len(self.database.get_cutting_batches_for_layout("Шорты")[0]), 7)
+
+        self.assertTrue(
+            self.database.add_cutting_layout(
+                batch_id,
+                1,
+                1,
+                1,
+                {"Бежевый": 3, "Синий": 2},
+            )
+        )
+        self.assertEqual(self.database.get_production_task_by_id(task["id"])["status"], "in_cutting")
+
+        self.assertTrue(self.database.update_cutting_batch_progress(batch_id, 1, 1, 1, 100))
+        self.assertEqual(
+            self.database.get_cutting_batch_result_rows(batch_id),
+            [
+                ("80", "Бежевый", 6),
+                ("80", "Синий", 8),
+                ("92", "Бежевый", 9),
+            ],
+        )
+
+        self.assertTrue(self.database.mark_cutting_batch_formed(batch_id, 1, 1, 1))
+        self.assertEqual(self.database.get_production_task_by_id(task["id"])["status"], "formed")
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT product_size, product_color, contour_quantity, formed_quantity
+            FROM production_task_items
+            WHERE task_id = ?
+            ORDER BY product_color, CAST(product_size AS INTEGER)
+            """,
+            (task["id"],),
+        )
+        self.assertEqual(
+            cursor.fetchall(),
+            [
+                ("80", "Бежевый", 2, 6),
+                ("92", "Бежевый", 3, 9),
+                ("80", "Синий", 4, 8),
+                ("92", "Синий", 0, 0),
+            ],
+        )
+        conn.close()
 
     def test_zero_quantity_is_not_saved_or_reported(self):
         self.database.create_employee(2002, "Тест Швея", "Швея")

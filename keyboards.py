@@ -115,6 +115,9 @@ def admin_keyboard():
                 KeyboardButton(text="Операции"),
             ],
             [
+                KeyboardButton(text="Производство"),
+            ],
+            [
                 KeyboardButton(text="Файлы"),
                 KeyboardButton(text="В меню сотрудника"),
             ],
@@ -143,6 +146,26 @@ def admin_reports_keyboard():
                 KeyboardButton(text="Партии раскроя"),
             ],
             [
+                KeyboardButton(text="Админ меню"),
+            ],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def admin_production_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="Приход ткани"),
+                KeyboardButton(text="Остатки ткани"),
+            ],
+            [
+                KeyboardButton(text="Создать задание на раскрой"),
+                KeyboardButton(text="Производственные задания"),
+            ],
+            [
+                KeyboardButton(text="Партии раскроя"),
                 KeyboardButton(text="Админ меню"),
             ],
         ],
