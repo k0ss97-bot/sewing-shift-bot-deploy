@@ -70,6 +70,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("idx_fabric_stock_color", indexes)
         self.assertIn("idx_production_tasks_status", indexes)
         self.assertIn("idx_production_task_items_task", indexes)
+        self.assertIn("idx_warehouse_stock_type_position", indexes)
+        self.assertIn("idx_warehouse_stock_product", indexes)
 
     def test_catalog_seed_contains_expected_operations(self):
         operations = self.database.get_active_operations(position="Упаковщик", folder="Нарезание резинки")
@@ -240,6 +242,18 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ],
         )
         conn.close()
+        warehouse_rows = self.database.get_warehouse_stock_rows()
+        self.assertEqual(
+            {
+                (row["product_size"], row["product_color"], row["quantity"], row["stage_name"], row["ready_for_position"])
+                for row in warehouse_rows
+            },
+            {
+                ("80", "Бежевый", 6, "Раскроенные", "Швея"),
+                ("92", "Бежевый", 9, "Раскроенные", "Швея"),
+                ("80", "Синий", 8, "Раскроенные", "Швея"),
+            },
+        )
 
     def test_miniapp_production_creates_task_and_submits_contours(self):
         os.environ["ADMIN_IDS"] = "9001"
@@ -310,6 +324,21 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(cutting_result["ok"], cutting_result)
         self.assertEqual(len(self.database.get_active_production_tasks()), 1)
         self.assertEqual(set(self.database.get_production_task_options(1)[1]), {"Бежевый", "Фуксия"})
+        stock_items = []
+
+        for product_size in ["80", "92"]:
+            for product_color in ["Бежевый", "Фуксия"]:
+                stock_row = self.database.add_warehouse_stock(
+                    "semifinished",
+                    "Шорты",
+                    product_size,
+                    product_color,
+                    "Раскроенные",
+                    "Швея",
+                    10,
+                    None,
+                )
+                stock_items.append({"stock_id": stock_row["id"], "quantity": "7"})
 
         route_result = miniapp_server.create_order_task_for_telegram(
             9001,
@@ -317,9 +346,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "product_name": "Шорты",
                 "task_type": "route",
                 "route_step_index": len(miniapp_server.CUTTING_ROUTE),
-                "sizes": ["80", "92"],
-                "colors": ["Бежевый", "Фуксия"],
-                "quantity": "7",
+                "stock_items": stock_items,
             },
         )
 
@@ -328,6 +355,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(len(batches), 4)
         self.assertEqual({batch["quantity"] for batch in batches}, {7})
         self.assertEqual({batch["route_step_index"] for batch in batches}, {len(miniapp_server.CUTTING_ROUTE)})
+        self.assertEqual({row["quantity"] for row in self.database.get_warehouse_stock_rows()}, {3})
         self.assertIn("Сборка шорт на оверлоке", {task["operation"] for task in route_result["routes"]["tasks"]})
 
     def test_miniapp_admin_deletes_order_tasks(self):
@@ -345,6 +373,16 @@ class IsolatedDatabaseTest(unittest.TestCase):
             },
         )
         self.assertTrue(cutting_result["ok"], cutting_result)
+        stock_row = self.database.add_warehouse_stock(
+            "semifinished",
+            "Шорты",
+            "80",
+            "Бежевый",
+            "Раскроенные",
+            "Швея",
+            5,
+            None,
+        )
 
         route_result = miniapp_server.create_order_task_for_telegram(
             9001,
@@ -352,9 +390,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "product_name": "Шорты",
                 "task_type": "route",
                 "route_step_index": len(miniapp_server.CUTTING_ROUTE),
-                "sizes": ["80"],
-                "colors": ["Бежевый"],
-                "quantity": "3",
+                "stock_items": [{"stock_id": stock_row["id"], "quantity": "3"}],
             },
         )
         self.assertTrue(route_result["ok"], route_result)

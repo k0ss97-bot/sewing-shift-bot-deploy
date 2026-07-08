@@ -71,6 +71,7 @@ ROUTE_BATCH_COLUMNS = [
     "created_at",
     "updated_at",
     "completed_at",
+    "source_stock_id",
 ]
 PRODUCTION_TASK_COLUMNS = [
     "id",
@@ -751,6 +752,44 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS warehouse_stock (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_type TEXT NOT NULL,
+            product_name TEXT NOT NULL,
+            product_size TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            stage_name TEXT NOT NULL,
+            ready_for_position TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 0,
+            unit TEXT NOT NULL DEFAULT 'шт',
+            updated_at TEXT NOT NULL,
+            UNIQUE(item_type, product_name, product_size, product_color, stage_name, ready_for_position, unit)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS warehouse_stock_movements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stock_id INTEGER,
+            item_type TEXT NOT NULL,
+            product_name TEXT NOT NULL,
+            product_size TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            stage_name TEXT NOT NULL,
+            ready_for_position TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            unit TEXT NOT NULL DEFAULT 'шт',
+            movement_type TEXT NOT NULL,
+            source_type TEXT,
+            source_id INTEGER,
+            created_by_employee_id INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (stock_id) REFERENCES warehouse_stock (id),
+            FOREIGN KEY (created_by_employee_id) REFERENCES employees (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS production_tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_name TEXT NOT NULL,
@@ -810,9 +849,16 @@ def init_db():
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             completed_at TEXT,
+            source_stock_id INTEGER,
             FOREIGN KEY (created_by_employee_id) REFERENCES employees (id)
         )
     """)
+
+    cursor.execute("PRAGMA table_info(route_batches)")
+    route_batch_columns = [column[1] for column in cursor.fetchall()]
+
+    if "source_stock_id" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN source_stock_id INTEGER")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batch_history (
@@ -844,6 +890,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_fabric_stock_color ON fabric_stock (product_color)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_tasks_status ON production_tasks (status, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_items_task ON production_task_items (task_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_type_position ON warehouse_stock (item_type, ready_for_position)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_product ON warehouse_stock (product_name, product_size, product_color)")
 
     cursor.execute("SELECT COUNT(*) FROM operations")
     count = cursor.fetchone()[0]
@@ -1808,7 +1856,8 @@ def get_route_batch_by_id(batch_id: int):
             created_by_employee_id,
             created_at,
             updated_at,
-            completed_at
+            completed_at,
+            source_stock_id
         FROM route_batches
         WHERE id = ?
         """,
@@ -1866,7 +1915,8 @@ def get_active_route_batches():
             created_by_employee_id,
             created_at,
             updated_at,
-            completed_at
+            completed_at,
+            source_stock_id
         FROM route_batches
         WHERE status = 'active'
         ORDER BY created_at ASC, id ASC
@@ -1886,6 +1936,7 @@ def create_route_batch(
     employee_id: int | None,
     route_step_index: int = 0,
     status: str = "active",
+    source_stock_id: int | None = None,
 ):
     if quantity <= 0:
         return None
@@ -1911,9 +1962,10 @@ def create_route_batch(
             created_by_employee_id,
             created_at,
             updated_at,
-            completed_at
+            completed_at,
+            source_stock_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             product_name,
@@ -1926,6 +1978,7 @@ def create_route_batch(
             now,
             now,
             completed_at,
+            source_stock_id,
         )
     )
 
@@ -2592,14 +2645,15 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
     if changed:
         cursor.execute(
             """
-            SELECT production_task_id
+            SELECT product_name, production_task_id
             FROM cutting_batches
             WHERE id = ?
             """,
             (batch_id,),
         )
         task_row = cursor.fetchone()
-        task_id = task_row[0] if task_row else None
+        batch_product_name = task_row[0] if task_row else ""
+        task_id = task_row[1] if task_row else None
 
         if task_id is not None:
             cursor.execute("SELECT COUNT(*) FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
@@ -2636,6 +2690,8 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
                 )
 
             result_rows = cursor.fetchall()
+            ready_for_position = get_first_production_position(batch_product_name)
+            stage_name = "Раскроенные"
 
             cursor.executemany(
                 """
@@ -2650,6 +2706,71 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
                     for product_size, product_color, quantity in result_rows
                 ],
             )
+
+            for product_size, product_color, quantity in result_rows:
+                if quantity <= 0:
+                    continue
+
+                now_stock_text = local_now().isoformat()
+                cursor.execute(
+                    """
+                    INSERT INTO warehouse_stock (
+                        item_type, product_name, product_size, product_color, stage_name,
+                        ready_for_position, quantity, unit, updated_at
+                    )
+                    VALUES ('semifinished', ?, ?, ?, ?, ?, ?, 'шт', ?)
+                    ON CONFLICT(item_type, product_name, product_size, product_color, stage_name, ready_for_position, unit)
+                    DO UPDATE SET
+                        quantity = quantity + excluded.quantity,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        batch_product_name,
+                        product_size,
+                        product_color,
+                        stage_name,
+                        ready_for_position,
+                        quantity,
+                        now_stock_text,
+                    ),
+                )
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM warehouse_stock
+                    WHERE item_type = 'semifinished'
+                      AND product_name = ?
+                      AND product_size = ?
+                      AND product_color = ?
+                      AND stage_name = ?
+                      AND ready_for_position = ?
+                      AND unit = 'шт'
+                    """,
+                    (batch_product_name, product_size, product_color, stage_name, ready_for_position),
+                )
+                stock_id = cursor.fetchone()[0]
+                cursor.execute(
+                    """
+                    INSERT INTO warehouse_stock_movements (
+                        stock_id, item_type, product_name, product_size, product_color, stage_name,
+                        ready_for_position, quantity, unit, movement_type, source_type, source_id,
+                        created_by_employee_id, created_at
+                    )
+                    VALUES (?, 'semifinished', ?, ?, ?, ?, ?, ?, 'шт', 'receipt', 'cutting_batch', ?, ?, ?)
+                    """,
+                    (
+                        stock_id,
+                        batch_product_name,
+                        product_size,
+                        product_color,
+                        stage_name,
+                        ready_for_position,
+                        quantity,
+                        batch_id,
+                        employee_id,
+                        now_stock_text,
+                    ),
+                )
 
             cursor.execute(
                 """
@@ -2974,6 +3095,245 @@ def get_fabric_stock_rows():
     )
 
     rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def warehouse_stock_from_row(row):
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "item_type": row[1],
+        "product_name": row[2],
+        "product_size": row[3],
+        "product_color": row[4],
+        "stage_name": row[5],
+        "ready_for_position": row[6],
+        "quantity": row[7],
+        "unit": row[8],
+        "updated_at": row[9],
+    }
+
+
+def get_next_route_position(product_name: str, route_step_index: int):
+    from route_maps import PRODUCT_ROUTE_MAPS
+
+    steps = PRODUCT_ROUTE_MAPS.get(product_name, [])
+    next_index = route_step_index + 1
+
+    if next_index < len(steps):
+        return steps[next_index]["position"]
+
+    return "Склад"
+
+
+def get_first_production_position(product_name: str):
+    from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
+
+    steps = PRODUCT_ROUTE_MAPS.get(product_name, [])
+
+    for route_step in steps[len(CUTTING_ROUTE):]:
+        return route_step["position"]
+
+    return "Склад"
+
+
+def add_warehouse_stock(
+    item_type: str,
+    product_name: str,
+    product_size: str,
+    product_color: str,
+    stage_name: str,
+    ready_for_position: str,
+    quantity: int,
+    employee_id: int | None,
+    source_type: str = "",
+    source_id: int | None = None,
+):
+    item_type = item_type.strip()
+    product_name = product_name.strip()
+    product_size = str(product_size).strip()
+    product_color = product_color.strip()
+    stage_name = stage_name.strip()
+    ready_for_position = ready_for_position.strip() or "Склад"
+
+    if item_type not in {"semifinished", "finished"}:
+        return None
+
+    if not product_name or not product_size or not product_color or not stage_name or quantity <= 0:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    cursor.execute(
+        """
+        INSERT INTO warehouse_stock (
+            item_type, product_name, product_size, product_color, stage_name,
+            ready_for_position, quantity, unit, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'шт', ?)
+        ON CONFLICT(item_type, product_name, product_size, product_color, stage_name, ready_for_position, unit)
+        DO UPDATE SET
+            quantity = quantity + excluded.quantity,
+            updated_at = excluded.updated_at
+        """,
+        (item_type, product_name, product_size, product_color, stage_name, ready_for_position, quantity, now),
+    )
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM warehouse_stock
+        WHERE item_type = ?
+          AND product_name = ?
+          AND product_size = ?
+          AND product_color = ?
+          AND stage_name = ?
+          AND ready_for_position = ?
+          AND unit = 'шт'
+        """,
+        (item_type, product_name, product_size, product_color, stage_name, ready_for_position),
+    )
+    stock_id = cursor.fetchone()[0]
+
+    cursor.execute(
+        """
+        INSERT INTO warehouse_stock_movements (
+            stock_id, item_type, product_name, product_size, product_color, stage_name,
+            ready_for_position, quantity, unit, movement_type, source_type, source_id,
+            created_by_employee_id, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'шт', 'receipt', ?, ?, ?, ?)
+        """,
+        (
+            stock_id,
+            item_type,
+            product_name,
+            product_size,
+            product_color,
+            stage_name,
+            ready_for_position,
+            quantity,
+            source_type,
+            source_id,
+            employee_id,
+            now,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+    return get_warehouse_stock_by_id(stock_id)
+
+
+def consume_warehouse_stock(stock_id: int, quantity: int, employee_id: int | None, source_type: str = "", source_id: int | None = None):
+    if quantity <= 0:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, item_type, product_name, product_size, product_color, stage_name,
+               ready_for_position, quantity, unit, updated_at
+        FROM warehouse_stock
+        WHERE id = ?
+        """,
+        (stock_id,),
+    )
+    row = cursor.fetchone()
+
+    if row is None or row[7] < quantity:
+        conn.close()
+        return None
+
+    now = local_now().isoformat()
+    new_quantity = row[7] - quantity
+
+    cursor.execute(
+        """
+        UPDATE warehouse_stock
+        SET quantity = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (new_quantity, now, stock_id),
+    )
+
+    cursor.execute(
+        """
+        INSERT INTO warehouse_stock_movements (
+            stock_id, item_type, product_name, product_size, product_color, stage_name,
+            ready_for_position, quantity, unit, movement_type, source_type, source_id,
+            created_by_employee_id, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issue', ?, ?, ?, ?)
+        """,
+        (
+            stock_id,
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+            row[5],
+            row[6],
+            -quantity,
+            row[8],
+            source_type,
+            source_id,
+            employee_id,
+            now,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+    return {**warehouse_stock_from_row(row), "quantity": new_quantity}
+
+
+def get_warehouse_stock_by_id(stock_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, item_type, product_name, product_size, product_color, stage_name,
+               ready_for_position, quantity, unit, updated_at
+        FROM warehouse_stock
+        WHERE id = ?
+        """,
+        (stock_id,),
+    )
+    row = warehouse_stock_from_row(cursor.fetchone())
+    conn.close()
+    return row
+
+
+def get_warehouse_stock_rows():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, item_type, product_name, product_size, product_color, stage_name,
+               ready_for_position, quantity, unit, updated_at
+        FROM warehouse_stock
+        WHERE quantity > 0
+        ORDER BY
+            item_type ASC,
+            ready_for_position ASC,
+            product_name ASC,
+            CAST(product_size AS INTEGER),
+            product_size ASC,
+            product_color ASC
+        """
+    )
+    rows = [warehouse_stock_from_row(row) for row in cursor.fetchall()]
     conn.close()
     return rows
 

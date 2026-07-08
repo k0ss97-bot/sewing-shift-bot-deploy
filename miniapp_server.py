@@ -15,6 +15,8 @@ from database import (
     add_feedback_entry,
     add_operation,
     add_shift_operation,
+    add_cutting_layout,
+    add_warehouse_stock,
     admin_close_shift,
     cancel_production_task,
     cancel_route_batch,
@@ -33,6 +35,10 @@ from database import (
     get_all_product_colors,
     get_all_employees,
     get_all_operations,
+    get_cutting_batches_for_cutting,
+    get_cutting_batches_for_formation,
+    get_cutting_batches_for_layout,
+    get_cutting_batch_result_rows,
     get_employee_by_telegram_id,
     get_employee_period_operation_totals,
     get_employee_period_summary,
@@ -54,10 +60,16 @@ from database import (
     get_production_task_by_id,
     get_shift_for_today,
     get_shift_report,
+    get_warehouse_stock_by_id,
+    get_warehouse_stock_rows,
     get_today_shifts,
     hide_operation,
     local_today,
+    mark_cutting_batch_formed,
     restore_operation,
+    consume_warehouse_stock,
+    set_shift_operation_quantity,
+    update_cutting_batch_progress,
     update_employee_position,
     update_employee_status,
     update_operation_field,
@@ -70,6 +82,9 @@ from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 AUTH_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 ROUTES_MINIAPP_ENABLED = False
 CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
+CUTTING_LAYOUT_OPERATION = "Формирование настила"
+CUTTING_CUT_OPERATION = "Раскрой"
+CUTTING_FORM_OPERATION = "Формирование готового кроя"
 
 
 def get_admin_ids():
@@ -409,7 +424,7 @@ def get_route_step(product_name: str, step_index: int):
 def get_route_previous_status(batch: dict):
     if batch["status"] == "done":
         steps = PRODUCT_ROUTE_MAPS.get(batch["product_name"], [])
-        return steps[-1]["status_after"] if steps else "Маршрут завершён"
+        return steps[-1]["status_after"] if steps else "Процесс завершён"
 
     step_index = batch["route_step_index"]
 
@@ -531,7 +546,7 @@ def create_route_batch_for_telegram(telegram_id: int, payload: dict):
     add_edit_log(
         telegram_id,
         "admin" if is_admin(telegram_id) else "employee",
-        "Создал маршрутную партию из миниаппа",
+        "Создал задание по операции из миниаппа",
         "route_batch",
         batch["id"],
         route_batch_identity(batch),
@@ -539,7 +554,7 @@ def create_route_batch_for_telegram(telegram_id: int, payload: dict):
 
     return {
         "ok": True,
-        "message": f"Партия #{batch['id']} создана.",
+        "message": f"Задание #{batch['id']} создано.",
         "batch": route_task_to_dict(batch, current_step),
         "tasks": get_route_tasks_for_telegram(telegram_id)["tasks"],
     }
@@ -561,40 +576,56 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
     if not is_admin(telegram_id) and not can_employee_work_route_step(employee, current_step):
         return {"ok": False, "message": "Это задание сейчас доступно другой должности."}
 
-    route_steps = PRODUCT_ROUTE_MAPS[batch["product_name"]]
     next_step_index = batch["route_step_index"] + 1
-    new_status = "done" if next_step_index >= len(route_steps) else "active"
     updated_batch = complete_route_batch_step(
         batch["id"],
         employee[0],
         current_step["operation"],
         current_step["position"],
         next_step_index,
-        new_status,
+        "done",
     )
 
     if updated_batch is None:
         return {"ok": False, "message": "Не удалось завершить этап."}
 
+    next_step = get_route_step(updated_batch["product_name"], updated_batch["route_step_index"])
+    item_type = "semifinished" if next_step else "finished"
+    ready_for_position = next_step["position"] if next_step else "Склад"
+    stage_name = current_step["status_after"]
+
+    add_warehouse_stock(
+        item_type,
+        batch["product_name"],
+        batch["product_size"],
+        batch["product_color"],
+        stage_name,
+        ready_for_position,
+        batch["quantity"],
+        employee[0],
+        "route_batch",
+        batch["id"],
+    )
+
     add_edit_log(
         telegram_id,
         "admin" if is_admin(telegram_id) else "employee",
-        "Завершил этап маршрута из миниаппа",
+        "Завершил задание по операции из миниаппа",
         "route_batch",
         batch["id"],
         f"{route_batch_identity(batch)}. Этап: {current_step['operation']}",
     )
 
-    if updated_batch["status"] == "done":
-        message = f"Этап завершён. Партия #{batch['id']} полностью прошла маршрут."
+    if next_step:
+        message = f"Этап завершён. Результат на складе для должности {next_step['position']}."
     else:
-        next_step = get_route_step(updated_batch["product_name"], updated_batch["route_step_index"])
-        message = f"Этап завершён. Следующий этап: {next_step['position']} — {next_step['operation']}."
+        message = "Этап завершён. Готовая продукция принята на склад."
 
     return {
         "ok": True,
         "message": message,
         "tasks": get_route_tasks_for_telegram(telegram_id)["tasks"],
+        "production": get_production_state_for_telegram(telegram_id),
     }
 
 
@@ -701,31 +732,137 @@ def fabric_stock_to_dict(row):
     }
 
 
-def get_cutting_contour_operation(product_name: str):
+def warehouse_stock_to_dict(row: dict):
+    item_type_text = {
+        "semifinished": "Полуфабрикаты",
+        "finished": "Готовая продукция",
+    }.get(row["item_type"], row["item_type"])
+
+    return {
+        **row,
+        "item_type_text": item_type_text,
+        "product_color_label": format_color_label(row["product_color"]),
+        "quantity_text": format_number(row["quantity"]),
+        "title": f"{row['product_name']} — {row['stage_name']}",
+    }
+
+
+def get_cutting_operation(product_name: str, operation_name: str):
     operations = get_active_operations("Раскройщик", product_name, "Раскрой изделий")
 
     for operation_id, _number, name, unit in operations:
-        if name == CUTTING_CONTOUR_OPERATION:
+        if name == operation_name:
             return {
                 "id": operation_id,
                 "name": f"{product_name}: {name}",
+                "base_name": name,
                 "unit": unit,
             }
 
     return None
 
 
+def get_cutting_contour_operation(product_name: str):
+    return get_cutting_operation(product_name, CUTTING_CONTOUR_OPERATION)
+
+
+def cutting_stage_task_to_dict(stage: str, row):
+    if stage == "contours":
+        task = production_task_to_dict(row)
+        return {
+            **task,
+            "task_kind": "cutting_stage",
+            "stage": "contours",
+            "stage_title": "Нанесение контуров лекал на ткань",
+            "source_id": task["id"],
+            "next_action": "Начать контуры",
+        }
+
+    if stage == "layout":
+        batch_id, product_name, contour_date, production_task_id, employee_name, sizes_text, colors_text = row
+        colors = split_group_concat(colors_text)
+        return {
+            "id": batch_id,
+            "source_id": batch_id,
+            "production_task_id": production_task_id,
+            "task_kind": "cutting_stage",
+            "stage": "layout",
+            "stage_title": "Формирование настила",
+            "next_action": "Сохранить настил",
+            "product_name": product_name,
+            "status": "contours_done",
+            "status_text": "контуры нанесены",
+            "created_at": contour_date,
+            "employee": employee_name or "",
+            "sizes_text": sizes_text or "",
+            "colors": colors,
+            "color_labels": [format_color_label(color) for color in colors],
+        }
+
+    if stage == "cutting":
+        batch_id, product_name, contour_date, layout_date, progress, colors_text = row
+        return {
+            "id": batch_id,
+            "source_id": batch_id,
+            "task_kind": "cutting_stage",
+            "stage": "cutting",
+            "stage_title": "Раскрой",
+            "next_action": "Обновить процент",
+            "product_name": product_name,
+            "status": "in_cutting" if progress else "layout_done",
+            "status_text": f"готовность {progress or 0}%",
+            "created_at": layout_date or contour_date,
+            "progress": progress or 0,
+            "colors_text": colors_text or "",
+        }
+
+    batch_id, product_name, contour_date, layout_date, progress = row
+    return {
+        "id": batch_id,
+        "source_id": batch_id,
+        "task_kind": "cutting_stage",
+        "stage": "formation",
+        "stage_title": "Формирование готового кроя",
+        "next_action": "Принять крой на склад",
+        "product_name": product_name,
+        "status": "cutting_done",
+        "status_text": "раскрой завершён",
+        "created_at": layout_date or contour_date,
+        "progress": progress or 100,
+    }
+
+
+def get_cutting_stage_tasks(employee):
+    if not employee or employee[5] != "active" or employee[3] != "Раскройщик":
+        return []
+
+    tasks = [
+        cutting_stage_task_to_dict("contours", row)
+        for row in get_active_production_tasks_for_contours()
+    ]
+
+    for product_name in PRODUCT_ROUTE_MAPS:
+        tasks.extend(cutting_stage_task_to_dict("layout", row) for row in get_cutting_batches_for_layout(product_name))
+        tasks.extend(cutting_stage_task_to_dict("cutting", row) for row in get_cutting_batches_for_cutting(product_name))
+        tasks.extend(cutting_stage_task_to_dict("formation", row) for row in get_cutting_batches_for_formation(product_name))
+
+    return tasks
+
+
 def get_production_state_for_telegram(telegram_id: int):
     employee = get_employee_for_access(telegram_id)
     is_admin_user = is_admin(telegram_id)
     can_work_contours = bool(employee and employee[5] == "active" and employee[3] == "Раскройщик")
+    warehouse_rows = [warehouse_stock_to_dict(row) for row in get_warehouse_stock_rows()]
 
     return {
         "catalog": production_catalog_to_dict(),
         "order_colors": get_order_color_options(),
         "order_color_labels": [format_color_label(color) for color in get_order_color_options()],
         "fabric_stock": [fabric_stock_to_dict(row) for row in get_fabric_stock_rows()] if is_admin_user else [],
+        "warehouse_stock": warehouse_rows if is_admin_user else [],
         "tasks": [production_task_to_dict(row) for row in get_active_production_tasks()] if is_admin_user else [],
+        "cutting_tasks": get_cutting_stage_tasks(employee),
         "contour_tasks": [
             production_task_to_dict(row)
             for row in get_active_production_tasks_for_contours()
@@ -843,19 +980,19 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     if task_type not in {"cutting", "route"}:
         return {"ok": False, "message": "Выберите тип задания."}
 
-    allowed_sizes = set(get_product_sizes(product_name))
-    allowed_colors = set(get_order_color_options())
-
-    if not sizes or any(size not in allowed_sizes for size in sizes):
-        return {"ok": False, "message": "Выберите размеры из списка."}
-
-    if not colors or any(color not in allowed_colors for color in colors):
-        return {"ok": False, "message": "Выберите цвета из списка."}
-
     employee = get_employee_for_access(telegram_id)
     employee_id = employee[0] if employee else None
 
     if task_type == "cutting":
+        allowed_sizes = set(get_product_sizes(product_name))
+        allowed_colors = set(get_order_color_options())
+
+        if not sizes or any(size not in allowed_sizes for size in sizes):
+            return {"ok": False, "message": "Выберите размеры из списка."}
+
+        if not colors or any(color not in allowed_colors for color in colors):
+            return {"ok": False, "message": "Выберите цвета из списка."}
+
         material_name = material_name or "Ткань"
 
         if material_name != "Ткань":
@@ -900,54 +1037,86 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     route_step = get_route_step(product_name, route_step_index)
 
     if route_step is None:
-        return {"ok": False, "message": "Выберите операцию маршрута."}
+        return {"ok": False, "message": "Выберите операцию."}
 
     if route_step_index < len(CUTTING_ROUTE):
         return {"ok": False, "message": "Для раскроя используйте тип задания «Раскрой»."}
 
-    try:
-        quantity = int(payload.get("quantity") or 0)
-    except (TypeError, ValueError):
-        quantity = 0
+    raw_stock_items = payload.get("stock_items") or []
 
-    if quantity <= 0:
-        return {"ok": False, "message": "Введите количество больше 0."}
+    if not raw_stock_items:
+        return {"ok": False, "message": "Выберите полуфабрикат со склада."}
 
     created_batches = []
+    consumed_rows = []
 
-    for product_size in sizes:
-        for product_color in colors:
-            batch = create_route_batch(
-                product_name,
-                product_size,
-                product_color,
-                quantity,
-                employee_id,
-                route_step_index=route_step_index,
-            )
+    for item in raw_stock_items:
+        try:
+            stock_id = int(item.get("stock_id") or 0)
+            quantity = int(item.get("quantity") or 0)
+        except (AttributeError, TypeError, ValueError):
+            return {"ok": False, "message": "Количество по складу должно быть целым числом."}
 
-            if batch is not None:
-                created_batches.append(batch)
+        if quantity <= 0:
+            continue
+
+        stock_row = get_warehouse_stock_by_id(stock_id)
+
+        if stock_row is None or stock_row["quantity"] <= 0:
+            return {"ok": False, "message": "Один из полуфабрикатов уже недоступен."}
+
+        if stock_row["item_type"] != "semifinished":
+            return {"ok": False, "message": "Для задания выберите полуфабрикат."}
+
+        if stock_row["product_name"] != product_name:
+            return {"ok": False, "message": "Полуфабрикат не соответствует изделию."}
+
+        if stock_row["ready_for_position"] != route_step["position"]:
+            return {"ok": False, "message": f"Этот полуфабрикат не для должности {route_step['position']}."}
+
+        if quantity > stock_row["quantity"]:
+            return {"ok": False, "message": "Количество больше остатка на складе."}
+
+        batch = create_route_batch(
+            product_name,
+            stock_row["product_size"],
+            stock_row["product_color"],
+            quantity,
+            employee_id,
+            route_step_index=route_step_index,
+            source_stock_id=stock_id,
+        )
+
+        if batch is None:
+            return {"ok": False, "message": "Не удалось создать одно из заданий."}
+
+        consumed = consume_warehouse_stock(stock_id, quantity, employee_id, "route_batch", batch["id"])
+
+        if consumed is None:
+            cancel_route_batch(batch["id"])
+            return {"ok": False, "message": "Не удалось списать полуфабрикат со склада."}
+
+        consumed_rows.append(stock_row)
+        created_batches.append(batch)
 
     if not created_batches:
-        return {"ok": False, "message": "Не удалось создать маршрутные задания."}
+        return {"ok": False, "message": "Введите количество хотя бы по одной строке склада."}
 
     add_edit_log(
         telegram_id,
         "admin",
-        "Создал маршрутные задания из миниаппа",
+        "Создал задания по операции из миниаппа",
         "route_batch",
         created_batches[0]["id"],
         (
             f"{product_name}; {route_step['position']} — {route_step['operation']}; "
-            f"вход: полуфабрикат; размеры: {', '.join(sizes)}; цвета: {', '.join(colors)}; "
-            f"количество на комбинацию: {quantity}; партий: {len(created_batches)}"
+            f"вход: полуфабрикат со склада; партий: {len(created_batches)}"
         ),
     )
 
     return {
         "ok": True,
-        "message": f"Создано маршрутных заданий: {len(created_batches)}.",
+        "message": f"Создано заданий: {len(created_batches)}.",
         "production": get_production_state_for_telegram(telegram_id),
         "routes": {
             "enabled": ROUTES_MINIAPP_ENABLED,
@@ -995,22 +1164,39 @@ def delete_order_task_for_telegram(telegram_id: int, payload: dict):
         batch = get_route_batch_by_id(task_id)
 
         if batch is None:
-            return {"ok": False, "message": "Маршрутное задание не найдено."}
+            return {"ok": False, "message": "Задание не найдено."}
 
         cancelled_batch = cancel_route_batch(task_id)
 
         if cancelled_batch is None:
-            return {"ok": False, "message": "Это маршрутное задание уже нельзя удалить."}
+            return {"ok": False, "message": "Это задание уже нельзя удалить."}
+
+        if batch.get("source_stock_id"):
+            source_stock = get_warehouse_stock_by_id(batch["source_stock_id"])
+
+            if source_stock is not None:
+                add_warehouse_stock(
+                    source_stock["item_type"],
+                    source_stock["product_name"],
+                    source_stock["product_size"],
+                    source_stock["product_color"],
+                    source_stock["stage_name"],
+                    source_stock["ready_for_position"],
+                    batch["quantity"],
+                    employee[0] if (employee := get_employee_for_access(telegram_id)) else None,
+                    "cancelled_task",
+                    batch["id"],
+                )
 
         add_edit_log(
             telegram_id,
             "admin",
-            "Удалил маршрутное задание из миниаппа",
+            "Удалил задание по операции из миниаппа",
             "route_batch",
             task_id,
             route_batch_identity(batch),
         )
-        message = f"Маршрутное задание #{task_id} удалено."
+        message = f"Задание #{task_id} удалено."
     else:
         return {"ok": False, "message": "Неизвестный тип задания."}
 
@@ -1117,6 +1303,210 @@ def submit_production_contours_for_telegram(telegram_id: int, payload: dict):
         "message": f"Контуры сохранены. Партия раскроя #{batch_id}.",
         "production": get_production_state_for_telegram(telegram_id),
     }
+
+
+def parse_cutting_sizes_text(value: str):
+    sizes = []
+
+    for item in (value or "").split(","):
+        size = item.split(" - ", 1)[0].strip()
+
+        if size:
+            sizes.append(size)
+
+    return sizes
+
+
+def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
+    employee = get_employee_for_access(telegram_id)
+
+    if employee is None or employee[5] != "active":
+        return {"ok": False, "message": "Нет активного профиля."}
+
+    if employee[3] != "Раскройщик" and not is_admin(telegram_id):
+        return {"ok": False, "message": "Этапы раскроя доступны раскройщику."}
+
+    shift = get_open_shift_for_today(employee[0])
+
+    if shift is None:
+        return {"ok": False, "message": "Откройте смену перед выполнением задания."}
+
+    stage = (payload.get("stage") or "").strip()
+
+    if stage == "contours":
+        return submit_production_contours_for_telegram(telegram_id, payload)
+
+    try:
+        batch_id = int(payload.get("batch_id") or 0)
+    except (TypeError, ValueError):
+        batch_id = 0
+
+    if batch_id <= 0:
+        return {"ok": False, "message": "Выберите задание."}
+
+    if stage == "layout":
+        batch_row = None
+
+        for product_name in PRODUCT_ROUTE_MAPS:
+            for row in get_cutting_batches_for_layout(product_name):
+                if row[0] == batch_id:
+                    batch_row = row
+                    break
+            if batch_row:
+                break
+
+        if batch_row is None:
+            return {"ok": False, "message": "Сначала нужно выполнить нанесение контуров."}
+
+        operation = get_cutting_operation(batch_row[1], CUTTING_LAYOUT_OPERATION)
+
+        if operation is None:
+            return {"ok": False, "message": "Для изделия не найдена операция настила."}
+
+        raw_layers = payload.get("color_layers") or {}
+        color_layers = {}
+        colors = split_group_concat(batch_row[6])
+
+        for color in colors:
+            try:
+                layers = int(raw_layers.get(color) or 0)
+            except (TypeError, ValueError):
+                return {"ok": False, "message": "Количество слоёв должно быть целым числом."}
+
+            if layers < 0:
+                return {"ok": False, "message": "Количество слоёв не может быть отрицательным."}
+
+            if layers > 0:
+                color_layers[color] = layers
+
+        if not color_layers:
+            return {"ok": False, "message": "Укажите слои хотя бы по одному цвету."}
+
+        if not add_cutting_layout(batch_id, shift[0], employee[0], operation["id"], color_layers):
+            return {"ok": False, "message": "Настил уже недоступен."}
+
+        sizes = parse_cutting_sizes_text(batch_row[5])
+        added_count = 0
+
+        for color, layers in color_layers.items():
+            for product_size in sizes:
+                add_shift_operation(shift[0], employee[0], operation["id"], product_size, color, layers)
+                added_count += 1
+
+        add_edit_log(
+            telegram_id,
+            "employee",
+            "Выполнил формирование настила из миниаппа",
+            "cutting_batch",
+            batch_id,
+            f"Цветов: {len(color_layers)}, строк отчёта: {added_count}",
+        )
+
+        return {
+            "ok": True,
+            "message": "Настил сохранён. Следующий этап: раскрой.",
+            "production": get_production_state_for_telegram(telegram_id),
+        }
+
+    if stage == "cutting":
+        batch_row = None
+
+        for product_name in PRODUCT_ROUTE_MAPS:
+            for row in get_cutting_batches_for_cutting(product_name):
+                if row[0] == batch_id:
+                    batch_row = row
+                    break
+            if batch_row:
+                break
+
+        if batch_row is None:
+            return {"ok": False, "message": "Сначала нужно выполнить формирование настила."}
+
+        operation = get_cutting_operation(batch_row[1], CUTTING_CUT_OPERATION)
+
+        if operation is None:
+            return {"ok": False, "message": "Для изделия не найдена операция раскроя."}
+
+        try:
+            progress = int(payload.get("progress") or 0)
+        except (TypeError, ValueError):
+            progress = 0
+
+        if progress not in {25, 50, 75, 100}:
+            return {"ok": False, "message": "Выберите готовность: 25, 50, 75 или 100%."}
+
+        if not update_cutting_batch_progress(batch_id, shift[0], employee[0], operation["id"], progress):
+            return {"ok": False, "message": "Раскрой уже недоступен."}
+
+        set_shift_operation_quantity(
+            shift[0],
+            employee[0],
+            operation["id"],
+            "готовность",
+            "без цвета",
+            progress,
+        )
+        add_edit_log(
+            telegram_id,
+            "employee",
+            "Обновил процент раскроя из миниаппа",
+            "cutting_batch",
+            batch_id,
+            f"{progress}%",
+        )
+
+        message = "Раскрой завершён. Следующий этап: формирование готового кроя." if progress == 100 else "Готовность раскроя сохранена."
+
+        return {
+            "ok": True,
+            "message": message,
+            "production": get_production_state_for_telegram(telegram_id),
+        }
+
+    if stage == "formation":
+        batch_row = None
+
+        for product_name in PRODUCT_ROUTE_MAPS:
+            for row in get_cutting_batches_for_formation(product_name):
+                if row[0] == batch_id:
+                    batch_row = row
+                    break
+            if batch_row:
+                break
+
+        if batch_row is None:
+            return {"ok": False, "message": "Сначала нужно завершить раскрой на 100%."}
+
+        operation = get_cutting_operation(batch_row[1], CUTTING_FORM_OPERATION)
+
+        if operation is None:
+            return {"ok": False, "message": "Для изделия не найдена операция формирования готового кроя."}
+
+        result_rows = get_cutting_batch_result_rows(batch_id)
+
+        if not mark_cutting_batch_formed(batch_id, shift[0], employee[0], operation["id"]):
+            return {"ok": False, "message": "Готовый крой уже недоступен."}
+
+        for product_size, color, quantity in result_rows:
+            if quantity > 0:
+                add_shift_operation(shift[0], employee[0], operation["id"], product_size, color, quantity)
+
+        add_edit_log(
+            telegram_id,
+            "employee",
+            "Сформировал готовый крой из миниаппа",
+            "cutting_batch",
+            batch_id,
+            f"На склад передано строк: {len([row for row in result_rows if row[2] > 0])}",
+        )
+
+        return {
+            "ok": True,
+            "message": "Готовый крой принят на склад.",
+            "production": get_production_state_for_telegram(telegram_id),
+        }
+
+    return {"ok": False, "message": "Неизвестный этап."}
 
 
 ADMIN_MENU = [
@@ -3145,7 +3535,8 @@ MINIAPP_HTML = """<!doctype html>
       orderSizes: [],
       orderColors: [],
       orderQuantity: "1",
-      adminSection: "reports",
+      orderStockQuantities: {},
+      adminSection: "warehouse",
       adminReportType: "period",
       adminStartDate: "",
       adminEndDate: "",
@@ -3218,6 +3609,12 @@ MINIAPP_HTML = """<!doctype html>
 
     function progressForTask(task) {
       if (!task) return 0;
+      if (task.task_kind === "cutting_stage" || task.stage) {
+        if (task.stage === "contours") return 18;
+        if (task.stage === "layout") return 42;
+        if (task.stage === "cutting") return Math.max(60, Number(task.progress || 0));
+        if (task.stage === "formation") return 92;
+      }
       if (task.status === "formed") return 100;
       if (task.status === "in_cutting") return 70;
       if (task.status === "contours_done") return 40;
@@ -3242,6 +3639,14 @@ MINIAPP_HTML = """<!doctype html>
 
     function getContourTasks() {
       return getProduction().contour_tasks || [];
+    }
+
+    function getCuttingTasks() {
+      return getProduction().cutting_tasks || [];
+    }
+
+    function getWarehouseStock() {
+      return getProduction().warehouse_stock || [];
     }
 
     function getRouteCatalog() {
@@ -3274,6 +3679,14 @@ MINIAPP_HTML = """<!doctype html>
       return product.steps
         .map((step, index) => ({...step, index}))
         .filter((step) => step.position !== "Раскройщик");
+    }
+
+    function currentOrderRows() {
+      const productionTasks = state.data && state.data.is_admin ? getTasks() : getCuttingTasks();
+      const routeTasks = getRouteTasks();
+      const tasks = productionTasks.map((task) => ({...task, task_kind: state.data && state.data.is_admin ? "production" : "cutting_stage"}));
+      const routeRows = routeTasks.map((task) => ({...task, task_kind: "route"}));
+      return [...tasks, ...routeRows];
     }
 
     function shiftText() {
@@ -3931,6 +4344,7 @@ MINIAPP_HTML = """<!doctype html>
       state.orderSizes = [];
       state.orderColors = [];
       state.orderQuantity = "1";
+      state.orderStockQuantities = {};
     }
 
     function ensureOrderDraftDefaults() {
@@ -3962,18 +4376,28 @@ MINIAPP_HTML = """<!doctype html>
       const routeStep = document.getElementById("orderRouteStep");
       const material = document.getElementById("orderMaterial");
       const quantity = document.getElementById("orderQuantity");
+      const stockQuantityInputs = document.querySelectorAll("[data-stock-quantity]");
       const previousProduct = state.orderProduct;
+      const previousRouteStep = state.orderRouteStep;
 
       if (product) state.orderProduct = product.value;
       if (taskType) state.orderTaskType = taskType.value;
       if (routeStep) state.orderRouteStep = routeStep.value;
       if (material) state.orderMaterial = material.value;
       if (quantity) state.orderQuantity = quantity.value;
+      stockQuantityInputs.forEach((input) => {
+        state.orderStockQuantities[input.dataset.stockQuantity] = input.value;
+      });
 
       if (previousProduct && previousProduct !== state.orderProduct) {
         state.orderSizes = [];
         state.orderColors = [];
         state.orderRouteStep = "";
+        state.orderStockQuantities = {};
+      }
+
+      if (previousRouteStep && previousRouteStep !== state.orderRouteStep) {
+        state.orderStockQuantities = {};
       }
 
       ensureOrderDraftDefaults();
@@ -3996,6 +4420,9 @@ MINIAPP_HTML = """<!doctype html>
       if (!state.data || !state.data.is_admin) return;
       syncOrderDraft();
       mainButton.disabled = true;
+      const stockItems = Object.entries(state.orderStockQuantities)
+        .map(([stockId, quantity]) => ({stock_id: stockId, quantity}))
+        .filter((item) => Number(item.quantity || 0) > 0);
 
       try {
         const data = await api("/api/production/create-order-task", {
@@ -4006,6 +4433,7 @@ MINIAPP_HTML = """<!doctype html>
           sizes: state.orderSizes,
           colors: state.orderColors,
           quantity: state.orderQuantity,
+          stock_items: stockItems,
         });
 
         if (!data.ok) {
@@ -4064,6 +4492,117 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    function renderCuttingStageDetail(current) {
+      if (current.stage === "contours") {
+        const rows = (current.colors || []).map((color) => (current.sizes || []).map((size) => `
+          <div class="card report-row">
+            <div><b>${escapeHtml(size)} · ${escapeHtml(color)}</b><span>Количество деталей</span></div>
+            <input data-contour-key="${escapeHtml(`${size}|${color}`)}" type="number" min="0" step="1" placeholder="0">
+          </div>
+        `).join("")).join("");
+
+        return `<div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">1 этап</span></div></div><div class="op-list">${rows || itemEmpty("Нет размеров или цветов.")}</div>`;
+      }
+
+      if (current.stage === "layout") {
+        const rows = (current.colors || []).map((color) => `
+          <div class="card report-row">
+            <div><b>${escapeHtml(color)}</b><span>${escapeHtml(current.sizes_text || "Размеры задания")}</span></div>
+            <input data-layer-color="${escapeHtml(color)}" type="number" min="0" step="1" placeholder="слои">
+          </div>
+        `).join("");
+
+        return `<div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">2 этап</span></div></div><div class="op-list">${rows || itemEmpty("Нет цветов для настила.")}</div>`;
+      }
+
+      if (current.stage === "cutting") {
+        return `
+          <div class="card order-detail">
+            <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">3 этап</span></div>
+            <div class="form-grid"><div class="field full"><label>Готовность</label><select id="cuttingProgress"><option value="25">25%</option><option value="50">50%</option><option value="75">75%</option><option value="100" selected>100%</option></select></div></div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="card order-detail">
+          <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">4 этап</span></div>
+          <p class="empty">После выполнения готовый крой попадёт на склад полуфабрикатов.</p>
+        </div>
+      `;
+    }
+
+    async function submitCuttingStage(current) {
+      if (!current) return;
+      const payload = {stage: current.stage};
+
+      if (current.stage === "contours") {
+        payload.task_id = current.id;
+        payload.quantities = {};
+        document.querySelectorAll("[data-contour-key]").forEach((input) => {
+          payload.quantities[input.dataset.contourKey] = input.value;
+        });
+      } else {
+        payload.batch_id = current.id;
+      }
+
+      if (current.stage === "layout") {
+        payload.color_layers = {};
+        document.querySelectorAll("[data-layer-color]").forEach((input) => {
+          payload.color_layers[input.dataset.layerColor] = input.value;
+        });
+      }
+
+      if (current.stage === "cutting") {
+        const progress = document.getElementById("cuttingProgress");
+        payload.progress = progress ? progress.value : "100";
+      }
+
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/production/submit-cutting-stage", payload);
+
+        if (!data.ok) {
+          showToast("Задание", data.message || "Не удалось выполнить этап.");
+          mainButton.disabled = false;
+          return;
+        }
+
+        state.data.production = data.production || state.data.production;
+        state.selectedOrder = 0;
+        render();
+        showToast("Задание", data.message || "Этап выполнен.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось выполнить этап.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function completeOperationTask(current) {
+      if (!current) return;
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/routes/complete", {batch_id: current.id});
+
+        if (!data.ok) {
+          showToast("Задание", data.message || "Не удалось завершить операцию.");
+          mainButton.disabled = false;
+          return;
+        }
+
+        if (state.data.routes) state.data.routes.tasks = data.tasks || [];
+        state.data.production = data.production || state.data.production;
+        state.selectedOrder = 0;
+        render();
+        showToast("Задание", data.message || "Операция завершена.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось завершить операцию.");
+        mainButton.disabled = false;
+      }
+    }
+
     function renderOrderCreate() {
       const product = ensureOrderDraftDefaults();
       const catalog = getRouteCatalog();
@@ -4073,6 +4612,18 @@ MINIAPP_HTML = """<!doctype html>
       const operationOptions = operations.map((operation) => `
         <option value="${operation.index}" ${String(operation.index) === String(state.orderRouteStep) ? "selected" : ""}>${escapeHtml(operation.position)} — ${escapeHtml(operation.operation)}</option>
       `).join("");
+      const selectedOperation = operations.find((operation) => String(operation.index) === String(state.orderRouteStep)) || operations[0] || null;
+      const stockRows = selectedOperation ? getWarehouseStock().filter((row) =>
+        row.item_type === "semifinished" &&
+        row.product_name === state.orderProduct &&
+        row.ready_for_position === selectedOperation.position
+      ) : [];
+      const stockHtml = stockRows.length ? stockRows.map((row) => `
+        <div class="card report-row">
+          <div><b>${escapeHtml(row.product_name)} — ${escapeHtml(row.stage_name)}</b><span>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}<br>Доступно: ${escapeHtml(row.quantity_text || row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>
+          <input data-stock-quantity="${escapeHtml(row.id)}" type="number" min="0" max="${escapeHtml(row.quantity)}" step="1" value="${escapeHtml(state.orderStockQuantities[row.id] || "")}" placeholder="0">
+        </div>
+      `).join("") : itemEmpty("На складе нет полуфабрикатов для этой операции.");
 
       mainButton.textContent = "Создать задание";
       mainButton.disabled = false;
@@ -4082,14 +4633,18 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card field-card">
           <div class="form-grid">
             <div class="field full"><label>Изделие</label><select id="orderProduct">${catalog.map((item) => `<option value="${escapeHtml(item.product_name)}" ${item.product_name === state.orderProduct ? "selected" : ""}>${escapeHtml(item.product_name)}</option>`).join("")}</select></div>
-            <div class="field full"><label>Тип задания</label><select id="orderTaskType"><option value="cutting" ${state.orderTaskType === "cutting" ? "selected" : ""}>Раскрой</option><option value="route" ${state.orderTaskType === "route" ? "selected" : ""}>Операция по маршруту</option></select></div>
+            <div class="field full"><label>Тип задания</label><select id="orderTaskType"><option value="cutting" ${state.orderTaskType === "cutting" ? "selected" : ""}>Раскрой</option><option value="route" ${state.orderTaskType === "route" ? "selected" : ""}>Операция</option></select></div>
             ${state.orderTaskType === "route" ? `<div class="field full"><label>Операция</label><select id="orderRouteStep">${operationOptions || `<option value="">Нет операций</option>`}</select></div>` : ""}
             ${state.orderTaskType === "cutting" ? `<div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>` : `<div class="field full"><label>Вход</label><input value="Полуфабрикат" disabled></div>`}
-            ${state.orderTaskType === "route" ? `<div class="field full"><label>Количество на каждую комбинацию</label><input id="orderQuantity" type="number" min="1" step="1" value="${escapeHtml(state.orderQuantity || "1")}"></div>` : ""}
           </div>
         </div>
-        <div class="card field-card"><label>Размеры</label>${sizes.length ? renderChoiceChips("size", sizes, state.orderSizes) : itemEmpty("У изделия нет размеров.")}</div>
-        <div class="card field-card"><label>${state.orderTaskType === "cutting" ? "Цвета ткани" : "Цвета изделия"}</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
+        ${state.orderTaskType === "cutting" ? `
+          <div class="card field-card"><label>Размеры</label>${sizes.length ? renderChoiceChips("size", sizes, state.orderSizes) : itemEmpty("У изделия нет размеров.")}</div>
+          <div class="card field-card"><label>Цвета ткани</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
+        ` : `
+          <div class="section-title"><b>Полуфабрикаты со склада</b><span>${stockRows.length}</span></div>
+          <div class="op-list">${stockHtml}</div>
+        `}
         <div class="button-row"><button class="small-button secondary" data-order-action="cancel">К списку</button><button class="small-button" data-order-action="create">Создать</button></div>
       `;
     }
@@ -4100,32 +4655,32 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      const productionTasks = state.data && state.data.is_admin ? getTasks() : getContourTasks();
+      const productionTasks = state.data && state.data.is_admin ? getTasks() : getCuttingTasks();
       const routeTasks = getRouteTasks();
-      const tasks = productionTasks.map((task) => ({...task, task_kind: "production"}));
+      const tasks = productionTasks.map((task) => ({...task, task_kind: state.data && state.data.is_admin ? "production" : "cutting_stage"}));
       const routeRows = routeTasks.map((task) => ({...task, task_kind: "route"}));
       const allTasks = [...tasks, ...routeRows];
       const current = allTasks[state.selectedOrder] || allTasks[0];
-      mainButton.textContent = state.data && state.data.is_admin ? "Создать задание" : "Обновить статус";
+      mainButton.textContent = state.data && state.data.is_admin ? "Создать задание" : (current ? "Выполнить" : "Обновить статус");
       mainButton.disabled = false;
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Заказы в работе</h2><p>${state.data && state.data.is_admin ? "Создание и контроль заданий." : "Доступные задания для вашей должности."}</p></div><div class="date">${allTasks.length} активных</div></div>
-        ${state.data && state.data.is_admin ? `<div class="card shift-card" data-order-action="new"><div><b>Создать задание</b><span>Раскрой, пошив и другие операции по маршруту.</span></div><span class="status-chip">+</span></div>` : ""}
+        ${state.data && state.data.is_admin ? `<div class="card shift-card" data-order-action="new"><div><b>Создать задание</b><span>Раскрой и следующие операции из складского остатка.</span></div><span class="status-chip">+</span></div>` : ""}
         <div class="op-list">
           ${allTasks.length ? `
           ${tasks.map((task, index) => `
             <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
-              <div class="order-head"><div class="op-icon">▣</div><div><b>Задание #${escapeHtml(task.id)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip ${task.status === "active" ? "warn" : ""}">${escapeHtml(task.status_text || task.status)}</span></div>
+              <div class="order-head"><div class="op-icon">▣</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip ${task.status === "active" ? "warn" : ""}">${escapeHtml(task.status_text || task.status)}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
-              <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || "-")}</span><span>${progressForTask(task)}%</span></div>
+              <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
             </div>
           `).join("")}
           ${routeRows.map((task, routeIndex) => {
             const index = tasks.length + routeIndex;
             return `
               <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
-                <div class="order-head"><div class="op-icon">▣</div><div><b>Маршрут #${escapeHtml(task.id)}</b><span>${escapeHtml(task.product_name)} · ${escapeHtml(task.position)}</span></div><span class="status-chip gray">${escapeHtml(task.operation)}</span></div>
+                <div class="order-head"><div class="op-icon">▣</div><div><b>Операция #${escapeHtml(task.id)}</b><span>${escapeHtml(task.product_name)} · ${escapeHtml(task.position)}</span></div><span class="status-chip gray">${escapeHtml(task.operation)}</span></div>
                 <div class="order-foot"><span>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</span><span>${escapeHtml(task.quantity)} шт</span></div>
               </div>
             `;
@@ -4133,10 +4688,10 @@ MINIAPP_HTML = """<!doctype html>
           ` : itemEmpty("Активных заданий пока нет.")}
         </div>
         <div class="section-title"><b>Детали выбранного</b><span>${current ? progressForTask(current) : 0}%</span></div>
-        ${current && current.task_kind === "production" ? `
+        ${current && current.task_kind === "cutting_stage" ? renderCuttingStageDetail(current) : current && current.task_kind === "production" ? `
           <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.status_text || current.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || current.status)}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
         ` : current ? `
-          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Маршрут #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.position)}</span></div><div class="detail-grid"><div class="detail-box"><span>Операция</span><strong>${escapeHtml(current.operation)}</strong></div><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div></div></div>
+          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Операция #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.position)}</span></div><div class="detail-grid"><div class="detail-box"><span>Операция</span><strong>${escapeHtml(current.operation)}</strong></div><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div></div></div>
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
         ${state.data && state.data.is_admin && current ? `<div class="button-row"><button class="small-button danger" data-order-action="delete">Удалить задание</button></div>` : ""}
       `;
@@ -4182,6 +4737,7 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderAdminTabs() {
       const sections = [
+        ["warehouse", "Склад"],
         ["reports", "Отчёты"],
         ["employees", "Сотрудники"],
         ["shifts", "Смены"],
@@ -4191,6 +4747,45 @@ MINIAPP_HTML = """<!doctype html>
       return `<div class="segment-row">${sections.map(([id, label]) => `
         <button class="segment-button ${state.adminSection === id ? "active" : ""}" data-admin-section="${id}">${label}</button>
       `).join("")}</div>`;
+    }
+
+    function renderAdminWarehouse() {
+      const fabricRows = getProduction().fabric_stock || [];
+      const warehouseRows = getWarehouseStock();
+      const semifinished = warehouseRows.filter((row) => row.item_type === "semifinished");
+      const finished = warehouseRows.filter((row) => row.item_type === "finished");
+      const cuttingReady = semifinished.filter((row) => row.ready_for_position === "Раскройщик");
+      const sewingReady = semifinished.filter((row) => row.ready_for_position === "Швея");
+      const packingReady = semifinished.filter((row) => row.ready_for_position === "Упаковщик");
+      mainButton.textContent = "Обновить склад";
+      mainButton.disabled = false;
+
+      const materialHtml = fabricRows.length ? fabricRows.map((row) => `
+        <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span></div>
+      `).join("") : itemEmpty("Материалов пока нет.");
+      const stockList = (rows) => rows.length ? rows.map((row) => `
+        <div class="card report-row"><div><b>${escapeHtml(row.title)}</b><span>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}<br>Для: ${escapeHtml(row.ready_for_position)}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span></div>
+      `).join("") : itemEmpty("Нет остатков.");
+
+      return `
+        <div class="screen-head"><div><h2>Склад</h2><p>Материалы, полуфабрикаты и готовая продукция.</p></div><div class="date">${warehouseRows.length + fabricRows.length} поз.</div></div>
+        ${renderAdminTabs()}
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>Материалы</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз</small></strong><span>Ткань и материалы</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Полуфабрикаты</span><div class="kpi-ico">▣</div></div><strong>${semifinished.length}<small> поз</small></strong><span>После этапов</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Готовое</span><div class="kpi-ico">✓</div></div><strong>${finished.length}<small> поз</small></strong><span>Готовая продукция</span></div>
+        </div>
+        <div class="section-title"><b>Материалы</b><span>${fabricRows.length}</span></div>
+        <div class="op-list">${materialHtml}</div>
+        <div class="section-title"><b>Для раскроя</b><span>${cuttingReady.length}</span></div>
+        <div class="op-list">${stockList(cuttingReady)}</div>
+        <div class="section-title"><b>Для швеи</b><span>${sewingReady.length}</span></div>
+        <div class="op-list">${stockList(sewingReady)}</div>
+        <div class="section-title"><b>Для упаковщика</b><span>${packingReady.length}</span></div>
+        <div class="op-list">${stockList(packingReady)}</div>
+        <div class="section-title"><b>Готовая продукция</b><span>${finished.length}</span></div>
+        <div class="op-list">${stockList(finished)}</div>
+      `;
     }
 
     function renderAdminReports(admin) {
@@ -4352,6 +4947,11 @@ MINIAPP_HTML = """<!doctype html>
       ensureAdminDefaults();
       const admin = getAdmin();
       mainButton.disabled = false;
+
+      if (state.adminSection === "warehouse") {
+        mount.innerHTML = renderAdminWarehouse();
+        return;
+      }
 
       if (state.adminSection === "employees") {
         mount.innerHTML = renderAdminEmployees(admin);
@@ -4543,7 +5143,13 @@ MINIAPP_HTML = """<!doctype html>
         render();
         return;
       }
-      if (state.screen === "orders") { refreshState("Статус обновлён."); return; }
+      if (state.screen === "orders") {
+        const current = currentOrderRows()[state.selectedOrder] || currentOrderRows()[0];
+        if (current && current.task_kind === "cutting_stage") { submitCuttingStage(current); return; }
+        if (current && current.task_kind === "route") { completeOperationTask(current); return; }
+        refreshState("Статус обновлён.");
+        return;
+      }
       if (state.screen === "admin") {
         if (state.adminSection === "reports") { exportAdminReport(); return; }
         if (state.adminSection === "feedback") { loadAdminFeedback(); return; }
@@ -4552,9 +5158,9 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
-      if (event.target.closest("#orderProduct") || event.target.closest("#orderTaskType") || event.target.closest("#orderRouteStep") || event.target.closest("#orderMaterial") || event.target.closest("#orderQuantity")) {
+      if (event.target.closest("#orderProduct") || event.target.closest("#orderTaskType") || event.target.closest("#orderRouteStep") || event.target.closest("#orderMaterial") || event.target.closest("#orderQuantity") || event.target.closest("[data-stock-quantity]")) {
         syncOrderDraft();
-        render();
+        if (!event.target.closest("[data-stock-quantity]")) render();
         return;
       }
 
@@ -4629,6 +5235,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/production/create-order-task",
                 "/api/production/delete-order-task",
                 "/api/production/submit-contours",
+                "/api/production/submit-cutting-stage",
                 "/api/routes/create-batch",
                 "/api/routes/complete",
                 "/api/admin/dashboard",
@@ -4700,6 +5307,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = delete_order_task_for_telegram(telegram_id, payload)
             elif path == "/api/production/submit-contours":
                 result = submit_production_contours_for_telegram(telegram_id, payload)
+            elif path == "/api/production/submit-cutting-stage":
+                result = submit_cutting_stage_for_telegram(telegram_id, payload)
             elif path == "/api/routes/create-batch":
                 result = create_route_batch_for_telegram(telegram_id, payload)
             elif path == "/api/routes/complete":
