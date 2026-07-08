@@ -1031,6 +1031,20 @@ def shift_detail_to_dict(row):
     }
 
 
+def employee_shift_to_dict(row):
+    shift_id, shift_date, start_time, end_time, total_minutes, shift_status = row
+
+    return {
+        "id": shift_id,
+        "date": shift_date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "total_minutes": total_minutes,
+        "total_time": format_minutes(total_minutes or 0),
+        "status": shift_status,
+    }
+
+
 def employee_summary_to_dict(row):
     employee_id, full_name, shift_count, total_minutes = row[:4]
 
@@ -1344,6 +1358,10 @@ def get_admin_dashboard(telegram_id: int):
             operation_admin_to_dict(operation) for operation in get_all_operations()
         ],
         "reports": get_admin_report_payload("period", month_start, today),
+        "feedback": [
+            feedback_row_to_dict(row)
+            for row in get_feedback_entries(month_start, today)
+        ],
     }
 
 
@@ -1440,6 +1458,72 @@ def get_admin_report_for_telegram(telegram_id: int, payload: dict):
             end_date,
             employee_id or None,
         ),
+    }
+
+
+def get_employee_history_for_telegram(telegram_id: int, payload: dict):
+    month_start, today = month_bounds()
+    start_date = clean_date(payload.get("start_date"), month_start)
+    end_date = clean_date(payload.get("end_date"), today)
+    employee = get_employee_for_access(telegram_id)
+
+    if employee is None or employee[5] != "active":
+        return {
+            "ok": False,
+            "message": "Нет активного профиля.",
+            "start_date": start_date,
+            "end_date": end_date,
+            "summary": None,
+            "shifts": [],
+            "operations": [],
+        }
+
+    summary = get_employee_period_summary(employee[0], start_date, end_date)
+
+    return {
+        "ok": True,
+        "message": "",
+        "start_date": start_date,
+        "end_date": end_date,
+        "summary": (
+            {
+                "employee_id": summary[0],
+                "full_name": summary[1],
+                "position": summary[2],
+                "shift_count": summary[3],
+                "total_minutes": summary[4],
+                "total_time": format_minutes(summary[4] or 0),
+            }
+            if summary
+            else None
+        ),
+        "shifts": [
+            employee_shift_to_dict(row)
+            for row in get_employee_shifts_by_period(employee[0], start_date, end_date)
+        ],
+        "operations": [
+            employee_operation_total_to_dict(row)
+            for row in get_employee_period_operation_totals(employee[0], start_date, end_date)
+        ],
+    }
+
+
+def get_admin_feedback_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора.", "feedback": []}
+
+    month_start, today = month_bounds()
+    start_date = clean_date(payload.get("start_date"), month_start)
+    end_date = clean_date(payload.get("end_date"), today)
+
+    return {
+        "ok": True,
+        "start_date": start_date,
+        "end_date": end_date,
+        "feedback": [
+            feedback_row_to_dict(row)
+            for row in get_feedback_entries(start_date, end_date)
+        ],
     }
 
 
@@ -1686,6 +1770,7 @@ def get_app_state(telegram_id: int, message: str = ""):
         **shift_state,
         "is_admin": is_admin(telegram_id),
         "report": get_current_report_for_telegram(telegram_id),
+        "history": get_employee_history_for_telegram(telegram_id, {}),
         "routes": {
             "enabled": ROUTES_MINIAPP_ENABLED,
             "catalog": get_route_catalog(),
@@ -2123,7 +2208,8 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .field input,
-    .field select {
+    .field select,
+    .field textarea {
       width: 100%;
       min-height: 42px;
       border: 1px solid rgba(78,56,42,.13);
@@ -2134,6 +2220,38 @@ MINIAPP_HTML = """<!doctype html>
       outline: none;
       font-size: 13px;
       font-weight: 850;
+    }
+
+    .field textarea {
+      min-height: 108px;
+      resize: vertical;
+      line-height: 1.35;
+    }
+
+    .segment-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .segment-button {
+      min-width: 0;
+      min-height: 34px;
+      border: none;
+      border-radius: 13px;
+      padding: 8px 5px;
+      background: rgba(255,255,255,.56);
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.05;
+      font-weight: 950;
+      overflow-wrap: anywhere;
+    }
+
+    .segment-button.active {
+      background: var(--accent);
+      color: white;
     }
 
     .button-row {
@@ -2158,6 +2276,10 @@ MINIAPP_HTML = """<!doctype html>
     .small-button.secondary {
       color: var(--accent-dark);
       background: rgba(195,111,85,.12);
+    }
+
+    .small-button.danger {
+      background: var(--danger);
     }
 
     .report-row {
@@ -2532,10 +2654,14 @@ MINIAPP_HTML = """<!doctype html>
       screen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
+      adminSection: "reports",
       adminReportType: "period",
       adminStartDate: "",
       adminEndDate: "",
       adminEmployeeId: "",
+      adminShiftEndTime: "",
+      userStartDate: "",
+      userEndDate: "",
       data: null,
     };
 
@@ -2551,6 +2677,7 @@ MINIAPP_HTML = """<!doctype html>
       { id: "report", label: "Отчёт", icon: "＋" },
       { id: "analytics", label: "Аналитика", icon: "▥" },
       { id: "orders", label: "Заказы", icon: "▣" },
+      { id: "feedback", label: "Связь", icon: "✎" },
     ];
 
     if (tg) {
@@ -2671,6 +2798,31 @@ MINIAPP_HTML = """<!doctype html>
       return admin && admin.reports ? admin.reports : null;
     }
 
+    function getHistory() {
+      return state.data && state.data.history ? state.data.history : null;
+    }
+
+    function ensureUserDefaults() {
+      const admin = getAdmin();
+      const defaults = admin && admin.period_defaults ? admin.period_defaults : {};
+      const history = getHistory();
+
+      if (!state.userStartDate) {
+        state.userStartDate = (history && history.start_date) || defaults.start_date || "";
+      }
+      if (!state.userEndDate) {
+        state.userEndDate = (history && history.end_date) || defaults.end_date || "";
+      }
+    }
+
+    function getHistoryPayload() {
+      ensureUserDefaults();
+      return {
+        start_date: state.userStartDate,
+        end_date: state.userEndDate,
+      };
+    }
+
     function ensureAdminDefaults() {
       const admin = getAdmin();
       const report = getAdminReport();
@@ -2685,6 +2837,14 @@ MINIAPP_HTML = """<!doctype html>
       if (!state.adminEmployeeId && admin && admin.employees && admin.employees[0]) {
         state.adminEmployeeId = String(admin.employees[0].id);
       }
+    }
+
+    function syncHistoryForm() {
+      const start = document.getElementById("userStartDate");
+      const end = document.getElementById("userEndDate");
+
+      if (start) state.userStartDate = start.value;
+      if (end) state.userEndDate = end.value;
     }
 
     function getAdminReportPayload() {
@@ -2736,6 +2896,163 @@ MINIAPP_HTML = """<!doctype html>
       if (start) state.adminStartDate = start.value;
       if (end) state.adminEndDate = end.value;
       if (employee) state.adminEmployeeId = employee.value;
+    }
+
+    function replaceAdminDashboard(data, fallbackMessage) {
+      if (!data.ok) {
+        showToast("Админ", data.message || fallbackMessage || "Действие не выполнено.");
+        mainButton.disabled = false;
+        return;
+      }
+
+      state.data.admin = data;
+      render();
+      showToast("Админ", data.message || fallbackMessage || "Данные обновлены.");
+    }
+
+    async function loadHistory() {
+      syncHistoryForm();
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/report/history", getHistoryPayload());
+        if (!data.ok) {
+          showToast("История", data.message || "Не удалось загрузить историю.");
+          mainButton.disabled = false;
+          return;
+        }
+        state.data.history = data;
+        render();
+        showToast("История", "Данные обновлены.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось загрузить историю.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function sendFeedback() {
+      const category = document.getElementById("feedbackCategory");
+      const message = document.getElementById("feedbackMessage");
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/feedback/send", {
+          category: category ? category.value : "",
+          message: message ? message.value : "",
+        });
+        if (!data.ok) {
+          showToast("Связь", data.message || "Не удалось отправить сообщение.");
+          mainButton.disabled = false;
+          return;
+        }
+        state.data.report = data.report || state.data.report;
+        if (message) message.value = "";
+        render();
+        showToast("Связь", data.message || "Сообщение отправлено.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось отправить сообщение.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function refreshAdminDashboard(message = "Данные обновлены.") {
+      if (!state.data || !state.data.is_admin) return;
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/admin/dashboard");
+        replaceAdminDashboard(data, message);
+      } catch (error) {
+        showToast("Ошибка", "Не удалось обновить админ-раздел.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function adminEmployeeStatus(employeeId, status) {
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/admin/employee/status", {
+          employee_id: employeeId,
+          status,
+        });
+        replaceAdminDashboard(data, "Статус сотрудника изменён.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось изменить статус.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function adminEmployeePosition(employeeId) {
+      const select = document.getElementById(`employeePosition${employeeId}`);
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/admin/employee/position", {
+          employee_id: employeeId,
+          position: select ? select.value : "",
+        });
+        replaceAdminDashboard(data, "Должность изменена.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось изменить должность.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function adminCloseShift(shiftId) {
+      const endTime = document.getElementById("adminShiftEndTime");
+      state.adminShiftEndTime = endTime ? endTime.value : state.adminShiftEndTime;
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/admin/shift/close", {
+          shift_id: shiftId,
+          end_time: state.adminShiftEndTime,
+        });
+        replaceAdminDashboard(data, "Смена закрыта.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось закрыть смену.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function adminDeleteShift(shiftId) {
+      if (!window.confirm("Удалить смену?")) return;
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/admin/shift/delete", { shift_id: shiftId });
+        replaceAdminDashboard(data, "Смена удалена.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось удалить смену.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function loadAdminFeedback() {
+      ensureAdminDefaults();
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/admin/feedback", {
+          start_date: state.adminStartDate,
+          end_date: state.adminEndDate,
+        });
+        if (!data.ok) {
+          showToast("Связь", data.message || "Не удалось загрузить сообщения.");
+          mainButton.disabled = false;
+          return;
+        }
+        state.data.admin = {
+          ...state.data.admin,
+          feedback: data.feedback || [],
+        };
+        render();
+        showToast("Связь", "Сообщения обновлены.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось загрузить сообщения.");
+        mainButton.disabled = false;
+      }
     }
 
     async function loadAdminReport() {
@@ -2858,8 +3175,14 @@ MINIAPP_HTML = """<!doctype html>
       const operations = getReportOperations();
       const feedback = getFeedbackRows();
       const op = operations[state.selectedOperation] || operations[0];
+      const history = getHistory();
+      ensureUserDefaults();
       mainButton.textContent = "Обновить отчёт";
       mainButton.disabled = false;
+
+      const historySummary = history && history.summary ? history.summary : null;
+      const historyShifts = history && history.shifts ? history.shifts : [];
+      const historyOperations = history && history.operations ? history.operations : [];
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Отчёт по операции</h2><p>Просмотр данных текущей смены.</p></div><div class="date">${operations.length} строк</div></div>
@@ -2872,6 +3195,30 @@ MINIAPP_HTML = """<!doctype html>
           ${feedback.length ? feedback.map((row) => `
             <div class="card field-card"><label>${escapeHtml(row.category)} · ${escapeHtml(row.date)}</label><div class="textarea">${escapeHtml(row.message)}</div></div>
           `).join("") : `<div class="card field-card">${itemEmpty("Сообщений за смену нет.")}</div>`}
+        </div>
+        <div class="section-title"><b>Моя история</b><button data-history-action="load">показать</button></div>
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field"><label>Начало</label><input id="userStartDate" type="date" value="${escapeHtml(state.userStartDate)}"></div>
+            <div class="field"><label>Окончание</label><input id="userEndDate" type="date" value="${escapeHtml(state.userEndDate)}"></div>
+          </div>
+          <div class="button-row"><button class="small-button secondary" data-history-action="load">Показать</button><button class="small-button" data-go="feedback">Написать связь</button></div>
+        </div>
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">◷</div></div><strong>${historySummary ? historySummary.shift_count : 0}<small> шт</small></strong><span>За выбранный период</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(historySummary ? historySummary.total_time : "0:00")}</strong><span>Отработано суммарно</span></div>
+        </div>
+        <div class="section-title"><b>Смены за период</b><span>${historyShifts.length}</span></div>
+        <div class="op-list">
+          ${historyShifts.length ? historyShifts.slice(0, 8).map((shift) => `
+            <div class="card report-row"><div><b>${escapeHtml(shift.date)}</b><span>${escapeHtml(shift.start_time || "-")} — ${escapeHtml(shift.end_time || "-")} · ${escapeHtml(shift.status)}</span></div><span class="status-chip gray">${escapeHtml(shift.total_time || "-")}</span></div>
+          `).join("") : itemEmpty("За выбранный период смен пока нет.")}
+        </div>
+        <div class="section-title"><b>Операции за период</b><span>${historyOperations.length}</span></div>
+        <div class="op-list">
+          ${historyOperations.length ? historyOperations.slice(0, 10).map((operation) => `
+            <div class="card report-row"><div><b>${escapeHtml(operation.operation)}</b><span>Итого по операции</span></div><span class="status-chip">${escapeHtml(operation.quantity)} ${escapeHtml(operation.unit)}</span></div>
+          `).join("") : itemEmpty("Операций за выбранный период пока нет.")}
         </div>
       `;
     }
@@ -2938,19 +3285,44 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
-    function renderAdmin() {
-      if (!state.data || !state.data.is_admin) {
-        mainButton.textContent = "Обновить";
-        mainButton.disabled = false;
-        mount.innerHTML = `
-          <div class="screen-head"><div><h2>Админ</h2><p>Раздел доступен только администратору.</p></div></div>
-          <div class="card field-card">${itemEmpty("Нет прав администратора.")}</div>
-        `;
-        return;
-      }
+    function renderFeedback() {
+      const feedback = getFeedbackRows();
+      mainButton.textContent = "Отправить сообщение";
+      mainButton.disabled = false;
 
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Связь</h2><p>Сообщение администратору по производству или бытовому вопросу.</p></div><div class="date">${feedback.length} сообщений</div></div>
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field full"><label>Раздел</label><select id="feedbackCategory"><option value="Производство">Производство</option><option value="Бытовое">Бытовое</option></select></div>
+            <div class="field full"><label>Сообщение</label><textarea id="feedbackMessage" placeholder="Напишите сообщение"></textarea></div>
+          </div>
+          <div class="button-row"><button class="small-button secondary" data-go="report">К отчёту</button><button class="small-button" data-feedback-action="send">Отправить</button></div>
+        </div>
+        <div class="section-title"><b>Мои сообщения</b><span>${feedback.length}</span></div>
+        <div class="op-list">
+          ${feedback.length ? feedback.map((row) => `
+            <div class="card report-row"><div><b>${escapeHtml(row.category)} · ${escapeHtml(row.date)}</b><span>${escapeHtml(row.message)}</span></div><span class="status-chip gray">${escapeHtml(row.time || "")}</span></div>
+          `).join("") : itemEmpty("Сообщений по текущей смене пока нет.")}
+        </div>
+      `;
+    }
+
+    function renderAdminTabs() {
+      const sections = [
+        ["reports", "Отчёты"],
+        ["employees", "Сотрудники"],
+        ["shifts", "Смены"],
+        ["feedback", "Связь"],
+      ];
+
+      return `<div class="segment-row">${sections.map(([id, label]) => `
+        <button class="segment-button ${state.adminSection === id ? "active" : ""}" data-admin-section="${id}">${label}</button>
+      `).join("")}</div>`;
+    }
+
+    function renderAdminReports(admin) {
       ensureAdminDefaults();
-      const admin = getAdmin();
       const report = getAdminReport();
       const totals = adminReportTotals(report);
       const employees = admin && admin.employees ? admin.employees : [];
@@ -2958,10 +3330,6 @@ MINIAPP_HTML = """<!doctype html>
         <option value="${escapeHtml(employee.id)}" ${String(employee.id) === String(state.adminEmployeeId) ? "selected" : ""}>${escapeHtml(employee.full_name)} · ${escapeHtml(employee.position)}</option>
       `).join("");
       const isEmployeeReport = state.adminReportType === "employee";
-
-      mainButton.textContent = "Выгрузить отчёт";
-      mainButton.disabled = false;
-
       const summaryHtml = report && report.type === "employee" ? `
         ${report.employee_summary ? `
           <div class="card report-row"><div><b>${escapeHtml(report.employee_summary.full_name)}</b><span>${escapeHtml(report.employee_summary.position)} · ${escapeHtml(report.employee_summary.shift_count)} смен · ${escapeHtml(report.employee_summary.total_time)}</span></div><span class="status-chip">сотрудник</span></div>
@@ -2971,15 +3339,17 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card report-row"><div><b>${escapeHtml(row.full_name)}</b><span>${escapeHtml(row.shift_count)} смен · ${escapeHtml(row.total_time)}</span></div><span class="status-chip gray">ID ${escapeHtml(row.employee_id)}</span></div>
         `).join("") : itemEmpty("За выбранный период закрытых смен пока нет.")}
       `;
-
       const shifts = report && report.type === "employee" ? (report.employee_shifts || []) : (report ? report.shifts || [] : []);
       const operations = report && report.type === "employee" ? (report.employee_operations || []) : (report ? report.operations || [] : []);
       const operationsHtml = operations.length ? operations.slice(0, 10).map((operation) => `
         <div class="card report-row"><div><b>${escapeHtml(operation.operation)}</b><span>${escapeHtml(operation.employee || "")}${operation.employee ? " · " : ""}${escapeHtml(operation.date || "")}${operation.group ? `<br>${escapeHtml(operation.group)} · ${escapeHtml(operation.size || "-")} · ${escapeHtml(operation.color || "-")}` : ""}</span></div><span class="status-chip">${escapeHtml(operation.quantity)} ${escapeHtml(operation.unit)}</span></div>
       `).join("") : itemEmpty("Операций за выбранный период пока нет.");
 
-      mount.innerHTML = `
+      mainButton.textContent = "Выгрузить отчёт";
+
+      return `
         <div class="screen-head"><div><h2>Админ отчёты</h2><p>Сегодня, период или конкретный сотрудник.</p></div><div class="date">${escapeHtml(report ? `${report.start_date} — ${report.end_date}` : "период")}</div></div>
+        ${renderAdminTabs()}
         <div class="card field-card">
           <div class="form-grid">
             <div class="field full"><label>Тип отчёта</label><select id="adminReportType"><option value="today" ${state.adminReportType === "today" ? "selected" : ""}>Сегодня</option><option value="period" ${state.adminReportType === "period" ? "selected" : ""}>Период</option><option value="employee" ${isEmployeeReport ? "selected" : ""}>Сотрудник</option></select></div>
@@ -3008,6 +3378,125 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderAdminEmployees(admin) {
+      const employees = admin && admin.employees ? admin.employees : [];
+      const pending = admin && admin.pending_employees ? admin.pending_employees : [];
+      const positions = admin && admin.positions ? admin.positions : [];
+      mainButton.textContent = "Обновить сотрудников";
+
+      const positionOptions = (employee) => positions.map((position) => `
+        <option value="${escapeHtml(position)}" ${employee.position === position ? "selected" : ""}>${escapeHtml(position)}</option>
+      `).join("");
+      const employeeCards = employees.length ? employees.map((employee) => `
+        <div class="card field-card">
+          <label>ID ${escapeHtml(employee.id)} · ${escapeHtml(employee.status)}</label>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · TG ${escapeHtml(employee.telegram_id || "-")}</span></div><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employee.status)}</span></div>
+          <div class="form-grid"><div class="field full"><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>
+          <div class="button-row"><button class="small-button secondary" data-admin-action="position" data-employee-id="${escapeHtml(employee.id)}">Должность</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button></div>
+        </div>
+      `).join("") : itemEmpty("Сотрудников пока нет.");
+      const pendingCards = pending.length ? pending.map((employee) => `
+        <div class="card field-card">
+          <label>Заявка · ${escapeHtml(employee.registered_at || "")}</label>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · TG ${escapeHtml(employee.telegram_id || "-")}</span></div><span class="status-chip warn">pending</span></div>
+          <div class="button-row"><button class="small-button secondary" data-admin-action="inactive" data-employee-id="${escapeHtml(employee.id)}">Отклонить</button><button class="small-button" data-admin-action="active" data-employee-id="${escapeHtml(employee.id)}">Активировать</button></div>
+        </div>
+      `).join("") : itemEmpty("Новых заявок нет.");
+
+      return `
+        <div class="screen-head"><div><h2>Сотрудники</h2><p>Заявки, статусы и должности.</p></div><div class="date">${employees.length} всего</div></div>
+        ${renderAdminTabs()}
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>Заявки</span><div class="kpi-ico">◎</div></div><strong>${pending.length}<small> шт</small></strong><span>Ожидают решения</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Активные</span><div class="kpi-ico">✓</div></div><strong>${(admin.active_employees || []).length}<small> чел</small></strong><span>Могут работать</span></div>
+        </div>
+        <div class="section-title"><b>Заявки</b><span>${pending.length}</span></div>
+        <div class="op-list">${pendingCards}</div>
+        <div class="section-title"><b>Список сотрудников</b><button data-admin-action="refresh">обновить</button></div>
+        <div class="op-list">${employeeCards}</div>
+      `;
+    }
+
+    function renderAdminShifts(admin) {
+      const openShifts = admin && admin.open_shifts ? admin.open_shifts : [];
+      const recentShifts = admin && admin.recent_shifts ? admin.recent_shifts : [];
+      mainButton.textContent = "Обновить смены";
+
+      return `
+        <div class="screen-head"><div><h2>Смены</h2><p>Открытые и последние смены сотрудников.</p></div><div class="date">${openShifts.length} открыто</div></div>
+        ${renderAdminTabs()}
+        <div class="card field-card">
+          <div class="form-grid"><div class="field full"><label>Время закрытия</label><input id="adminShiftEndTime" type="time" value="${escapeHtml(state.adminShiftEndTime)}"></div></div>
+        </div>
+        <div class="section-title"><b>Открытые смены</b><span>${openShifts.length}</span></div>
+        <div class="op-list">
+          ${openShifts.length ? openShifts.map((shift) => `
+            <div class="card field-card"><label>ID ${escapeHtml(shift.id)}</label><div class="report-row"><div><b>${escapeHtml(shift.employee)}</b><span>${escapeHtml(shift.date)} · начало ${escapeHtml(shift.start_time)}</span></div><span class="status-chip">open</span></div><div class="button-row"><button class="small-button secondary" data-admin-action="refresh">Обновить</button><button class="small-button" data-admin-action="close-shift" data-shift-id="${escapeHtml(shift.id)}">Закрыть</button></div></div>
+          `).join("") : itemEmpty("Открытых смен сейчас нет.")}
+        </div>
+        <div class="section-title"><b>Последние смены</b><button data-admin-action="refresh">обновить</button></div>
+        <div class="op-list">
+          ${recentShifts.length ? recentShifts.map((shift) => `
+            <div class="card field-card"><label>ID ${escapeHtml(shift.id)} · ${escapeHtml(shift.status)}</label><div class="report-row"><div><b>${escapeHtml(shift.employee)}</b><span>${escapeHtml(shift.date)} · ${escapeHtml(shift.start_time || "-")} — ${escapeHtml(shift.end_time || "-")}<br>Операций: ${escapeHtml(shift.operation_count || 0)}</span></div><span class="status-chip gray">${escapeHtml(shift.status)}</span></div><div class="button-row"><button class="small-button secondary" data-admin-action="refresh">Обновить</button><button class="small-button danger" data-admin-action="delete-shift" data-shift-id="${escapeHtml(shift.id)}">Удалить</button></div></div>
+          `).join("") : itemEmpty("Последних смен пока нет.")}
+        </div>
+      `;
+    }
+
+    function renderAdminFeedback(admin) {
+      ensureAdminDefaults();
+      const feedback = admin && admin.feedback ? admin.feedback : [];
+      mainButton.textContent = "Обновить связь";
+
+      return `
+        <div class="screen-head"><div><h2>Связь</h2><p>Сообщения сотрудников за выбранный период.</p></div><div class="date">${feedback.length} сообщений</div></div>
+        ${renderAdminTabs()}
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field"><label>Начало</label><input id="adminStartDate" type="date" value="${escapeHtml(state.adminStartDate)}"></div>
+            <div class="field"><label>Окончание</label><input id="adminEndDate" type="date" value="${escapeHtml(state.adminEndDate)}"></div>
+          </div>
+          <div class="button-row"><button class="small-button secondary" data-admin-action="refresh">Обновить всё</button><button class="small-button" data-admin-action="load-feedback">Показать связь</button></div>
+        </div>
+        <div class="op-list">
+          ${feedback.length ? feedback.map((row) => `
+            <div class="card report-row"><div><b>${escapeHtml(row.employee)} · ${escapeHtml(row.category)}</b><span>${escapeHtml(row.date)} ${escapeHtml(row.time || "")} · ${escapeHtml(row.position)}<br>${escapeHtml(row.message)}</span></div><span class="status-chip gray">${row.shift_id ? `#${escapeHtml(row.shift_id)}` : "-"}</span></div>
+          `).join("") : itemEmpty("Сообщений за выбранный период нет.")}
+        </div>
+      `;
+    }
+
+    function renderAdmin() {
+      if (!state.data || !state.data.is_admin) {
+        mainButton.textContent = "Обновить";
+        mainButton.disabled = false;
+        mount.innerHTML = `
+          <div class="screen-head"><div><h2>Админ</h2><p>Раздел доступен только администратору.</p></div></div>
+          <div class="card field-card">${itemEmpty("Нет прав администратора.")}</div>
+        `;
+        return;
+      }
+
+      ensureAdminDefaults();
+      const admin = getAdmin();
+      mainButton.disabled = false;
+
+      if (state.adminSection === "employees") {
+        mount.innerHTML = renderAdminEmployees(admin);
+        return;
+      }
+      if (state.adminSection === "shifts") {
+        mount.innerHTML = renderAdminShifts(admin);
+        return;
+      }
+      if (state.adminSection === "feedback") {
+        mount.innerHTML = renderAdminFeedback(admin);
+        return;
+      }
+
+      mount.innerHTML = renderAdminReports(admin);
+    }
+
     function render() {
       if (!state.data) return;
       document.getElementById("roleLabel").textContent = roleLabel();
@@ -3018,6 +3507,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "report") renderReport();
       if (state.screen === "analytics") renderAnalytics();
       if (state.screen === "orders") renderOrders();
+      if (state.screen === "feedback") renderFeedback();
       if (state.screen === "admin") renderAdmin();
       renderBottomNav();
       renderTopTabs();
@@ -3055,10 +3545,37 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const adminSection = event.target.closest("[data-admin-section]");
+      if (adminSection) {
+        state.adminSection = adminSection.dataset.adminSection;
+        render();
+        return;
+      }
+
       const adminAction = event.target.closest("[data-admin-action]");
       if (adminAction) {
+        syncAdminForm();
+        if (adminAction.dataset.adminAction === "refresh") refreshAdminDashboard();
         if (adminAction.dataset.adminAction === "load-report") loadAdminReport();
         if (adminAction.dataset.adminAction === "export-report") exportAdminReport();
+        if (adminAction.dataset.adminAction === "load-feedback") loadAdminFeedback();
+        if (adminAction.dataset.adminAction === "active") adminEmployeeStatus(adminAction.dataset.employeeId, "active");
+        if (adminAction.dataset.adminAction === "inactive") adminEmployeeStatus(adminAction.dataset.employeeId, "inactive");
+        if (adminAction.dataset.adminAction === "position") adminEmployeePosition(adminAction.dataset.employeeId);
+        if (adminAction.dataset.adminAction === "close-shift") adminCloseShift(adminAction.dataset.shiftId);
+        if (adminAction.dataset.adminAction === "delete-shift") adminDeleteShift(adminAction.dataset.shiftId);
+        return;
+      }
+
+      const historyAction = event.target.closest("[data-history-action]");
+      if (historyAction) {
+        loadHistory();
+        return;
+      }
+
+      const feedbackAction = event.target.closest("[data-feedback-action]");
+      if (feedbackAction) {
+        sendFeedback();
         return;
       }
 
@@ -3087,7 +3604,12 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "report") { refreshState("Отчёт обновлён."); return; }
       if (state.screen === "analytics") { setScreen("orders"); return; }
       if (state.screen === "orders") { refreshState("Статус обновлён."); }
-      if (state.screen === "admin") { exportAdminReport(); }
+      if (state.screen === "feedback") { sendFeedback(); return; }
+      if (state.screen === "admin") {
+        if (state.adminSection === "reports") { exportAdminReport(); return; }
+        if (state.adminSection === "feedback") { loadAdminFeedback(); return; }
+        refreshAdminDashboard();
+      }
     });
 
     document.addEventListener("change", (event) => {
@@ -3097,7 +3619,7 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
-      const flow = ["shift", "operations", "report", "analytics", "orders", "admin"];
+      const flow = ["shift", "operations", "report", "feedback", "analytics", "orders", "admin"];
       const index = flow.indexOf(state.screen);
       setScreen(flow[Math.max(0, index - 1)]);
     });
@@ -3142,6 +3664,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/shift/status",
                 "/api/shift/open",
                 "/api/shift/close",
+                "/api/report/history",
                 "/api/feedback/send",
                 "/api/production/fabric-receipt",
                 "/api/production/create-task",
@@ -3151,6 +3674,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/admin/dashboard",
                 "/api/admin/report",
                 "/api/admin/report/export",
+                "/api/admin/feedback",
                 "/api/admin/employee/status",
                 "/api/admin/employee/position",
                 "/api/admin/shift/close",
@@ -3192,6 +3716,8 @@ def make_handler(bot_token: str, debug: bool):
 
             if path == "/api/app/state":
                 result = get_app_state(telegram_id, payload.get("message", ""))
+            elif path == "/api/report/history":
+                result = get_employee_history_for_telegram(telegram_id, payload)
             elif path == "/api/shift/open":
                 action_result = open_shift_for_telegram(telegram_id)
                 result = get_app_state(telegram_id, action_result.get("message", ""))
@@ -3223,6 +3749,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = get_admin_dashboard(telegram_id)
             elif path == "/api/admin/report":
                 result = get_admin_report_for_telegram(telegram_id, payload)
+            elif path == "/api/admin/feedback":
+                result = get_admin_feedback_for_telegram(telegram_id, payload)
             elif path == "/api/admin/employee/status":
                 result = set_employee_status_for_admin(telegram_id, payload)
             elif path == "/api/admin/employee/position":
