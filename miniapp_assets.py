@@ -1223,8 +1223,6 @@ MINIAPP_HTML = """<!doctype html>
     const topTabs = document.getElementById("topTabs");
     const bottomNav = document.getElementById("bottomNav");
     const toast = document.getElementById("toast");
-    const attachmentCache = new Map();
-    let attachmentCounter = 0;
 
     const baseNav = [
       { id: "shift", label: "Главная", icon: "⌂" },
@@ -1277,63 +1275,56 @@ MINIAPP_HTML = """<!doctype html>
       return `<p class="empty">${escapeHtml(text)}</p>`;
     }
 
-    function registerAttachment(attachment) {
-      if (!attachment || !attachment.content_base64) return "";
-      const key = `attachment-${attachmentCounter++}`;
-      attachmentCache.set(key, attachment);
-      return key;
+    function attachmentFileUrl(taskId, action) {
+      if (!taskId) return "";
+
+      const url = new URL("/api/production/task-attachment", window.location.href);
+      url.searchParams.set("task_id", taskId);
+      url.searchParams.set("mode", action === "download" ? "download" : "open");
+
+      if (state.initData) url.searchParams.set("initData", state.initData);
+      if (authToken) url.searchParams.set("authToken", authToken);
+      if (debugTelegramId) url.searchParams.set("telegram_id", debugTelegramId);
+
+      return url.toString();
     }
 
-    function attachmentBlob(attachment) {
-      const binary = window.atob(attachment.content_base64);
-      const bytes = new Uint8Array(binary.length);
+    function openTaskAttachment(taskId, action) {
+      const url = attachmentFileUrl(taskId, action);
 
-      for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-      }
-
-      return new Blob([bytes], {type: attachment.mime_type || "application/octet-stream"});
-    }
-
-    function openTaskAttachment(key, action) {
-      const attachment = attachmentCache.get(key);
-
-      if (!attachment) {
+      if (!url) {
         showToast("Файл", "Файл не найден. Обновите задание.");
         return;
       }
 
       try {
-        const blob = attachmentBlob(attachment);
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.target = "_blank";
-        link.rel = "noopener";
-
         if (action === "download") {
-          link.download = attachment.file_name || "task-file";
+          window.location.href = url;
+          showToast("Файл", "Скачивание запущено.");
+          return;
         }
 
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-        showToast("Файл", action === "download" ? "Скачивание запущено." : "Открываю файл.");
+        if (tg && typeof tg.openLink === "function") {
+          tg.openLink(url);
+        } else {
+          const opened = window.open(url, "_blank", "noopener");
+          if (!opened) window.location.href = url;
+        }
+
+        showToast("Файл", "Открываю файл.");
       } catch (error) {
         showToast("Файл", "Не удалось открыть файл.");
       }
     }
 
     function renderTaskAttachment(attachment) {
-      const key = registerAttachment(attachment);
-      if (!key) return "";
+      if (!attachment || !attachment.task_id) return "";
 
       return `
         <div class="card field-card">
           <label>Файл задания</label>
           <div class="report-row"><div><b>${escapeHtml(attachment.file_name || "Файл")}</b><span>Word, Excel или PDF</span></div><span class="status-chip gray">файл</span></div>
-          <div class="button-row"><button class="small-button secondary" data-attachment-action="open" data-attachment-key="${escapeHtml(key)}">Открыть файл</button><button class="small-button" data-attachment-action="download" data-attachment-key="${escapeHtml(key)}">Скачать</button></div>
+          <div class="button-row"><button class="small-button secondary" data-attachment-action="open" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Открыть файл</button><button class="small-button" data-attachment-action="download" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Скачать</button></div>
         </div>
       `;
     }
@@ -3176,8 +3167,6 @@ MINIAPP_HTML = """<!doctype html>
 
     function render() {
       if (!state.data) return;
-      attachmentCache.clear();
-      attachmentCounter = 0;
       document.getElementById("roleLabel").textContent = roleLabel();
       if (state.screen === "shift") renderShift();
       if (state.screen === "operations") renderOperations();
@@ -3357,7 +3346,7 @@ MINIAPP_HTML = """<!doctype html>
 
       const attachmentAction = event.target.closest("[data-attachment-action]");
       if (attachmentAction) {
-        openTaskAttachment(attachmentAction.dataset.attachmentKey, attachmentAction.dataset.attachmentAction);
+        openTaskAttachment(attachmentAction.dataset.attachmentTaskId, attachmentAction.dataset.attachmentAction);
         return;
       }
 

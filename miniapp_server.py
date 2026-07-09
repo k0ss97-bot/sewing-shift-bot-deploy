@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import base64
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -981,6 +982,21 @@ def task_fabric_rolls_to_dict(task_id: int | None):
     ]
 
 
+def task_attachment_to_dict(task_id: int | None):
+    if not task_id:
+        return None
+
+    attachment = get_production_task_attachment(task_id)
+
+    if attachment is None:
+        return None
+
+    return {
+        **attachment,
+        "task_id": task_id,
+    }
+
+
 def production_catalog_to_dict():
     catalog = []
 
@@ -1002,7 +1018,7 @@ def production_task_to_dict(row):
     task_id, product_name, status, created_at, sizes_text, colors_text = row
     colors = split_group_concat(colors_text)
     fabric_rolls = task_fabric_rolls_to_dict(task_id)
-    attachment = get_production_task_attachment(task_id)
+    attachment = task_attachment_to_dict(task_id)
 
     return {
         "id": task_id,
@@ -1106,7 +1122,7 @@ def cutting_stage_task_to_dict(stage: str, row):
             "colors": colors,
             "color_labels": [format_color_label(color) for color in colors],
             "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
-            "attachment": get_production_task_attachment(production_task_id),
+            "attachment": task_attachment_to_dict(production_task_id),
         }
 
     if stage == "cutting":
@@ -1127,7 +1143,7 @@ def cutting_stage_task_to_dict(stage: str, row):
             "progress": progress or 0,
             "colors_text": colors_text or "",
             "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
-            "attachment": get_production_task_attachment(production_task_id),
+            "attachment": task_attachment_to_dict(production_task_id),
         }
 
     batch_id, product_name, contour_date, layout_date, progress, production_task_id = row
@@ -1146,7 +1162,7 @@ def cutting_stage_task_to_dict(stage: str, row):
         "created_at": layout_date or contour_date,
         "progress": progress or 100,
         "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
-        "attachment": get_production_task_attachment(production_task_id),
+        "attachment": task_attachment_to_dict(production_task_id),
     }
 
 
@@ -2890,12 +2906,33 @@ def get_app_state(telegram_id: int, message: str = ""):
     }
 
 
+def can_access_task_attachment(telegram_id: int, task_id: int):
+    if is_admin(telegram_id):
+        return True
+
+    employee = get_employee_for_access(telegram_id)
+
+    if not employee or employee[5] != "active":
+        return False
+
+    task = get_production_task_by_id(task_id)
+
+    if task is None:
+        return False
+
+    if employee[3] == "Раскройщик" and task["status"] in {"active", "contours_done", "in_cutting", "formed"}:
+        return True
+
+    return False
+
+
 def make_handler(bot_token: str, debug: bool):
     class MiniAppRequestHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self):
-            path = urlparse(self.path).path
+            parsed_url = urlparse(self.path)
+            path = parsed_url.path
 
             if path in {"/", "/app"}:
                 self.send_html(MINIAPP_HTML)
@@ -2903,6 +2940,55 @@ def make_handler(bot_token: str, debug: bool):
 
             if path == "/health":
                 self.send_json({"ok": True})
+                return
+
+            if path == "/api/production/task-attachment":
+                query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+                payload = {
+                    "initData": query.get("initData", ""),
+                    "authToken": query.get("authToken", "") or query.get("auth", ""),
+                    "telegram_id": query.get("telegram_id", "") or query.get("debug_tg_id", ""),
+                }
+                user = authenticate_payload(payload, bot_token, debug)
+
+                if not user or not user.get("id"):
+                    self.send_json({"ok": False, "message": "Откройте приложение из Telegram."}, status=401)
+                    return
+
+                try:
+                    task_id = int(query.get("task_id") or 0)
+                except (TypeError, ValueError):
+                    task_id = 0
+
+                if task_id <= 0:
+                    self.send_json({"ok": False, "message": "Файл не найден."}, status=404)
+                    return
+
+                telegram_id = int(user["id"])
+
+                if not can_access_task_attachment(telegram_id, task_id):
+                    self.send_json({"ok": False, "message": "Нет доступа к файлу."}, status=403)
+                    return
+
+                attachment = get_production_task_attachment(task_id)
+
+                if attachment is None:
+                    self.send_json({"ok": False, "message": "Файл не найден."}, status=404)
+                    return
+
+                try:
+                    content = base64.b64decode(attachment["content_base64"], validate=True)
+                except (ValueError, TypeError):
+                    self.send_json({"ok": False, "message": "Файл повреждён."}, status=500)
+                    return
+
+                disposition = "attachment" if query.get("mode") == "download" else "inline"
+                self.send_binary_file(
+                    content,
+                    attachment["file_name"],
+                    attachment["mime_type"],
+                    disposition,
+                )
                 return
 
             self.send_json({"ok": False, "message": "Not found"}, status=404)
@@ -3062,16 +3148,21 @@ def make_handler(bot_token: str, debug: bool):
             self.wfile.write(body)
 
         def send_file(self, content: bytes, filename: str):
+            self.send_binary_file(
+                content,
+                filename,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "attachment",
+            )
+
+        def send_binary_file(self, content: bytes, filename: str, mime_type: str, disposition: str):
             safe_filename = quote(filename)
             self.send_response(200)
-            self.send_header(
-                "Content-Type",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            self.send_header("Content-Type", mime_type or "application/octet-stream")
             self.send_header("Content-Length", str(len(content)))
             self.send_header(
                 "Content-Disposition",
-                f"attachment; filename*=UTF-8''{safe_filename}",
+                f"{disposition}; filename*=UTF-8''{safe_filename}",
             )
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
