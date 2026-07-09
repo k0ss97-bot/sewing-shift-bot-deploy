@@ -4,7 +4,7 @@ MINIAPP_HTML = """<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Шагаем вместе</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
@@ -39,10 +39,17 @@ MINIAPP_HTML = """<!doctype html>
         radial-gradient(circle at 92% 4%, rgba(143,159,127,.22), transparent 30%),
         linear-gradient(135deg, #fff8ee 0%, #f4eee6 48%, #eadfd2 100%);
       overflow-x: hidden;
+      -webkit-text-size-adjust: 100%;
     }
 
     button, input, select, textarea {
       font: inherit;
+    }
+
+    input,
+    select,
+    textarea {
+      font-size: 16px;
     }
 
     button {
@@ -446,7 +453,7 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--text);
       padding: 9px 10px;
       outline: none;
-      font-size: 13px;
+      font-size: 16px;
       font-weight: 850;
     }
 
@@ -539,7 +546,9 @@ MINIAPP_HTML = """<!doctype html>
     [data-history-action],
     [data-feedback-action],
     [data-select-operation],
-    [data-select-order] {
+    [data-select-order],
+    [data-select-report-task],
+    [data-select-cutting-report-task] {
       cursor: pointer;
       user-select: none;
       -webkit-user-select: none;
@@ -551,7 +560,9 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-admin-home-view],
     .card[data-admin-home-employee],
     .card[data-select-operation],
-    .card[data-select-order] {
+    .card[data-select-order],
+    .card[data-select-report-task],
+    .card[data-select-cutting-report-task] {
       border-color: rgba(195,111,85,.24);
       box-shadow: 0 9px 22px rgba(95,67,48,.07);
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
@@ -562,7 +573,9 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-admin-home-view]:hover,
     .card[data-admin-home-employee]:hover,
     .card[data-select-operation]:hover,
-    .card[data-select-order]:hover {
+    .card[data-select-order]:hover,
+    .card[data-select-report-task]:hover,
+    .card[data-select-cutting-report-task]:hover {
       transform: translateY(-1px);
       border-color: rgba(195,111,85,.52);
       background: rgba(255,255,255,.72);
@@ -574,7 +587,9 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-admin-home-view]:active,
     .card[data-admin-home-employee]:active,
     .card[data-select-operation]:active,
-    .card[data-select-order]:active {
+    .card[data-select-order]:active,
+    .card[data-select-report-task]:active,
+    .card[data-select-cutting-report-task]:active {
       transform: translateY(0);
       box-shadow: 0 7px 16px rgba(195,111,85,.12);
     }
@@ -584,7 +599,9 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-admin-home-view] .status-chip.gray,
     .card[data-admin-home-employee] .status-chip.gray,
     .card[data-select-operation] .status-chip.gray,
-    .card[data-select-order] .status-chip.gray {
+    .card[data-select-order] .status-chip.gray,
+    .card[data-select-report-task] .status-chip.gray,
+    .card[data-select-cutting-report-task] .status-chip.gray {
       color: var(--accent-dark);
       background: rgba(195,111,85,.13);
       border-color: rgba(195,111,85,.18);
@@ -691,7 +708,21 @@ MINIAPP_HTML = """<!doctype html>
       background: rgba(255,255,255,.78);
       padding: 0 10px;
       color: var(--text);
-      font-size: 13px;
+      font-size: 16px;
+      font-weight: 900;
+      outline: none;
+    }
+
+    .report-row input,
+    .report-row select,
+    .report-row textarea {
+      min-height: 42px;
+      border: 1px solid rgba(49,39,33,.12);
+      border-radius: 14px;
+      background: rgba(255,255,255,.78);
+      padding: 0 10px;
+      color: var(--text);
+      font-size: 16px;
       font-weight: 900;
       outline: none;
     }
@@ -772,6 +803,11 @@ MINIAPP_HTML = """<!doctype html>
 
     .order-card {
       padding: 9px 10px;
+    }
+
+    .order-card.selected {
+      border-color: rgba(195,111,85,.44);
+      box-shadow: 0 12px 28px rgba(195,111,85,.12), var(--inset-shadow);
     }
 
     .order-card .order-head {
@@ -1109,6 +1145,7 @@ MINIAPP_HTML = """<!doctype html>
       selectedOperation: 0,
       selectedOrder: 0,
       selectedReportTask: 0,
+      selectedCuttingReportTask: 0,
       orderCategory: "",
       reportSection: "work",
       orderMode: "list",
@@ -1290,6 +1327,10 @@ MINIAPP_HTML = """<!doctype html>
         .map((task) => ({...task, task_kind: "route"}));
     }
 
+    function getMyCuttingTasks() {
+      return getCuttingTasks().map((task) => ({...task, task_kind: "cutting_stage"}));
+    }
+
     function getOrderColors() {
       const colors = getProduction().order_colors || [];
       if (colors.length) return colors;
@@ -1391,6 +1432,14 @@ MINIAPP_HTML = """<!doctype html>
 
       ensureOrderCategory();
       return rows.filter((task) => (task.category || "") === state.orderCategory);
+    }
+
+    function selectCuttingTaskForReport(task) {
+      const tasks = getMyCuttingTasks();
+      const index = tasks.findIndex((row) => row.id === task.id && row.stage === task.stage);
+      state.selectedCuttingReportTask = index >= 0 ? index : 0;
+      state.reportSection = "work";
+      setScreen("report");
     }
 
     function shiftText() {
@@ -2020,14 +2069,17 @@ MINIAPP_HTML = """<!doctype html>
       const feedback = getFeedbackRows();
       const history = getHistory();
       const workTasks = getMyRouteTasks();
+      const cuttingWorkTasks = getMyCuttingTasks();
       const doneTasks = getCompletedRouteTasks();
       ensureUserDefaults();
       if (!["work", "done", "feedback"].includes(state.reportSection)) state.reportSection = "work";
 
       if (state.selectedReportTask >= workTasks.length) state.selectedReportTask = 0;
+      if (state.selectedCuttingReportTask >= cuttingWorkTasks.length) state.selectedCuttingReportTask = 0;
 
       const selectedTask = workTasks[state.selectedReportTask] || workTasks[0];
-      mainButton.textContent = state.reportSection === "work" && selectedTask ? "Выполнить задание" : "Обновить отчёт";
+      const selectedCuttingTask = cuttingWorkTasks[state.selectedCuttingReportTask] || cuttingWorkTasks[0];
+      mainButton.textContent = state.reportSection === "work" && (selectedCuttingTask || selectedTask) ? (selectedCuttingTask ? "Выполнить этап" : "Выполнить задание") : "Обновить отчёт";
       mainButton.disabled = false;
 
       const historySummary = history && history.summary ? history.summary : null;
@@ -2035,6 +2087,27 @@ MINIAPP_HTML = """<!doctype html>
       const historyOperations = history && history.operations ? history.operations : [];
 
       if (state.reportSection === "work") {
+        if (cuttingWorkTasks.length) {
+          mount.innerHTML = `
+            <div class="screen-head"><div><h2>В работе</h2><p>Этапы раскроя по выбранным заданиям.</p></div><div class="date">${cuttingWorkTasks.length} акт.</div></div>
+            <div class="op-list">
+              ${cuttingWorkTasks.map((task, index) => `
+                <div class="card order-card ${index === state.selectedCuttingReportTask ? "selected" : ""}" data-select-cutting-report-task="${index}">
+                  <div class="order-head"><div class="op-icon">▣</div><div><b>${escapeHtml(task.stage_title)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">${escapeHtml(task.status_text || task.status)}</span></div>
+                  <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
+                  <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${escapeHtml(task.next_action || "этап")}</span></div>
+                </div>
+              `).join("")}
+            </div>
+            ${selectedCuttingTask ? `
+              <div class="section-title"><b>Выполнение этапа</b><span>${escapeHtml(selectedCuttingTask.next_action || "")}</span></div>
+              ${renderCuttingStageDetail(selectedCuttingTask)}
+              <div class="button-row"><button class="small-button" data-report-action="complete-cutting-stage">Выполнить этап</button></div>
+            ` : ""}
+          `;
+          return;
+        }
+
         mount.innerHTML = `
           <div class="screen-head"><div><h2>В работе</h2><p>Задания, которые вы взяли в работу.</p></div><div class="date">${workTasks.length} акт.</div></div>
           <div class="op-list">
@@ -2464,6 +2537,26 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderCuttingStageSummary(current) {
+      return `
+        <div class="card order-detail">
+          <div class="order-head">
+            <div class="op-icon">${sewingIcon()}</div>
+            <div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div>
+            <span class="status-chip">${escapeHtml(current.status_text || current.status)}</span>
+          </div>
+          <div class="detail-grid">
+            <div class="detail-box"><span>Этап</span><strong>${escapeHtml(current.next_action || "-")}</strong></div>
+            <div class="detail-box"><span>Готовность</span><strong>${progressForTask(current)}%</strong></div>
+            <div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || current.sizes_text || "-")}</strong></div>
+            <div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || current.colors_text || "-")}</strong></div>
+          </div>
+        </div>
+        ${renderTaskFabricRolls(current)}
+        ${renderTaskAttachment(current.attachment)}
+      `;
+    }
+
     async function submitCuttingStage(current) {
       if (!current) return;
       const payload = {stage: current.stage};
@@ -2503,6 +2596,7 @@ MINIAPP_HTML = """<!doctype html>
 
         state.data.production = data.production || state.data.production;
         state.selectedOrder = 0;
+        state.selectedCuttingReportTask = 0;
         render();
         showToast("Задание", data.message || "Этап выполнен.");
       } catch (error) {
@@ -2685,7 +2779,7 @@ MINIAPP_HTML = """<!doctype html>
           ` : itemEmpty("Активных заданий пока нет.")}
         </div>
         <div class="section-title"><b>Детали выбранного</b><span>${current ? progressForTask(current) : 0}%</span></div>
-        ${current && current.task_kind === "cutting_stage" ? renderCuttingStageDetail(current) : current && current.task_kind === "production" ? `
+        ${current && current.task_kind === "cutting_stage" ? renderCuttingStageSummary(current) : current && current.task_kind === "production" ? `
           <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.status_text || current.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || current.status)}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
@@ -3111,6 +3205,7 @@ MINIAPP_HTML = """<!doctype html>
       if (reportSection) {
         state.reportSection = reportSection.dataset.reportSection;
         state.selectedReportTask = 0;
+        state.selectedCuttingReportTask = 0;
         render();
         return;
       }
@@ -3177,6 +3272,10 @@ MINIAPP_HTML = """<!doctype html>
           const tasks = getMyRouteTasks();
           completeOperationTask(tasks[state.selectedReportTask] || tasks[0]);
         }
+        if (reportAction.dataset.reportAction === "complete-cutting-stage") {
+          const tasks = getMyCuttingTasks();
+          submitCuttingStage(tasks[state.selectedCuttingReportTask] || tasks[0]);
+        }
         return;
       }
 
@@ -3196,6 +3295,10 @@ MINIAPP_HTML = """<!doctype html>
           startOperationTask(current);
           return;
         }
+        if (current && current.task_kind === "cutting_stage" && !state.data.is_admin) {
+          selectCuttingTaskForReport(current);
+          return;
+        }
         setScreen("orders");
         return;
       }
@@ -3203,6 +3306,12 @@ MINIAPP_HTML = """<!doctype html>
       const reportTask = event.target.closest("[data-select-report-task]");
       if (reportTask) {
         state.selectedReportTask = Number(reportTask.dataset.selectReportTask);
+        render();
+      }
+
+      const cuttingReportTask = event.target.closest("[data-select-cutting-report-task]");
+      if (cuttingReportTask) {
+        state.selectedCuttingReportTask = Number(cuttingReportTask.dataset.selectCuttingReportTask);
         render();
       }
     });
@@ -3221,6 +3330,9 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "operations") { setScreen("report"); return; }
       if (state.screen === "report") {
         if (state.reportSection === "work") {
+          const cuttingTasks = getMyCuttingTasks();
+          const cuttingCurrent = cuttingTasks[state.selectedCuttingReportTask] || cuttingTasks[0];
+          if (cuttingCurrent) { submitCuttingStage(cuttingCurrent); return; }
           const tasks = getMyRouteTasks();
           const current = tasks[state.selectedReportTask] || tasks[0];
           if (current) { completeOperationTask(current); return; }
@@ -3239,7 +3351,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "orders") {
         const rows = visibleOrderRows();
         const current = rows[state.selectedOrder] || rows[0];
-        if (current && current.task_kind === "cutting_stage") { submitCuttingStage(current); return; }
+        if (current && current.task_kind === "cutting_stage") { selectCuttingTaskForReport(current); return; }
         if (current && current.task_kind === "route") { startOperationTask(current); return; }
         refreshState("Статус обновлён.");
         return;
