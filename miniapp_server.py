@@ -74,7 +74,7 @@ from database import (
     update_employee_status,
     update_operation_field,
 )
-from catalog import format_color_label
+from catalog import PREPARATION_OPERATION_OPTIONS, format_color_label
 from miniapp_auth import parse_auth_token
 from miniapp_assets import MINIAPP_HTML
 from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
@@ -449,6 +449,60 @@ def can_employee_work_route_step(employee, current_step: dict | None):
     return bool(employee and current_step and employee[3] == current_step["position"])
 
 
+def get_preparation_folder(operation_name: str):
+    return PREPARATION_OPERATION_OPTIONS.get(operation_name, {}).get("folder", "")
+
+
+def is_elastic_preparation_operation(operation_name: str):
+    return get_preparation_folder(operation_name) == "Нарезание резинки"
+
+
+def route_step_category(route_step: dict | None):
+    if not route_step:
+        return ""
+
+    position = route_step.get("position", "")
+    operation = route_step.get("operation", "")
+    operation_lower = operation.lower()
+    preparation_folder = get_preparation_folder(operation)
+
+    if position == "Раскройщик":
+        return "Раскрой"
+
+    if position == "Упаковщик":
+        if preparation_folder in {"Нарезание резинки", "Нарезание дублерина", "Дублирование"}:
+            return "Подготовка"
+        if "подготов" in operation_lower:
+            return "Подготовка"
+        if "упаков" in operation_lower or "склад" in operation_lower:
+            return "Упаковка"
+        if "вто" in operation_lower or "заутюж" in operation_lower or "проклей" in operation_lower:
+            return "ВТО"
+        return "Подготовка"
+
+    if position == "Швея":
+        if operation == "Сшивание резинок в кольцо":
+            return "Подготовка"
+        if "подготов" in operation_lower or "стачивание" in operation_lower:
+            return "Подготовка"
+        if "оверлок" in operation_lower or "сборка" in operation_lower:
+            return "Оверлок"
+        return "Прямострочка"
+
+    return position
+
+
+def should_auto_create_next_preparation_task(current_step: dict | None, next_step: dict | None):
+    if not current_step or not next_step:
+        return False
+
+    return (
+        is_elastic_preparation_operation(current_step.get("operation", ""))
+        and next_step.get("position") == "Швея"
+        and next_step.get("operation") == "Сшивание резинок в кольцо"
+    )
+
+
 def route_map_to_dict(product_name: str):
     return {
         "product_name": product_name,
@@ -461,6 +515,7 @@ def route_map_to_dict(product_name: str):
                 "position": route_step["position"],
                 "operation": route_step["operation"],
                 "status_after": route_step["status_after"],
+                "category": route_step_category(route_step),
             }
             for index, route_step in enumerate(PRODUCT_ROUTE_MAPS[product_name], start=1)
         ],
@@ -479,6 +534,7 @@ def route_task_to_dict(batch: dict, current_step: dict):
         "position": current_step["position"],
         "operation": current_step["operation"],
         "status_after": current_step["status_after"],
+        "category": route_step_category(current_step),
     }
 
 
@@ -595,7 +651,7 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
     ready_for_position = next_step["position"] if next_step else "Склад"
     stage_name = current_step["status_after"]
 
-    add_warehouse_stock(
+    stock_row = add_warehouse_stock(
         item_type,
         batch["product_name"],
         batch["product_size"],
@@ -607,6 +663,31 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
         "route_batch",
         batch["id"],
     )
+    auto_batch = None
+
+    if stock_row and should_auto_create_next_preparation_task(current_step, next_step):
+        auto_batch = create_route_batch(
+            batch["product_name"],
+            batch["product_size"],
+            batch["product_color"],
+            batch["quantity"],
+            employee[0],
+            route_step_index=updated_batch["route_step_index"],
+            source_stock_id=stock_row["id"],
+        )
+
+        if auto_batch:
+            consumed = consume_warehouse_stock(
+                stock_row["id"],
+                batch["quantity"],
+                employee[0],
+                "route_batch",
+                auto_batch["id"],
+            )
+
+            if consumed is None:
+                cancel_route_batch(auto_batch["id"])
+                auto_batch = None
 
     add_edit_log(
         telegram_id,
@@ -617,7 +698,9 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
         f"{route_batch_identity(batch)}. Этап: {current_step['operation']}",
     )
 
-    if next_step:
+    if auto_batch:
+        message = f"Этап завершён. Следующее задание создано для должности {next_step['position']}."
+    elif next_step:
         message = f"Этап завершён. Результат на складе для должности {next_step['position']}."
     else:
         message = "Этап завершён. Готовая продукция принята на склад."
@@ -786,6 +869,7 @@ def cutting_stage_task_to_dict(stage: str, row):
         return {
             **task,
             "task_kind": "cutting_stage",
+            "category": "Раскрой",
             "stage": "contours",
             "stage_title": "Нанесение контуров лекал на ткань",
             "source_id": task["id"],
@@ -800,6 +884,7 @@ def cutting_stage_task_to_dict(stage: str, row):
             "source_id": batch_id,
             "production_task_id": production_task_id,
             "task_kind": "cutting_stage",
+            "category": "Раскрой",
             "stage": "layout",
             "stage_title": "Формирование настила",
             "next_action": "Сохранить настил",
@@ -819,6 +904,7 @@ def cutting_stage_task_to_dict(stage: str, row):
             "id": batch_id,
             "source_id": batch_id,
             "task_kind": "cutting_stage",
+            "category": "Раскрой",
             "stage": "cutting",
             "stage_title": "Раскрой",
             "next_action": "Обновить процент",
@@ -835,6 +921,7 @@ def cutting_stage_task_to_dict(stage: str, row):
         "id": batch_id,
         "source_id": batch_id,
         "task_kind": "cutting_stage",
+        "category": "Раскрой",
         "stage": "formation",
         "stage_title": "Формирование готового кроя",
         "next_action": "Принять крой на склад",

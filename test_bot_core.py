@@ -46,6 +46,15 @@ class IsolatedDatabaseTest(unittest.TestCase):
 
         self.temp_dir.cleanup()
 
+    def route_step_index(self, product_name: str, operation_name: str, position: str | None = None):
+        route_maps = importlib.import_module("route_maps")
+
+        for index, route_step in enumerate(route_maps.PRODUCT_ROUTE_MAPS[product_name]):
+            if route_step["operation"] == operation_name and (position is None or route_step["position"] == position):
+                return index
+
+        self.fail(f"Route step not found: {product_name} / {operation_name}")
+
     def test_database_uses_isolated_path_and_indexes(self):
         self.assertEqual(Path(self.database.DB_NAME).parent, Path(self.temp_dir.name))
         self.assertEqual(self.database.get_backup_dir(), str(Path(self.temp_dir.name) / "backups"))
@@ -207,6 +216,16 @@ class IsolatedDatabaseTest(unittest.TestCase):
             )
         )
         self.assertEqual(self.database.get_production_task_by_id(task["id"])["status"], "in_cutting")
+        preparation_batches = self.database.get_active_route_batches()
+        elastic_step_index = self.route_step_index("Шорты", "Шорты — резинка 25 мм", "Упаковщик")
+        self.assertEqual({batch["route_step_index"] for batch in preparation_batches}, {elastic_step_index})
+        self.assertEqual(
+            sorted((batch["product_size"], batch["product_color"], batch["quantity"]) for batch in preparation_batches),
+            [
+                ("80 (43 см)", "Черный", 14),
+                ("92 (45 см)", "Черный", 9),
+            ],
+        )
 
         self.assertTrue(self.database.update_cutting_batch_progress(batch_id, 1, 1, 1, 100))
         self.assertEqual(
@@ -272,6 +291,44 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ],
         )
         conn.close()
+
+    def test_layout_creates_dublerin_and_dubling_preparation_tasks(self):
+        task = self.database.create_production_task(
+            "Жакет для девочек",
+            ["98"],
+            ["Черный"],
+            None,
+        )
+        batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"],
+            "Жакет для девочек",
+            1,
+            1,
+            1,
+            {("98", "Черный"): 5},
+        )
+
+        self.assertTrue(
+            self.database.add_cutting_layout(
+                batch_id,
+                1,
+                1,
+                1,
+                {"Черный": 2},
+            )
+        )
+
+        dublerin_index = self.route_step_index("Жакет для девочек", "Жакеты — дублерин 80 мм", "Упаковщик")
+        dubling_index = self.route_step_index("Жакет для девочек", "Жакет для девочек — Дублирование", "Упаковщик")
+        preparation_batches = self.database.get_active_route_batches()
+
+        self.assertEqual(
+            sorted((batch["route_step_index"], batch["product_size"], batch["product_color"], batch["quantity"]) for batch in preparation_batches),
+            [
+                (dublerin_index, "98 (28,5 см)", "Черный", 10),
+                (dubling_index, "98", "Черный", 10),
+            ],
+        )
 
     def test_miniapp_production_creates_task_and_submits_contours(self):
         os.environ["ADMIN_IDS"] = "9001"
@@ -358,12 +415,13 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 )
                 stock_items.append({"stock_id": stock_row["id"], "quantity": "7"})
 
+        sewing_step_index = self.route_step_index("Шорты", "Сборка шорт на оверлоке", "Швея")
         route_result = miniapp_server.create_order_task_for_telegram(
             9001,
             {
                 "product_name": "Шорты",
                 "task_type": "route",
-                "route_step_index": len(miniapp_server.CUTTING_ROUTE),
+                "route_step_index": sewing_step_index,
                 "stock_items": stock_items,
             },
         )
@@ -372,9 +430,45 @@ class IsolatedDatabaseTest(unittest.TestCase):
         batches = self.database.get_active_route_batches()
         self.assertEqual(len(batches), 4)
         self.assertEqual({batch["quantity"] for batch in batches}, {7})
-        self.assertEqual({batch["route_step_index"] for batch in batches}, {len(miniapp_server.CUTTING_ROUTE)})
+        self.assertEqual({batch["route_step_index"] for batch in batches}, {sewing_step_index})
         self.assertEqual({row["quantity"] for row in self.database.get_warehouse_stock_rows()}, {3})
         self.assertIn("Сборка шорт на оверлоке", {task["operation"] for task in route_result["routes"]["tasks"]})
+
+    def test_elastic_preparation_completion_creates_sewing_task(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9003, "Тест Упаковщик", "Упаковщик")
+        self.database.create_employee(9004, "Тест Швея", "Швея")
+        packer = self.database.get_employee_by_telegram_id(9003)
+        seamstress = self.database.get_employee_by_telegram_id(9004)
+        self.database.update_employee_status(packer[0], "active")
+        self.database.update_employee_status(seamstress[0], "active")
+        elastic_step_index = self.route_step_index("Шорты", "Шорты — резинка 25 мм", "Упаковщик")
+
+        batch = self.database.create_route_batch(
+            "Шорты",
+            "80 (43 см)",
+            "Черный",
+            14,
+            packer[0],
+            route_step_index=elastic_step_index,
+        )
+        result = miniapp_server.complete_route_task_for_telegram(9003, batch["id"])
+
+        self.assertTrue(result["ok"], result)
+        self.assertIn("Следующее задание создано", result["message"])
+        active_batches = self.database.get_active_route_batches()
+        self.assertEqual(len(active_batches), 1)
+
+        sewing_batch = active_batches[0]
+        sewing_step = miniapp_server.get_route_step("Шорты", sewing_batch["route_step_index"])
+        self.assertEqual(sewing_step["operation"], "Сшивание резинок в кольцо")
+        self.assertEqual(sewing_batch["quantity"], 14)
+        self.assertIsNotNone(sewing_batch["source_stock_id"])
+        self.assertEqual(self.database.get_warehouse_stock_by_id(sewing_batch["source_stock_id"])["quantity"], 0)
+
+        seamstress_tasks = miniapp_server.get_route_tasks_for_telegram(9004)
+        self.assertTrue(seamstress_tasks["ok"], seamstress_tasks)
+        self.assertEqual(seamstress_tasks["tasks"][0]["category"], "Подготовка")
 
     def test_miniapp_admin_deletes_order_tasks(self):
         os.environ["ADMIN_IDS"] = "9001"
@@ -402,12 +496,13 @@ class IsolatedDatabaseTest(unittest.TestCase):
             None,
         )
 
+        sewing_step_index = self.route_step_index("Шорты", "Сборка шорт на оверлоке", "Швея")
         route_result = miniapp_server.create_order_task_for_telegram(
             9001,
             {
                 "product_name": "Шорты",
                 "task_type": "route",
-                "route_step_index": len(miniapp_server.CUTTING_ROUTE),
+                "route_step_index": sewing_step_index,
                 "stock_items": [{"stock_id": stock_row["id"], "quantity": "3"}],
             },
         )

@@ -523,6 +523,7 @@ MINIAPP_HTML = """<!doctype html>
     button,
     [data-go],
     [data-admin-home-period],
+    [data-order-category],
     [data-admin-home-view],
     [data-admin-home-employee],
     [data-admin-section],
@@ -1078,6 +1079,7 @@ MINIAPP_HTML = """<!doctype html>
       screen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
+      orderCategory: "",
       orderMode: "list",
       orderProduct: "",
       orderTaskType: "cutting",
@@ -1240,6 +1242,42 @@ MINIAPP_HTML = """<!doctype html>
       return [...tasks, ...routeRows];
     }
 
+    function employeeOrderCategories() {
+      const employee = state.data && state.data.employee;
+      const position = employee ? employee.position : "";
+
+      if (position === "Упаковщик") return ["Подготовка", "ВТО", "Упаковка"];
+      if (position === "Швея") return ["Подготовка", "Прямострочка", "Оверлок"];
+      if (position === "Раскройщик") return ["Раскрой"];
+
+      return [];
+    }
+
+    function ensureOrderCategory() {
+      const categories = employeeOrderCategories();
+
+      if (!categories.length) {
+        state.orderCategory = "";
+        return;
+      }
+
+      if (!state.orderCategory || !categories.includes(state.orderCategory)) {
+        state.orderCategory = categories[0];
+      }
+    }
+
+    function visibleOrderRows() {
+      const rows = currentOrderRows();
+
+      if (state.data && state.data.is_admin) return rows;
+
+      const categories = employeeOrderCategories();
+      if (!categories.length) return rows;
+
+      ensureOrderCategory();
+      return rows.filter((task) => (task.category || "") === state.orderCategory);
+    }
+
     function shiftText() {
       const shift = state.data && state.data.shift;
       if (!shift) return "Смена не открыта";
@@ -1282,6 +1320,16 @@ MINIAPP_HTML = """<!doctype html>
           label,
           attr: "data-admin-home-period",
           active: state.adminHomePeriod === id,
+        }));
+      }
+
+      if (state.screen === "orders" && state.data && !state.data.is_admin) {
+        ensureOrderCategory();
+        tabs = employeeOrderCategories().map((category) => ({
+          id: category,
+          label: category,
+          attr: "data-order-category",
+          active: state.orderCategory === category,
         }));
       }
 
@@ -2243,7 +2291,8 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      const allTasks = currentOrderRows();
+      const allTasks = visibleOrderRows();
+      if (state.selectedOrder >= allTasks.length) state.selectedOrder = 0;
       const tasks = allTasks.filter((task) => task.task_kind !== "route");
       const routeRows = allTasks.filter((task) => task.task_kind === "route");
       const current = allTasks[state.selectedOrder] || allTasks[0];
@@ -2657,6 +2706,14 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const orderCategory = event.target.closest("[data-order-category]");
+      if (orderCategory) {
+        state.orderCategory = orderCategory.dataset.orderCategory;
+        state.selectedOrder = 0;
+        render();
+        return;
+      }
+
       const adminHomeView = event.target.closest("[data-admin-home-view]");
       if (adminHomeView) {
         state.adminHomeView = adminHomeView.dataset.adminHomeView;
@@ -2749,7 +2806,8 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       if (state.screen === "orders") {
-        const current = currentOrderRows()[state.selectedOrder] || currentOrderRows()[0];
+        const rows = visibleOrderRows();
+        const current = rows[state.selectedOrder] || rows[0];
         if (current && current.task_kind === "cutting_stage") { submitCuttingStage(current); return; }
         if (current && current.task_kind === "route") { completeOperationTask(current); return; }
         refreshState("Статус обновлён.");

@@ -96,6 +96,8 @@ WAREHOUSE_STOCK_COLUMNS = [
     "updated_at",
 ]
 WAREHOUSE_STOCK_SELECT = ", ".join(WAREHOUSE_STOCK_COLUMNS)
+MATERIAL_PREPARATION_FOLDERS = {"Нарезание резинки", "Нарезание дублерина"}
+AUTO_PREPARATION_FOLDERS = {*MATERIAL_PREPARATION_FOLDERS, "Дублирование"}
 
 
 def get_database_dir():
@@ -2408,6 +2410,207 @@ def get_cutting_batches_for_layout(product_name: str):
     return rows
 
 
+def get_preparation_folder(operation_name: str):
+    return PREPARATION_OPERATION_OPTIONS.get(operation_name, {}).get("folder", "")
+
+
+def is_material_preparation_operation(operation_name: str):
+    return get_preparation_folder(operation_name) in MATERIAL_PREPARATION_FOLDERS
+
+
+def is_auto_preparation_operation(operation_name: str):
+    return get_preparation_folder(operation_name) in AUTO_PREPARATION_FOLDERS
+
+
+def is_elastic_preparation_operation(operation_name: str):
+    return get_preparation_folder(operation_name) == "Нарезание резинки"
+
+
+def should_skip_cut_output_step(route_step: dict):
+    operation_name = route_step.get("operation", "")
+    return is_material_preparation_operation(operation_name) or operation_name == "Сшивание резинок в кольцо"
+
+
+def preparation_option_size_label(operation_name: str, product_size: str):
+    product_size = str(product_size).strip()
+
+    for label in PREPARATION_OPERATION_OPTIONS.get(operation_name, {}).get("sizes", []):
+        if label == product_size or label.startswith(f"{product_size} "):
+            return label
+
+    return product_size
+
+
+def preparation_group_label(operation_name: str, product_size: str):
+    label = preparation_option_size_label(operation_name, product_size)
+
+    if is_elastic_preparation_operation(operation_name) and "(" in label and ")" in label:
+        return label[label.find("(") + 1:label.rfind(")")].strip()
+
+    return label
+
+
+def sort_product_size_values(values):
+    def size_key(value):
+        value_text = str(value)
+        return (0, int(value_text)) if value_text.isdigit() else (1, value_text)
+
+    return sorted(values, key=size_key)
+
+
+def preparation_batch_size_label(operation_name: str, sizes, group_label: str):
+    sorted_sizes = sort_product_size_values(sizes)
+    size_text = ", ".join(sorted_sizes)
+
+    if is_elastic_preparation_operation(operation_name):
+        return f"{size_text} ({group_label})" if group_label and size_text else group_label or size_text
+
+    if len(sorted_sizes) == 1:
+        return preparation_option_size_label(operation_name, sorted_sizes[0])
+
+    return f"{size_text} ({group_label})" if group_label else size_text
+
+
+def preparation_material_color(operation_name: str, product_color: str):
+    if is_elastic_preparation_operation(operation_name):
+        return "Черный"
+
+    return product_color
+
+
+def _get_cutting_batch_result_rows(cursor, batch_id: int):
+    cursor.execute("SELECT COUNT(*) FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
+    has_matrix = cursor.fetchone()[0] > 0
+
+    if has_matrix:
+        cursor.execute(
+            """
+            SELECT
+                cutting_batch_matrix.product_size,
+                cutting_batch_matrix.product_color,
+                cutting_batch_matrix.quantity * cutting_batch_colors.layers AS quantity
+            FROM cutting_batch_matrix
+            JOIN cutting_batch_colors
+                ON cutting_batch_colors.batch_id = cutting_batch_matrix.batch_id
+               AND cutting_batch_colors.product_color = cutting_batch_matrix.product_color
+            WHERE cutting_batch_matrix.batch_id = ?
+              AND cutting_batch_matrix.quantity > 0
+              AND cutting_batch_colors.layers > 0
+            ORDER BY
+                CAST(cutting_batch_matrix.product_size AS INTEGER),
+                cutting_batch_matrix.product_color
+            """,
+            (batch_id,),
+        )
+
+        return cursor.fetchall()
+
+    cursor.execute(
+        """
+        SELECT
+            cutting_batch_sizes.product_size,
+            cutting_batch_colors.product_color,
+            cutting_batch_sizes.quantity * cutting_batch_colors.layers AS quantity
+        FROM cutting_batch_sizes
+        CROSS JOIN cutting_batch_colors
+        WHERE cutting_batch_sizes.batch_id = ?
+          AND cutting_batch_colors.batch_id = ?
+          AND cutting_batch_sizes.quantity > 0
+          AND cutting_batch_colors.layers > 0
+        ORDER BY
+            CAST(cutting_batch_sizes.product_size AS INTEGER),
+            cutting_batch_colors.product_color
+        """,
+        (batch_id, batch_id),
+    )
+
+    return cursor.fetchall()
+
+
+def _create_preparation_route_batches_for_layout(cursor, batch_id: int, employee_id: int | None, now_text: str):
+    from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
+
+    cursor.execute("SELECT product_name FROM cutting_batches WHERE id = ?", (batch_id,))
+    batch_row = cursor.fetchone()
+    product_name = batch_row[0] if batch_row else ""
+    route_steps = PRODUCT_ROUTE_MAPS.get(product_name, [])
+
+    if not product_name or not route_steps:
+        return []
+
+    result_rows = _get_cutting_batch_result_rows(cursor, batch_id)
+    grouped_tasks = {}
+
+    for step_index, route_step in enumerate(route_steps[len(CUTTING_ROUTE):], start=len(CUTTING_ROUTE)):
+        operation_name = route_step["operation"]
+
+        if not is_auto_preparation_operation(operation_name):
+            continue
+
+        for product_size, product_color, quantity in result_rows:
+            if quantity <= 0:
+                continue
+
+            material_color = preparation_material_color(operation_name, product_color)
+            size_label = preparation_option_size_label(operation_name, product_size)
+            group_label = preparation_group_label(operation_name, product_size)
+            group_size_key = group_label if is_elastic_preparation_operation(operation_name) else size_label
+            group_key = (step_index, operation_name, material_color, group_size_key)
+            group = grouped_tasks.setdefault(
+                group_key,
+                {
+                    "route_step_index": step_index,
+                    "operation_name": operation_name,
+                    "product_color": material_color,
+                    "group_label": group_label,
+                    "sizes": set(),
+                    "quantity": 0,
+                },
+            )
+            group["sizes"].add(str(product_size))
+            group["quantity"] += int(quantity)
+
+    created_ids = []
+
+    for group in grouped_tasks.values():
+        product_size = preparation_batch_size_label(
+            group["operation_name"],
+            group["sizes"],
+            group["group_label"],
+        )
+        cursor.execute(
+            """
+            INSERT INTO route_batches (
+                product_name,
+                product_size,
+                product_color,
+                quantity,
+                route_step_index,
+                status,
+                created_by_employee_id,
+                created_at,
+                updated_at,
+                completed_at,
+                source_stock_id
+            )
+            VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL)
+            """,
+            (
+                product_name,
+                product_size,
+                group["product_color"],
+                group["quantity"],
+                group["route_step_index"],
+                employee_id,
+                now_text,
+                now_text,
+            ),
+        )
+        created_ids.append(cursor.lastrowid)
+
+    return created_ids
+
+
 def add_cutting_layout(
     batch_id: int,
     shift_id: int,
@@ -2449,6 +2652,8 @@ def add_cutting_layout(
         """,
         [(batch_id, product_color, layers) for product_color, layers in color_layers.items()]
     )
+
+    _create_preparation_route_batches_for_layout(cursor, batch_id, employee_id, now_text)
 
     cursor.execute("SELECT production_task_id FROM cutting_batches WHERE id = ?", (batch_id,))
     task_row = cursor.fetchone()
@@ -2583,51 +2788,7 @@ def get_cutting_batches_for_formation(product_name: str):
 def get_cutting_batch_result_rows(batch_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-
-    cursor.execute("SELECT COUNT(*) FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
-    has_matrix = cursor.fetchone()[0] > 0
-
-    if has_matrix:
-        cursor.execute(
-            """
-            SELECT
-                cutting_batch_matrix.product_size,
-                cutting_batch_matrix.product_color,
-                cutting_batch_matrix.quantity * cutting_batch_colors.layers AS quantity
-            FROM cutting_batch_matrix
-            JOIN cutting_batch_colors
-                ON cutting_batch_colors.batch_id = cutting_batch_matrix.batch_id
-               AND cutting_batch_colors.product_color = cutting_batch_matrix.product_color
-            WHERE cutting_batch_matrix.batch_id = ?
-            ORDER BY
-                CAST(cutting_batch_matrix.product_size AS INTEGER),
-                cutting_batch_matrix.product_color
-            """,
-            (batch_id,),
-        )
-
-        rows = cursor.fetchall()
-        conn.close()
-        return rows
-
-    cursor.execute(
-        """
-        SELECT
-            cutting_batch_sizes.product_size,
-            cutting_batch_colors.product_color,
-            cutting_batch_sizes.quantity * cutting_batch_colors.layers AS quantity
-        FROM cutting_batch_sizes
-        CROSS JOIN cutting_batch_colors
-        WHERE cutting_batch_sizes.batch_id = ?
-          AND cutting_batch_colors.batch_id = ?
-        ORDER BY
-            CAST(cutting_batch_sizes.product_size AS INTEGER),
-            cutting_batch_colors.product_color
-        """,
-        (batch_id, batch_id)
-    )
-
-    rows = cursor.fetchall()
+    rows = _get_cutting_batch_result_rows(cursor, batch_id)
     conn.close()
     return rows
 
@@ -3135,6 +3296,9 @@ def get_first_production_position(product_name: str):
     steps = PRODUCT_ROUTE_MAPS.get(product_name, [])
 
     for route_step in steps[len(CUTTING_ROUTE):]:
+        if should_skip_cut_output_step(route_step):
+            continue
+
         return route_step["position"]
 
     return "Склад"
