@@ -31,6 +31,7 @@ from database import (
     delete_shift_by_id,
     ensure_admin_employee,
     get_active_operations,
+    get_active_cutting_batch_product_names,
     get_active_production_tasks,
     get_active_production_tasks_for_contours,
     get_active_route_batches,
@@ -1088,6 +1089,16 @@ def get_cutting_contour_operation(product_name: str):
     return get_cutting_operation(product_name, CUTTING_CONTOUR_OPERATION)
 
 
+def cutting_product_names():
+    product_names = list(PRODUCT_ROUTE_MAPS)
+
+    for product_name in get_active_cutting_batch_product_names():
+        if product_name not in product_names:
+            product_names.append(product_name)
+
+    return product_names
+
+
 def cutting_stage_task_to_dict(stage: str, row):
     if stage == "contours":
         task = production_task_to_dict(row)
@@ -1175,7 +1186,7 @@ def get_cutting_stage_tasks(employee):
         for row in get_active_production_tasks_for_contours()
     ]
 
-    for product_name in PRODUCT_ROUTE_MAPS:
+    for product_name in cutting_product_names():
         tasks.extend(cutting_stage_task_to_dict("layout", row) for row in get_cutting_batches_for_layout(product_name))
         tasks.extend(cutting_stage_task_to_dict("cutting", row) for row in get_cutting_batches_for_cutting(product_name))
         tasks.extend(cutting_stage_task_to_dict("formation", row) for row in get_cutting_batches_for_formation(product_name))
@@ -1717,7 +1728,7 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
     if stage == "layout":
         batch_row = None
 
-        for product_name in PRODUCT_ROUTE_MAPS:
+        for product_name in cutting_product_names():
             for row in get_cutting_batches_for_layout(product_name):
                 if row[0] == batch_id:
                     batch_row = row
@@ -1781,7 +1792,7 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
     if stage == "cutting":
         batch_row = None
 
-        for product_name in PRODUCT_ROUTE_MAPS:
+        for product_name in cutting_product_names():
             for row in get_cutting_batches_for_cutting(product_name):
                 if row[0] == batch_id:
                     batch_row = row
@@ -1836,7 +1847,7 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
     if stage == "formation":
         batch_row = None
 
-        for product_name in PRODUCT_ROUTE_MAPS:
+        for product_name in cutting_product_names():
             for row in get_cutting_batches_for_formation(product_name):
                 if row[0] == batch_id:
                     batch_row = row

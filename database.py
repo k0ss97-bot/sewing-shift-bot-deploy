@@ -2512,6 +2512,23 @@ def get_cutting_batches_for_layout(product_name: str):
     return rows
 
 
+def get_active_cutting_batch_product_names():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT DISTINCT product_name
+        FROM cutting_batches
+        WHERE status IN ('contours_done', 'layout_done', 'cutting_in_progress', 'cutting_done')
+        ORDER BY product_name ASC
+        """
+    )
+    rows = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
 def get_preparation_folder(operation_name: str):
     return PREPARATION_OPERATION_OPTIONS.get(operation_name, {}).get("folder", "")
 

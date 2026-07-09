@@ -176,6 +176,31 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ],
         )
 
+    def test_cutting_batch_at_75_percent_stays_visible_for_cutter(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        batch_id = self._create_layout_done_batch()
+
+        self.assertTrue(
+            self.database.update_cutting_batch_progress(
+                batch_id,
+                self.shift_id,
+                self.employee_id,
+                self.operation_id,
+                75,
+            )
+        )
+
+        state = miniapp_server.get_production_state_for_telegram(1001)
+        cutting_tasks = [
+            task
+            for task in state["cutting_tasks"]
+            if task["id"] == batch_id and task["stage"] == "cutting"
+        ]
+
+        self.assertEqual(len(cutting_tasks), 1)
+        self.assertEqual(cutting_tasks[0]["progress"], 75)
+        self.assertEqual(cutting_tasks[0]["status_text"], "готовность 75%")
+
     def test_production_task_creates_matrix_cutting_batch(self):
         task = self.database.create_production_task(
             "Шорты",
