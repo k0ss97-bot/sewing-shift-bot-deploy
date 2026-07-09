@@ -1290,8 +1290,24 @@ MINIAPP_HTML = """<!doctype html>
       return [];
     }
 
+    function adminOrderCategories() {
+      return [
+        {id: "cutting", label: "Раскрой"},
+        {id: "sewing", label: "Швея"},
+        {id: "packing", label: "Упаковка"},
+      ];
+    }
+
+    function orderCategoryIds() {
+      if (state.data && state.data.is_admin) {
+        return adminOrderCategories().map((category) => category.id);
+      }
+
+      return employeeOrderCategories();
+    }
+
     function ensureOrderCategory() {
-      const categories = employeeOrderCategories();
+      const categories = orderCategoryIds();
 
       if (!categories.length) {
         state.orderCategory = "";
@@ -1303,10 +1319,29 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    function adminOrderCategoryForTask(task) {
+      if (task.task_kind === "production" || task.position === "Раскройщик" || task.category === "Раскрой") {
+        return "cutting";
+      }
+
+      if (task.position === "Швея") {
+        return "sewing";
+      }
+
+      if (task.position === "Упаковщик") {
+        return "packing";
+      }
+
+      return "";
+    }
+
     function visibleOrderRows() {
       const rows = currentOrderRows();
 
-      if (state.data && state.data.is_admin) return rows;
+      if (state.data && state.data.is_admin) {
+        ensureOrderCategory();
+        return rows.filter((task) => adminOrderCategoryForTask(task) === state.orderCategory);
+      }
 
       const categories = employeeOrderCategories();
       if (!categories.length) return rows;
@@ -1367,6 +1402,16 @@ MINIAPP_HTML = """<!doctype html>
           label: category,
           attr: "data-order-category",
           active: state.orderCategory === category,
+        }));
+      }
+
+      if (state.screen === "orders" && state.data && state.data.is_admin && state.orderMode !== "create") {
+        ensureOrderCategory();
+        tabs = adminOrderCategories().map((category) => ({
+          id: category.id,
+          label: category.label,
+          attr: "data-order-category",
+          active: state.orderCategory === category.id,
         }));
       }
 
@@ -2190,7 +2235,8 @@ MINIAPP_HTML = """<!doctype html>
 
     async function deleteOrderTask() {
       if (!state.data || !state.data.is_admin) return;
-      const current = currentOrderRows()[state.selectedOrder] || currentOrderRows()[0];
+      const rows = visibleOrderRows();
+      const current = rows[state.selectedOrder] || rows[0];
 
       if (!current) {
         showToast("Задание", "Выберите задание.");
