@@ -59,207 +59,105 @@ def miniapp_reply_button():
     )
 
 
-def employee_keyboard():
+def reply_keyboard(rows):
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                miniapp_reply_button(),
-            ],
-            [
-                KeyboardButton(text="Отчёт"),
-                KeyboardButton(text="Закрыть смену"),
-            ],
-            [
-                KeyboardButton(text="Обратная связь"),
-            ],
-            [
-                KeyboardButton(text="Маршрутные карты"),
-            ],
-            [
-                KeyboardButton(text="Админ-панель"),
-            ],
+                item if isinstance(item, KeyboardButton) else KeyboardButton(text=item)
+                for item in row
+            ]
+            for row in rows
         ],
         resize_keyboard=True,
     )
+
+
+def navigation_row():
+    return [
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
+    ]
+
+
+def employee_keyboard():
+    return reply_keyboard([
+        [miniapp_reply_button()],
+        ["Отчёт", "Закрыть смену"],
+        ["Обратная связь"],
+        ["Маршрутные карты"],
+        ["Админ-панель"],
+    ])
 
 
 def report_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Отправить отчёт"),
-                KeyboardButton(text="Текущий отчёт"),
-            ],
-            [
-                KeyboardButton(text="Изменить отчёт"),
-                KeyboardButton(text="Удалить операцию"),
-            ],
-            [
-                KeyboardButton(text="Отчёт за даты"),
-                KeyboardButton(text="Назад"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+    return reply_keyboard([
+        ["Отправить отчёт", "Текущий отчёт"],
+        ["Изменить отчёт", "Удалить операцию"],
+        ["Отчёт за даты", "Назад"],
+    ])
 
 
 def admin_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Отчёты"),
-                KeyboardButton(text="Смены"),
-            ],
-            [
-                KeyboardButton(text="Сотрудники"),
-                KeyboardButton(text="Операции"),
-            ],
-            [
-                KeyboardButton(text="Производство"),
-            ],
-            [
-                KeyboardButton(text="Файлы"),
-                KeyboardButton(text="В меню сотрудника"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+    return reply_keyboard([
+        ["Отчёты", "Смены"],
+        ["Сотрудники", "Операции"],
+        ["Производство"],
+        ["Файлы", "В меню сотрудника"],
+    ])
 
 
 def admin_reports_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Отчёт за сегодня"),
-                KeyboardButton(text="Отчёт за месяц"),
-            ],
-            [
-                KeyboardButton(text="Отчёт за период"),
-                KeyboardButton(text="Excel за период"),
-            ],
-            [
-                KeyboardButton(text="Отчёт по сотруднику"),
-                KeyboardButton(text="Править отчёт"),
-            ],
-            [
-                KeyboardButton(text="Выгрузить отчёт"),
-                KeyboardButton(text="Партии раскроя"),
-            ],
-            [
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+    return reply_keyboard([
+        ["Отчёт за сегодня", "Отчёт за месяц"],
+        ["Отчёт за период", "Excel за период"],
+        ["Отчёт по сотруднику", "Править отчёт"],
+        ["Выгрузить отчёт", "Партии раскроя"],
+        ["Админ меню"],
+    ])
 
 
 def admin_production_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Приход ткани"),
-                KeyboardButton(text="Остатки ткани"),
-            ],
-            [
-                KeyboardButton(text="Создать задание на раскрой"),
-                KeyboardButton(text="Производственные задания"),
-            ],
-            [
-                KeyboardButton(text="Партии раскроя"),
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+    return reply_keyboard([
+        ["Приход ткани", "Остатки ткани"],
+        ["Создать задание на раскрой", "Производственные задания"],
+        ["Партии раскроя", "Админ меню"],
+    ])
 
 
 def admin_shifts_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Открытые смены"),
-                KeyboardButton(text="Последние смены"),
-            ],
-            [
-                KeyboardButton(text="Удалить смену"),
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+    return reply_keyboard([
+        ["Открытые смены", "Последние смены"],
+        ["Удалить смену", "Админ меню"],
+    ])
 
 
 def admin_employees_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Заявки"),
-                KeyboardButton(text="Список сотрудников"),
-            ],
-            [
-                KeyboardButton(text="Активные сотрудники"),
-                KeyboardButton(text="Неактивные сотрудники"),
-            ],
-            [
-                KeyboardButton(text="Активировать сотрудника"),
-                KeyboardButton(text="Отключить сотрудника"),
-            ],
-            [
-                KeyboardButton(text="Сменить должность"),
-            ],
-            [
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+    return reply_keyboard([
+        ["Заявки", "Список сотрудников"],
+        ["Активные сотрудники", "Неактивные сотрудники"],
+        ["Активировать сотрудника", "Отключить сотрудника"],
+        ["Сменить должность"],
+        ["Админ меню"],
+    ])
 
 
 def admin_operations_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Список операций"),
-                KeyboardButton(text="Добавить операцию"),
-            ],
-            [
-                KeyboardButton(text="Изменить операцию"),
-            ],
-            [
-                KeyboardButton(text="Скрыть операцию"),
-                KeyboardButton(text="Вернуть операцию"),
-            ],
-            [
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+    return reply_keyboard([
+        ["Список операций", "Добавить операцию"],
+        ["Изменить операцию"],
+        ["Скрыть операцию", "Вернуть операцию"],
+        ["Админ меню"],
+    ])
 
 
 def admin_files_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Журнал"),
-                KeyboardButton(text="Скачать базу"),
-            ],
-            [
-                KeyboardButton(text="Проверка базы"),
-            ],
-            [
-                KeyboardButton(text="Загрузить базу"),
-            ],
-            [
-                KeyboardButton(text="Создать копию базы"),
-                KeyboardButton(text="Ошибки"),
-            ],
-            [
-                KeyboardButton(text="Админ меню"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+    return reply_keyboard([
+        ["Журнал", "Скачать базу"],
+        ["Проверка базы"],
+        ["Загрузить базу"],
+        ["Создать копию базы", "Ошибки"],
+        ["Админ меню"],
+    ])
 
 
 def position_list_text():
@@ -292,10 +190,7 @@ def choice_keyboard(prefix: str, items: dict[str, str | dict], with_navigation: 
         ])
 
     if with_navigation:
-        keyboard.append([
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
-        ])
+        keyboard.append(navigation_row())
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -303,10 +198,7 @@ def choice_keyboard(prefix: str, items: dict[str, str | dict], with_navigation: 
 def navigation_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
-                InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
-            ]
+            navigation_row()
         ]
     )
 
@@ -330,10 +222,7 @@ def multi_choice_keyboard(prefix: str, items: dict[str, str], selected_numbers: 
     keyboard.append([
         InlineKeyboardButton(text="✅ Далее", callback_data=f"{prefix}_done"),
     ])
-    keyboard.append([
-        InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
-    ])
+    keyboard.append(navigation_row())
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -349,9 +238,6 @@ def progress_keyboard():
                 InlineKeyboardButton(text="75%", callback_data="cutting_progress:75"),
                 InlineKeyboardButton(text="100%", callback_data="cutting_progress:100"),
             ],
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"),
-                InlineKeyboardButton(text="❌ Отмена", callback_data="nav_cancel"),
-            ],
+            navigation_row(),
         ]
     )

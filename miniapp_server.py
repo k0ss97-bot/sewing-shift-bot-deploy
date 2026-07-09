@@ -694,15 +694,20 @@ def get_order_color_options():
 
 
 def production_catalog_to_dict():
-    return [
-        {
-            "product_name": product_name,
-            "sizes": get_product_sizes(product_name),
-            "colors": get_product_colors(product_name),
-            "color_labels": [format_color_label(color) for color in get_product_colors(product_name)],
-        }
-        for product_name in PRODUCT_ROUTE_MAPS
-    ]
+    catalog = []
+
+    for product_name in PRODUCT_ROUTE_MAPS:
+        colors = get_product_colors(product_name)
+        catalog.append(
+            {
+                "product_name": product_name,
+                "sizes": get_product_sizes(product_name),
+                "colors": colors,
+                "color_labels": [format_color_label(color) for color in colors],
+            }
+        )
+
+    return catalog
 
 
 def production_task_to_dict(row):
@@ -862,12 +867,13 @@ def get_production_state_for_telegram(telegram_id: int):
     employee = get_employee_for_access(telegram_id)
     is_admin_user = is_admin(telegram_id)
     can_work_contours = bool(employee and employee[5] == "active" and employee[3] == "Раскройщик")
+    order_colors = get_order_color_options()
     warehouse_rows = [warehouse_stock_to_dict(row) for row in get_warehouse_stock_rows()]
 
     return {
         "catalog": production_catalog_to_dict(),
-        "order_colors": get_order_color_options(),
-        "order_color_labels": [format_color_label(color) for color in get_order_color_options()],
+        "order_colors": order_colors,
+        "order_color_labels": [format_color_label(color) for color in order_colors],
         "fabric_stock": [fabric_stock_to_dict(row) for row in get_fabric_stock_rows()] if is_admin_user else [],
         "warehouse_stock": warehouse_rows if is_admin_user else [],
         "tasks": [production_task_to_dict(row) for row in get_active_production_tasks()] if is_admin_user else [],
