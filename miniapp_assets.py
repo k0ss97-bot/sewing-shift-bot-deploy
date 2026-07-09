@@ -769,6 +769,24 @@ MINIAPP_HTML = """<!doctype html>
       padding: 12px;
     }
 
+    .route-order-head {
+      grid-template-columns: 44px minmax(0, 1fr);
+    }
+
+    .route-operation-chip {
+      display: block;
+      margin-top: 9px;
+      padding: 8px 10px;
+      border: 1px solid rgba(195,111,85,.18);
+      border-radius: 14px;
+      color: var(--accent-dark);
+      background: rgba(195,111,85,.10);
+      font-size: 12px;
+      font-weight: 950;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
     .order-foot {
       display: flex;
       justify-content: space-between;
@@ -2315,7 +2333,8 @@ MINIAPP_HTML = """<!doctype html>
             const index = tasks.length + routeIndex;
             return `
               <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
-                <div class="order-head"><div class="op-icon">▣</div><div><b>Операция #${escapeHtml(task.id)}</b><span>${escapeHtml(task.product_name)} · ${escapeHtml(task.position)}</span></div><span class="status-chip gray">${escapeHtml(task.operation)}</span></div>
+                <div class="order-head route-order-head"><div class="op-icon">▣</div><div><b>Операция #${escapeHtml(task.id)}</b><span>${escapeHtml(task.product_name)} · ${escapeHtml(task.position)}</span></div></div>
+                <div class="route-operation-chip">${escapeHtml(task.operation)}</div>
                 <div class="order-foot"><span>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</span><span>${escapeHtml(task.quantity)} шт</span></div>
               </div>
             `;
