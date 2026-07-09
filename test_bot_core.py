@@ -79,6 +79,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("idx_fabric_stock_color", indexes)
         self.assertIn("idx_production_tasks_status", indexes)
         self.assertIn("idx_production_task_items_task", indexes)
+        self.assertIn("idx_production_task_fabric_rolls_task", indexes)
         self.assertIn("idx_warehouse_stock_type_position", indexes)
         self.assertIn("idx_warehouse_stock_product", indexes)
 
@@ -343,9 +344,9 @@ class IsolatedDatabaseTest(unittest.TestCase):
         fabric_result = miniapp_server.add_fabric_receipt_for_telegram(
             9001,
             {
-                "material_name": "Футер",
+                "material_name": "Ткань",
                 "product_color": "Бежевый",
-                "quantity": "12.5",
+                "quantity": "12",
             },
         )
         self.assertTrue(fabric_result["ok"], fabric_result)
@@ -357,14 +358,23 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "product_name": "Шорты",
                 "sizes": ["80", "92"],
                 "colors": ["Бежевый"],
+                "fabric_rolls": {"Бежевый": "2"},
+                "attachment": {
+                    "file_name": "layout.pdf",
+                    "mime_type": "",
+                    "content_base64": "ZmlsZQ==",
+                },
             },
         )
         self.assertTrue(task_result["ok"], task_result)
+        self.assertEqual(task_result["production"]["fabric_stock"][0]["quantity"], 10)
 
         task_id = self.database.get_active_production_tasks()[0][0]
         cutter_state = miniapp_server.get_production_state_for_telegram(9002)
         self.assertTrue(cutter_state["can_contours"])
         self.assertEqual(cutter_state["contour_tasks"][0]["id"], task_id)
+        self.assertEqual(cutter_state["contour_tasks"][0]["attachment"]["mime_type"], "application/pdf")
+        self.assertEqual(cutter_state["contour_tasks"][0]["fabric_rolls"][0]["rolls"], 2)
 
         contour_result = miniapp_server.submit_production_contours_for_telegram(
             9002,
@@ -383,6 +393,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
     def test_miniapp_admin_creates_order_tasks(self):
         os.environ["ADMIN_IDS"] = "9001"
         miniapp_server = importlib.import_module("miniapp_server")
+        self.database.add_fabric_receipt("Ткань", "Бежевый", 8, None)
         self.database.add_fabric_receipt("Ткань", "Фуксия", 12, None)
 
         cutting_result = miniapp_server.create_order_task_for_telegram(
@@ -393,12 +404,30 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "material_name": "Ткань",
                 "sizes": ["80", "92"],
                 "colors": ["Бежевый", "Фуксия"],
+                "fabric_rolls": {"Бежевый": "1", "Фуксия": "2"},
+                "attachment": {
+                    "file_name": "cutting.xlsx",
+                    "mime_type": "application/octet-stream",
+                    "content_base64": "ZmlsZQ==",
+                },
             },
         )
 
         self.assertTrue(cutting_result["ok"], cutting_result)
         self.assertEqual(len(self.database.get_active_production_tasks()), 1)
         self.assertEqual(set(self.database.get_production_task_options(1)[1]), {"Бежевый", "Фуксия"})
+        self.assertEqual(
+            {(row["product_color"], row["unit"]): row["quantity"] for row in cutting_result["production"]["fabric_stock"]},
+            {("Бежевый", "рул"): 7, ("Фуксия", "рул"): 10},
+        )
+        self.assertEqual(
+            {(row["product_color"], row["rolls"]) for row in cutting_result["production"]["tasks"][0]["fabric_rolls"]},
+            {("Бежевый", 1), ("Фуксия", 2)},
+        )
+        self.assertEqual(
+            cutting_result["production"]["tasks"][0]["attachment"]["mime_type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
         stock_items = []
 
         for product_size in ["80", "92"]:
@@ -515,6 +544,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
     def test_miniapp_admin_deletes_order_tasks(self):
         os.environ["ADMIN_IDS"] = "9001"
         miniapp_server = importlib.import_module("miniapp_server")
+        self.database.add_fabric_receipt("Ткань", "Бежевый", 5, None)
 
         cutting_result = miniapp_server.create_order_task_for_telegram(
             9001,
@@ -524,9 +554,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "material_name": "Ткань",
                 "sizes": ["80"],
                 "colors": ["Бежевый"],
+                "fabric_rolls": {"Бежевый": "2"},
             },
         )
         self.assertTrue(cutting_result["ok"], cutting_result)
+        self.assertEqual(cutting_result["production"]["fabric_stock"][0]["quantity"], 3)
         stock_row = self.database.add_warehouse_stock(
             "semifinished",
             "Шорты",
@@ -560,6 +592,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(delete_production["ok"], delete_production)
         self.assertEqual(self.database.get_production_task_by_id(production_id)["status"], "cancelled")
         self.assertEqual(self.database.get_active_production_tasks(), [])
+        self.assertEqual(self.database.get_fabric_stock_rows()[0][2], 5)
 
         delete_route = miniapp_server.delete_order_task_for_telegram(
             9001,

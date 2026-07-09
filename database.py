@@ -751,7 +751,7 @@ def init_db():
             material_name TEXT NOT NULL,
             product_color TEXT NOT NULL,
             quantity REAL NOT NULL DEFAULT 0,
-            unit TEXT NOT NULL DEFAULT 'м',
+            unit TEXT NOT NULL DEFAULT 'рул',
             updated_at TEXT NOT NULL,
             UNIQUE(material_name, product_color, unit)
         )
@@ -763,7 +763,7 @@ def init_db():
             material_name TEXT NOT NULL,
             product_color TEXT NOT NULL,
             quantity REAL NOT NULL,
-            unit TEXT NOT NULL DEFAULT 'м',
+            unit TEXT NOT NULL DEFAULT 'рул',
             movement_type TEXT NOT NULL,
             comment TEXT,
             created_by_employee_id INTEGER,
@@ -858,6 +858,30 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS production_task_fabric_rolls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            material_name TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            rolls INTEGER NOT NULL,
+            UNIQUE(task_id, material_name, product_color),
+            FOREIGN KEY (task_id) REFERENCES production_tasks (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS production_task_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL UNIQUE,
+            file_name TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            content_base64 TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES production_tasks (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_name TEXT NOT NULL,
@@ -919,6 +943,7 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_fabric_stock_color ON fabric_stock (product_color)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_tasks_status ON production_tasks (status, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_items_task ON production_task_items (task_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_fabric_rolls_task ON production_task_fabric_rolls (task_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_type_position ON warehouse_stock (item_type, ready_for_position)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_product ON warehouse_stock (product_name, product_size, product_color)")
 
@@ -2764,6 +2789,7 @@ def get_cutting_batches_for_cutting(product_name: str):
             cutting_batches.contour_date,
             cutting_batches.layout_date,
             cutting_batches.cutting_progress,
+            cutting_batches.production_task_id,
             GROUP_CONCAT(DISTINCT cutting_batch_colors.product_color || ' - ' || cutting_batch_colors.layers || ' сл.') AS colors_text
         FROM cutting_batches
         LEFT JOIN cutting_batch_colors ON cutting_batch_colors.batch_id = cutting_batches.id
@@ -2774,7 +2800,8 @@ def get_cutting_batches_for_cutting(product_name: str):
             cutting_batches.product_name,
             cutting_batches.contour_date,
             cutting_batches.layout_date,
-            cutting_batches.cutting_progress
+            cutting_batches.cutting_progress,
+            cutting_batches.production_task_id
         ORDER BY cutting_batches.layout_date ASC, cutting_batches.id ASC
         """,
         (product_name,)
@@ -2848,7 +2875,8 @@ def get_cutting_batches_for_formation(product_name: str):
             product_name,
             contour_date,
             layout_date,
-            cutting_progress
+            cutting_progress,
+            production_task_id
         FROM cutting_batches
         WHERE product_name = ?
           AND status = 'cutting_done'
@@ -3279,12 +3307,12 @@ def add_fabric_receipt(
     product_color: str,
     quantity: float,
     employee_id: int | None,
-    unit: str = "м",
+    unit: str = "рул",
     comment: str = "",
 ):
     material_name = material_name.strip()
     product_color = product_color.strip()
-    unit = unit.strip() or "м"
+    unit = unit.strip() or "рул"
 
     if not material_name or not product_color or quantity <= 0:
         return None
@@ -3583,10 +3611,15 @@ def create_production_task(
     colors: list[str],
     employee_id: int | None,
     note: str = "",
+    fabric_rolls: dict[str, int] | None = None,
+    material_name: str = "Ткань",
+    attachment: dict | None = None,
 ):
     product_name = product_name.strip()
     sizes = [str(size).strip() for size in sizes if str(size).strip()]
     colors = [str(color).strip() for color in colors if str(color).strip()]
+    material_name = material_name.strip() or "Ткань"
+    fabric_rolls = fabric_rolls or {}
 
     if not product_name or not sizes or not colors:
         return None
@@ -3594,6 +3627,30 @@ def create_production_task(
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     now = local_now().isoformat()
+
+    if fabric_rolls:
+        for product_color in colors:
+            rolls = int(fabric_rolls.get(product_color) or 0)
+
+            if rolls <= 0:
+                conn.close()
+                return None
+
+            cursor.execute(
+                """
+                SELECT quantity
+                FROM fabric_stock
+                WHERE material_name = ?
+                  AND product_color = ?
+                  AND unit = 'рул'
+                """,
+                (material_name, product_color),
+            )
+            row = cursor.fetchone()
+
+            if row is None or row[0] < rolls:
+                conn.close()
+                return None
 
     cursor.execute(
         """
@@ -3632,6 +3689,71 @@ def create_production_task(
         ],
     )
 
+    for product_color in colors:
+        rolls = int(fabric_rolls.get(product_color) or 0)
+
+        if rolls <= 0:
+            continue
+
+        cursor.execute(
+            """
+            UPDATE fabric_stock
+            SET quantity = quantity - ?,
+                updated_at = ?
+            WHERE material_name = ?
+              AND product_color = ?
+              AND unit = 'рул'
+              AND quantity >= ?
+            """,
+            (rolls, now, material_name, product_color, rolls),
+        )
+
+        if cursor.rowcount == 0:
+            conn.rollback()
+            conn.close()
+            return None
+
+        cursor.execute(
+            """
+            INSERT INTO fabric_stock_movements (
+                material_name, product_color, quantity, unit, movement_type, comment,
+                created_by_employee_id, created_at
+            )
+            VALUES (?, ?, ?, 'рул', 'issue', ?, ?, ?)
+            """,
+            (
+                material_name,
+                product_color,
+                -rolls,
+                f"Задание на раскрой #{task_id}: {product_name}",
+                employee_id,
+                now,
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO production_task_fabric_rolls (task_id, material_name, product_color, rolls)
+            VALUES (?, ?, ?, ?)
+            """,
+            (task_id, material_name, product_color, rolls),
+        )
+
+    if attachment:
+        file_name = str(attachment.get("file_name") or "").strip()
+        mime_type = str(attachment.get("mime_type") or "").strip()
+        content_base64 = str(attachment.get("content_base64") or "").strip()
+
+        if file_name and mime_type and content_base64:
+            cursor.execute(
+                """
+                INSERT INTO production_task_attachments (
+                    task_id, file_name, mime_type, content_base64, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (task_id, file_name, mime_type, content_base64, now),
+            )
+
     conn.commit()
     conn.close()
     return get_production_task_by_id(task_id)
@@ -3663,7 +3785,50 @@ def get_production_task_by_id(task_id: int):
     return task
 
 
-def cancel_production_task(task_id: int):
+def get_production_task_fabric_rolls(task_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT material_name, product_color, rolls
+        FROM production_task_fabric_rolls
+        WHERE task_id = ?
+        ORDER BY product_color ASC
+        """,
+        (task_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_production_task_attachment(task_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT file_name, mime_type, content_base64
+        FROM production_task_attachments
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+
+    if row is None:
+        return None
+
+    return {
+        "file_name": row[0],
+        "mime_type": row[1],
+        "content_base64": row[2],
+    }
+
+
+def cancel_production_task(task_id: int, employee_id: int | None = None):
     task = get_production_task_by_id(task_id)
 
     if task is None or task["status"] not in {"active", "contours_done", "in_cutting"}:
@@ -3688,6 +3853,46 @@ def cancel_production_task(task_id: int):
     changed = cursor.rowcount > 0
 
     if changed:
+        cursor.execute(
+            """
+            SELECT material_name, product_color, rolls
+            FROM production_task_fabric_rolls
+            WHERE task_id = ?
+            """,
+            (task_id,),
+        )
+        roll_rows = cursor.fetchall()
+
+        for material_name, product_color, rolls in roll_rows:
+            cursor.execute(
+                """
+                INSERT INTO fabric_stock (material_name, product_color, quantity, unit, updated_at)
+                VALUES (?, ?, ?, 'рул', ?)
+                ON CONFLICT(material_name, product_color, unit)
+                DO UPDATE SET
+                    quantity = quantity + excluded.quantity,
+                    updated_at = excluded.updated_at
+                """,
+                (material_name, product_color, rolls, now),
+            )
+            cursor.execute(
+                """
+                INSERT INTO fabric_stock_movements (
+                    material_name, product_color, quantity, unit, movement_type, comment,
+                    created_by_employee_id, created_at
+                )
+                VALUES (?, ?, ?, 'рул', 'receipt', ?, ?, ?)
+                """,
+                (
+                    material_name,
+                    product_color,
+                    rolls,
+                    f"Возврат рулонов после отмены задания на раскрой #{task_id}: {task['product_name']}",
+                    employee_id,
+                    now,
+                ),
+            )
+
         cursor.execute(
             """
             UPDATE cutting_batches

@@ -495,6 +495,9 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .small-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
       min-width: 0;
       border: none;
       border-radius: 15px;
@@ -504,6 +507,7 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 12px;
       font-weight: 950;
       overflow-wrap: anywhere;
+      text-decoration: none;
     }
 
     .small-button.secondary {
@@ -1116,6 +1120,11 @@ MINIAPP_HTML = """<!doctype html>
       orderColors: [],
       orderQuantity: "1",
       orderStockQuantities: {},
+      orderFabricRolls: {},
+      orderAttachment: null,
+      fabricReceiptMaterial: "Ткань",
+      fabricReceiptColor: "",
+      fabricReceiptQuantity: "",
       adminSection: "reports",
       adminReportType: "period",
       adminStartDate: "",
@@ -1185,6 +1194,40 @@ MINIAPP_HTML = """<!doctype html>
 
     function itemEmpty(text) {
       return `<p class="empty">${escapeHtml(text)}</p>`;
+    }
+
+    function attachmentUrl(attachment) {
+      if (!attachment || !attachment.content_base64 || !attachment.mime_type) return "";
+      return `data:${attachment.mime_type};base64,${attachment.content_base64}`;
+    }
+
+    function renderTaskAttachment(attachment) {
+      const url = attachmentUrl(attachment);
+      if (!url) return "";
+
+      return `
+        <div class="card field-card">
+          <label>Файл задания</label>
+          <div class="report-row"><div><b>${escapeHtml(attachment.file_name || "Файл")}</b><span>Word, Excel или PDF</span></div><span class="status-chip gray">файл</span></div>
+          <div class="button-row"><a class="small-button secondary" href="${escapeHtml(url)}" target="_blank" rel="noopener">Открыть файл</a><a class="small-button" href="${escapeHtml(url)}" download="${escapeHtml(attachment.file_name || "task-file")}">Скачать</a></div>
+        </div>
+      `;
+    }
+
+    function renderTaskFabricRolls(task) {
+      const rows = task && task.fabric_rolls ? task.fabric_rolls : [];
+      if (!rows.length) return "";
+
+      return `
+        <div class="card field-card">
+          <label>Списанные рулоны</label>
+          <div class="op-list">
+            ${rows.map((row) => `
+              <div class="report-row"><div><b>${escapeHtml(row.product_color_label || row.product_color)}</b><span>${escapeHtml(row.material_name || "Ткань")}</span></div><span class="status-chip">${escapeHtml(row.rolls)} рул.</span></div>
+            `).join("")}
+          </div>
+        </div>
+      `;
     }
 
     function progressForTask(task) {
@@ -2084,6 +2127,8 @@ MINIAPP_HTML = """<!doctype html>
       state.orderColors = [];
       state.orderQuantity = "1";
       state.orderStockQuantities = {};
+      state.orderFabricRolls = {};
+      state.orderAttachment = null;
     }
 
     function ensureOrderDraftDefaults() {
@@ -2100,6 +2145,9 @@ MINIAPP_HTML = """<!doctype html>
       const availableColors = getOrderColors();
       state.orderSizes = state.orderSizes.filter((size) => availableSizes.includes(size));
       state.orderColors = state.orderColors.filter((color) => availableColors.includes(color));
+      Object.keys(state.orderFabricRolls).forEach((color) => {
+        if (!state.orderColors.includes(color)) delete state.orderFabricRolls[color];
+      });
 
       const operations = routeOperations(product);
       if (state.orderTaskType === "route" && !operations.some((operation) => String(operation.index) === String(state.orderRouteStep))) {
@@ -2116,6 +2164,7 @@ MINIAPP_HTML = """<!doctype html>
       const material = document.getElementById("orderMaterial");
       const quantity = document.getElementById("orderQuantity");
       const stockQuantityInputs = document.querySelectorAll("[data-stock-quantity]");
+      const fabricRollInputs = document.querySelectorAll("[data-fabric-rolls]");
       const previousProduct = state.orderProduct;
       const previousRouteStep = state.orderRouteStep;
 
@@ -2127,12 +2176,16 @@ MINIAPP_HTML = """<!doctype html>
       stockQuantityInputs.forEach((input) => {
         state.orderStockQuantities[input.dataset.stockQuantity] = input.value;
       });
+      fabricRollInputs.forEach((input) => {
+        state.orderFabricRolls[input.dataset.fabricRolls] = input.value;
+      });
 
       if (previousProduct && previousProduct !== state.orderProduct) {
         state.orderSizes = [];
         state.orderColors = [];
         state.orderRouteStep = "";
         state.orderStockQuantities = {};
+        state.orderFabricRolls = {};
       }
 
       if (previousRouteStep && previousRouteStep !== state.orderRouteStep) {
@@ -2145,7 +2198,17 @@ MINIAPP_HTML = """<!doctype html>
     function toggleOrderValue(kind, value) {
       const key = kind === "size" ? "orderSizes" : "orderColors";
       const values = state[key];
-      state[key] = values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+      const isSelected = values.includes(value);
+      state[key] = isSelected ? values.filter((item) => item !== value) : [...values, value];
+
+      if (kind === "color") {
+        if (isSelected) {
+          delete state.orderFabricRolls[value];
+        } else if (!state.orderFabricRolls[value]) {
+          state.orderFabricRolls[value] = "1";
+        }
+      }
+
       render();
     }
 
@@ -2213,6 +2276,8 @@ MINIAPP_HTML = """<!doctype html>
           sizes: state.orderSizes,
           colors: state.orderColors,
           quantity: state.orderQuantity,
+          fabric_rolls: state.orderFabricRolls,
+          attachment: state.orderTaskType === "cutting" ? state.orderAttachment : null,
           stock_items: stockItems,
         });
 
@@ -2229,6 +2294,76 @@ MINIAPP_HTML = """<!doctype html>
         showToast("Задание", data.message || "Задание создано.");
       } catch (error) {
         showToast("Ошибка", "Не удалось создать задание.");
+        mainButton.disabled = false;
+      }
+    }
+
+    function readOrderAttachment(file) {
+      if (!file) {
+        state.orderAttachment = null;
+        render();
+        return;
+      }
+
+      const allowed = [".pdf", ".doc", ".docx", ".xls", ".xlsx"];
+      const lowerName = file.name.toLowerCase();
+
+      if (!allowed.some((extension) => lowerName.endsWith(extension))) {
+        state.orderAttachment = null;
+        showToast("Файл", "Можно прикрепить только Word, Excel или PDF.");
+        render();
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result || "");
+        state.orderAttachment = {
+          file_name: file.name,
+          mime_type: file.type || "application/octet-stream",
+          content_base64: dataUrl.includes(",") ? dataUrl.split(",").pop() : dataUrl,
+        };
+        render();
+        showToast("Файл", "Файл прикреплён к заданию.");
+      };
+      reader.onerror = () => showToast("Файл", "Не удалось прочитать файл.");
+      reader.readAsDataURL(file);
+    }
+
+    function syncWarehouseReceiptForm() {
+      const material = document.getElementById("fabricReceiptMaterial");
+      const color = document.getElementById("fabricReceiptColor");
+      const quantity = document.getElementById("fabricReceiptQuantity");
+
+      if (material) state.fabricReceiptMaterial = material.value;
+      if (color) state.fabricReceiptColor = color.value;
+      if (quantity) state.fabricReceiptQuantity = quantity.value;
+    }
+
+    async function addFabricReceipt() {
+      if (!state.data || !state.data.is_admin) return;
+      syncWarehouseReceiptForm();
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/production/fabric-receipt", {
+          material_name: state.fabricReceiptMaterial || "Ткань",
+          product_color: state.fabricReceiptColor,
+          quantity: state.fabricReceiptQuantity,
+        });
+
+        if (!data.ok) {
+          showToast("Склад", data.message || "Не удалось сохранить приход.");
+          mainButton.disabled = false;
+          return;
+        }
+
+        state.data.production = data.production || state.data.production;
+        state.fabricReceiptQuantity = "";
+        render();
+        showToast("Склад", data.message || "Приход сохранён.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось сохранить приход.");
         mainButton.disabled = false;
       }
     }
@@ -2280,7 +2415,14 @@ MINIAPP_HTML = """<!doctype html>
           </div>
         `).join("")).join("");
 
-        return `<div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">1 этап</span></div></div><div class="op-list">${rows || itemEmpty("Нет размеров или цветов.")}</div>`;
+        return `
+          <div class="card order-detail">
+            <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">1 этап</span></div>
+            <div class="op-list">${rows || itemEmpty("Нет размеров или цветов.")}</div>
+          </div>
+          ${renderTaskFabricRolls(current)}
+          ${renderTaskAttachment(current.attachment)}
+        `;
       }
 
       if (current.stage === "layout") {
@@ -2291,7 +2433,14 @@ MINIAPP_HTML = """<!doctype html>
           </div>
         `).join("");
 
-        return `<div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">2 этап</span></div></div><div class="op-list">${rows || itemEmpty("Нет цветов для настила.")}</div>`;
+        return `
+          <div class="card order-detail">
+            <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">2 этап</span></div>
+            <div class="op-list">${rows || itemEmpty("Нет цветов для настила.")}</div>
+          </div>
+          ${renderTaskFabricRolls(current)}
+          ${renderTaskAttachment(current.attachment)}
+        `;
       }
 
       if (current.stage === "cutting") {
@@ -2300,6 +2449,8 @@ MINIAPP_HTML = """<!doctype html>
             <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">3 этап</span></div>
             <div class="form-grid"><div class="field full"><label>Готовность</label><select id="cuttingProgress"><option value="25">25%</option><option value="50">50%</option><option value="75">75%</option><option value="100" selected>100%</option></select></div></div>
           </div>
+          ${renderTaskFabricRolls(current)}
+          ${renderTaskAttachment(current.attachment)}
         `;
       }
 
@@ -2308,6 +2459,8 @@ MINIAPP_HTML = """<!doctype html>
           <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">4 этап</span></div>
           <p class="empty">После выполнения готовый крой попадёт на склад полуфабрикатов.</p>
         </div>
+        ${renderTaskFabricRolls(current)}
+        ${renderTaskAttachment(current.attachment)}
       `;
     }
 
@@ -2444,6 +2597,17 @@ MINIAPP_HTML = """<!doctype html>
         row.product_name === state.orderProduct &&
         row.ready_for_position === selectedOperation.position
       ) : [];
+      const rollInputs = state.orderColors.length ? `
+        <div class="card field-card">
+          <label>Рулоны по цветам</label>
+          <div class="form-grid">
+            ${state.orderColors.map((color) => `
+              <div class="field"><label>${escapeHtml(color)}</label><input data-fabric-rolls="${escapeHtml(color)}" type="number" min="1" step="1" value="${escapeHtml(state.orderFabricRolls[color] || "1")}"></div>
+            `).join("")}
+          </div>
+        </div>
+      ` : `<div class="card field-card">${itemEmpty("Выберите цвета, чтобы указать рулоны.")}</div>`;
+      const attachmentText = state.orderAttachment ? state.orderAttachment.file_name : "Word, Excel или PDF";
 
       mainButton.textContent = "Создать задание";
       mainButton.disabled = false;
@@ -2461,6 +2625,8 @@ MINIAPP_HTML = """<!doctype html>
         ${state.orderTaskType === "cutting" ? `
           <div class="card field-card"><label>Размеры</label>${sizes.length ? renderChoiceChips("size", sizes, state.orderSizes) : itemEmpty("У изделия нет размеров.")}</div>
           <div class="card field-card"><label>Цвета ткани</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
+          ${rollInputs}
+          <div class="card field-card"><label>Файл задания</label><div class="form-grid"><div class="field full"><input id="orderAttachment" type="file" accept=".doc,.docx,.xls,.xlsx,.pdf,application/pdf,application/msword,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div></div><p class="empty">${escapeHtml(attachmentText)}</p></div>
         ` : `
           ${renderStockPicker(stockRows, selectedOperation)}
         `}
@@ -2521,6 +2687,8 @@ MINIAPP_HTML = """<!doctype html>
         <div class="section-title"><b>Детали выбранного</b><span>${current ? progressForTask(current) : 0}%</span></div>
         ${current && current.task_kind === "cutting_stage" ? renderCuttingStageDetail(current) : current && current.task_kind === "production" ? `
           <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.status_text || current.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || current.status)}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
+          ${renderTaskFabricRolls(current)}
+          ${renderTaskAttachment(current.attachment)}
         ` : current ? `
           <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}${current.assigned_employee_name ? `<br>В работе: ${escapeHtml(current.assigned_employee_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div></div>
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
@@ -2582,6 +2750,7 @@ MINIAPP_HTML = """<!doctype html>
     function renderAdminWarehouse(includeTabs = false) {
       const fabricRows = getProduction().fabric_stock || [];
       const warehouseRows = getWarehouseStock();
+      const receiptColors = getOrderColors();
       const semifinished = warehouseRows.filter((row) => row.item_type === "semifinished");
       const finished = warehouseRows.filter((row) => row.item_type === "finished");
       const cuttingReady = semifinished.filter((row) => row.ready_for_position === "Раскройщик");
@@ -2590,8 +2759,15 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.textContent = "Обновить склад";
       mainButton.disabled = false;
 
+      if ((!state.fabricReceiptColor || !receiptColors.includes(state.fabricReceiptColor)) && receiptColors.length) {
+        state.fabricReceiptColor = receiptColors[0];
+      }
+
+      const receiptColorOptions = receiptColors.map((color) => `
+        <option value="${escapeHtml(color)}" ${color === state.fabricReceiptColor ? "selected" : ""}>${escapeHtml(color)}</option>
+      `).join("");
       const materialHtml = fabricRows.length ? fabricRows.map((row) => `
-        <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span></div>
+        <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit === "рул" ? "рул." : row.unit)}</span></div>
       `).join("") : itemEmpty("Материалов пока нет.");
       const stockList = (rows) => rows.length ? rows.map((row) => `
         <div class="card report-row"><div><b>${escapeHtml(row.title)}</b><span>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}<br>Для: ${escapeHtml(row.ready_for_position)}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span></div>
@@ -2604,6 +2780,15 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card kpi"><div class="kpi-top"><span>Материалы</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз</small></strong><span>Ткань и материалы</span></div>
           <div class="card kpi"><div class="kpi-top"><span>Полуфабрикаты</span><div class="kpi-ico">▣</div></div><strong>${semifinished.length}<small> поз</small></strong><span>После этапов</span></div>
           <div class="card kpi good"><div class="kpi-top"><span>Готовое</span><div class="kpi-ico">✓</div></div><strong>${finished.length}<small> поз</small></strong><span>Готовая продукция</span></div>
+        </div>
+        <div class="section-title"><b>Приход материалов</b><span>рулоны</span></div>
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field"><label>Материал</label><select id="fabricReceiptMaterial"><option value="Ткань" ${state.fabricReceiptMaterial === "Ткань" ? "selected" : ""}>Ткань</option></select></div>
+            <div class="field"><label>Цвет</label><select id="fabricReceiptColor">${receiptColorOptions || `<option value="">Нет цветов</option>`}</select></div>
+            <div class="field full"><label>Количество рулонов</label><input id="fabricReceiptQuantity" type="number" min="1" step="1" value="${escapeHtml(state.fabricReceiptQuantity)}" placeholder="0"></div>
+          </div>
+          <div class="button-row"><button class="small-button secondary" data-warehouse-action="refresh">Обновить</button><button class="small-button" data-warehouse-action="receipt">Добавить приход</button></div>
         </div>
         <div class="section-title"><b>Материалы</b><span>${fabricRows.length}</span></div>
         <div class="op-list">${materialHtml}</div>
@@ -2893,6 +3078,18 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const warehouseAction = event.target.closest("[data-warehouse-action]");
+      if (warehouseAction) {
+        syncWarehouseReceiptForm();
+        if (warehouseAction.dataset.warehouseAction === "receipt") {
+          addFabricReceipt();
+        }
+        if (warehouseAction.dataset.warehouseAction === "refresh") {
+          refreshAdminDashboard("Склад обновлён.");
+        }
+        return;
+      }
+
       const adminHomePeriod = event.target.closest("[data-admin-home-period]");
       if (adminHomePeriod) {
         state.adminHomePeriod = adminHomePeriod.dataset.adminHomePeriod;
@@ -3055,6 +3252,17 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
+      const attachmentInput = event.target.closest("#orderAttachment");
+      if (attachmentInput) {
+        readOrderAttachment(attachmentInput.files && attachmentInput.files[0]);
+        return;
+      }
+
+      if (event.target.closest("#fabricReceiptMaterial") || event.target.closest("#fabricReceiptColor") || event.target.closest("#fabricReceiptQuantity")) {
+        syncWarehouseReceiptForm();
+        return;
+      }
+
       const stockToggle = event.target.closest("[data-stock-toggle]");
       if (stockToggle) {
         const input = document.querySelector(`[data-stock-quantity="${stockToggle.dataset.stockToggle}"]`);
@@ -3067,9 +3275,10 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      if (event.target.closest("#orderProduct") || event.target.closest("#orderTaskType") || event.target.closest("#orderRouteStep") || event.target.closest("#orderMaterial") || event.target.closest("#orderQuantity") || event.target.closest("[data-stock-quantity]")) {
+      if (event.target.closest("#orderProduct") || event.target.closest("#orderTaskType") || event.target.closest("#orderRouteStep") || event.target.closest("#orderMaterial") || event.target.closest("#orderQuantity") || event.target.closest("[data-stock-quantity]") || event.target.closest("[data-fabric-rolls]")) {
         syncOrderDraft();
         const stockQuantity = event.target.closest("[data-stock-quantity]");
+        const fabricRolls = event.target.closest("[data-fabric-rolls]");
         if (stockQuantity) {
           const row = stockQuantity.closest(".stock-pick-row");
           const toggle = document.querySelector(`[data-stock-toggle="${stockQuantity.dataset.stockQuantity}"]`);
@@ -3077,7 +3286,7 @@ MINIAPP_HTML = """<!doctype html>
           if (toggle) toggle.checked = hasQuantity;
           if (row) row.classList.toggle("active", hasQuantity);
         }
-        if (!event.target.closest("[data-stock-quantity]")) render();
+        if (!stockQuantity && !fabricRolls) render();
         return;
       }
 

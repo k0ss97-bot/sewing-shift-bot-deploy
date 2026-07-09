@@ -59,8 +59,10 @@ from database import (
     get_product_colors,
     get_product_sizes,
     get_recent_shifts,
+    get_production_task_attachment,
     get_route_batch_by_id,
     get_production_task_by_id,
+    get_production_task_fabric_rolls,
     get_shift_for_today,
     get_shift_report,
     get_warehouse_stock_by_id,
@@ -876,9 +878,9 @@ def format_number(value: float):
     return str(value).rstrip("0").rstrip(".")
 
 
-def parse_positive_float(value):
+def parse_positive_int(value):
     try:
-        parsed = float(str(value or "").replace(",", "."))
+        parsed = int(str(value or "").strip())
     except (TypeError, ValueError):
         return None
 
@@ -886,6 +888,68 @@ def parse_positive_float(value):
         return None
 
     return parsed
+
+
+def infer_attachment_mime_type(file_name: str, mime_type: str):
+    lower_name = file_name.lower()
+
+    if mime_type and mime_type != "application/octet-stream":
+        return mime_type
+
+    if lower_name.endswith(".pdf"):
+        return "application/pdf"
+
+    if lower_name.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+    if lower_name.endswith(".doc"):
+        return "application/msword"
+
+    if lower_name.endswith(".xlsx"):
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    if lower_name.endswith(".xls"):
+        return "application/vnd.ms-excel"
+
+    return mime_type
+
+
+def normalize_task_attachment(payload: dict):
+    attachment = payload.get("attachment") or {}
+
+    if not attachment:
+        return None
+
+    file_name = str(attachment.get("file_name") or "").strip()
+    mime_type = str(attachment.get("mime_type") or "").strip()
+    content_base64 = str(attachment.get("content_base64") or "").strip()
+    allowed_extensions = (".pdf", ".doc", ".docx", ".xls", ".xlsx")
+    allowed_mime_prefixes = (
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument",
+        "application/vnd.ms-excel",
+    )
+
+    if not file_name or not content_base64:
+        return None
+
+    if not file_name.lower().endswith(allowed_extensions):
+        return {"error": "Можно прикрепить только Word, Excel или PDF."}
+
+    mime_type = infer_attachment_mime_type(file_name, mime_type)
+
+    if not mime_type:
+        return {"error": "Формат файла должен быть Word, Excel или PDF."}
+
+    if not any(mime_type.startswith(prefix) for prefix in allowed_mime_prefixes):
+        return {"error": "Формат файла должен быть Word, Excel или PDF."}
+
+    return {
+        "file_name": file_name,
+        "mime_type": mime_type,
+        "content_base64": content_base64,
+    }
 
 
 def get_order_color_options():
@@ -900,6 +964,21 @@ def get_order_color_options():
             colors.append(product_color)
 
     return colors
+
+
+def task_fabric_rolls_to_dict(task_id: int | None):
+    if not task_id:
+        return []
+
+    return [
+        {
+            "material_name": material_name,
+            "product_color": product_color,
+            "product_color_label": format_color_label(product_color),
+            "rolls": rolls,
+        }
+        for material_name, product_color, rolls in get_production_task_fabric_rolls(task_id)
+    ]
 
 
 def production_catalog_to_dict():
@@ -922,6 +1001,8 @@ def production_catalog_to_dict():
 def production_task_to_dict(row):
     task_id, product_name, status, created_at, sizes_text, colors_text = row
     colors = split_group_concat(colors_text)
+    fabric_rolls = task_fabric_rolls_to_dict(task_id)
+    attachment = get_production_task_attachment(task_id)
 
     return {
         "id": task_id,
@@ -938,6 +1019,8 @@ def production_task_to_dict(row):
         "sizes": split_group_concat(sizes_text, sort_sizes=True),
         "colors": colors,
         "color_labels": [format_color_label(color) for color in colors],
+        "fabric_rolls": fabric_rolls,
+        "attachment": attachment,
     }
 
 
@@ -1022,13 +1105,16 @@ def cutting_stage_task_to_dict(stage: str, row):
             "sizes_text": sizes_text or "",
             "colors": colors,
             "color_labels": [format_color_label(color) for color in colors],
+            "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
+            "attachment": get_production_task_attachment(production_task_id),
         }
 
     if stage == "cutting":
-        batch_id, product_name, contour_date, layout_date, progress, colors_text = row
+        batch_id, product_name, contour_date, layout_date, progress, production_task_id, colors_text = row
         return {
             "id": batch_id,
             "source_id": batch_id,
+            "production_task_id": production_task_id,
             "task_kind": "cutting_stage",
             "category": "Раскрой",
             "stage": "cutting",
@@ -1040,12 +1126,15 @@ def cutting_stage_task_to_dict(stage: str, row):
             "created_at": layout_date or contour_date,
             "progress": progress or 0,
             "colors_text": colors_text or "",
+            "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
+            "attachment": get_production_task_attachment(production_task_id),
         }
 
-    batch_id, product_name, contour_date, layout_date, progress = row
+    batch_id, product_name, contour_date, layout_date, progress, production_task_id = row
     return {
         "id": batch_id,
         "source_id": batch_id,
+        "production_task_id": production_task_id,
         "task_kind": "cutting_stage",
         "category": "Раскрой",
         "stage": "formation",
@@ -1056,6 +1145,8 @@ def cutting_stage_task_to_dict(stage: str, row):
         "status_text": "раскрой завершён",
         "created_at": layout_date or contour_date,
         "progress": progress or 100,
+        "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
+        "attachment": get_production_task_attachment(production_task_id),
     }
 
 
@@ -1106,7 +1197,7 @@ def add_fabric_receipt_for_telegram(telegram_id: int, payload: dict):
 
     material_name = (payload.get("material_name") or "").strip()
     product_color = (payload.get("product_color") or "").strip()
-    quantity = parse_positive_float(payload.get("quantity"))
+    quantity = parse_positive_int(payload.get("quantity"))
 
     if not material_name:
         return {"ok": False, "message": "Введите материал."}
@@ -1115,7 +1206,7 @@ def add_fabric_receipt_for_telegram(telegram_id: int, payload: dict):
         return {"ok": False, "message": "Выберите цвет."}
 
     if quantity is None:
-        return {"ok": False, "message": "Введите количество больше 0."}
+        return {"ok": False, "message": "Введите количество рулонов больше 0."}
 
     employee = get_employee_for_access(telegram_id)
     row = add_fabric_receipt(
@@ -1123,6 +1214,7 @@ def add_fabric_receipt_for_telegram(telegram_id: int, payload: dict):
         product_color,
         quantity,
         employee[0] if employee else None,
+        unit="рул",
     )
 
     if row is None:
@@ -1150,8 +1242,10 @@ def create_production_task_for_telegram(telegram_id: int, payload: dict):
         return {"ok": False, "message": "Нет прав администратора."}
 
     product_name = (payload.get("product_name") or "").strip()
+    material_name = (payload.get("material_name") or "Ткань").strip() or "Ткань"
     sizes = [str(size).strip() for size in payload.get("sizes", []) if str(size).strip()]
     colors = [str(color).strip() for color in payload.get("colors", []) if str(color).strip()]
+    raw_fabric_rolls = payload.get("fabric_rolls") or {}
 
     if product_name not in PRODUCT_ROUTE_MAPS:
         return {"ok": False, "message": "Выберите изделие."}
@@ -1165,16 +1259,38 @@ def create_production_task_for_telegram(telegram_id: int, payload: dict):
     if not colors or any(color not in allowed_colors for color in colors):
         return {"ok": False, "message": "Выберите цвета из списка."}
 
+    if material_name != "Ткань":
+        return {"ok": False, "message": "Пока для раскроя доступен только материал: Ткань."}
+
+    fabric_rolls = {}
+
+    for color in colors:
+        rolls = parse_positive_int(raw_fabric_rolls.get(color))
+
+        if rolls is None:
+            return {"ok": False, "message": f"Укажите количество рулонов для цвета {format_color_label(color)}."}
+
+        fabric_rolls[color] = rolls
+
+    attachment = normalize_task_attachment(payload)
+
+    if attachment and attachment.get("error"):
+        return {"ok": False, "message": attachment["error"]}
+
     employee = get_employee_for_access(telegram_id)
     task = create_production_task(
         product_name,
         sizes,
         colors,
         employee[0] if employee else None,
+        f"Материал: {material_name}; рулоны: " + ", ".join(f"{format_color_label(color)} — {rolls} рул." for color, rolls in fabric_rolls.items()),
+        fabric_rolls=fabric_rolls,
+        material_name=material_name,
+        attachment=attachment,
     )
 
     if task is None:
-        return {"ok": False, "message": "Не удалось создать задание."}
+        return {"ok": False, "message": "Не удалось создать задание. Проверьте остатки рулонов на складе."}
 
     add_edit_log(
         telegram_id,
@@ -1182,7 +1298,7 @@ def create_production_task_for_telegram(telegram_id: int, payload: dict):
         "Создал производственное задание из миниаппа",
         "production_task",
         task["id"],
-        f"{task['product_name']}; размеры: {', '.join(sizes)}; цвета: {', '.join(colors)}",
+        f"{task['product_name']}; размеры: {', '.join(sizes)}; рулоны: {fabric_rolls}",
     )
 
     return {
@@ -1201,6 +1317,7 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     material_name = (payload.get("material_name") or "").strip()
     sizes = [str(size).strip() for size in payload.get("sizes", []) if str(size).strip()]
     colors = [str(color).strip() for color in payload.get("colors", []) if str(color).strip()]
+    raw_fabric_rolls = payload.get("fabric_rolls") or {}
 
     if product_name not in PRODUCT_ROUTE_MAPS:
         return {"ok": False, "message": "Выберите изделие."}
@@ -1226,16 +1343,34 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
         if material_name != "Ткань":
             return {"ok": False, "message": "Пока для раскроя доступен только материал: Ткань."}
 
+        fabric_rolls = {}
+
+        for color in colors:
+            rolls = parse_positive_int(raw_fabric_rolls.get(color))
+
+            if rolls is None:
+                return {"ok": False, "message": f"Укажите количество рулонов для цвета {format_color_label(color)}."}
+
+            fabric_rolls[color] = rolls
+
+        attachment = normalize_task_attachment(payload)
+
+        if attachment and attachment.get("error"):
+            return {"ok": False, "message": attachment["error"]}
+
         task = create_production_task(
             product_name,
             sizes,
             colors,
             employee_id,
-            f"Материал: {material_name}",
+            f"Материал: {material_name}; рулоны: " + ", ".join(f"{format_color_label(color)} — {rolls} рул." for color, rolls in fabric_rolls.items()),
+            fabric_rolls=fabric_rolls,
+            material_name=material_name,
+            attachment=attachment,
         )
 
         if task is None:
-            return {"ok": False, "message": "Не удалось создать задание на раскрой."}
+            return {"ok": False, "message": "Не удалось создать задание на раскрой. Проверьте остатки рулонов на складе."}
 
         add_edit_log(
             telegram_id,
@@ -1243,7 +1378,7 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
             "Создал задание на раскрой из миниаппа",
             "production_task",
             task["id"],
-            f"{task['product_name']}; материал: {material_name}; размеры: {', '.join(sizes)}; цвета: {', '.join(colors)}",
+            f"{task['product_name']}; материал: {material_name}; размеры: {', '.join(sizes)}; рулоны: {fabric_rolls}",
         )
 
         return {
@@ -1360,13 +1495,16 @@ def delete_order_task_for_telegram(telegram_id: int, payload: dict):
     if task_id <= 0:
         return {"ok": False, "message": "Выберите задание."}
 
+    employee = get_employee_for_access(telegram_id)
+    employee_id = employee[0] if employee else None
+
     if task_kind == "production":
         task = get_production_task_by_id(task_id)
 
         if task is None:
             return {"ok": False, "message": "Задание не найдено."}
 
-        cancelled_task = cancel_production_task(task_id)
+        cancelled_task = cancel_production_task(task_id, employee_id)
 
         if cancelled_task is None:
             return {"ok": False, "message": "Это задание уже нельзя удалить."}
