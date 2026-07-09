@@ -716,6 +716,7 @@ MINIAPP_HTML = """<!doctype html>
     .report-row input,
     .report-row select,
     .report-row textarea {
+      width: 100%;
       min-height: 42px;
       border: 1px solid rgba(49,39,33,.12);
       border-radius: 14px;
@@ -725,6 +726,47 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 16px;
       font-weight: 900;
       outline: none;
+    }
+
+    .cutting-input-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 11px;
+      align-items: stretch;
+      padding: 13px;
+    }
+
+    .cutting-input-row b {
+      display: block;
+      font-size: 15px;
+      line-height: 1.22;
+      overflow-wrap: anywhere;
+    }
+
+    .cutting-input-row span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    .cutting-input-row input {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid rgba(49,39,33,.12);
+      border-radius: 14px;
+      background: rgba(255,255,255,.78);
+      padding: 0 12px;
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 900;
+      outline: none;
+    }
+
+    .cutting-input-row input:focus {
+      border-color: rgba(195,111,85,.48);
+      box-shadow: 0 0 0 3px rgba(195,111,85,.12);
     }
 
     .stock-pick-qty input:focus {
@@ -1181,6 +1223,8 @@ MINIAPP_HTML = """<!doctype html>
     const topTabs = document.getElementById("topTabs");
     const bottomNav = document.getElementById("bottomNav");
     const toast = document.getElementById("toast");
+    const attachmentCache = new Map();
+    let attachmentCounter = 0;
 
     const baseNav = [
       { id: "shift", label: "Главная", icon: "⌂" },
@@ -1233,20 +1277,63 @@ MINIAPP_HTML = """<!doctype html>
       return `<p class="empty">${escapeHtml(text)}</p>`;
     }
 
-    function attachmentUrl(attachment) {
-      if (!attachment || !attachment.content_base64 || !attachment.mime_type) return "";
-      return `data:${attachment.mime_type};base64,${attachment.content_base64}`;
+    function registerAttachment(attachment) {
+      if (!attachment || !attachment.content_base64) return "";
+      const key = `attachment-${attachmentCounter++}`;
+      attachmentCache.set(key, attachment);
+      return key;
+    }
+
+    function attachmentBlob(attachment) {
+      const binary = window.atob(attachment.content_base64);
+      const bytes = new Uint8Array(binary.length);
+
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+
+      return new Blob([bytes], {type: attachment.mime_type || "application/octet-stream"});
+    }
+
+    function openTaskAttachment(key, action) {
+      const attachment = attachmentCache.get(key);
+
+      if (!attachment) {
+        showToast("Файл", "Файл не найден. Обновите задание.");
+        return;
+      }
+
+      try {
+        const blob = attachmentBlob(attachment);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener";
+
+        if (action === "download") {
+          link.download = attachment.file_name || "task-file";
+        }
+
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+        showToast("Файл", action === "download" ? "Скачивание запущено." : "Открываю файл.");
+      } catch (error) {
+        showToast("Файл", "Не удалось открыть файл.");
+      }
     }
 
     function renderTaskAttachment(attachment) {
-      const url = attachmentUrl(attachment);
-      if (!url) return "";
+      const key = registerAttachment(attachment);
+      if (!key) return "";
 
       return `
         <div class="card field-card">
           <label>Файл задания</label>
           <div class="report-row"><div><b>${escapeHtml(attachment.file_name || "Файл")}</b><span>Word, Excel или PDF</span></div><span class="status-chip gray">файл</span></div>
-          <div class="button-row"><a class="small-button secondary" href="${escapeHtml(url)}" target="_blank" rel="noopener">Открыть файл</a><a class="small-button" href="${escapeHtml(url)}" download="${escapeHtml(attachment.file_name || "task-file")}">Скачать</a></div>
+          <div class="button-row"><button class="small-button secondary" data-attachment-action="open" data-attachment-key="${escapeHtml(key)}">Открыть файл</button><button class="small-button" data-attachment-action="download" data-attachment-key="${escapeHtml(key)}">Скачать</button></div>
         </div>
       `;
     }
@@ -2482,9 +2569,9 @@ MINIAPP_HTML = """<!doctype html>
     function renderCuttingStageDetail(current) {
       if (current.stage === "contours") {
         const rows = (current.colors || []).map((color) => (current.sizes || []).map((size) => `
-          <div class="card report-row">
+          <div class="card cutting-input-row">
             <div><b>${escapeHtml(size)} · ${escapeHtml(color)}</b><span>Количество деталей</span></div>
-            <input data-contour-key="${escapeHtml(`${size}|${color}`)}" type="number" min="0" step="1" placeholder="0">
+            <input data-contour-key="${escapeHtml(`${size}|${color}`)}" type="number" inputmode="numeric" min="0" step="1" placeholder="0">
           </div>
         `).join("")).join("");
 
@@ -2500,9 +2587,9 @@ MINIAPP_HTML = """<!doctype html>
 
       if (current.stage === "layout") {
         const rows = (current.colors || []).map((color) => `
-          <div class="card report-row">
+          <div class="card cutting-input-row">
             <div><b>${escapeHtml(color)}</b><span>${escapeHtml(current.sizes_text || "Размеры задания")}</span></div>
-            <input data-layer-color="${escapeHtml(color)}" type="number" min="0" step="1" placeholder="слои">
+            <input data-layer-color="${escapeHtml(color)}" type="number" inputmode="numeric" min="0" step="1" placeholder="слои">
           </div>
         `).join("");
 
@@ -3089,6 +3176,8 @@ MINIAPP_HTML = """<!doctype html>
 
     function render() {
       if (!state.data) return;
+      attachmentCache.clear();
+      attachmentCounter = 0;
       document.getElementById("roleLabel").textContent = roleLabel();
       if (state.screen === "shift") renderShift();
       if (state.screen === "operations") renderOperations();
@@ -3263,6 +3352,12 @@ MINIAPP_HTML = """<!doctype html>
       const feedbackAction = event.target.closest("[data-feedback-action]");
       if (feedbackAction) {
         sendFeedback();
+        return;
+      }
+
+      const attachmentAction = event.target.closest("[data-attachment-action]");
+      if (attachmentAction) {
+        openTaskAttachment(attachmentAction.dataset.attachmentKey, attachmentAction.dataset.attachmentAction);
         return;
       }
 
