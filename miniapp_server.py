@@ -633,6 +633,14 @@ def get_route_catalog():
     return [route_map_to_dict(product_name) for product_name in PRODUCT_ROUTE_MAPS]
 
 
+def get_routes_payload(telegram_id: int):
+    return {
+        "enabled": ROUTES_MINIAPP_ENABLED,
+        "catalog": get_route_catalog(),
+        "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
+    }
+
+
 def sort_size_key(value: str):
     value_text = str(value)
 
@@ -1022,11 +1030,7 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
             "ok": True,
             "message": f"Задание на раскрой #{task['id']} создано.",
             "production": get_production_state_for_telegram(telegram_id),
-            "routes": {
-                "enabled": ROUTES_MINIAPP_ENABLED,
-                "catalog": get_route_catalog(),
-                "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
-            },
+            "routes": get_routes_payload(telegram_id),
         }
 
     try:
@@ -1118,11 +1122,7 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
         "ok": True,
         "message": f"Создано заданий: {len(created_batches)}.",
         "production": get_production_state_for_telegram(telegram_id),
-        "routes": {
-            "enabled": ROUTES_MINIAPP_ENABLED,
-            "catalog": get_route_catalog(),
-            "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
-        },
+        "routes": get_routes_payload(telegram_id),
     }
 
 
@@ -1204,11 +1204,7 @@ def delete_order_task_for_telegram(telegram_id: int, payload: dict):
         "ok": True,
         "message": message,
         "production": get_production_state_for_telegram(telegram_id),
-        "routes": {
-            "enabled": ROUTES_MINIAPP_ENABLED,
-            "catalog": get_route_catalog(),
-            "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
-        },
+        "routes": get_routes_payload(telegram_id),
     }
 
 
@@ -2518,22 +2514,19 @@ def operation_action_for_admin(telegram_id: int, payload: dict):
 def get_app_state(telegram_id: int, message: str = ""):
     shift_state = get_shift_state(telegram_id, message)
     employee = shift_state.get("employee")
+    is_admin_user = is_admin(telegram_id)
 
     return {
         **shift_state,
-        "is_admin": is_admin(telegram_id),
+        "is_admin": is_admin_user,
         "report": get_current_report_for_telegram(telegram_id),
         "history": get_employee_history_for_telegram(telegram_id, {}),
-        "routes": {
-            "enabled": ROUTES_MINIAPP_ENABLED,
-            "catalog": get_route_catalog(),
-            "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
-        },
+        "routes": get_routes_payload(telegram_id),
         "production": get_production_state_for_telegram(telegram_id),
-        "admin": get_admin_dashboard(telegram_id) if is_admin(telegram_id) else None,
+        "admin": get_admin_dashboard(telegram_id) if is_admin_user else None,
         "features": {
             "can_work": bool(employee and employee.get("status") == "active"),
-            "can_admin": is_admin(telegram_id),
+            "can_admin": is_admin_user,
             "routes_enabled": ROUTES_MINIAPP_ENABLED,
         },
     }
