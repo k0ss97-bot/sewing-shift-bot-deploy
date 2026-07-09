@@ -18,6 +18,7 @@ from database import (
     add_cutting_layout,
     add_warehouse_stock,
     admin_close_shift,
+    assign_route_batch,
     cancel_production_task,
     cancel_route_batch,
     close_shift,
@@ -40,6 +41,8 @@ from database import (
     get_cutting_batches_for_layout,
     get_cutting_batch_result_rows,
     get_employee_by_telegram_id,
+    get_employee_by_id,
+    get_employee_route_batches,
     get_employee_period_operation_totals,
     get_employee_period_summary,
     get_employee_shifts_by_period,
@@ -445,6 +448,24 @@ def route_batch_identity(batch: dict):
     )
 
 
+def route_batch_assignee_to_dict(batch: dict):
+    employee_id = batch.get("assigned_employee_id")
+
+    if not employee_id:
+        return None
+
+    employee = get_employee_by_id(employee_id)
+
+    if not employee:
+        return {
+            "id": employee_id,
+            "full_name": "Сотрудник",
+            "position": "",
+        }
+
+    return employee_to_dict(employee)
+
+
 def can_employee_work_route_step(employee, current_step: dict | None):
     return bool(employee and current_step and employee[3] == current_step["position"])
 
@@ -522,7 +543,13 @@ def route_map_to_dict(product_name: str):
     }
 
 
-def route_task_to_dict(batch: dict, current_step: dict):
+def route_task_to_dict(batch: dict, current_step: dict, viewer_employee=None):
+    assignee = route_batch_assignee_to_dict(batch)
+    viewer_employee_id = viewer_employee[0] if viewer_employee else None
+    is_assigned_to_viewer = bool(viewer_employee_id and batch.get("assigned_employee_id") == viewer_employee_id)
+    is_free = not batch.get("assigned_employee_id")
+    is_done = batch.get("status") == "done"
+
     return {
         "id": batch["id"],
         "identity": route_batch_identity(batch),
@@ -535,6 +562,17 @@ def route_task_to_dict(batch: dict, current_step: dict):
         "operation": current_step["operation"],
         "status_after": current_step["status_after"],
         "category": route_step_category(current_step),
+        "assigned_employee_id": batch.get("assigned_employee_id"),
+        "assigned_employee": assignee,
+        "assigned_employee_name": assignee["full_name"] if assignee else "",
+        "assigned_at": batch.get("assigned_at") or "",
+        "good_quantity": batch.get("good_quantity") or 0,
+        "defect_quantity": batch.get("defect_quantity") or 0,
+        "work_status": "done" if is_done else ("free" if is_free else "in_work"),
+        "status_text": "Завершено" if is_done else ("Свободно" if is_free else "В работе"),
+        "is_assigned_to_me": is_assigned_to_viewer,
+        "can_take": is_free,
+        "can_complete": is_assigned_to_viewer,
     }
 
 
@@ -553,9 +591,72 @@ def get_route_tasks_for_telegram(telegram_id: int):
             continue
 
         if is_admin(telegram_id) or can_employee_work_route_step(employee, current_step):
-            tasks.append(route_task_to_dict(batch, current_step))
+            tasks.append(route_task_to_dict(batch, current_step, employee))
 
     return {"ok": True, "tasks": tasks}
+
+
+def get_completed_route_tasks_for_telegram(telegram_id: int):
+    employee = get_employee_for_access(telegram_id)
+
+    if employee is None or employee[5] != "active":
+        return []
+
+    tasks = []
+
+    for batch in get_employee_route_batches(employee[0], "done"):
+        step_index = max(0, batch["route_step_index"] - 1)
+        completed_step = get_route_step(batch["product_name"], step_index)
+
+        if completed_step is None:
+            continue
+
+        tasks.append(route_task_to_dict(batch, completed_step, employee))
+
+    return tasks
+
+
+def start_route_task_for_telegram(telegram_id: int, batch_id: int):
+    employee = get_employee_for_access(telegram_id)
+
+    if employee is None or employee[5] != "active":
+        return {"ok": False, "message": "Нет активного профиля."}
+
+    batch = get_route_batch_by_id(batch_id)
+
+    if batch is None or batch["status"] != "active":
+        return {"ok": False, "message": "Это задание уже недоступно."}
+
+    current_step = get_route_step(batch["product_name"], batch["route_step_index"])
+
+    if not can_employee_work_route_step(employee, current_step):
+        return {"ok": False, "message": "Это задание доступно другой должности."}
+
+    if batch.get("assigned_employee_id") and batch["assigned_employee_id"] != employee[0]:
+        assignee = route_batch_assignee_to_dict(batch)
+        assignee_name = assignee["full_name"] if assignee else "другого сотрудника"
+        return {"ok": False, "message": f"Задание уже в работе у {assignee_name}."}
+
+    assigned_batch = assign_route_batch(batch_id, employee[0])
+
+    if assigned_batch is None:
+        return {"ok": False, "message": "Не удалось взять задание в работу."}
+
+    add_edit_log(
+        telegram_id,
+        "employee",
+        "Взял задание в работу из миниаппа",
+        "route_batch",
+        batch_id,
+        route_batch_identity(assigned_batch),
+    )
+
+    return {
+        "ok": True,
+        "message": "Задание взято в работу.",
+        "tasks": get_route_tasks_for_telegram(telegram_id)["tasks"],
+        "completed_tasks": get_completed_route_tasks_for_telegram(telegram_id),
+    }
 
 
 def create_route_batch_for_telegram(telegram_id: int, payload: dict):
@@ -612,12 +713,13 @@ def create_route_batch_for_telegram(telegram_id: int, payload: dict):
     return {
         "ok": True,
         "message": f"Задание #{batch['id']} создано.",
-        "batch": route_task_to_dict(batch, current_step),
+        "batch": route_task_to_dict(batch, current_step, employee),
         "tasks": get_route_tasks_for_telegram(telegram_id)["tasks"],
     }
 
 
-def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
+def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: dict | None = None):
+    payload = payload or {}
     employee = get_employee_for_access(telegram_id)
 
     if employee is None or employee[5] != "active":
@@ -633,6 +735,23 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
     if not is_admin(telegram_id) and not can_employee_work_route_step(employee, current_step):
         return {"ok": False, "message": "Это задание сейчас доступно другой должности."}
 
+    if batch.get("assigned_employee_id") and batch["assigned_employee_id"] != employee[0]:
+        assignee = route_batch_assignee_to_dict(batch)
+        assignee_name = assignee["full_name"] if assignee else "другого сотрудника"
+        return {"ok": False, "message": f"Задание в работе у {assignee_name}."}
+
+    try:
+        good_quantity = int(payload.get("good_quantity") if payload.get("good_quantity") not in (None, "") else batch["quantity"])
+        defect_quantity = int(payload.get("defect_quantity") or 0)
+    except (TypeError, ValueError):
+        return {"ok": False, "message": "Количество годного и брака должно быть целым числом."}
+
+    if good_quantity < 0 or defect_quantity < 0:
+        return {"ok": False, "message": "Количество не может быть отрицательным."}
+
+    if good_quantity + defect_quantity != batch["quantity"]:
+        return {"ok": False, "message": "Распределите всё количество задания между годным и браком."}
+
     next_step_index = batch["route_step_index"] + 1
     updated_batch = complete_route_batch_step(
         batch["id"],
@@ -641,6 +760,8 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
         current_step["position"],
         next_step_index,
         "done",
+        good_quantity,
+        defect_quantity,
     )
 
     if updated_batch is None:
@@ -651,18 +772,21 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
     ready_for_position = next_step["position"] if next_step else "Склад"
     stage_name = current_step["status_after"]
 
-    stock_row = add_warehouse_stock(
-        item_type,
-        batch["product_name"],
-        batch["product_size"],
-        batch["product_color"],
-        stage_name,
-        ready_for_position,
-        batch["quantity"],
-        employee[0],
-        "route_batch",
-        batch["id"],
-    )
+    stock_row = None
+
+    if good_quantity > 0:
+        stock_row = add_warehouse_stock(
+            item_type,
+            batch["product_name"],
+            batch["product_size"],
+            batch["product_color"],
+            stage_name,
+            ready_for_position,
+            good_quantity,
+            employee[0],
+            "route_batch",
+            batch["id"],
+        )
     auto_batch = None
 
     if stock_row and should_auto_create_next_preparation_task(current_step, next_step):
@@ -670,7 +794,7 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
             batch["product_name"],
             batch["product_size"],
             batch["product_color"],
-            batch["quantity"],
+            good_quantity,
             employee[0],
             route_step_index=updated_batch["route_step_index"],
             source_stock_id=stock_row["id"],
@@ -679,7 +803,7 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
         if auto_batch:
             consumed = consume_warehouse_stock(
                 stock_row["id"],
-                batch["quantity"],
+                good_quantity,
                 employee[0],
                 "route_batch",
                 auto_batch["id"],
@@ -709,6 +833,7 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int):
         "ok": True,
         "message": message,
         "tasks": get_route_tasks_for_telegram(telegram_id)["tasks"],
+        "completed_tasks": get_completed_route_tasks_for_telegram(telegram_id),
         "production": get_production_state_for_telegram(telegram_id),
     }
 
@@ -722,6 +847,7 @@ def get_routes_payload(telegram_id: int):
         "enabled": ROUTES_MINIAPP_ENABLED,
         "catalog": get_route_catalog(),
         "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
+        "completed_tasks": get_completed_route_tasks_for_telegram(telegram_id),
     }
 
 
@@ -2660,6 +2786,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/production/submit-contours",
                 "/api/production/submit-cutting-stage",
                 "/api/routes/create-batch",
+                "/api/routes/start",
                 "/api/routes/complete",
                 "/api/admin/dashboard",
                 "/api/admin/report",
@@ -2734,13 +2861,20 @@ def make_handler(bot_token: str, debug: bool):
                 result = submit_cutting_stage_for_telegram(telegram_id, payload)
             elif path == "/api/routes/create-batch":
                 result = create_route_batch_for_telegram(telegram_id, payload)
+            elif path == "/api/routes/start":
+                try:
+                    batch_id = int(payload.get("batch_id") or 0)
+                except (TypeError, ValueError):
+                    batch_id = 0
+
+                result = start_route_task_for_telegram(telegram_id, batch_id)
             elif path == "/api/routes/complete":
                 try:
                     batch_id = int(payload.get("batch_id") or 0)
                 except (TypeError, ValueError):
                     batch_id = 0
 
-                result = complete_route_task_for_telegram(telegram_id, batch_id)
+                result = complete_route_task_for_telegram(telegram_id, batch_id, payload)
             elif path == "/api/admin/dashboard":
                 result = get_admin_dashboard(telegram_id)
             elif path == "/api/admin/report":

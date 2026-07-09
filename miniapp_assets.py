@@ -524,6 +524,7 @@ MINIAPP_HTML = """<!doctype html>
     [data-go],
     [data-admin-home-period],
     [data-order-category],
+    [data-report-section],
     [data-admin-home-view],
     [data-admin-home-employee],
     [data-admin-section],
@@ -766,35 +767,41 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .order-card {
-      padding: 12px;
+      padding: 9px 10px;
+    }
+
+    .order-card .order-head {
+      padding: 4px 2px;
     }
 
     .route-order-head {
-      grid-template-columns: 44px minmax(0, 1fr);
+      grid-template-columns: 44px minmax(0, 1fr) auto;
+      align-items: start;
     }
 
-    .route-operation-chip {
-      display: block;
-      margin-top: 9px;
-      padding: 8px 10px;
-      border: 1px solid rgba(195,111,85,.18);
-      border-radius: 14px;
+    .route-assignee {
+      display: inline-block;
+      margin-top: 5px;
       color: var(--accent-dark);
-      background: rgba(195,111,85,.10);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 950;
-      line-height: 1.25;
-      overflow-wrap: anywhere;
     }
 
     .order-foot {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-top: 10px;
+      gap: 10px;
+      margin-top: 8px;
       color: var(--muted);
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 850;
+    }
+
+    .order-foot strong {
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.2;
     }
 
     .order-detail {
@@ -1097,7 +1104,9 @@ MINIAPP_HTML = """<!doctype html>
       screen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
+      selectedReportTask: 0,
       orderCategory: "",
+      reportSection: "work",
       orderMode: "list",
       orderProduct: "",
       orderTaskType: "cutting",
@@ -1131,7 +1140,7 @@ MINIAPP_HTML = """<!doctype html>
       { id: "shift", label: "Главная", icon: "⌂" },
       { id: "report", label: "Отчёт", icon: "＋" },
       { id: "analytics", label: "Аналитика", icon: "▥" },
-      { id: "orders", label: "Заказы", icon: "▣" },
+      { id: "orders", label: "Задания", icon: "▣" },
     ];
 
     if (tg) {
@@ -1226,6 +1235,16 @@ MINIAPP_HTML = """<!doctype html>
 
     function getRouteTasks() {
       return state.data && state.data.routes && state.data.routes.tasks ? state.data.routes.tasks : [];
+    }
+
+    function getCompletedRouteTasks() {
+      return state.data && state.data.routes && state.data.routes.completed_tasks ? state.data.routes.completed_tasks : [];
+    }
+
+    function getMyRouteTasks() {
+      return getRouteTasks()
+        .filter((task) => task.is_assigned_to_me)
+        .map((task) => ({...task, task_kind: "route"}));
     }
 
     function getOrderColors() {
@@ -1348,6 +1367,19 @@ MINIAPP_HTML = """<!doctype html>
           label: category,
           attr: "data-order-category",
           active: state.orderCategory === category,
+        }));
+      }
+
+      if (state.screen === "report" && state.data && !state.data.is_admin) {
+        tabs = [
+          ["work", "В работе"],
+          ["done", "Завершено"],
+          ["feedback", "Обратная связь"],
+        ].map(([id, label]) => ({
+          id,
+          label,
+          attr: "data-report-section",
+          active: state.reportSection === id,
         }));
       }
 
@@ -1897,24 +1929,64 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderReport() {
-      const operations = getReportOperations();
       const feedback = getFeedbackRows();
-      const op = operations[state.selectedOperation] || operations[0];
       const history = getHistory();
+      const workTasks = getMyRouteTasks();
+      const doneTasks = getCompletedRouteTasks();
       ensureUserDefaults();
-      mainButton.textContent = "Обновить отчёт";
+      if (!["work", "done", "feedback"].includes(state.reportSection)) state.reportSection = "work";
+
+      if (state.selectedReportTask >= workTasks.length) state.selectedReportTask = 0;
+
+      const selectedTask = workTasks[state.selectedReportTask] || workTasks[0];
+      mainButton.textContent = state.reportSection === "work" && selectedTask ? "Выполнить задание" : "Обновить отчёт";
       mainButton.disabled = false;
 
       const historySummary = history && history.summary ? history.summary : null;
       const historyShifts = history && history.shifts ? history.shifts : [];
       const historyOperations = history && history.operations ? history.operations : [];
 
+      if (state.reportSection === "work") {
+        mount.innerHTML = `
+          <div class="screen-head"><div><h2>В работе</h2><p>Задания, которые вы взяли в работу.</p></div><div class="date">${workTasks.length} акт.</div></div>
+          <div class="op-list">
+            ${workTasks.length ? workTasks.map((task, index) => routeTaskCard(task, index, {selectedIndex: state.selectedReportTask, selectAttr: "data-select-report-task"})).join("") : itemEmpty("В работе пока нет заданий. Возьмите свободное задание во вкладке «Задания».")}
+          </div>
+          ${selectedTask ? `
+            <div class="section-title"><b>Сдача задания</b><span>${escapeHtml(selectedTask.quantity)} шт</span></div>
+            <div class="card field-card">
+              <label>${escapeHtml(selectedTask.operation)}</label>
+              <div class="form-grid">
+                <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(selectedTask.quantity)}"></div>
+                <div class="field"><label>Брак</label><input id="taskDefectQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="0"></div>
+                <div class="field full"><label>Остаток задания</label><input type="text" value="${escapeHtml(selectedTask.product_size)} · ${escapeHtml(selectedTask.product_color)} · ${escapeHtml(selectedTask.quantity)} шт" disabled></div>
+              </div>
+              <div class="button-row"><button class="small-button" data-report-action="complete-task">Выполнить задание</button></div>
+            </div>
+          ` : ""}
+        `;
+        return;
+      }
+
+      if (state.reportSection === "done") {
+        mainButton.textContent = "Обновить завершённые";
+        mount.innerHTML = `
+          <div class="screen-head"><div><h2>Завершено</h2><p>Ваши выполненные задания.</p></div><div class="date">${doneTasks.length} шт</div></div>
+          <div class="op-list">
+            ${doneTasks.length ? doneTasks.map((task, index) => `
+              <div class="card order-card">
+                <div class="order-head route-order-head"><div class="op-icon">✓</div><div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">Завершено</span></div>
+                <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.good_quantity || 0)} годн. · ${escapeHtml(task.defect_quantity || 0)} брак</strong></div>
+              </div>
+            `).join("") : itemEmpty("Завершённых заданий пока нет.")}
+          </div>
+        `;
+        return;
+      }
+
+      mainButton.textContent = "Обновить связь";
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Отчёт по операции</h2><p>Просмотр данных текущей смены.</p></div><div class="date">${operations.length} строк</div></div>
-        ${op ? `
-          <div class="card field-card"><label>Операция</label><div class="select-row"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(op.operation_name)}</b><span>${escapeHtml(op.product_size || "-")} · ${escapeHtml(op.product_color || "-")}</span></div><span>✓</span></div></div>
-          <div class="card field-card"><label>Количество</label><div class="select-row"><div class="op-icon">✓</div><div><b>${escapeHtml(op.quantity)} ${escapeHtml(op.unit)}</b><span>Сохранено в сменном отчёте</span></div><span class="status-chip">принято</span></div></div>
-        ` : `<div class="card field-card">${itemEmpty("В текущей смене пока нет строк отчёта.")}</div>`}
+        <div class="screen-head"><div><h2>Обратная связь</h2><p>Сообщение администратору и история смен.</p></div><div class="date">${feedback.length} сообщ.</div></div>
         <div class="section-title"><b>Обратная связь</b><span>${feedback.length}</span></div>
         <div class="op-list">
           ${feedback.length ? feedback.map((row) => `
@@ -2242,10 +2314,16 @@ MINIAPP_HTML = """<!doctype html>
 
     async function completeOperationTask(current) {
       if (!current) return;
+      const goodInput = document.getElementById("taskGoodQuantity");
+      const defectInput = document.getElementById("taskDefectQuantity");
       mainButton.disabled = true;
 
       try {
-        const data = await api("/api/routes/complete", {batch_id: current.id});
+        const data = await api("/api/routes/complete", {
+          batch_id: current.id,
+          good_quantity: goodInput ? goodInput.value : current.quantity,
+          defect_quantity: defectInput ? defectInput.value : 0,
+        });
 
         if (!data.ok) {
           showToast("Задание", data.message || "Не удалось завершить операцию.");
@@ -2254,12 +2332,53 @@ MINIAPP_HTML = """<!doctype html>
         }
 
         if (state.data.routes) state.data.routes.tasks = data.tasks || [];
+        if (state.data.routes) state.data.routes.completed_tasks = data.completed_tasks || [];
         state.data.production = data.production || state.data.production;
         state.selectedOrder = 0;
+        state.selectedReportTask = 0;
         render();
         showToast("Задание", data.message || "Операция завершена.");
       } catch (error) {
         showToast("Ошибка", "Не удалось завершить операцию.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function startOperationTask(current) {
+      if (!current || current.task_kind !== "route" || state.data.is_admin) return;
+
+      if (current.is_assigned_to_me) {
+        state.reportSection = "work";
+        setScreen("report");
+        return;
+      }
+
+      if (!current.can_take) {
+        showToast("Задание", current.assigned_employee_name ? `Задание в работе у ${current.assigned_employee_name}.` : "Задание уже в работе.");
+        return;
+      }
+
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/routes/start", {batch_id: current.id});
+
+        if (!data.ok) {
+          showToast("Задание", data.message || "Не удалось взять задание.");
+          mainButton.disabled = false;
+          return;
+        }
+
+        if (state.data.routes) {
+          state.data.routes.tasks = data.tasks || [];
+          state.data.routes.completed_tasks = data.completed_tasks || state.data.routes.completed_tasks || [];
+        }
+        state.reportSection = "work";
+        state.selectedReportTask = 0;
+        setScreen("report");
+        showToast("Задание", data.message || "Задание взято в работу.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось взять задание.");
         mainButton.disabled = false;
       }
     }
@@ -2303,6 +2422,24 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function routeTaskCard(task, index, options = {}) {
+      const isSelected = index === options.selectedIndex;
+      const selectAttr = options.selectAttr || "data-select-order";
+      const assignee = task.assigned_employee_name ? `<span class="route-assignee">В работе: ${escapeHtml(task.assigned_employee_name)}</span>` : "";
+      const statusClass = task.work_status === "free" ? "gray" : (task.work_status === "done" ? "" : "warn");
+
+      return `
+        <div class="card order-card ${isSelected ? "selected" : ""}" ${selectAttr}="${index}">
+          <div class="order-head route-order-head">
+            <div class="op-icon">▣</div>
+            <div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}${assignee}</span></div>
+            <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
+          </div>
+          <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.quantity)} шт</strong></div>
+        </div>
+      `;
+    }
+
     function renderOrders() {
       if (state.data && state.data.is_admin && state.orderMode === "create") {
         renderOrderCreate();
@@ -2314,11 +2451,11 @@ MINIAPP_HTML = """<!doctype html>
       const tasks = allTasks.filter((task) => task.task_kind !== "route");
       const routeRows = allTasks.filter((task) => task.task_kind === "route");
       const current = allTasks[state.selectedOrder] || allTasks[0];
-      mainButton.textContent = state.data && state.data.is_admin ? "Создать задание" : (current ? "Выполнить" : "Обновить статус");
+      mainButton.textContent = state.data && state.data.is_admin ? "Создать задание" : (current && current.task_kind === "route" && current.is_assigned_to_me ? "Открыть отчёт" : (current ? "Выбрать задание" : "Обновить статус"));
       mainButton.disabled = false;
 
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Заказы в работе</h2><p>${state.data && state.data.is_admin ? "Создание и контроль заданий." : "Доступные задания для вашей должности."}</p></div><div class="date">${allTasks.length} активных</div></div>
+        <div class="screen-head"><div><h2>${state.data && state.data.is_admin ? "Заказы в работе" : "Задания"}</h2><p>${state.data && state.data.is_admin ? "Создание и контроль заданий." : "Выберите свободное задание, чтобы взять его в работу."}</p></div><div class="date">${allTasks.length} активных</div></div>
         ${state.data && state.data.is_admin ? `<div class="card shift-card" data-order-action="new"><div><b>Создать задание</b><span>Раскрой и следующие операции из складского остатка.</span></div><span class="status-chip">+</span></div>` : ""}
         <div class="op-list">
           ${allTasks.length ? `
@@ -2331,13 +2468,7 @@ MINIAPP_HTML = """<!doctype html>
           `).join("")}
           ${routeRows.map((task, routeIndex) => {
             const index = tasks.length + routeIndex;
-            return `
-              <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
-                <div class="order-head route-order-head"><div class="op-icon">▣</div><div><b>Операция #${escapeHtml(task.id)}</b><span>${escapeHtml(task.product_name)} · ${escapeHtml(task.position)}</span></div></div>
-                <div class="route-operation-chip">${escapeHtml(task.operation)}</div>
-                <div class="order-foot"><span>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</span><span>${escapeHtml(task.quantity)} шт</span></div>
-              </div>
-            `;
+            return routeTaskCard(task, index, {selectedIndex: state.selectedOrder});
           }).join("")}
           ` : itemEmpty("Активных заданий пока нет.")}
         </div>
@@ -2345,7 +2476,7 @@ MINIAPP_HTML = """<!doctype html>
         ${current && current.task_kind === "cutting_stage" ? renderCuttingStageDetail(current) : current && current.task_kind === "production" ? `
           <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.status_text || current.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || current.status)}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
         ` : current ? `
-          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Операция #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.position)}</span></div><div class="detail-grid"><div class="detail-box"><span>Операция</span><strong>${escapeHtml(current.operation)}</strong></div><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div></div></div>
+          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}${current.assigned_employee_name ? `<br>В работе: ${escapeHtml(current.assigned_employee_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div></div>
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
         ${state.data && state.data.is_admin && current ? `<div class="button-row"><button class="small-button danger" data-order-action="delete">Удалить задание</button></div>` : ""}
       `;
@@ -2362,7 +2493,7 @@ MINIAPP_HTML = """<!doctype html>
       const total = Math.max(tasks.length, 1);
       const donePercent = Math.round(formed / total * 100);
 
-      mainButton.textContent = "Открыть заказы";
+      mainButton.textContent = state.data && state.data.is_admin ? "Открыть заказы" : "Открыть задания";
       mainButton.disabled = false;
 
       mount.innerHTML = `
@@ -2381,7 +2512,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="card mini-metric"><div class="ring" style="--p:${Math.round(active / total * 100)}"><strong>${active}</strong></div><b>Ожидают</b><span>контуры</span></div>
           </div>
         </div>
-        <div class="section-title"><b>Показатели</b><button data-go="orders">все заказы</button></div>
+        <div class="section-title"><b>Показатели</b><button data-go="orders">${state.data && state.data.is_admin ? "все заказы" : "все задания"}</button></div>
         <div class="op-list">
           <div class="card shift-card"><div><b>Остатки ткани</b><span>${fabricRows.length} позиций</span></div><span class="status-chip gray">склад</span></div>
           <div class="card shift-card"><div><b>Обратная связь</b><span>${feedback.length} сообщений за смену</span></div><span class="status-chip gray">связь</span></div>
@@ -2733,6 +2864,14 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const reportSection = event.target.closest("[data-report-section]");
+      if (reportSection) {
+        state.reportSection = reportSection.dataset.reportSection;
+        state.selectedReportTask = 0;
+        render();
+        return;
+      }
+
       const adminHomeView = event.target.closest("[data-admin-home-view]");
       if (adminHomeView) {
         state.adminHomeView = adminHomeView.dataset.adminHomeView;
@@ -2789,6 +2928,15 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const reportAction = event.target.closest("[data-report-action]");
+      if (reportAction) {
+        if (reportAction.dataset.reportAction === "complete-task") {
+          const tasks = getMyRouteTasks();
+          completeOperationTask(tasks[state.selectedReportTask] || tasks[0]);
+        }
+        return;
+      }
+
       const op = event.target.closest("[data-select-operation]");
       if (op) {
         state.selectedOperation = Number(op.dataset.selectOperation);
@@ -2799,7 +2947,20 @@ MINIAPP_HTML = """<!doctype html>
       const order = event.target.closest("[data-select-order]");
       if (order) {
         state.selectedOrder = Number(order.dataset.selectOrder);
+        const rows = visibleOrderRows();
+        const current = rows[state.selectedOrder] || rows[0];
+        if (current && current.task_kind === "route" && !state.data.is_admin) {
+          startOperationTask(current);
+          return;
+        }
         setScreen("orders");
+        return;
+      }
+
+      const reportTask = event.target.closest("[data-select-report-task]");
+      if (reportTask) {
+        state.selectedReportTask = Number(reportTask.dataset.selectReportTask);
+        render();
       }
     });
 
@@ -2815,7 +2976,15 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       if (state.screen === "operations") { setScreen("report"); return; }
-      if (state.screen === "report") { refreshState("Отчёт обновлён."); return; }
+      if (state.screen === "report") {
+        if (state.reportSection === "work") {
+          const tasks = getMyRouteTasks();
+          const current = tasks[state.selectedReportTask] || tasks[0];
+          if (current) { completeOperationTask(current); return; }
+        }
+        refreshState("Отчёт обновлён.");
+        return;
+      }
       if (state.screen === "warehouse") { refreshAdminDashboard("Склад обновлён."); return; }
       if (state.screen === "analytics") { setScreen("orders"); return; }
       if (state.screen === "orders" && state.data && state.data.is_admin) {
@@ -2828,7 +2997,7 @@ MINIAPP_HTML = """<!doctype html>
         const rows = visibleOrderRows();
         const current = rows[state.selectedOrder] || rows[0];
         if (current && current.task_kind === "cutting_stage") { submitCuttingStage(current); return; }
-        if (current && current.task_kind === "route") { completeOperationTask(current); return; }
+        if (current && current.task_kind === "route") { startOperationTask(current); return; }
         refreshState("Статус обновлён.");
         return;
       }

@@ -470,6 +470,48 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(seamstress_tasks["ok"], seamstress_tasks)
         self.assertEqual(seamstress_tasks["tasks"][0]["category"], "Подготовка")
 
+    def test_employee_starts_and_completes_route_task_with_defects(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9013, "Тест Упаковщик", "Упаковщик")
+        packer = self.database.get_employee_by_telegram_id(9013)
+        self.database.update_employee_status(packer[0], "active")
+        elastic_step_index = self.route_step_index("Шорты", "Шорты — резинка 25 мм", "Упаковщик")
+        batch = self.database.create_route_batch(
+            "Шорты",
+            "80 (43 см)",
+            "Черный",
+            10,
+            None,
+            route_step_index=elastic_step_index,
+        )
+
+        free_tasks = miniapp_server.get_route_tasks_for_telegram(9013)
+        self.assertTrue(free_tasks["ok"], free_tasks)
+        self.assertEqual(free_tasks["tasks"][0]["status_text"], "Свободно")
+        self.assertTrue(free_tasks["tasks"][0]["can_take"])
+
+        started = miniapp_server.start_route_task_for_telegram(9013, batch["id"])
+        self.assertTrue(started["ok"], started)
+        started_task = started["tasks"][0]
+        self.assertEqual(started_task["status_text"], "В работе")
+        self.assertEqual(started_task["assigned_employee_name"], "Тест Упаковщик")
+        self.assertTrue(started_task["can_complete"])
+
+        completed = miniapp_server.complete_route_task_for_telegram(
+            9013,
+            batch["id"],
+            {"good_quantity": 9, "defect_quantity": 1},
+        )
+        self.assertTrue(completed["ok"], completed)
+        completed_batch = self.database.get_route_batch_by_id(batch["id"])
+        self.assertEqual(completed_batch["status"], "done")
+        self.assertEqual(completed_batch["assigned_employee_id"], packer[0])
+        self.assertEqual(completed_batch["good_quantity"], 9)
+        self.assertEqual(completed_batch["defect_quantity"], 1)
+        self.assertEqual(completed["completed_tasks"][0]["status_text"], "Завершено")
+        self.assertEqual(completed["completed_tasks"][0]["good_quantity"], 9)
+        self.assertEqual(completed["completed_tasks"][0]["defect_quantity"], 1)
+
     def test_miniapp_admin_deletes_order_tasks(self):
         os.environ["ADMIN_IDS"] = "9001"
         miniapp_server = importlib.import_module("miniapp_server")

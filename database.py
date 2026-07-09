@@ -72,7 +72,12 @@ ROUTE_BATCH_COLUMNS = [
     "updated_at",
     "completed_at",
     "source_stock_id",
+    "assigned_employee_id",
+    "assigned_at",
+    "good_quantity",
+    "defect_quantity",
 ]
+ROUTE_BATCH_SELECT = ", ".join(ROUTE_BATCH_COLUMNS)
 PRODUCTION_TASK_COLUMNS = [
     "id",
     "product_name",
@@ -875,6 +880,14 @@ def init_db():
 
     if "source_stock_id" not in route_batch_columns:
         cursor.execute("ALTER TABLE route_batches ADD COLUMN source_stock_id INTEGER")
+    if "assigned_employee_id" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN assigned_employee_id INTEGER")
+    if "assigned_at" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN assigned_at TEXT")
+    if "good_quantity" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN good_quantity INTEGER NOT NULL DEFAULT 0")
+    if "defect_quantity" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN defect_quantity INTEGER NOT NULL DEFAULT 0")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batch_history (
@@ -1037,6 +1050,24 @@ def get_employee_by_telegram_id(telegram_id: int):
         WHERE telegram_id = ?
         """,
         (telegram_id,)
+    )
+
+    employee = cursor.fetchone()
+    conn.close()
+    return employee
+
+
+def get_employee_by_id(employee_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, telegram_id, full_name, position, role, status
+        FROM employees
+        WHERE id = ?
+        """,
+        (employee_id,),
     )
 
     employee = cursor.fetchone()
@@ -1860,20 +1891,8 @@ def get_route_batch_by_id(batch_id: int):
     cursor = conn.cursor()
 
     cursor.execute(
-        """
-        SELECT
-            id,
-            product_name,
-            product_size,
-            product_color,
-            quantity,
-            route_step_index,
-            status,
-            created_by_employee_id,
-            created_at,
-            updated_at,
-            completed_at,
-            source_stock_id
+        f"""
+        SELECT {ROUTE_BATCH_SELECT}
         FROM route_batches
         WHERE id = ?
         """,
@@ -1919,20 +1938,8 @@ def get_active_route_batches():
     cursor = conn.cursor()
 
     cursor.execute(
-        """
-        SELECT
-            id,
-            product_name,
-            product_size,
-            product_color,
-            quantity,
-            route_step_index,
-            status,
-            created_by_employee_id,
-            created_at,
-            updated_at,
-            completed_at,
-            source_stock_id
+        f"""
+        SELECT {ROUTE_BATCH_SELECT}
         FROM route_batches
         WHERE status = 'active'
         ORDER BY created_at ASC, id ASC
@@ -1942,6 +1949,61 @@ def get_active_route_batches():
     batches = [route_batch_from_row(row) for row in cursor.fetchall()]
     conn.close()
     return batches
+
+
+def get_employee_route_batches(employee_id: int, status: str):
+    if status not in {"active", "done"}:
+        return []
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        f"""
+        SELECT {ROUTE_BATCH_SELECT}
+        FROM route_batches
+        WHERE status = ?
+          AND assigned_employee_id = ?
+        ORDER BY updated_at DESC, id DESC
+        """,
+        (status, employee_id),
+    )
+
+    batches = [route_batch_from_row(row) for row in cursor.fetchall()]
+    conn.close()
+    return batches
+
+
+def assign_route_batch(batch_id: int, employee_id: int):
+    batch = get_route_batch_by_id(batch_id)
+
+    if batch is None or batch["status"] != "active":
+        return None
+
+    if batch.get("assigned_employee_id") not in (None, employee_id):
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    cursor.execute(
+        """
+        UPDATE route_batches
+        SET assigned_employee_id = ?,
+            assigned_at = COALESCE(assigned_at, ?),
+            updated_at = ?
+        WHERE id = ?
+          AND status = 'active'
+          AND (assigned_employee_id IS NULL OR assigned_employee_id = ?)
+        """,
+        (employee_id, now, now, batch_id, employee_id),
+    )
+
+    changed = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return get_route_batch_by_id(batch_id) if changed else None
 
 
 def create_route_batch(
@@ -2011,10 +2073,21 @@ def complete_route_batch_step(
     position: str,
     next_step_index: int,
     new_status: str,
+    good_quantity: int | None = None,
+    defect_quantity: int = 0,
 ):
     batch = get_route_batch_by_id(batch_id)
 
     if batch is None or batch["status"] != "active":
+        return None
+
+    if batch.get("assigned_employee_id") not in (None, employee_id):
+        return None
+
+    if good_quantity is None:
+        good_quantity = batch["quantity"]
+
+    if good_quantity < 0 or defect_quantity < 0 or good_quantity + defect_quantity > batch["quantity"]:
         return None
 
     conn = sqlite3.connect(DB_NAME)
@@ -2042,7 +2115,7 @@ def complete_route_batch_step(
             operation_name,
             position,
             employee_id,
-            batch["quantity"],
+            good_quantity,
             now,
         )
     )
@@ -2052,11 +2125,15 @@ def complete_route_batch_step(
         UPDATE route_batches
         SET route_step_index = ?,
             status = ?,
+            assigned_employee_id = COALESCE(assigned_employee_id, ?),
+            assigned_at = COALESCE(assigned_at, ?),
+            good_quantity = ?,
+            defect_quantity = ?,
             updated_at = ?,
             completed_at = ?
         WHERE id = ?
         """,
-        (next_step_index, new_status, now, completed_at, batch_id)
+        (next_step_index, new_status, employee_id, now, good_quantity, defect_quantity, now, completed_at, batch_id)
     )
 
     conn.commit()
