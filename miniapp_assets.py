@@ -2052,9 +2052,7 @@ MINIAPP_HTML = """<!doctype html>
 
     async function deleteOrderTask() {
       if (!state.data || !state.data.is_admin) return;
-      const productionTasks = getTasks().map((task) => ({...task, task_kind: "production"}));
-      const routeRows = getRouteTasks().map((task) => ({...task, task_kind: "route"}));
-      const current = [...productionTasks, ...routeRows][state.selectedOrder] || [...productionTasks, ...routeRows][0];
+      const current = currentOrderRows()[state.selectedOrder] || currentOrderRows()[0];
 
       if (!current) {
         showToast("Задание", "Выберите задание.");
@@ -2245,11 +2243,9 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      const productionTasks = state.data && state.data.is_admin ? getTasks() : getCuttingTasks();
-      const routeTasks = getRouteTasks();
-      const tasks = productionTasks.map((task) => ({...task, task_kind: state.data && state.data.is_admin ? "production" : "cutting_stage"}));
-      const routeRows = routeTasks.map((task) => ({...task, task_kind: "route"}));
-      const allTasks = [...tasks, ...routeRows];
+      const allTasks = currentOrderRows();
+      const tasks = allTasks.filter((task) => task.task_kind !== "route");
+      const routeRows = allTasks.filter((task) => task.task_kind === "route");
       const current = allTasks[state.selectedOrder] || allTasks[0];
       mainButton.textContent = state.data && state.data.is_admin ? "Создать задание" : (current ? "Выполнить" : "Обновить статус");
       mainButton.disabled = false;
@@ -2570,8 +2566,6 @@ MINIAPP_HTML = """<!doctype html>
     function render() {
       if (!state.data) return;
       document.getElementById("roleLabel").textContent = roleLabel();
-      renderBottomNav();
-      renderTopTabs();
       if (state.screen === "shift") renderShift();
       if (state.screen === "operations") renderOperations();
       if (state.screen === "report") renderReport();

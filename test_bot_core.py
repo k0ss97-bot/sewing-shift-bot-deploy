@@ -254,6 +254,24 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 ("80", "Синий", 8, "Раскроенные", "Швея"),
             },
         )
+        conn = sqlite3.connect(self.database.DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT product_size, product_color, quantity, movement_type, source_type, source_id
+            FROM warehouse_stock_movements
+            ORDER BY product_color, CAST(product_size AS INTEGER)
+            """
+        )
+        self.assertEqual(
+            cursor.fetchall(),
+            [
+                ("80", "Бежевый", 6, "receipt", "cutting_batch", batch_id),
+                ("92", "Бежевый", 9, "receipt", "cutting_batch", batch_id),
+                ("80", "Синий", 8, "receipt", "cutting_batch", batch_id),
+            ],
+        )
+        conn.close()
 
     def test_miniapp_production_creates_task_and_submits_contours(self):
         os.environ["ADMIN_IDS"] = "9001"
@@ -413,6 +431,28 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(delete_route["ok"], delete_route)
         self.assertEqual(self.database.get_route_batch_by_id(route_id)["status"], "cancelled")
         self.assertEqual(self.database.get_active_route_batches(), [])
+        self.assertEqual(self.database.get_warehouse_stock_by_id(stock_row["id"])["quantity"], 5)
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT quantity, movement_type, source_type, source_id
+            FROM warehouse_stock_movements
+            WHERE stock_id = ?
+            ORDER BY id
+            """,
+            (stock_row["id"],),
+        )
+        self.assertEqual(
+            cursor.fetchall(),
+            [
+                (5, "receipt", "", None),
+                (-3, "issue", "route_batch", route_id),
+                (3, "receipt", "cancelled_task", route_id),
+            ],
+        )
+        conn.close()
 
     def test_zero_quantity_is_not_saved_or_reported(self):
         self.database.create_employee(2002, "Тест Швея", "Швея")

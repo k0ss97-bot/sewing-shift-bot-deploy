@@ -83,6 +83,19 @@ PRODUCTION_TASK_COLUMNS = [
     "completed_at",
     "note",
 ]
+WAREHOUSE_STOCK_COLUMNS = [
+    "id",
+    "item_type",
+    "product_name",
+    "product_size",
+    "product_color",
+    "stage_name",
+    "ready_for_position",
+    "quantity",
+    "unit",
+    "updated_at",
+]
+WAREHOUSE_STOCK_SELECT = ", ".join(WAREHOUSE_STOCK_COLUMNS)
 
 
 def get_database_dir():
@@ -134,18 +147,19 @@ def local_today():
     return local_now().date()
 
 
-def route_batch_from_row(row):
+def row_to_dict(columns, row):
     if row is None:
         return None
 
-    return dict(zip(ROUTE_BATCH_COLUMNS, row))
+    return dict(zip(columns, row))
+
+
+def route_batch_from_row(row):
+    return row_to_dict(ROUTE_BATCH_COLUMNS, row)
 
 
 def production_task_from_row(row):
-    if row is None:
-        return None
-
-    return dict(zip(PRODUCTION_TASK_COLUMNS, row))
+    return row_to_dict(PRODUCTION_TASK_COLUMNS, row)
 
 
 from catalog import (
@@ -3100,21 +3114,7 @@ def get_fabric_stock_rows():
 
 
 def warehouse_stock_from_row(row):
-    if row is None:
-        return None
-
-    return {
-        "id": row[0],
-        "item_type": row[1],
-        "product_name": row[2],
-        "product_size": row[3],
-        "product_color": row[4],
-        "stage_name": row[5],
-        "ready_for_position": row[6],
-        "quantity": row[7],
-        "unit": row[8],
-        "updated_at": row[9],
-    }
+    return row_to_dict(WAREHOUSE_STOCK_COLUMNS, row)
 
 
 def get_next_route_position(product_name: str, route_step_index: int):
@@ -3238,22 +3238,22 @@ def consume_warehouse_stock(stock_id: int, quantity: int, employee_id: int | Non
     cursor = conn.cursor()
 
     cursor.execute(
-        """
-        SELECT id, item_type, product_name, product_size, product_color, stage_name,
-               ready_for_position, quantity, unit, updated_at
+        f"""
+        SELECT {WAREHOUSE_STOCK_SELECT}
         FROM warehouse_stock
         WHERE id = ?
         """,
         (stock_id,),
     )
     row = cursor.fetchone()
+    stock = warehouse_stock_from_row(row)
 
-    if row is None or row[7] < quantity:
+    if stock is None or stock["quantity"] < quantity:
         conn.close()
         return None
 
     now = local_now().isoformat()
-    new_quantity = row[7] - quantity
+    new_quantity = stock["quantity"] - quantity
 
     cursor.execute(
         """
@@ -3276,14 +3276,14 @@ def consume_warehouse_stock(stock_id: int, quantity: int, employee_id: int | Non
         """,
         (
             stock_id,
-            row[1],
-            row[2],
-            row[3],
-            row[4],
-            row[5],
-            row[6],
+            stock["item_type"],
+            stock["product_name"],
+            stock["product_size"],
+            stock["product_color"],
+            stock["stage_name"],
+            stock["ready_for_position"],
             -quantity,
-            row[8],
+            stock["unit"],
             source_type,
             source_id,
             employee_id,
@@ -3293,7 +3293,7 @@ def consume_warehouse_stock(stock_id: int, quantity: int, employee_id: int | Non
 
     conn.commit()
     conn.close()
-    return {**warehouse_stock_from_row(row), "quantity": new_quantity}
+    return {**stock, "quantity": new_quantity}
 
 
 def get_warehouse_stock_by_id(stock_id: int):
@@ -3301,9 +3301,8 @@ def get_warehouse_stock_by_id(stock_id: int):
     cursor = conn.cursor()
 
     cursor.execute(
-        """
-        SELECT id, item_type, product_name, product_size, product_color, stage_name,
-               ready_for_position, quantity, unit, updated_at
+        f"""
+        SELECT {WAREHOUSE_STOCK_SELECT}
         FROM warehouse_stock
         WHERE id = ?
         """,
@@ -3319,9 +3318,8 @@ def get_warehouse_stock_rows():
     cursor = conn.cursor()
 
     cursor.execute(
-        """
-        SELECT id, item_type, product_name, product_size, product_color, stage_name,
-               ready_for_position, quantity, unit, updated_at
+        f"""
+        SELECT {WAREHOUSE_STOCK_SELECT}
         FROM warehouse_stock
         WHERE quantity > 0
         ORDER BY

@@ -1,8 +1,8 @@
-"""Draft product route maps.
+"""Product route maps for production batches.
 
-The bot does not use these maps yet. They are a structured draft for the next
-step: moving product batches through operations and showing the next available
-task to the right position.
+The bot and miniapp use these maps as a shared reference for moving product
+batches through operations and showing the next available task to the right
+position.
 """
 
 CUTTING_ROUTE = [
@@ -168,7 +168,7 @@ PRODUCT_ROUTE_MAPS = {
 
 
 ROUTE_NOTES = [
-    "Все маршруты пока начинаются с общего блока раскроя.",
+    "Все маршруты начинаются с общего блока раскроя.",
     "ВТО стрелок приведено к текущему названию в боте: ВТО пошитых стрелок.",
     "Проклеивание планок флизелином приведено к текущему названию подготовки: Дублирование.",
     "Упаковка и размещение на склад добавлены финальными этапами для всех изделий как черновой вариант.",
