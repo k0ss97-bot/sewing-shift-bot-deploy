@@ -1324,7 +1324,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card field-card">
           <label>Файл задания</label>
           <div class="report-row"><div><b>${escapeHtml(attachment.file_name || "Файл")}</b><span>Word, Excel или PDF</span></div><span class="status-chip gray">файл</span></div>
-          <div class="button-row"><button class="small-button secondary" data-attachment-action="open" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Открыть файл</button><button class="small-button" data-attachment-action="download" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Скачать</button></div>
+          <div class="button-row"><button class="small-button secondary" data-attachment-action="download" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Открыть файл</button><button class="small-button" data-attachment-action="open" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Скачать</button></div>
         </div>
       `;
     }
