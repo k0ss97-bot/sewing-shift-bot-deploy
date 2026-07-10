@@ -301,6 +301,52 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(cutting_tasks[0]["progress"], 75)
         self.assertEqual(cutting_tasks[0]["status_text"], "готовность 75%")
 
+    def test_incomplete_cutting_survives_closed_shift_and_can_be_reopened_once(self):
+        batch_id = self._create_layout_done_batch()
+        shift_date = "2026-01-01"
+        self.database.close_shift(self.shift_id)
+
+        self.assertEqual(
+            [row[0] for row in self.database.get_cutting_batches_for_cutting("Брюки-ползунки")],
+            [batch_id],
+        )
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE shifts SET shift_date = ? WHERE id = ?",
+            (shift_date, self.shift_id),
+        )
+        restored = self.database.restore_incomplete_cutting_shift(
+            cursor,
+            repair_key="test_restore_incomplete_cutting",
+            batch_id=batch_id,
+            shift_id=self.shift_id,
+            expected_shift_date=shift_date,
+        )
+        restored_again = self.database.restore_incomplete_cutting_shift(
+            cursor,
+            repair_key="test_restore_incomplete_cutting",
+            batch_id=batch_id,
+            shift_id=self.shift_id,
+            expected_shift_date=shift_date,
+        )
+        conn.commit()
+        cursor.execute(
+            "SELECT status, end_time, total_minutes, closed_at FROM shifts WHERE id = ?",
+            (self.shift_id,),
+        )
+        shift = cursor.fetchone()
+        conn.close()
+
+        self.assertTrue(restored)
+        self.assertFalse(restored_again)
+        self.assertEqual(shift, ("open", None, None, None))
+        self.assertEqual(
+            self.database.get_open_shift_for_today(self.employee_id)[0],
+            self.shift_id,
+        )
+
     def test_production_task_creates_matrix_cutting_batch(self):
         task = self.database.create_production_task(
             "Шорты",

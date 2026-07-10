@@ -574,6 +574,80 @@ def backfill_cutting_progress_reports(cursor):
     )
 
 
+def restore_incomplete_cutting_shift(
+    cursor,
+    repair_key: str,
+    batch_id: int,
+    shift_id: int,
+    expected_shift_date: str,
+):
+    cursor.execute(
+        "SELECT 1 FROM data_repairs WHERE repair_key = ?",
+        (repair_key,),
+    )
+
+    if cursor.fetchone() is not None:
+        return False
+
+    cursor.execute(
+        """
+        SELECT cutting_batches.id
+        FROM cutting_batches
+        JOIN shifts ON shifts.id = ?
+        WHERE cutting_batches.id = ?
+          AND cutting_batches.layout_shift_id = shifts.id
+          AND cutting_batches.layout_employee_id = shifts.employee_id
+          AND cutting_batches.layout_date IS NOT NULL
+          AND cutting_batches.cutting_progress < 100
+          AND cutting_batches.status IN ('layout_done', 'cutting_in_progress')
+          AND shifts.shift_date = ?
+          AND shifts.status IN ('open', 'closed')
+        """,
+        (shift_id, batch_id, expected_shift_date),
+    )
+
+    if cursor.fetchone() is None:
+        return False
+
+    now_text = local_now().isoformat()
+    cursor.execute(
+        """
+        UPDATE shifts
+        SET end_time = NULL,
+            total_minutes = NULL,
+            status = 'open',
+            edit_until = NULL,
+            closed_at = NULL
+        WHERE id = ?
+        """,
+        (shift_id,),
+    )
+    cursor.execute(
+        """
+        UPDATE cutting_batches
+        SET status = CASE
+                WHEN cutting_progress > 0 THEN 'cutting_in_progress'
+                ELSE 'layout_done'
+            END,
+            formed_shift_id = NULL,
+            formed_operation_id = NULL,
+            formed_employee_id = NULL,
+            formed_date = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (now_text, batch_id),
+    )
+    cursor.execute(
+        """
+        INSERT INTO data_repairs (repair_key, applied_at)
+        VALUES (?, ?)
+        """,
+        (repair_key, now_text),
+    )
+    return True
+
+
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -700,6 +774,13 @@ def init_db():
             entity_id INTEGER,
             details TEXT,
             changed_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS data_repairs (
+            repair_key TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
         )
     """)
 
@@ -1099,6 +1180,13 @@ def init_db():
 
     seed_production_operations(cursor)
     backfill_cutting_progress_reports(cursor)
+    restore_incomplete_cutting_shift(
+        cursor,
+        repair_key="restore_cutting_batch_12_shift_43",
+        batch_id=12,
+        shift_id=43,
+        expected_shift_date="2026-07-10",
+    )
 
     conn.commit()
     conn.close()
@@ -1487,6 +1575,33 @@ def get_open_shift_for_today(employee_id: int):
     )
 
     shift = cursor.fetchone()
+
+    if shift is None:
+        cursor.execute(
+            """
+            SELECT DISTINCT
+                shifts.id,
+                shifts.employee_id,
+                shifts.shift_date,
+                shifts.start_time,
+                shifts.end_time,
+                shifts.status
+            FROM shifts
+            JOIN cutting_batches
+              ON cutting_batches.contour_shift_id = shifts.id
+              OR cutting_batches.layout_shift_id = shifts.id
+              OR cutting_batches.cutting_shift_id = shifts.id
+            WHERE shifts.employee_id = ?
+              AND shifts.status = 'open'
+              AND cutting_batches.status IN ('contours_done', 'layout_done', 'cutting_in_progress')
+              AND cutting_batches.cutting_progress < 100
+            ORDER BY shifts.shift_date DESC, shifts.id DESC
+            LIMIT 1
+            """,
+            (employee_id,),
+        )
+        shift = cursor.fetchone()
+
     conn.close()
     return shift
 
