@@ -216,7 +216,13 @@ def get_preparation_material_colors():
 
 
 def is_preparation_operation_folder(folder: str):
-    return folder in {"Нарезание резинки", "Нарезание дублерина", "Дублирование", *SIMPLE_PREPARATION_OPERATIONS}
+    if folder in SIMPLE_PREPARATION_OPERATIONS:
+        return True
+
+    return any(
+        options.get("folder") == folder
+        for options in PREPARATION_OPERATION_OPTIONS.values()
+    )
 
 
 def is_packing_product_folder(folder: str):

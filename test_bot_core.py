@@ -124,6 +124,15 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 folder=operation_name,
             )
             self.assertEqual([operation[2] for operation in preparation_operations], [operation_name])
+            self.assertTrue(self.database.is_preparation_operation_folder(operation_name))
+            self.assertEqual(
+                self.database.get_preparation_operation_sizes(operation_name),
+                ["92", "98", "104", "110", "116", "122", "134", "140", "146", "152", "158", "164"],
+            )
+            self.assertEqual(
+                self.database.get_preparation_operation_colors(operation_name),
+                ["Голубой", "Бежевый", "Капучино", "Темно-синий", "Брауни", "Светло-серый", "Черный"],
+            )
 
     def test_route_maps_cover_catalog_products_and_operations(self):
         catalog = importlib.import_module("catalog")

@@ -33,8 +33,6 @@ PREPARATION_MATERIAL_COLORS = ["Черный", "Белый"]
 SIMPLE_PREPARATION_OPERATIONS = [
     "Помощь с настилом ткани",
     "Стирка",
-    "Установка петель",
-    "Установка пуговиц",
 ]
 
 COMMON_COLORS = [
@@ -126,6 +124,19 @@ PRODUCT_OPTIONS = {
     "ТО оборудования": {"colors": [], "sizes": []},
 }
 
+CARDIGAN_PREPARATION_SIZES = [
+    *PRODUCT_OPTIONS["Кардиган"]["sizes"],
+    *PRODUCT_OPTIONS["Кардиган детский и подростковый"]["sizes"],
+]
+CARDIGAN_PREPARATION_COLORS = list(
+    dict.fromkeys(
+        [
+            *PRODUCT_OPTIONS["Кардиган"]["colors"],
+            *PRODUCT_OPTIONS["Кардиган детский и подростковый"]["colors"],
+        ]
+    )
+)
+
 PREPARATION_OPERATION_OPTIONS = {
     "Брюки со стрелкой / стрелка — резинка 35 мм": {
         "folder": "Нарезание резинки",
@@ -183,6 +194,16 @@ PREPARATION_OPERATION_OPTIONS = {
             "158 (100 см)",
             "164 (100 см)",
         ],
+    },
+    "Установка петель": {
+        "folder": "Установка петель",
+        "colors": CARDIGAN_PREPARATION_COLORS,
+        "sizes": CARDIGAN_PREPARATION_SIZES,
+    },
+    "Установка пуговиц": {
+        "folder": "Установка пуговиц",
+        "colors": CARDIGAN_PREPARATION_COLORS,
+        "sizes": CARDIGAN_PREPARATION_SIZES,
     },
     "Кардиган — Дублирование": {
         "folder": "Дублирование",
