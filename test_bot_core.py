@@ -91,6 +91,40 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("Шорты — резинка 25 мм", operation_names)
         self.assertIn("80 (43 см)", self.database.get_preparation_operation_sizes("Шорты — резинка 25 мм"))
 
+        dublerin_operations = self.database.get_active_operations(
+            position="Упаковщик",
+            folder="Нарезание дублерина",
+        )
+        self.assertIn("Кардиганы — дублерин 25 мм", {operation[2] for operation in dublerin_operations})
+        self.assertEqual(
+            self.database.get_preparation_operation_sizes("Кардиганы — дублерин 25 мм"),
+            [
+                "92 (100 см)",
+                "98 (100 см)",
+                "104 (100 см)",
+                "110 (100 см)",
+                "116 (100 см)",
+                "122 (100 см)",
+                "134 (100 см)",
+                "140 (100 см)",
+                "146 (100 см)",
+                "152 (100 см)",
+                "158 (100 см)",
+                "164 (100 см)",
+            ],
+        )
+        self.assertEqual(
+            self.database.get_preparation_operation_colors("Кардиганы — дублерин 25 мм"),
+            ["Черный", "Белый"],
+        )
+
+        for operation_name in ["Установка петель", "Установка пуговиц"]:
+            preparation_operations = self.database.get_active_operations(
+                position="Упаковщик",
+                folder=operation_name,
+            )
+            self.assertEqual([operation[2] for operation in preparation_operations], [operation_name])
+
     def test_route_maps_cover_catalog_products_and_operations(self):
         catalog = importlib.import_module("catalog")
         route_maps = importlib.import_module("route_maps")
@@ -174,6 +208,63 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 ("86", "Бежевый", 30),
                 ("86", "Синий", 15),
             ],
+        )
+
+    def test_cutting_progress_is_atomic_idempotent_and_backfilled(self):
+        batch_id = self._create_layout_done_batch()
+        cutting_operation = next(
+            operation
+            for operation in self.database.get_active_operations(
+                position="Раскройщик",
+                folder="Брюки-ползунки",
+            )
+            if operation[2] == "Раскрой"
+        )
+        cutting_operation_id = cutting_operation[0]
+
+        self.assertEqual(cutting_operation[3], "%")
+        self.assertTrue(
+            self.database.update_cutting_batch_progress(
+                batch_id,
+                self.shift_id,
+                self.employee_id,
+                cutting_operation_id,
+                100,
+            )
+        )
+        self.assertTrue(
+            self.database.update_cutting_batch_progress(
+                batch_id,
+                self.shift_id,
+                self.employee_id,
+                cutting_operation_id,
+                100,
+            )
+        )
+        self.assertIn(
+            ("Брюки-ползунки: Раскрой", "готовность", "без цвета", 100, "%"),
+            self.database.get_shift_report(self.shift_id),
+        )
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM shift_operations
+            WHERE shift_id = ?
+              AND operation_id = ?
+              AND product_size = 'готовность'
+              AND product_color = 'без цвета'
+            """,
+            (self.shift_id, cutting_operation_id),
+        )
+        conn.commit()
+        conn.close()
+
+        self.database.init_db()
+        self.assertIn(
+            ("Брюки-ползунки: Раскрой", "готовность", "без цвета", 100, "%"),
+            self.database.get_shift_report(self.shift_id),
         )
 
     def test_cutting_batch_at_75_percent_stays_visible_for_cutter(self):

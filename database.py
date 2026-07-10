@@ -395,6 +395,7 @@ def seed_production_operations(cursor):
 
     for sort_order, (position, folder, name) in enumerate(seed_items, start=1):
         operation_group = get_operation_group(position, folder, name)
+        unit = "%" if position == "Раскройщик" and name == "Раскрой" else "шт"
 
         cursor.execute(
             """
@@ -413,13 +414,13 @@ def seed_production_operations(cursor):
             cursor.execute(
                 """
                 UPDATE operations
-                SET unit = 'шт',
+                SET unit = ?,
                     is_active = 1,
                     operation_group = ?,
                     sort_order = ?
                 WHERE id = ?
                 """,
-                (operation_group, sort_order, existing_operation[0]),
+                (unit, operation_group, sort_order, existing_operation[0]),
             )
             continue
 
@@ -429,9 +430,9 @@ def seed_production_operations(cursor):
         cursor.execute(
             """
             INSERT INTO operations (number, name, position, operation_group, folder, sort_order, unit, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, 'шт', 1)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
             """,
-            (next_number, name, position, operation_group, folder, sort_order),
+            (next_number, name, position, operation_group, folder, sort_order, unit),
         )
 
     maintenance_items = [
@@ -533,6 +534,38 @@ def seed_production_operations(cursor):
             """,
             (next_number, name, position, operation_group, folder, sort_order),
         )
+
+
+def backfill_cutting_progress_reports(cursor):
+    cursor.execute(
+        """
+        INSERT INTO shift_operations (
+            shift_id, employee_id, operation_id,
+            product_size, product_color, quantity, created_at, updated_at
+        )
+        SELECT
+            cutting_shift_id,
+            cutting_employee_id,
+            cutting_operation_id,
+            'готовность',
+            'без цвета',
+            cutting_progress,
+            updated_at,
+            updated_at
+        FROM cutting_batches
+        WHERE cutting_progress > 0
+          AND cutting_shift_id IS NOT NULL
+          AND cutting_employee_id IS NOT NULL
+          AND cutting_operation_id IS NOT NULL
+        ON CONFLICT(shift_id, operation_id, product_size, product_color)
+        DO UPDATE SET
+            employee_id = excluded.employee_id,
+            quantity = excluded.quantity,
+            updated_at = excluded.updated_at
+        WHERE shift_operations.updated_at < excluded.updated_at
+          AND shift_operations.quantity < excluded.quantity
+        """
+    )
 
 
 def init_db():
@@ -1059,6 +1092,7 @@ def init_db():
                 )
 
     seed_production_operations(cursor)
+    backfill_cutting_progress_reports(cursor)
 
     conn.commit()
     conn.close()
@@ -2875,6 +2909,38 @@ def update_cutting_batch_progress(
                 """,
                 (now_text, task_row[0]),
             )
+    else:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM cutting_batches
+            WHERE id = ?
+              AND status = ?
+              AND cutting_shift_id = ?
+              AND cutting_operation_id = ?
+              AND cutting_employee_id = ?
+              AND cutting_progress = ?
+            """,
+            (batch_id, status, shift_id, operation_id, employee_id, progress),
+        )
+        changed = cursor.fetchone() is not None
+
+    if changed:
+        cursor.execute(
+            """
+            INSERT INTO shift_operations (
+                shift_id, employee_id, operation_id,
+                product_size, product_color, quantity, created_at, updated_at
+            )
+            VALUES (?, ?, ?, 'готовность', 'без цвета', ?, ?, ?)
+            ON CONFLICT(shift_id, operation_id, product_size, product_color)
+            DO UPDATE SET
+                employee_id = excluded.employee_id,
+                quantity = excluded.quantity,
+                updated_at = excluded.updated_at
+            """,
+            (shift_id, employee_id, operation_id, progress, now_text, now_text),
+        )
 
     conn.commit()
     conn.close()

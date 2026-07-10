@@ -102,7 +102,6 @@ from database import (
     mark_cutting_batch_formed,
     restore_operation,
     rollback_cutting_batch,
-    set_shift_operation_quantity,
     update_cutting_batch_progress,
     update_operation_field,
     update_employee_position,
@@ -4466,17 +4465,8 @@ async def finish_cutting_progress(message: Message, state: FSMContext, progress:
         await message.answer("Партия недоступна для раскроя.", reply_markup=report_keyboard())
         return
 
-    set_shift_operation_quantity(
-        data["shift_id"],
-        data["employee_id"],
-        data["operation_id"],
-        "готовность",
-        "без цвета",
-        progress,
-    )
-
     add_edit_log(
-        message.from_user.id,
+        get_message_actor_id(message),
         "employee",
         "Обновил процент раскроя",
         "shift",
@@ -4505,11 +4495,13 @@ async def process_cutting_progress(message: Message, state: FSMContext):
     if await reset_state_if_command(message, state):
         return
 
-    if not message.text.isdigit():
+    progress_text = message.text.strip().removesuffix("%").strip()
+
+    if not progress_text.isdigit():
         await message.answer("Введите процент: 25, 50, 75 или 100.")
         return
 
-    await finish_cutting_progress(message, state, int(message.text))
+    await finish_cutting_progress(message, state, int(progress_text))
 
 
 @dp.callback_query(lambda callback: callback.data and callback.data.startswith("cutting_progress:"))
