@@ -265,6 +265,27 @@ MINIAPP_HTML = """<!doctype html>
       min-height: 104px;
     }
 
+    .warehouse-category {
+      width: 100%;
+      text-align: left;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+      border-color: rgba(195,111,85,.24);
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    }
+
+    .warehouse-category:hover {
+      transform: translateY(-1px);
+      border-color: rgba(195,111,85,.52);
+      background: rgba(255,255,255,.72);
+      box-shadow: 0 14px 28px rgba(195,111,85,.16);
+    }
+
+    .warehouse-category:active {
+      transform: translateY(0);
+    }
+
     .kpi-top {
       display: flex;
       justify-content: space-between;
@@ -309,6 +330,21 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--muted);
       font-size: 11px;
       line-height: 1.3;
+    }
+
+    .warehouse-category .kpi-top {
+      display: flex;
+      margin-top: 0;
+    }
+
+    .warehouse-category .kpi-ico {
+      display: grid;
+      margin-top: 0;
+      color: var(--accent-dark);
+    }
+
+    .warehouse-category.good .kpi-ico {
+      color: var(--sage-dark);
     }
 
     .progress {
@@ -468,6 +504,10 @@ MINIAPP_HTML = """<!doctype html>
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 6px;
       margin-bottom: 12px;
+    }
+
+    .segment-row.warehouse-segments {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .segment-button {
@@ -1282,6 +1322,10 @@ MINIAPP_HTML = """<!doctype html>
       fabricReceiptMaterial: "Ткань",
       fabricReceiptColor: "",
       fabricReceiptQuantity: "",
+      warehouseView: "overview",
+      warehouseProductFilter: "",
+      warehouseSizeFilter: "",
+      warehouseColorFilter: "",
       adminSection: "reports",
       adminReportType: "period",
       adminStartDate: "",
@@ -2582,6 +2626,22 @@ MINIAPP_HTML = """<!doctype html>
       if (quantity) state.fabricReceiptQuantity = quantity.value;
     }
 
+    function syncWarehouseFilters() {
+      const product = document.getElementById("warehouseProductFilter");
+      const size = document.getElementById("warehouseSizeFilter");
+      const color = document.getElementById("warehouseColorFilter");
+
+      if (product) state.warehouseProductFilter = product.value;
+      if (size) state.warehouseSizeFilter = size.value;
+      if (color) state.warehouseColorFilter = color.value;
+    }
+
+    function resetWarehouseFilters() {
+      state.warehouseProductFilter = "";
+      state.warehouseSizeFilter = "";
+      state.warehouseColorFilter = "";
+    }
+
     async function addFabricReceipt() {
       if (!state.data || !state.data.is_admin) return;
       syncWarehouseReceiptForm();
@@ -3040,14 +3100,11 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderAdminWarehouse(includeTabs = false) {
-      const fabricRows = getProduction().fabric_stock || [];
-      const warehouseRows = getWarehouseStock();
+      const fabricRows = (getProduction().fabric_stock || []).filter((row) => Number(row.quantity || 0) > 0);
+      const warehouseRows = getWarehouseStock().filter((row) => Number(row.quantity || 0) > 0);
       const receiptColors = getOrderColors();
       const semifinished = warehouseRows.filter((row) => row.item_type === "semifinished");
       const finished = warehouseRows.filter((row) => row.item_type === "finished");
-      const cuttingReady = semifinished.filter((row) => row.ready_for_position === "Раскройщик");
-      const sewingReady = semifinished.filter((row) => row.ready_for_position === "Швея");
-      const packingReady = semifinished.filter((row) => row.ready_for_position === "Упаковщик");
       mainButton.textContent = "Обновить склад";
       mainButton.disabled = false;
 
@@ -3058,40 +3115,89 @@ MINIAPP_HTML = """<!doctype html>
       const receiptColorOptions = receiptColors.map((color) => `
         <option value="${escapeHtml(color)}" ${color === state.fabricReceiptColor ? "selected" : ""}>${escapeHtml(color)}</option>
       `).join("");
-      const materialHtml = fabricRows.length ? fabricRows.map((row) => `
+      const viewDefinitions = {
+        materials: {label: "Материалы", rows: fabricRows, icon: "▦"},
+        semifinished: {label: "Полуфабрикаты", rows: semifinished, icon: "▣"},
+        finished: {label: "Готовая продукция", rows: finished, icon: "✓"},
+      };
+
+      if (state.warehouseView === "overview" || !viewDefinitions[state.warehouseView]) {
+        state.warehouseView = "overview";
+        return `
+          <div class="screen-head"><div><h2>Склад</h2><p>Материалы, полуфабрикаты и готовая продукция.</p></div><div class="date">${warehouseRows.length + fabricRows.length} поз.</div></div>
+          ${includeTabs ? renderAdminTabs() : ""}
+          <div class="kpi-grid">
+            <button type="button" class="card kpi warehouse-category" data-warehouse-view="materials"><span class="kpi-top"><span>Материалы</span><span class="kpi-ico">▦</span></span><strong>${fabricRows.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+            <button type="button" class="card kpi warehouse-category" data-warehouse-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">▣</span></span><strong>${semifinished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+            <button type="button" class="card kpi good warehouse-category" data-warehouse-view="finished"><span class="kpi-top"><span>Готовое</span><span class="kpi-ico">✓</span></span><strong>${finished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+          </div>
+          <div class="section-title"><b>Приход материалов</b><span>рулоны</span></div>
+          <div class="card field-card">
+            <div class="form-grid">
+              <div class="field"><label>Материал</label><select id="fabricReceiptMaterial"><option value="Ткань" ${state.fabricReceiptMaterial === "Ткань" ? "selected" : ""}>Ткань</option></select></div>
+              <div class="field"><label>Цвет</label><select id="fabricReceiptColor">${receiptColorOptions || `<option value="">Нет цветов</option>`}</select></div>
+              <div class="field full"><label>Количество рулонов</label><input id="fabricReceiptQuantity" type="number" min="1" step="1" value="${escapeHtml(state.fabricReceiptQuantity)}" placeholder="0"></div>
+            </div>
+            <div class="button-row"><button class="small-button secondary" data-warehouse-action="refresh">Обновить</button><button class="small-button" data-warehouse-action="receipt">Добавить приход</button></div>
+          </div>
+        `;
+      }
+
+      const definition = viewDefinitions[state.warehouseView];
+      const isMaterials = state.warehouseView === "materials";
+      const productField = isMaterials ? "material_name" : "product_name";
+      const uniqueValues = (rows, field) => [...new Set(rows.map((row) => String(row[field] || "")).filter(Boolean))]
+        .sort((first, second) => first.localeCompare(second, "ru"));
+      const optionHtml = (values, selected, allLabel, labelForValue = (value) => value) => `
+        <option value="">${escapeHtml(allLabel)}</option>
+        ${values.map((value) => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(labelForValue(value))}</option>`).join("")}
+      `;
+      const productValues = uniqueValues(definition.rows, productField);
+
+      if (state.warehouseProductFilter && !productValues.includes(state.warehouseProductFilter)) {
+        state.warehouseProductFilter = "";
+      }
+
+      const productRows = definition.rows.filter((row) => !state.warehouseProductFilter || row[productField] === state.warehouseProductFilter);
+      const sizeValues = isMaterials ? [] : uniqueValues(productRows, "product_size");
+
+      if (state.warehouseSizeFilter && !sizeValues.includes(state.warehouseSizeFilter)) {
+        state.warehouseSizeFilter = "";
+      }
+
+      const sizeRows = productRows.filter((row) => isMaterials || !state.warehouseSizeFilter || row.product_size === state.warehouseSizeFilter);
+      const colorValues = uniqueValues(sizeRows, "product_color");
+
+      if (state.warehouseColorFilter && !colorValues.includes(state.warehouseColorFilter)) {
+        state.warehouseColorFilter = "";
+      }
+
+      const filteredRows = sizeRows.filter((row) => !state.warehouseColorFilter || row.product_color === state.warehouseColorFilter);
+      const colorLabel = (value) => {
+        const row = definition.rows.find((item) => item.product_color === value);
+        return row ? row.product_color_label || row.product_color : value;
+      };
+      const rowsHtml = filteredRows.length ? filteredRows.map((row) => isMaterials ? `
         <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit === "рул" ? "рул." : row.unit)}</span></div>
-      `).join("") : itemEmpty("Материалов пока нет.");
-      const stockList = (rows) => rows.length ? rows.map((row) => `
-        <div class="card report-row"><div><b>${escapeHtml(row.title)}</b><span>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}<br>Для: ${escapeHtml(row.ready_for_position)}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span></div>
-      `).join("") : itemEmpty("Нет остатков.");
+      ` : `
+        <div class="card report-row"><div><b>${escapeHtml(row.product_name)}</b><span>${escapeHtml(row.stage_name)}<br>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}${state.warehouseView === "semifinished" ? `<br>Для: ${escapeHtml(row.ready_for_position)}` : ""}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span></div>
+      `).join("") : itemEmpty("По выбранным фильтрам остатков нет.");
 
       return `
-        <div class="screen-head"><div><h2>Склад</h2><p>Материалы, полуфабрикаты и готовая продукция.</p></div><div class="date">${warehouseRows.length + fabricRows.length} поз.</div></div>
-        ${includeTabs ? renderAdminTabs() : ""}
-        <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Материалы</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз</small></strong><span>Ткань и материалы</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Полуфабрикаты</span><div class="kpi-ico">▣</div></div><strong>${semifinished.length}<small> поз</small></strong><span>После этапов</span></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Готовое</span><div class="kpi-ico">✓</div></div><strong>${finished.length}<small> поз</small></strong><span>Готовая продукция</span></div>
+        <div class="screen-head"><div><h2>${escapeHtml(definition.label)}</h2><p>Остатки на складе.</p></div><div class="date">${filteredRows.length} из ${definition.rows.length}</div></div>
+        <div class="segment-row warehouse-segments">
+          ${Object.entries(viewDefinitions).map(([id, item]) => `<button class="segment-button ${state.warehouseView === id ? "active" : ""}" data-warehouse-view="${id}">${escapeHtml(item.label)}</button>`).join("")}
         </div>
-        <div class="section-title"><b>Приход материалов</b><span>рулоны</span></div>
         <div class="card field-card">
           <div class="form-grid">
-            <div class="field"><label>Материал</label><select id="fabricReceiptMaterial"><option value="Ткань" ${state.fabricReceiptMaterial === "Ткань" ? "selected" : ""}>Ткань</option></select></div>
-            <div class="field"><label>Цвет</label><select id="fabricReceiptColor">${receiptColorOptions || `<option value="">Нет цветов</option>`}</select></div>
-            <div class="field full"><label>Количество рулонов</label><input id="fabricReceiptQuantity" type="number" min="1" step="1" value="${escapeHtml(state.fabricReceiptQuantity)}" placeholder="0"></div>
+            <div class="field ${isMaterials ? "" : "full"}"><label>${isMaterials ? "Материал" : "Номенклатура изделия"}</label><select id="warehouseProductFilter">${optionHtml(productValues, state.warehouseProductFilter, isMaterials ? "Все материалы" : "Все изделия")}</select></div>
+            ${isMaterials ? "" : `<div class="field"><label>Размер</label><select id="warehouseSizeFilter">${optionHtml(sizeValues, state.warehouseSizeFilter, "Все размеры")}</select></div>`}
+            <div class="field"><label>Цвет</label><select id="warehouseColorFilter">${optionHtml(colorValues, state.warehouseColorFilter, "Все цвета", colorLabel)}</select></div>
           </div>
-          <div class="button-row"><button class="small-button secondary" data-warehouse-action="refresh">Обновить</button><button class="small-button" data-warehouse-action="receipt">Добавить приход</button></div>
+          <div class="button-row"><button class="small-button secondary" data-warehouse-action="overview">К разделам</button><button class="small-button" data-warehouse-action="clear-filters">Сбросить фильтры</button></div>
         </div>
-        <div class="section-title"><b>Материалы</b><span>${fabricRows.length}</span></div>
-        <div class="op-list">${materialHtml}</div>
-        <div class="section-title"><b>Для раскроя</b><span>${cuttingReady.length}</span></div>
-        <div class="op-list">${stockList(cuttingReady)}</div>
-        <div class="section-title"><b>Для швеи</b><span>${sewingReady.length}</span></div>
-        <div class="op-list">${stockList(sewingReady)}</div>
-        <div class="section-title"><b>Для упаковщика</b><span>${packingReady.length}</span></div>
-        <div class="op-list">${stockList(packingReady)}</div>
-        <div class="section-title"><b>Готовая продукция</b><span>${finished.length}</span></div>
-        <div class="op-list">${stockList(finished)}</div>
+        <div class="section-title"><b>Остатки</b><span>${filteredRows.length}</span></div>
+        <div class="op-list">${rowsHtml}</div>
       `;
     }
 
@@ -3379,6 +3485,23 @@ MINIAPP_HTML = """<!doctype html>
         if (warehouseAction.dataset.warehouseAction === "refresh") {
           refreshAdminDashboard("Склад обновлён.");
         }
+        if (warehouseAction.dataset.warehouseAction === "overview") {
+          state.warehouseView = "overview";
+          resetWarehouseFilters();
+          render();
+        }
+        if (warehouseAction.dataset.warehouseAction === "clear-filters") {
+          resetWarehouseFilters();
+          render();
+        }
+        return;
+      }
+
+      const warehouseView = event.target.closest("[data-warehouse-view]");
+      if (warehouseView) {
+        state.warehouseView = warehouseView.dataset.warehouseView;
+        resetWarehouseFilters();
+        render();
         return;
       }
 
@@ -3579,6 +3702,12 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      if (event.target.closest("#warehouseProductFilter") || event.target.closest("#warehouseSizeFilter") || event.target.closest("#warehouseColorFilter")) {
+        syncWarehouseFilters();
+        render();
+        return;
+      }
+
       const stockToggle = event.target.closest("[data-stock-toggle]");
       if (stockToggle) {
         const input = document.querySelector(`[data-stock-quantity="${stockToggle.dataset.stockToggle}"]`);
@@ -3612,6 +3741,13 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
+      if (state.screen === "warehouse" && state.warehouseView !== "overview") {
+        state.warehouseView = "overview";
+        resetWarehouseFilters();
+        render();
+        return;
+      }
+
       if (state.screen === "shift" && state.data && state.data.is_admin && state.adminHomeView !== "overview") {
         state.adminHomeView = state.adminHomeView === "employee" ? "employees" : "overview";
         state.adminHomeEmployee = "";
