@@ -886,6 +886,28 @@ MINIAPP_HTML = """<!doctype html>
       line-height: 1.2;
     }
 
+    .order-card-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 7px;
+    }
+
+    .order-delete-button {
+      min-height: 30px;
+      border: 1px solid rgba(189,103,88,.28);
+      border-radius: 11px;
+      padding: 6px 11px;
+      color: var(--danger);
+      background: rgba(189,103,88,.10);
+      font-size: 11px;
+      font-weight: 950;
+    }
+
+    .order-delete-button:hover {
+      color: white;
+      background: var(--danger);
+    }
+
     .order-detail {
       padding: 14px;
       background: linear-gradient(135deg, rgba(195,111,85,.12), rgba(143,159,127,.10));
@@ -2519,13 +2541,15 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
-    async function deleteOrderTask() {
+    async function deleteOrderTask(taskKind = "", taskId = 0) {
       if (!state.data || !state.data.is_admin) return;
       const rows = visibleOrderRows();
-      const current = rows[state.selectedOrder] || rows[0];
+      const current = taskKind && taskId
+        ? rows.find((task) => task.task_kind === taskKind && String(task.id) === String(taskId))
+        : (rows[state.selectedOrder] || rows[0]);
 
       if (!current) {
-        showToast("Задание", "Выберите задание.");
+        showToast("Задание", "Задание не найдено. Обновите список.");
         return;
       }
 
@@ -2811,6 +2835,11 @@ MINIAPP_HTML = """<!doctype html>
       const selectAttr = options.selectAttr || "data-select-order";
       const assignee = task.assigned_employee_name ? `<span class="route-assignee">В работе: ${escapeHtml(task.assigned_employee_name)}</span>` : "";
       const statusClass = task.work_status === "free" ? "gray" : (task.work_status === "done" ? "" : "warn");
+      const deleteButton = state.data && state.data.is_admin ? `
+        <div class="order-card-actions">
+          <button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind || "route")}" data-task-id="${escapeHtml(task.id)}">Удалить</button>
+        </div>
+      ` : "";
 
       return `
         <div class="card order-card ${isSelected ? "selected" : ""}" ${selectAttr}="${index}">
@@ -2820,6 +2849,7 @@ MINIAPP_HTML = """<!doctype html>
             <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
           </div>
           <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.quantity)} шт</strong></div>
+          ${deleteButton}
         </div>
       `;
     }
@@ -2848,6 +2878,7 @@ MINIAPP_HTML = """<!doctype html>
               <div class="order-head"><div class="op-icon">▣</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip ${task.status === "active" ? "warn" : ""}">${escapeHtml(task.status_text || task.status)}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
               <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
+              ${state.data && state.data.is_admin ? `<div class="order-card-actions"><button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button></div>` : ""}
             </div>
           `).join("")}
           ${routeRows.map((task, routeIndex) => {
@@ -2864,7 +2895,7 @@ MINIAPP_HTML = """<!doctype html>
         ` : current ? `
           <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}${current.assigned_employee_name ? `<br>В работе: ${escapeHtml(current.assigned_employee_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div></div>
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
-        ${state.data && state.data.is_admin && current ? `<div class="button-row"><button class="small-button danger" data-order-action="delete">Удалить задание</button></div>` : ""}
+        ${state.data && state.data.is_admin && current ? `<div class="button-row"><button class="small-button danger" data-order-action="delete" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Удалить задание</button></div>` : ""}
       `;
     }
 
@@ -3220,7 +3251,7 @@ MINIAPP_HTML = """<!doctype html>
           createOrderTask();
         }
         if (orderAction.dataset.orderAction === "delete") {
-          deleteOrderTask();
+          deleteOrderTask(orderAction.dataset.taskKind, orderAction.dataset.taskId);
         }
         return;
       }
