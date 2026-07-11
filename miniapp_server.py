@@ -528,6 +528,38 @@ def should_auto_create_next_preparation_task(current_step: dict | None, next_ste
     )
 
 
+def should_skip_cut_output_step(route_step: dict):
+    operation_name = route_step.get("operation", "")
+    preparation_folder = get_preparation_folder(operation_name)
+    return preparation_folder in {"Нарезание резинки", "Нарезание дублерина"} or operation_name == "Сшивание резинок в кольцо"
+
+
+def accepted_stock_stages_for_route_step(product_name: str, step_index: int):
+    steps = PRODUCT_ROUTE_MAPS.get(product_name, [])
+
+    if step_index < len(CUTTING_ROUTE) or step_index >= len(steps):
+        return []
+
+    accepted_stages = []
+
+    if step_index > len(CUTTING_ROUTE):
+        accepted_stages.append(steps[step_index - 1]["status_after"])
+
+    first_cut_output_step = next(
+        (
+            index
+            for index, route_step in enumerate(steps[len(CUTTING_ROUTE):], start=len(CUTTING_ROUTE))
+            if not should_skip_cut_output_step(route_step)
+        ),
+        None,
+    )
+
+    if step_index == first_cut_output_step:
+        accepted_stages.append("Раскроенные")
+
+    return list(dict.fromkeys(accepted_stages))
+
+
 def route_map_to_dict(product_name: str):
     return {
         "product_name": product_name,
@@ -541,6 +573,7 @@ def route_map_to_dict(product_name: str):
                 "operation": route_step["operation"],
                 "status_after": route_step["status_after"],
                 "category": route_step_category(route_step),
+                "accepted_stock_stages": accepted_stock_stages_for_route_step(product_name, index - 1),
             }
             for index, route_step in enumerate(PRODUCT_ROUTE_MAPS[product_name], start=1)
         ],
@@ -1428,6 +1461,8 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     if route_step_index < len(CUTTING_ROUTE):
         return {"ok": False, "message": "Для раскроя используйте тип задания «Раскрой»."}
 
+    accepted_stock_stages = accepted_stock_stages_for_route_step(product_name, route_step_index)
+
     raw_stock_items = payload.get("stock_items") or []
 
     if not raw_stock_items:
@@ -1459,6 +1494,12 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
 
         if stock_row["ready_for_position"] != route_step["position"]:
             return {"ok": False, "message": f"Этот полуфабрикат не для должности {route_step['position']}."}
+
+        if stock_row["stage_name"] not in accepted_stock_stages:
+            return {
+                "ok": False,
+                "message": "Этот полуфабрикат получен после другой операции. Сначала завершите предыдущую или смежную операцию.",
+            }
 
         if quantity > stock_row["quantity"]:
             return {"ok": False, "message": "Количество больше остатка на складе."}

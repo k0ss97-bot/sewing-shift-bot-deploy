@@ -712,6 +712,167 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(completed["completed_tasks"][0]["good_quantity"], 9)
         self.assertEqual(completed["completed_tasks"][0]["defect_quantity"], 1)
 
+    def test_miniapp_full_production_cycle_is_strictly_sequential(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+
+        employees = {
+            "Раскройщик": (9002, "Тест Раскройщик Цикл"),
+            "Швея": (9003, "Тест Швея Цикл"),
+            "Упаковщик": (9004, "Тест Упаковщик Цикл"),
+        }
+        employee_rows = {}
+
+        for position, (telegram_id, full_name) in employees.items():
+            self.database.create_employee(telegram_id, full_name, position)
+            employee = self.database.get_employee_by_telegram_id(telegram_id)
+            self.database.update_employee_status(employee[0], "active")
+            employee_rows[position] = employee
+
+        self.database.create_shift(employee_rows["Раскройщик"][0])
+
+        receipt = miniapp_server.add_fabric_receipt_for_telegram(
+            9001,
+            {"material_name": "Ткань", "product_color": "Бежевый", "quantity": "3"},
+        )
+        self.assertTrue(receipt["ok"], receipt)
+
+        cutting_task = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Легинсы",
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["86"],
+                "colors": ["Бежевый"],
+                "fabric_rolls": {"Бежевый": "1"},
+            },
+        )
+        self.assertTrue(cutting_task["ok"], cutting_task)
+        self.assertEqual(cutting_task["production"]["fabric_stock"][0]["quantity"], 2)
+        task_id = self.database.get_active_production_tasks()[0][0]
+
+        blocked_layout = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {"stage": "layout", "batch_id": task_id, "color_layers": {"Бежевый": "2"}},
+        )
+        self.assertFalse(blocked_layout["ok"], blocked_layout)
+
+        contours = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {"stage": "contours", "task_id": task_id, "quantities": {"86|Бежевый": "5"}},
+        )
+        self.assertTrue(contours["ok"], contours)
+        batch_id = self.database.get_cutting_batches_for_layout("Легинсы")[0][0]
+
+        blocked_cutting = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {"stage": "cutting", "batch_id": batch_id, "progress": "100"},
+        )
+        self.assertFalse(blocked_cutting["ok"], blocked_cutting)
+
+        layout = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {"stage": "layout", "batch_id": batch_id, "color_layers": {"Бежевый": "2"}},
+        )
+        self.assertTrue(layout["ok"], layout)
+
+        partial_cutting = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {"stage": "cutting", "batch_id": batch_id, "progress": "50"},
+        )
+        self.assertTrue(partial_cutting["ok"], partial_cutting)
+        blocked_formation = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {"stage": "formation", "batch_id": batch_id},
+        )
+        self.assertFalse(blocked_formation["ok"], blocked_formation)
+
+        completed_cutting = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {"stage": "cutting", "batch_id": batch_id, "progress": "100"},
+        )
+        self.assertTrue(completed_cutting["ok"], completed_cutting)
+        formation = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {"stage": "formation", "batch_id": batch_id},
+        )
+        self.assertTrue(formation["ok"], formation)
+
+        stock = next(row for row in self.database.get_warehouse_stock_rows() if row["quantity"] > 0)
+        self.assertEqual(
+            (stock["item_type"], stock["stage_name"], stock["ready_for_position"], stock["quantity"]),
+            ("semifinished", "Раскроенные", "Швея", 10),
+        )
+
+        route_steps = route_maps.PRODUCT_ROUTE_MAPS["Легинсы"]
+        first_step_index = len(route_maps.CUTTING_ROUTE)
+        skipped = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Легинсы",
+                "task_type": "route",
+                "route_step_index": first_step_index + 1,
+                "stock_items": [{"stock_id": stock["id"], "quantity": "10"}],
+            },
+        )
+        self.assertFalse(skipped["ok"], skipped)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 10)
+
+        position_telegram_ids = {position: data[0] for position, data in employees.items()}
+
+        for step_index in range(first_step_index, len(route_steps)):
+            positive_stock = [row for row in self.database.get_warehouse_stock_rows() if row["quantity"] > 0]
+            self.assertEqual(len(positive_stock), 1, (step_index, positive_stock))
+            source_stock = positive_stock[0]
+
+            if step_index + 1 < len(route_steps) and route_steps[step_index + 1]["position"] == route_steps[step_index]["position"]:
+                skipped = miniapp_server.create_order_task_for_telegram(
+                    9001,
+                    {
+                        "product_name": "Легинсы",
+                        "task_type": "route",
+                        "route_step_index": step_index + 1,
+                        "stock_items": [{"stock_id": source_stock["id"], "quantity": "10"}],
+                    },
+                )
+                self.assertFalse(skipped["ok"], (step_index, skipped))
+
+            created = miniapp_server.create_order_task_for_telegram(
+                9001,
+                {
+                    "product_name": "Легинсы",
+                    "task_type": "route",
+                    "route_step_index": step_index,
+                    "stock_items": [{"stock_id": source_stock["id"], "quantity": "10"}],
+                },
+            )
+            self.assertTrue(created["ok"], (step_index, created))
+            active_batch = self.database.get_active_route_batches()[0]
+            telegram_id = position_telegram_ids[route_steps[step_index]["position"]]
+            started = miniapp_server.start_route_task_for_telegram(telegram_id, active_batch["id"])
+            self.assertTrue(started["ok"], (step_index, started))
+            completed = miniapp_server.complete_route_task_for_telegram(
+                telegram_id,
+                active_batch["id"],
+                {"good_quantity": 10, "defect_quantity": 0},
+            )
+            self.assertTrue(completed["ok"], (step_index, completed))
+
+        final_stock = [row for row in self.database.get_warehouse_stock_rows() if row["quantity"] > 0]
+        self.assertEqual(len(final_stock), 1)
+        self.assertEqual(
+            (
+                final_stock[0]["item_type"],
+                final_stock[0]["stage_name"],
+                final_stock[0]["ready_for_position"],
+                final_stock[0]["quantity"],
+            ),
+            ("finished", "На складе", "Склад", 10),
+        )
+        self.assertEqual(self.database.get_active_route_batches(), [])
+
     def test_miniapp_admin_deletes_order_tasks(self):
         os.environ["ADMIN_IDS"] = "9001"
         miniapp_server = importlib.import_module("miniapp_server")

@@ -2791,7 +2791,8 @@ MINIAPP_HTML = """<!doctype html>
       const stockRows = selectedOperation ? getWarehouseStock().filter((row) =>
         row.item_type === "semifinished" &&
         row.product_name === state.orderProduct &&
-        row.ready_for_position === selectedOperation.position
+        row.ready_for_position === selectedOperation.position &&
+        (selectedOperation.accepted_stock_stages || []).includes(row.stage_name)
       ) : [];
       const rollInputs = state.orderColors.length ? `
         <div class="card field-card">
