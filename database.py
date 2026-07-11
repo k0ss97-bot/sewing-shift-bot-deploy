@@ -1577,46 +1577,19 @@ def get_open_shift_for_today(employee_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    today = local_today().isoformat()
-
     cursor.execute(
         """
         SELECT id, employee_id, shift_date, start_time, end_time, status
         FROM shifts
         WHERE employee_id = ?
-          AND shift_date = ?
           AND status = 'open'
+        ORDER BY shift_date DESC, id DESC
+        LIMIT 1
         """,
-        (employee_id, today)
+        (employee_id,)
     )
 
     shift = cursor.fetchone()
-
-    if shift is None:
-        cursor.execute(
-            """
-            SELECT DISTINCT
-                shifts.id,
-                shifts.employee_id,
-                shifts.shift_date,
-                shifts.start_time,
-                shifts.end_time,
-                shifts.status
-            FROM shifts
-            JOIN cutting_batches
-              ON cutting_batches.contour_shift_id = shifts.id
-              OR cutting_batches.layout_shift_id = shifts.id
-              OR cutting_batches.cutting_shift_id = shifts.id
-            WHERE shifts.employee_id = ?
-              AND shifts.status = 'open'
-              AND cutting_batches.status IN ('contours_done', 'layout_done', 'cutting_in_progress')
-              AND cutting_batches.cutting_progress < 100
-            ORDER BY shifts.shift_date DESC, shifts.id DESC
-            LIMIT 1
-            """,
-            (employee_id,),
-        )
-        shift = cursor.fetchone()
 
     conn.close()
     return shift
@@ -4623,8 +4596,13 @@ def admin_close_shift(shift_id: int, end_time: str):
     end_dt = datetime.strptime(f"{shift_date} {end_time}", "%Y-%m-%d %H:%M")
 
     if end_dt < start_dt:
-        conn.close()
-        return "bad_time"
+        overnight_end = datetime.strptime(f"{local_today().isoformat()} {end_time}", "%Y-%m-%d %H:%M")
+
+        if overnight_end < start_dt:
+            conn.close()
+            return "bad_time"
+
+        end_dt = overnight_end
 
     now = local_now()
     closed_at = now.isoformat()
@@ -5045,6 +5023,175 @@ def get_period_shift_details(start_date: str, end_date: str):
         (start_date, end_date)
     )
 
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_period_route_batch_rows(start_date: str, end_date: str, employee_id: int | None = None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            route_batches.id,
+            route_batches.product_name,
+            route_batches.product_size,
+            route_batches.product_color,
+            route_batches.quantity,
+            route_batches.route_step_index,
+            route_batches.status,
+            route_batches.created_at,
+            route_batches.updated_at,
+            route_batches.completed_at,
+            route_batches.assigned_at,
+            employees.id,
+            employees.full_name,
+            employees.position,
+            route_batches.good_quantity,
+            route_batches.defect_quantity
+        FROM route_batches
+        LEFT JOIN employees ON employees.id = route_batches.assigned_employee_id
+        WHERE (
+            date(route_batches.created_at) BETWEEN ? AND ?
+            OR date(route_batches.completed_at) BETWEEN ? AND ?
+        )
+          AND (? IS NULL OR route_batches.assigned_employee_id = ?)
+        ORDER BY route_batches.created_at ASC, route_batches.id ASC
+        """,
+        (start_date, end_date, start_date, end_date, employee_id, employee_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_period_route_batch_input_rows(start_date: str, end_date: str, employee_id: int | None = None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            route_batch_inputs.batch_id,
+            route_batch_inputs.input_role,
+            route_batch_inputs.quantity,
+            route_batch_inputs.stock_id,
+            warehouse_stock.item_type,
+            warehouse_stock.product_name,
+            warehouse_stock.product_size,
+            warehouse_stock.product_color,
+            warehouse_stock.stage_name,
+            warehouse_stock.ready_for_position,
+            warehouse_stock.unit,
+            route_batches.status,
+            route_batches.created_at,
+            employees.full_name
+        FROM route_batch_inputs
+        JOIN route_batches ON route_batches.id = route_batch_inputs.batch_id
+        JOIN warehouse_stock ON warehouse_stock.id = route_batch_inputs.stock_id
+        LEFT JOIN employees ON employees.id = route_batches.assigned_employee_id
+        WHERE (
+            date(route_batches.created_at) BETWEEN ? AND ?
+            OR date(route_batches.completed_at) BETWEEN ? AND ?
+        )
+          AND (? IS NULL OR route_batches.assigned_employee_id = ?)
+        ORDER BY route_batch_inputs.batch_id ASC, route_batch_inputs.id ASC
+        """,
+        (start_date, end_date, start_date, end_date, employee_id, employee_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_period_production_task_item_rows(start_date: str, end_date: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            production_tasks.id,
+            production_tasks.product_name,
+            production_tasks.status,
+            production_tasks.created_at,
+            production_tasks.completed_at,
+            production_task_items.product_size,
+            production_task_items.product_color,
+            production_task_items.contour_quantity,
+            production_task_items.formed_quantity
+        FROM production_tasks
+        JOIN production_task_items ON production_task_items.task_id = production_tasks.id
+        WHERE (
+            date(production_tasks.created_at) BETWEEN ? AND ?
+            OR date(production_tasks.completed_at) BETWEEN ? AND ?
+        )
+        ORDER BY production_tasks.created_at ASC, production_tasks.id ASC,
+                 CAST(production_task_items.product_size AS INTEGER), production_task_items.product_color ASC
+        """,
+        (start_date, end_date, start_date, end_date),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_period_warehouse_movement_rows(start_date: str, end_date: str, employee_id: int | None = None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            warehouse_stock_movements.id,
+            warehouse_stock_movements.stock_id,
+            warehouse_stock_movements.created_at,
+            warehouse_stock_movements.item_type,
+            warehouse_stock_movements.product_name,
+            warehouse_stock_movements.product_size,
+            warehouse_stock_movements.product_color,
+            warehouse_stock_movements.stage_name,
+            warehouse_stock_movements.ready_for_position,
+            warehouse_stock_movements.quantity,
+            warehouse_stock_movements.unit,
+            warehouse_stock_movements.movement_type,
+            warehouse_stock_movements.source_type,
+            warehouse_stock_movements.source_id,
+            employees.full_name
+        FROM warehouse_stock_movements
+        LEFT JOIN employees ON employees.id = warehouse_stock_movements.created_by_employee_id
+        WHERE date(warehouse_stock_movements.created_at) BETWEEN ? AND ?
+          AND (? IS NULL OR warehouse_stock_movements.created_by_employee_id = ?)
+        ORDER BY warehouse_stock_movements.created_at ASC, warehouse_stock_movements.id ASC
+        """,
+        (start_date, end_date, employee_id, employee_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_period_fabric_movement_rows(start_date: str, end_date: str, employee_id: int | None = None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            fabric_stock_movements.id,
+            fabric_stock_movements.created_at,
+            fabric_stock_movements.material_name,
+            fabric_stock_movements.product_color,
+            fabric_stock_movements.quantity,
+            fabric_stock_movements.unit,
+            fabric_stock_movements.movement_type,
+            fabric_stock_movements.comment,
+            employees.full_name
+        FROM fabric_stock_movements
+        LEFT JOIN employees ON employees.id = fabric_stock_movements.created_by_employee_id
+        WHERE date(fabric_stock_movements.created_at) BETWEEN ? AND ?
+          AND (? IS NULL OR fabric_stock_movements.created_by_employee_id = ?)
+        ORDER BY fabric_stock_movements.created_at ASC, fabric_stock_movements.id ASC
+        """,
+        (start_date, end_date, employee_id, employee_id),
+    )
     rows = cursor.fetchall()
     conn.close()
     return rows

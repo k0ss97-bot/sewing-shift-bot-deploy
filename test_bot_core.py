@@ -1,9 +1,11 @@
 import importlib
+import io
 import os
 import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 
 
@@ -713,6 +715,83 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(completed["completed_tasks"][0]["status_text"], "Завершено")
         self.assertEqual(completed["completed_tasks"][0]["good_quantity"], 9)
         self.assertEqual(completed["completed_tasks"][0]["defect_quantity"], 1)
+
+    def test_open_shift_survives_midnight_and_remains_current(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9040, "Тест Ночная Смена", "Швея")
+        employee = self.database.get_employee_by_telegram_id(9040)
+        self.database.update_employee_status(employee[0], "active")
+        shift = self.database.create_shift(employee[0])
+        yesterday = (self.database.local_today() - timedelta(days=1)).isoformat()
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        conn.execute("UPDATE shifts SET shift_date = ? WHERE id = ?", (yesterday, shift["id"]))
+        conn.commit()
+        conn.close()
+
+        open_shift = self.database.get_open_shift_for_today(employee[0])
+        self.assertEqual(open_shift[0], shift["id"])
+        self.assertEqual(open_shift[2], yesterday)
+
+        reopened = miniapp_server.open_shift_for_telegram(9040)
+        self.assertTrue(reopened["ok"], reopened)
+        self.assertEqual(reopened["message"], "Смена уже открыта.")
+        self.assertEqual(reopened["shift"]["id"], shift["id"])
+
+        report = miniapp_server.get_current_report_for_telegram(9040)
+        self.assertEqual(report["shift"]["id"], shift["id"])
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM shifts WHERE employee_id = ?", (employee[0],)).fetchone()[0], 1)
+        conn.close()
+
+    def test_miniapp_excel_export_contains_detailed_production_sheets(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9041, "Тест Выгрузка", "Упаковщик")
+        employee = self.database.get_employee_by_telegram_id(9041)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        self.database.add_fabric_receipt("Ткань", "Черный", 3, None, "Тестовая приёмка")
+        stock = self.database.add_warehouse_stock(
+            "semifinished", "Шорты", "80", "Черный", "Раскроенные", "Упаковщик", 10, None,
+        )
+        step_index = self.route_step_index("Шорты", "Шорты — резинка 25 мм", "Упаковщик")
+        batch = self.database.create_route_batch_with_inputs(
+            "Шорты", "80", "Черный", 10, None, step_index,
+            [{"stock_id": stock["id"], "quantity": 10, "input_role": "main"}],
+        )
+        self.assertIsNotNone(batch)
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(9041, batch["id"])["ok"])
+        completed = miniapp_server.complete_route_task_for_telegram(
+            9041, batch["id"], {"good_quantity": 9, "defect_quantity": 1},
+        )
+        self.assertTrue(completed["ok"], completed)
+
+        today = self.database.local_today().isoformat()
+        export = miniapp_server.export_admin_report_for_telegram(
+            9001, {"report_type": "period", "start_date": today, "end_date": today},
+        )
+        self.assertTrue(export["ok"], export)
+
+        from openpyxl import load_workbook
+        workbook = load_workbook(io.BytesIO(export["content"]), data_only=False)
+        expected_sheets = {
+            "Сводка", "Смены по дням", "Операции", "Раскрой", "Пошив", "Упаковка",
+            "Задания раскроя", "Маршрутные задания", "Входы заданий", "Брак",
+            "Движения склада", "Движения материалов", "Остатки склада", "Остатки материалов",
+        }
+        self.assertTrue(expected_sheets.issubset(set(workbook.sheetnames)))
+
+        route_sheet = workbook["Маршрутные задания"]
+        route_values = list(route_sheet.values)
+        self.assertEqual(route_values[1][9:14], (10, 9, 1, 90, 10))
+        self.assertEqual(route_values[1][15], "Тест Выгрузка")
+        defect_values = list(workbook["Брак"].values)
+        self.assertEqual(defect_values[1][8], 1)
+        self.assertEqual(defect_values[1][9], "Нет данных")
+        self.assertGreaterEqual(workbook["Движения склада"].max_row, 3)
+        self.assertGreaterEqual(workbook["Движения материалов"].max_row, 2)
 
     def test_miniapp_full_production_cycle_is_strictly_sequential(self):
         os.environ["ADMIN_IDS"] = "9001"

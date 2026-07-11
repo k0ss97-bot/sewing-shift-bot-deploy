@@ -59,7 +59,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .app {
       min-height: 100vh;
-      padding: 12px 12px 118px;
+      padding: calc(12px + env(safe-area-inset-top)) 12px calc(150px + env(safe-area-inset-bottom));
       background:
         radial-gradient(circle at 20% 0%, rgba(195,111,85,.12), transparent 33%),
         radial-gradient(circle at 90% 0%, rgba(143,159,127,.15), transparent 31%),
@@ -1120,7 +1120,7 @@ MINIAPP_HTML = """<!doctype html>
       position: fixed;
       z-index: 50;
       left: 50%;
-      bottom: 88px;
+      bottom: calc(142px + env(safe-area-inset-bottom));
       transform: translate(-50%, 26px);
       opacity: 0;
       min-width: min(360px, calc(100% - 32px));
@@ -1156,7 +1156,7 @@ MINIAPP_HTML = """<!doctype html>
       z-index: 6;
       left: 16px;
       right: 16px;
-      bottom: 78px;
+      bottom: calc(78px + env(safe-area-inset-bottom));
       border: none;
       border-radius: 18px;
       padding: 15px 16px;
@@ -1178,7 +1178,7 @@ MINIAPP_HTML = """<!doctype html>
       left: 0;
       right: 0;
       bottom: 0;
-      padding: 9px 12px 12px;
+      padding: 9px 12px calc(12px + env(safe-area-inset-bottom));
       background: rgba(255,250,243,.88);
       border-top: 1px solid rgba(78,56,42,.11);
       backdrop-filter: blur(18px);
@@ -1299,6 +1299,57 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     const authToken = queryAuthToken || storedAuthToken;
+    const uiStateStorageKey = `miniapp_ui_state_${debugTelegramId || "telegram"}`;
+    const persistedUiStateKeys = [
+      "screen",
+      "selectedOrder",
+      "selectedReportTask",
+      "selectedCuttingReportTask",
+      "orderCategory",
+      "orderMode",
+      "orderProduct",
+      "orderTaskType",
+      "orderRouteStep",
+      "orderMaterial",
+      "orderSizes",
+      "orderColors",
+      "orderQuantity",
+      "orderStockQuantities",
+      "orderFabricRolls",
+      "reportSection",
+      "fabricReceiptMaterial",
+      "fabricReceiptColor",
+      "fabricReceiptQuantity",
+      "warehouseView",
+      "warehouseProductFilter",
+      "warehouseSizeFilter",
+      "warehouseColorFilter",
+      "adminSection",
+      "adminReportType",
+      "adminStartDate",
+      "adminEndDate",
+      "adminEmployeeId",
+      "adminShiftEndTime",
+      "adminHomePeriod",
+      "adminHomeView",
+      "adminHomeEmployee",
+      "userStartDate",
+      "userEndDate",
+      "taskCompletionDrafts",
+      "cuttingStageDrafts",
+      "feedbackDraft",
+    ];
+    let persistedUiState = {};
+
+    try {
+      const parsedUiState = JSON.parse(window.localStorage.getItem(uiStateStorageKey) || "{}");
+      persistedUiStateKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(parsedUiState, key)) persistedUiState[key] = parsedUiState[key];
+      });
+    } catch (error) {
+      persistedUiState = {};
+    }
+
     const state = {
       initData: tg ? tg.initData : "",
       screen: "shift",
@@ -1337,8 +1388,20 @@ MINIAPP_HTML = """<!doctype html>
       adminHomeEmployee: "",
       userStartDate: "",
       userEndDate: "",
+      taskCompletionDrafts: {},
+      cuttingStageDrafts: {},
+      feedbackDraft: {category: "Производство", message: ""},
+      ...persistedUiState,
       data: null,
     };
+
+    if (!state.taskCompletionDrafts || typeof state.taskCompletionDrafts !== "object") state.taskCompletionDrafts = {};
+    if (!state.cuttingStageDrafts || typeof state.cuttingStageDrafts !== "object") state.cuttingStageDrafts = {};
+    if (!state.feedbackDraft || typeof state.feedbackDraft !== "object") state.feedbackDraft = {category: "Производство", message: ""};
+    if (!Array.isArray(state.orderSizes)) state.orderSizes = [];
+    if (!Array.isArray(state.orderColors)) state.orderColors = [];
+    if (!state.orderStockQuantities || typeof state.orderStockQuantities !== "object") state.orderStockQuantities = {};
+    if (!state.orderFabricRolls || typeof state.orderFabricRolls !== "object") state.orderFabricRolls = {};
 
     const mount = document.getElementById("mount");
     const mainButton = document.getElementById("mainButton");
@@ -1378,7 +1441,15 @@ MINIAPP_HTML = """<!doctype html>
           telegram_id: debugTelegramId,
         }),
       });
-      return await response.json();
+      const data = await response.json();
+
+      if (!response.ok) {
+        const error = new Error(data.message || `HTTP ${response.status}`);
+        error.apiMessage = data.message || "";
+        throw error;
+      }
+
+      return data;
     }
 
     function showToast(title, text) {
@@ -1387,6 +1458,19 @@ MINIAPP_HTML = """<!doctype html>
       toast.classList.add("show");
       clearTimeout(window.toastTimer);
       window.toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+    }
+
+    function persistUiState() {
+      const payload = {};
+      persistedUiStateKeys.forEach((key) => {
+        payload[key] = state[key];
+      });
+
+      try {
+        window.localStorage.setItem(uiStateStorageKey, JSON.stringify(payload));
+      } catch (error) {
+        // Telegram may restrict storage in private mode; the in-memory state still works.
+      }
     }
 
     function sewingIcon() {
@@ -1446,7 +1530,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card field-card">
           <label>Файл задания</label>
           <div class="report-row"><div><b>${escapeHtml(attachment.file_name || "Файл")}</b><span>Word, Excel или PDF</span></div><span class="status-chip gray">файл</span></div>
-          <div class="button-row"><button class="small-button secondary" data-attachment-action="download" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Открыть файл</button><button class="small-button" data-attachment-action="open" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Скачать</button></div>
+          <div class="button-row"><button class="small-button secondary" data-attachment-action="open" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Открыть файл</button><button class="small-button" data-attachment-action="download" data-attachment-task-id="${escapeHtml(attachment.task_id)}">Скачать</button></div>
         </div>
       `;
     }
@@ -2035,7 +2119,10 @@ MINIAPP_HTML = """<!doctype html>
           return;
         }
         state.data.report = data.report || state.data.report;
-        if (message) message.value = "";
+        state.feedbackDraft = {
+          category: category ? category.value : "Производство",
+          message: "",
+        };
         render();
         showToast("Связь", data.message || "Сообщение отправлено.");
       } catch (error) {
@@ -2120,6 +2207,7 @@ MINIAPP_HTML = """<!doctype html>
 
     async function loadAdminFeedback() {
       ensureAdminDefaults();
+      syncAdminForm();
       mainButton.disabled = true;
 
       try {
@@ -2203,7 +2291,7 @@ MINIAPP_HTML = """<!doctype html>
         document.body.appendChild(link);
         link.click();
         link.remove();
-        URL.revokeObjectURL(url);
+        window.setTimeout(() => URL.revokeObjectURL(url), 60000);
         showToast("Выгрузка", "Файл отчёта сформирован.");
       } catch (error) {
         showToast("Ошибка", "Не удалось выгрузить отчёт.");
@@ -2279,6 +2367,7 @@ MINIAPP_HTML = """<!doctype html>
 
       const selectedTask = workTasks[state.selectedReportTask] || workTasks[0];
       const selectedCuttingTask = cuttingWorkTasks[state.selectedCuttingReportTask] || cuttingWorkTasks[0];
+      const taskDraft = selectedTask ? (state.taskCompletionDrafts[selectedTask.id] || {}) : {};
       mainButton.textContent = state.reportSection === "work" && (selectedCuttingTask || selectedTask) ? (selectedCuttingTask ? "Выполнить этап" : "Выполнить задание") : "Обновить отчёт";
       mainButton.disabled = false;
 
@@ -2319,8 +2408,8 @@ MINIAPP_HTML = """<!doctype html>
               <label>${escapeHtml(selectedTask.operation)}</label>
               ${renderRouteTaskInputs(selectedTask)}
               <div class="form-grid">
-                <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(selectedTask.quantity)}"></div>
-                <div class="field"><label>Брак</label><input id="taskDefectQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="0"></div>
+                <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(taskDraft.good ?? selectedTask.quantity)}"></div>
+                <div class="field"><label>Брак</label><input id="taskDefectQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(taskDraft.defect ?? 0)}"></div>
                 <div class="field full"><label>Остаток задания</label><input type="text" value="${escapeHtml(selectedTask.product_size)} · ${escapeHtml(selectedTask.product_color)} · ${escapeHtml(selectedTask.quantity)} шт" disabled></div>
               </div>
               <div class="button-row"><button class="small-button" data-report-action="complete-task">Выполнить задание</button></div>
@@ -2358,8 +2447,8 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card field-card">
           <label>Написать администратору</label>
           <div class="form-grid">
-            <div class="field full"><label>Раздел</label><select id="feedbackCategory"><option value="Производство">Производство</option><option value="Бытовое">Бытовое</option></select></div>
-            <div class="field full"><label>Сообщение</label><textarea id="feedbackMessage" placeholder="Напишите сообщение"></textarea></div>
+            <div class="field full"><label>Раздел</label><select id="feedbackCategory"><option value="Производство" ${state.feedbackDraft.category === "Производство" ? "selected" : ""}>Производство</option><option value="Бытовое" ${state.feedbackDraft.category === "Бытовое" ? "selected" : ""}>Бытовое</option></select></div>
+            <div class="field full"><label>Сообщение</label><textarea id="feedbackMessage" placeholder="Напишите сообщение">${escapeHtml(state.feedbackDraft.message || "")}</textarea></div>
           </div>
           <div class="button-row"><button class="small-button secondary" data-history-action="load">Обновить историю</button><button class="small-button" data-feedback-action="send">Отправить</button></div>
         </div>
@@ -2642,6 +2731,15 @@ MINIAPP_HTML = """<!doctype html>
       state.warehouseColorFilter = "";
     }
 
+    function cuttingDraftKey(task) {
+      return task ? `${task.stage}:${task.id}` : "";
+    }
+
+    function cuttingDraft(task) {
+      const key = cuttingDraftKey(task);
+      return key ? (state.cuttingStageDrafts[key] || {}) : {};
+    }
+
     async function addFabricReceipt() {
       if (!state.data || !state.data.is_admin) return;
       syncWarehouseReceiptForm();
@@ -2711,11 +2809,13 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderCuttingStageDetail(current) {
+      const draft = cuttingDraft(current);
+
       if (current.stage === "contours") {
         const rows = (current.colors || []).map((color) => (current.sizes || []).map((size) => `
           <div class="card cutting-input-row">
             <div><b>${escapeHtml(size)} · ${escapeHtml(color)}</b><span>Количество деталей</span></div>
-            <input data-contour-key="${escapeHtml(`${size}|${color}`)}" type="number" inputmode="numeric" min="0" step="1" placeholder="0">
+            <input data-contour-key="${escapeHtml(`${size}|${color}`)}" type="number" inputmode="numeric" min="0" step="1" placeholder="0" value="${escapeHtml((draft.quantities || {})[`${size}|${color}`] || "")}">
           </div>
         `).join("")).join("");
 
@@ -2733,7 +2833,7 @@ MINIAPP_HTML = """<!doctype html>
         const rows = (current.colors || []).map((color) => `
           <div class="card cutting-input-row">
             <div><b>${escapeHtml(color)}</b><span>${escapeHtml(current.sizes_text || "Размеры задания")}</span></div>
-            <input data-layer-color="${escapeHtml(color)}" type="number" inputmode="numeric" min="0" step="1" placeholder="слои">
+            <input data-layer-color="${escapeHtml(color)}" type="number" inputmode="numeric" min="0" step="1" placeholder="слои" value="${escapeHtml((draft.color_layers || {})[color] || "")}">
           </div>
         `).join("");
 
@@ -2751,7 +2851,7 @@ MINIAPP_HTML = """<!doctype html>
         return `
           <div class="card order-detail">
             <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">3 этап</span></div>
-            <div class="form-grid"><div class="field full"><label>Готовность</label><select id="cuttingProgress"><option value="25">25%</option><option value="50">50%</option><option value="75">75%</option><option value="100" selected>100%</option></select></div></div>
+            <div class="form-grid"><div class="field full"><label>Готовность</label><select id="cuttingProgress">${[25, 50, 75, 100].map((value) => `<option value="${value}" ${String(draft.progress || 100) === String(value) ? "selected" : ""}>${value}%</option>`).join("")}</select></div></div>
           </div>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
@@ -2826,6 +2926,7 @@ MINIAPP_HTML = """<!doctype html>
         }
 
         state.data.production = data.production || state.data.production;
+        delete state.cuttingStageDrafts[cuttingDraftKey(current)];
         state.selectedOrder = 0;
         state.selectedCuttingReportTask = 0;
         render();
@@ -2858,6 +2959,7 @@ MINIAPP_HTML = """<!doctype html>
         if (state.data.routes) state.data.routes.tasks = data.tasks || [];
         if (state.data.routes) state.data.routes.completed_tasks = data.completed_tasks || [];
         state.data.production = data.production || state.data.production;
+        delete state.taskCompletionDrafts[current.id];
         state.selectedOrder = 0;
         state.selectedReportTask = 0;
         render();
@@ -3061,6 +3163,30 @@ MINIAPP_HTML = """<!doctype html>
 
       mainButton.textContent = state.data && state.data.is_admin ? "Открыть заказы" : "Открыть задания";
       mainButton.disabled = false;
+
+      if (!state.data || !state.data.is_admin) {
+        const myRouteTasks = getMyRouteTasks();
+        const myCuttingTasks = getMyCuttingTasks();
+        const freeTasks = getRouteTasks().filter((task) => task.can_take).length;
+        const completedTasks = getCompletedRouteTasks();
+
+        mount.innerHTML = `
+          <div class="screen-head"><div><h2>Моя работа</h2><p>Текущие и завершённые задания.</p></div><div class="date">сейчас</div></div>
+          <div class="summary-grid">
+            <button class="card summary-card clickable" data-go="report"><span>В работе</span><strong>${myRouteTasks.length + myCuttingTasks.length}</strong><small>активных заданий</small></button>
+            <button class="card summary-card clickable" data-go="orders"><span>Свободно</span><strong>${freeTasks}</strong><small>можно взять</small></button>
+            <button class="card summary-card clickable" data-go="report"><span>Завершено</span><strong>${completedTasks.length}</strong><small>в истории заданий</small></button>
+            <button class="card summary-card clickable" data-go="report"><span>В отчёте</span><strong>${operations.length}</strong><small>операций смены</small></button>
+          </div>
+          <div class="section-title"><b>Последние завершённые</b><button data-go="report">открыть</button></div>
+          <div class="op-list">
+            ${completedTasks.length ? completedTasks.slice(0, 6).map((task) => `
+              <div class="card shift-card clickable" data-go="report"><div><b>${escapeHtml(task.operation || task.product_name)}</b><span>${escapeHtml(task.product_size || "-")} · ${escapeHtml(task.product_color || "-")}</span></div><span class="status-chip">${escapeHtml(task.good_quantity || 0)} шт</span></div>
+            `).join("") : itemEmpty("Завершённых заданий пока нет.")}
+          </div>
+        `;
+        return;
+      }
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Статус производства</h2><p>Аналитика по текущим данным миниаппа.</p></div><div class="date">сейчас</div></div>
@@ -3393,6 +3519,11 @@ MINIAPP_HTML = """<!doctype html>
 
     function render() {
       if (!state.data) return;
+      const allowedScreens = state.data.is_admin
+        ? ["shift", "warehouse", "analytics", "orders", "admin"]
+        : ["shift", "report", "analytics", "orders", "admin"];
+
+      if (!allowedScreens.includes(state.screen)) state.screen = "shift";
       document.getElementById("roleLabel").textContent = roleLabel();
       if (state.screen === "shift") renderShift();
       if (state.screen === "operations") renderOperations();
@@ -3403,6 +3534,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "admin") renderAdmin();
       renderBottomNav();
       renderTopTabs();
+      persistUiState();
     }
 
     function setScreen(screen) {
@@ -3414,20 +3546,51 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.disabled = true;
       try {
         const data = await api("/api/app/state", {message});
+
+        if (state.userStartDate && state.userEndDate && !data.is_admin) {
+          try {
+            const history = await api("/api/report/history", getHistoryPayload());
+            if (history.ok) data.history = history;
+          } catch (error) {
+            // The current app state is still usable when only the saved period fails to refresh.
+          }
+        }
+
+        if (data.is_admin && data.admin && state.adminStartDate && state.adminEndDate) {
+          try {
+            const report = await api("/api/admin/report", getAdminReportPayload());
+            if (report.ok) data.admin.reports = report.report;
+          } catch (error) {
+            // Keep the dashboard response and let the administrator retry the report separately.
+          }
+        }
+
         state.data = data;
         if (message) showToast("Готово", message);
         render();
       } catch (error) {
-        showToast("Ошибка", "Не удалось связаться с сервером.");
+        state.data = null;
+        document.getElementById("roleLabel").textContent = "Нет соединения";
+        mount.innerHTML = `<div class="screen-head"><div><h2>Не удалось загрузить приложение</h2><p>${escapeHtml(error.apiMessage || "Проверьте соединение и повторите попытку.")}</p></div></div>`;
+        topTabs.hidden = true;
+        bottomNav.innerHTML = "";
+        mainButton.textContent = "Повторить";
+        mainButton.disabled = false;
+        showToast("Ошибка", error.apiMessage || "Не удалось связаться с сервером.");
       }
     }
 
     async function shiftAction(action) {
       mainButton.disabled = true;
-      const data = await api(`/api/shift/${action}`);
-      state.data = data;
-      render();
-      showToast("Смена", data.message || "Данные обновлены.");
+      try {
+        const shiftData = await api(`/api/shift/${action}`);
+        state.data = shiftData;
+        render();
+        showToast("Смена", shiftData.message || "Данные обновлены.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось обновить смену.");
+        mainButton.disabled = false;
+      }
     }
 
     document.addEventListener("click", (event) => {
@@ -3483,7 +3646,7 @@ MINIAPP_HTML = """<!doctype html>
           addFabricReceipt();
         }
         if (warehouseAction.dataset.warehouseAction === "refresh") {
-          refreshAdminDashboard("Склад обновлён.");
+          refreshState("Склад обновлён.");
         }
         if (warehouseAction.dataset.warehouseAction === "overview") {
           state.warehouseView = "overview";
@@ -3644,7 +3807,7 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     mainButton.addEventListener("click", () => {
-      if (!state.data) return;
+      if (!state.data) { refreshState(); return; }
       if (state.screen === "shift") {
         if (state.data.is_admin) {
           refreshAdminDashboard("Главная обновлена.");
@@ -3667,7 +3830,7 @@ MINIAPP_HTML = """<!doctype html>
         refreshState("Отчёт обновлён.");
         return;
       }
-      if (state.screen === "warehouse") { refreshAdminDashboard("Склад обновлён."); return; }
+      if (state.screen === "warehouse") { refreshState("Склад обновлён."); return; }
       if (state.screen === "analytics") { setScreen("orders"); return; }
       if (state.screen === "orders" && state.data && state.data.is_admin) {
         if (state.orderMode === "create") { createOrderTask(); return; }
@@ -3688,6 +3851,53 @@ MINIAPP_HTML = """<!doctype html>
         if (state.adminSection === "feedback") { loadAdminFeedback(); return; }
         refreshAdminDashboard();
       }
+    });
+
+    document.addEventListener("input", (event) => {
+      if (event.target.closest("#orderProduct, #orderTaskType, #orderRouteStep, #orderMaterial, #orderQuantity, [data-stock-quantity], [data-fabric-rolls]")) {
+        syncOrderDraft();
+      }
+      if (event.target.closest("#fabricReceiptMaterial, #fabricReceiptColor, #fabricReceiptQuantity")) {
+        syncWarehouseReceiptForm();
+      }
+
+      const routeTasks = getMyRouteTasks();
+      const routeTask = routeTasks[state.selectedReportTask] || routeTasks[0];
+
+      if (routeTask && (event.target.closest("#taskGoodQuantity") || event.target.closest("#taskDefectQuantity"))) {
+        const draft = state.taskCompletionDrafts[routeTask.id] || {};
+        if (event.target.id === "taskGoodQuantity") draft.good = event.target.value;
+        if (event.target.id === "taskDefectQuantity") draft.defect = event.target.value;
+        state.taskCompletionDrafts[routeTask.id] = draft;
+      }
+
+      const cuttingTasks = getMyCuttingTasks();
+      const cuttingTask = cuttingTasks[state.selectedCuttingReportTask] || cuttingTasks[0];
+
+      if (cuttingTask && (event.target.matches("[data-contour-key]") || event.target.matches("[data-layer-color]") || event.target.id === "cuttingProgress")) {
+        const key = cuttingDraftKey(cuttingTask);
+        const draft = state.cuttingStageDrafts[key] || {};
+        if (event.target.dataset.contourKey) {
+          draft.quantities = draft.quantities || {};
+          draft.quantities[event.target.dataset.contourKey] = event.target.value;
+        }
+        if (event.target.dataset.layerColor) {
+          draft.color_layers = draft.color_layers || {};
+          draft.color_layers[event.target.dataset.layerColor] = event.target.value;
+        }
+        if (event.target.id === "cuttingProgress") draft.progress = event.target.value;
+        state.cuttingStageDrafts[key] = draft;
+      }
+
+      if (event.target.id === "feedbackCategory") state.feedbackDraft.category = event.target.value;
+      if (event.target.id === "feedbackMessage") state.feedbackDraft.message = event.target.value;
+
+      if (event.target.closest("#adminStartDate, #adminEndDate, #adminEmployeeId, #adminShiftEndTime")) {
+        syncAdminForm();
+        if (event.target.id === "adminShiftEndTime") state.adminShiftEndTime = event.target.value;
+      }
+      if (event.target.closest("#userStartDate, #userEndDate")) syncHistoryForm();
+      persistUiState();
     });
 
     document.addEventListener("change", (event) => {
@@ -3735,9 +3945,22 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      if (!event.target.closest("#adminReportType")) return;
-      syncAdminForm();
-      render();
+      if (event.target.closest("#feedbackCategory") || event.target.closest("#cuttingProgress")) {
+        event.target.dispatchEvent(new Event("input", {bubbles: true}));
+        return;
+      }
+
+      if (event.target.closest("#adminStartDate, #adminEndDate, #adminEmployeeId, #userStartDate, #userEndDate")) {
+        syncAdminForm();
+        syncHistoryForm();
+        persistUiState();
+        return;
+      }
+
+      if (event.target.closest("#adminReportType")) {
+        syncAdminForm();
+        render();
+      }
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {

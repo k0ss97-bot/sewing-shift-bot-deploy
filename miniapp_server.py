@@ -57,8 +57,13 @@ from database import (
     get_open_shift_for_today,
     get_pending_employees,
     get_period_employee_summary,
+    get_period_fabric_movement_rows,
     get_period_operation_rows,
+    get_period_production_task_item_rows,
+    get_period_route_batch_input_rows,
+    get_period_route_batch_rows,
     get_period_shift_details,
+    get_period_warehouse_movement_rows,
     get_product_colors,
     get_product_sizes,
     get_recent_shifts,
@@ -363,7 +368,7 @@ def get_current_report_for_telegram(telegram_id: int):
             "feedback": [],
         }
 
-    shift = get_shift_for_today(employee[0])
+    shift = get_open_shift_for_today(employee[0]) or get_shift_for_today(employee[0])
 
     if shift is None:
         return {
@@ -857,6 +862,25 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
             updated_batch["route_step_index"],
             [{"stock_id": stock_row["id"], "quantity": good_quantity, "input_role": "main"}],
         )
+
+    open_shift = get_open_shift_for_today(employee[0])
+    if open_shift and good_quantity > 0:
+        operation_row = next(
+            (
+                row for row in get_active_operations(position=current_step["position"])
+                if row[2] == current_step["operation"]
+            ),
+            None,
+        )
+        if operation_row:
+            add_shift_operation(
+                open_shift[0],
+                employee[0],
+                operation_row[0],
+                batch["product_size"],
+                batch["product_color"],
+                good_quantity,
+            )
 
     add_edit_log(
         telegram_id,
@@ -2334,6 +2358,153 @@ def append_excel_shift_rows(sheet, shift_rows, employee_name: str | None = None)
         ])
 
 
+def route_task_excel_step(row):
+    step_index = int(row[5] or 0)
+
+    if row[6] == "done":
+        step_index = max(0, step_index - 1)
+
+    return get_route_step(row[1], step_index) or {}
+
+
+def append_excel_route_task_rows(sheet, rows):
+    statuses = {"active": "В работе", "done": "Завершено", "cancelled": "Удалено"}
+    sheet.append([
+        "ID задания", "Создано", "Назначено", "Завершено", "Изделие", "Операция",
+        "Должность", "Размер", "Цвет", "План", "Годное", "Брак",
+        "Выполнение, %", "Брак, %", "Статус", "Сотрудник",
+    ])
+
+    for row in rows:
+        step = route_task_excel_step(row)
+        plan = int(row[4] or 0)
+        good = int(row[14] or 0)
+        defect = int(row[15] or 0)
+        sheet.append([
+            row[0], row[7] or "", row[10] or "", row[9] or "", row[1],
+            step.get("operation", ""), step.get("position", row[13] or ""), row[2],
+            format_color_label(row[3]), plan, good, defect,
+            round(good * 100 / plan, 1) if plan else 0,
+            round(defect * 100 / plan, 1) if plan else 0,
+            statuses.get(row[6], row[6]), row[12] or "Свободно",
+        ])
+
+    set_excel_filter_range(sheet)
+
+
+def append_excel_route_input_rows(sheet, rows):
+    roles = {"main": "Основной", "component": "Компонент"}
+    types = {"semifinished": "Полуфабрикат", "finished": "Готовая продукция"}
+    sheet.append([
+        "ID задания", "Роль", "ID остатка", "Тип", "Номенклатура", "Размер",
+        "Цвет", "Этап", "Для должности", "Количество", "Ед.", "Статус задания",
+        "Создано", "Сотрудник",
+    ])
+
+    for row in rows:
+        sheet.append([
+            row[0], roles.get(row[1], row[1]), row[3], types.get(row[4], row[4]), row[5],
+            row[6], format_color_label(row[7]), row[8], row[9], row[2], row[10],
+            row[11], row[12], row[13] or "Свободно",
+        ])
+
+    set_excel_filter_range(sheet)
+
+
+def append_excel_defect_rows(sheet, rows):
+    sheet.append([
+        "ID задания", "Дата", "Сотрудник", "Изделие", "Операция", "Размер",
+        "Цвет", "План", "Брак", "Причина",
+    ])
+
+    for row in rows:
+        defect = int(row[15] or 0)
+        if defect <= 0:
+            continue
+        step = route_task_excel_step(row)
+        sheet.append([
+            row[0], row[9] or row[8] or row[7], row[12] or "", row[1],
+            step.get("operation", ""), row[2], format_color_label(row[3]),
+            int(row[4] or 0), defect, "Нет данных",
+        ])
+
+    set_excel_filter_range(sheet)
+
+
+def append_excel_production_task_rows(sheet, rows):
+    statuses = {
+        "active": "Контуры", "contours_done": "Настил", "in_cutting": "Раскрой",
+        "cut_done": "Формирование кроя", "formed": "Завершено", "cancelled": "Удалено",
+    }
+    sheet.append([
+        "ID задания", "Создано", "Завершено", "Изделие", "Размер", "Цвет",
+        "Контуры, шт", "Сформировано, шт", "Статус",
+    ])
+
+    for row in rows:
+        sheet.append([
+            row[0], row[3], row[4] or "", row[1], row[5], format_color_label(row[6]),
+            int(row[7] or 0), int(row[8] or 0), statuses.get(row[2], row[2]),
+        ])
+
+    set_excel_filter_range(sheet)
+
+
+def append_excel_warehouse_movement_rows(sheet, rows):
+    types = {"semifinished": "Полуфабрикат", "finished": "Готовая продукция"}
+    sheet.append([
+        "ID движения", "Дата и время", "ID остатка", "Тип", "Номенклатура", "Размер",
+        "Цвет", "Этап", "Для должности", "Изменение", "Ед.", "Вид движения",
+        "Источник", "ID источника", "Сотрудник",
+    ])
+
+    for row in rows:
+        sheet.append([
+            row[0], row[2], row[1], types.get(row[3], row[3]), row[4], row[5],
+            format_color_label(row[6]), row[7], row[8], row[9], row[10], row[11],
+            row[12], row[13] or "", row[14] or "Система",
+        ])
+
+    set_excel_filter_range(sheet)
+
+
+def append_excel_fabric_movement_rows(sheet, rows):
+    sheet.append([
+        "ID движения", "Дата и время", "Материал", "Цвет", "Изменение", "Ед.",
+        "Вид движения", "Комментарий", "Сотрудник",
+    ])
+
+    for row in rows:
+        sheet.append([
+            row[0], row[1], row[2], format_color_label(row[3]), row[4], row[5],
+            row[6], row[7] or "", row[8] or "Система",
+        ])
+
+    set_excel_filter_range(sheet)
+
+
+def append_excel_warehouse_balance_rows(sheet, rows):
+    types = {"semifinished": "Полуфабрикат", "finished": "Готовая продукция"}
+    sheet.append([
+        "ID остатка", "Тип", "Номенклатура", "Размер", "Цвет", "Этап",
+        "Для должности", "Количество", "Ед.", "Обновлено",
+    ])
+    for row in rows:
+        sheet.append([
+            row["id"], types.get(row["item_type"], row["item_type"]), row["product_name"],
+            row["product_size"], format_color_label(row["product_color"]), row["stage_name"],
+            row["ready_for_position"], row["quantity"], row["unit"], row["updated_at"],
+        ])
+    set_excel_filter_range(sheet)
+
+
+def append_excel_fabric_balance_rows(sheet, rows):
+    sheet.append(["Материал", "Цвет", "Остаток", "Ед.", "Обновлено"])
+    for material, color, quantity, unit, updated_at in rows:
+        sheet.append([material, format_color_label(color), quantity, unit, updated_at])
+    set_excel_filter_range(sheet)
+
+
 def workbook_to_bytes(workbook):
     output = io.BytesIO()
     workbook.save(output)
@@ -2348,6 +2519,11 @@ def create_period_excel_bytes(start_date: str, end_date: str):
     operation_rows = get_period_operation_rows(start_date, end_date)
     shift_rows = get_period_shift_details(start_date, end_date)
     feedback_rows = get_feedback_entries(start_date, end_date)
+    route_rows = get_period_route_batch_rows(start_date, end_date)
+    route_input_rows = get_period_route_batch_input_rows(start_date, end_date)
+    production_rows = get_period_production_task_item_rows(start_date, end_date)
+    warehouse_movement_rows = get_period_warehouse_movement_rows(start_date, end_date)
+    fabric_movement_rows = get_period_fabric_movement_rows(start_date, end_date)
 
     workbook = Workbook()
 
@@ -2364,12 +2540,51 @@ def create_period_excel_bytes(start_date: str, end_date: str):
 
     append_excel_total_row(summary_sheet, "Итого", total_shifts, label_column=1, value_column=2)
     summary_sheet.cell(row=summary_sheet.max_row, column=3, value=minutes_to_excel_time(total_minutes))
+    summary_sheet.append([])
+    summary_sheet.append(["Производственный показатель", "Значение"])
+    summary_sheet.append(["Маршрутных заданий", len(route_rows)])
+    summary_sheet.append(["План, шт", sum(int(row[4] or 0) for row in route_rows)])
+    summary_sheet.append(["Годная продукция, шт", sum(int(row[14] or 0) for row in route_rows)])
+    summary_sheet.append(["Брак, шт", sum(int(row[15] or 0) for row in route_rows)])
+    summary_sheet.append(["Заданий раскроя", len({row[0] for row in production_rows})])
+    summary_sheet.append(["Период", f"{start_date} — {end_date}"])
 
     shifts_sheet = workbook.create_sheet("Смены по дням", 1)
     append_excel_shift_rows(shifts_sheet, shift_rows)
 
     operations_sheet = workbook.create_sheet("Операции")
     append_excel_operation_rows(operations_sheet, operation_rows)
+
+    for group_name in ("Раскрой", "Пошив", "Упаковка"):
+        group_sheet = workbook.create_sheet(group_name)
+        append_excel_operation_rows(
+            group_sheet,
+            [row for row in operation_rows if row[2] == group_name],
+        )
+
+    production_sheet = workbook.create_sheet("Задания раскроя")
+    append_excel_production_task_rows(production_sheet, production_rows)
+
+    route_sheet = workbook.create_sheet("Маршрутные задания")
+    append_excel_route_task_rows(route_sheet, route_rows)
+
+    route_inputs_sheet = workbook.create_sheet("Входы заданий")
+    append_excel_route_input_rows(route_inputs_sheet, route_input_rows)
+
+    defects_sheet = workbook.create_sheet("Брак")
+    append_excel_defect_rows(defects_sheet, route_rows)
+
+    warehouse_movements_sheet = workbook.create_sheet("Движения склада")
+    append_excel_warehouse_movement_rows(warehouse_movements_sheet, warehouse_movement_rows)
+
+    fabric_movements_sheet = workbook.create_sheet("Движения материалов")
+    append_excel_fabric_movement_rows(fabric_movements_sheet, fabric_movement_rows)
+
+    warehouse_balance_sheet = workbook.create_sheet("Остатки склада")
+    append_excel_warehouse_balance_rows(warehouse_balance_sheet, get_warehouse_stock_rows())
+
+    fabric_balance_sheet = workbook.create_sheet("Остатки материалов")
+    append_excel_fabric_balance_rows(fabric_balance_sheet, get_fabric_stock_rows())
 
     feedback_sheet = workbook.create_sheet("Обратная связь")
     append_excel_feedback_rows(feedback_sheet, feedback_rows)
@@ -2389,9 +2604,16 @@ def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str
         return None, None
 
     _, full_name, position, shift_count, total_minutes = employee_summary
-    operations = get_employee_period_operation_totals(employee_id, start_date, end_date)
+    operation_rows = [
+        row for row in get_period_operation_rows(start_date, end_date)
+        if row[1] == full_name
+    ]
     shift_rows = get_employee_shifts_by_period(employee_id, start_date, end_date)
     feedback_rows = get_feedback_entries(start_date, end_date, employee_id=employee_id)
+    route_rows = get_period_route_batch_rows(start_date, end_date, employee_id=employee_id)
+    route_input_rows = get_period_route_batch_input_rows(start_date, end_date, employee_id=employee_id)
+    warehouse_movement_rows = get_period_warehouse_movement_rows(start_date, end_date, employee_id=employee_id)
+    fabric_movement_rows = get_period_fabric_movement_rows(start_date, end_date, employee_id=employee_id)
 
     workbook = Workbook()
 
@@ -2403,17 +2625,31 @@ def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str
     summary_sheet.append(["Период", f"{start_date} — {end_date}"])
     summary_sheet.append(["Отработано смен", shift_count])
     summary_sheet.append(["Отработано часов", minutes_to_excel_time(total_minutes)])
+    summary_sheet.append(["Маршрутных заданий", len(route_rows)])
+    summary_sheet.append(["План, шт", sum(int(row[4] or 0) for row in route_rows)])
+    summary_sheet.append(["Годная продукция, шт", sum(int(row[14] or 0) for row in route_rows)])
+    summary_sheet.append(["Брак, шт", sum(int(row[15] or 0) for row in route_rows)])
 
     shifts_sheet = workbook.create_sheet("Смены по дням", 1)
     append_excel_shift_rows(shifts_sheet, shift_rows, employee_name=full_name)
 
     operations_sheet = workbook.create_sheet("Операции")
-    operations_sheet.append(["Операция", "Количество", "Ед."])
+    append_excel_operation_rows(operations_sheet, operation_rows)
 
-    for operation_name, quantity, unit in operations:
-        operations_sheet.append([operation_name, quantity, unit])
+    route_sheet = workbook.create_sheet("Маршрутные задания")
+    append_excel_route_task_rows(route_sheet, route_rows)
 
-    append_excel_filtered_total_row(operations_sheet, "Итого по фильтру", label_column=1, value_column=2)
+    route_inputs_sheet = workbook.create_sheet("Входы заданий")
+    append_excel_route_input_rows(route_inputs_sheet, route_input_rows)
+
+    defects_sheet = workbook.create_sheet("Брак")
+    append_excel_defect_rows(defects_sheet, route_rows)
+
+    warehouse_movements_sheet = workbook.create_sheet("Движения склада")
+    append_excel_warehouse_movement_rows(warehouse_movements_sheet, warehouse_movement_rows)
+
+    fabric_movements_sheet = workbook.create_sheet("Движения материалов")
+    append_excel_fabric_movement_rows(fabric_movements_sheet, fabric_movement_rows)
 
     feedback_sheet = workbook.create_sheet("Обратная связь")
     append_excel_feedback_rows(feedback_sheet, feedback_rows)
