@@ -27,6 +27,7 @@ from database import (
     create_cutting_contour_batch_for_task,
     create_production_task,
     create_route_batch,
+    create_route_batch_with_inputs,
     create_shift,
     delete_shift_by_id,
     ensure_admin_employee,
@@ -63,6 +64,7 @@ from database import (
     get_recent_shifts,
     get_production_task_attachment,
     get_route_batch_by_id,
+    get_route_batch_inputs,
     get_production_task_by_id,
     get_production_task_fabric_rolls,
     get_shift_for_today,
@@ -74,7 +76,6 @@ from database import (
     local_today,
     mark_cutting_batch_formed,
     restore_operation,
-    consume_warehouse_stock,
     set_shift_operation_quantity,
     update_cutting_batch_progress,
     update_employee_position,
@@ -560,6 +561,17 @@ def accepted_stock_stages_for_route_step(product_name: str, step_index: int):
     return list(dict.fromkeys(accepted_stages))
 
 
+def stock_size_tokens(value: str):
+    size_text = str(value or "").split("(", 1)[0]
+    return {item.strip() for item in size_text.split(",") if item.strip()}
+
+
+def stock_sizes_overlap(first_value: str, second_value: str):
+    first_sizes = stock_size_tokens(first_value)
+    second_sizes = stock_size_tokens(second_value)
+    return bool(first_sizes and second_sizes and first_sizes.intersection(second_sizes))
+
+
 def route_map_to_dict(product_name: str):
     return {
         "product_name": product_name,
@@ -574,6 +586,7 @@ def route_map_to_dict(product_name: str):
                 "status_after": route_step["status_after"],
                 "category": route_step_category(route_step),
                 "accepted_stock_stages": accepted_stock_stages_for_route_step(product_name, index - 1),
+                "requires_all_stock_stages": len(accepted_stock_stages_for_route_step(product_name, index - 1)) > 1,
             }
             for index, route_step in enumerate(PRODUCT_ROUTE_MAPS[product_name], start=1)
         ],
@@ -605,6 +618,14 @@ def route_task_to_dict(batch: dict, current_step: dict, viewer_employee=None):
         "assigned_at": batch.get("assigned_at") or "",
         "good_quantity": batch.get("good_quantity") or 0,
         "defect_quantity": batch.get("defect_quantity") or 0,
+        "inputs": [
+            {
+                **input_row,
+                "product_color_label": format_color_label(input_row["product_color"]),
+                "quantity_text": format_number(input_row["quantity"]),
+            }
+            for input_row in get_route_batch_inputs(batch["id"])
+        ],
         "work_status": "done" if is_done else ("free" if is_free else "in_work"),
         "status_text": "Завершено" if is_done else ("Свободно" if is_free else "В работе"),
         "is_assigned_to_me": is_assigned_to_viewer,
@@ -827,28 +848,15 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     auto_batch = None
 
     if stock_row and should_auto_create_next_preparation_task(current_step, next_step):
-        auto_batch = create_route_batch(
+        auto_batch = create_route_batch_with_inputs(
             batch["product_name"],
             batch["product_size"],
             batch["product_color"],
             good_quantity,
             employee[0],
-            route_step_index=updated_batch["route_step_index"],
-            source_stock_id=stock_row["id"],
+            updated_batch["route_step_index"],
+            [{"stock_id": stock_row["id"], "quantity": good_quantity, "input_role": "main"}],
         )
-
-        if auto_batch:
-            consumed = consume_warehouse_stock(
-                stock_row["id"],
-                good_quantity,
-                employee[0],
-                "route_batch",
-                auto_batch["id"],
-            )
-
-            if consumed is None:
-                cancel_route_batch(auto_batch["id"])
-                auto_batch = None
 
     add_edit_log(
         telegram_id,
@@ -1468,8 +1476,8 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     if not raw_stock_items:
         return {"ok": False, "message": "Выберите полуфабрикат со склада."}
 
-    created_batches = []
-    consumed_rows = []
+    selected_stock_rows = []
+    selected_stock_ids = set()
 
     for item in raw_stock_items:
         try:
@@ -1480,6 +1488,9 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
 
         if quantity <= 0:
             continue
+
+        if stock_id in selected_stock_ids:
+            return {"ok": False, "message": "Один складской остаток выбран несколько раз."}
 
         stock_row = get_warehouse_stock_by_id(stock_id)
 
@@ -1504,30 +1515,86 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
         if quantity > stock_row["quantity"]:
             return {"ok": False, "message": "Количество больше остатка на складе."}
 
-        batch = create_route_batch(
+        selected_stock_ids.add(stock_id)
+        selected_stock_rows.append({**stock_row, "selected_quantity": quantity})
+
+    if not selected_stock_rows:
+        return {"ok": False, "message": "Введите количество хотя бы по одной строке склада."}
+
+    primary_stage = "Раскроенные" if "Раскроенные" in accepted_stock_stages else accepted_stock_stages[0]
+    component_stages = [stage for stage in accepted_stock_stages if stage != primary_stage]
+    primary_rows = [row for row in selected_stock_rows if row["stage_name"] == primary_stage]
+
+    if not primary_rows:
+        return {"ok": False, "message": f"Выберите основной полуфабрикат: {primary_stage}."}
+
+    component_budgets = {row["id"]: row["selected_quantity"] for row in selected_stock_rows}
+    input_groups = []
+
+    for primary_row in primary_rows:
+        group_inputs = [
+            {
+                "stock_id": primary_row["id"],
+                "quantity": primary_row["selected_quantity"],
+                "input_role": "main",
+            }
+        ]
+
+        for component_stage in component_stages:
+            required_quantity = primary_row["selected_quantity"]
+            candidates = [
+                row
+                for row in selected_stock_rows
+                if row["stage_name"] == component_stage
+                and stock_sizes_overlap(primary_row["product_size"], row["product_size"])
+                and component_budgets.get(row["id"], 0) > 0
+            ]
+
+            for component_row in candidates:
+                available_quantity = component_budgets[component_row["id"]]
+                allocated_quantity = min(required_quantity, available_quantity)
+
+                if allocated_quantity <= 0:
+                    continue
+
+                group_inputs.append(
+                    {
+                        "stock_id": component_row["id"],
+                        "quantity": allocated_quantity,
+                        "input_role": "component",
+                    }
+                )
+                component_budgets[component_row["id"]] -= allocated_quantity
+                required_quantity -= allocated_quantity
+
+                if required_quantity == 0:
+                    break
+
+            if required_quantity > 0:
+                return {
+                    "ok": False,
+                    "message": f"Для размера {primary_row['product_size']} не хватает компонента «{component_stage}».",
+                }
+
+        input_groups.append((primary_row, group_inputs))
+
+    created_batches = []
+
+    for primary_row, group_inputs in input_groups:
+        batch = create_route_batch_with_inputs(
             product_name,
-            stock_row["product_size"],
-            stock_row["product_color"],
-            quantity,
+            primary_row["product_size"],
+            primary_row["product_color"],
+            primary_row["selected_quantity"],
             employee_id,
-            route_step_index=route_step_index,
-            source_stock_id=stock_id,
+            route_step_index,
+            group_inputs,
         )
 
         if batch is None:
-            return {"ok": False, "message": "Не удалось создать одно из заданий."}
+            return {"ok": False, "message": "Не удалось одновременно списать все компоненты задания."}
 
-        consumed = consume_warehouse_stock(stock_id, quantity, employee_id, "route_batch", batch["id"])
-
-        if consumed is None:
-            cancel_route_batch(batch["id"])
-            return {"ok": False, "message": "Не удалось списать полуфабрикат со склада."}
-
-        consumed_rows.append(stock_row)
         created_batches.append(batch)
-
-    if not created_batches:
-        return {"ok": False, "message": "Введите количество хотя бы по одной строке склада."}
 
     add_edit_log(
         telegram_id,
@@ -1537,7 +1604,7 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
         created_batches[0]["id"],
         (
             f"{product_name}; {route_step['position']} — {route_step['operation']}; "
-            f"вход: полуфабрикат со склада; партий: {len(created_batches)}"
+            f"входов на задание: {len(accepted_stock_stages)}; партий: {len(created_batches)}"
         ),
     )
 
@@ -1592,12 +1659,27 @@ def delete_order_task_for_telegram(telegram_id: int, payload: dict):
         if batch is None:
             return {"ok": False, "message": "Задание не найдено."}
 
+        batch_inputs = get_route_batch_inputs(task_id)
         cancelled_batch = cancel_route_batch(task_id)
 
         if cancelled_batch is None:
             return {"ok": False, "message": "Это задание уже нельзя удалить."}
 
-        if batch.get("source_stock_id"):
+        if batch_inputs:
+            for input_row in batch_inputs:
+                add_warehouse_stock(
+                    input_row["item_type"],
+                    input_row["product_name"],
+                    input_row["product_size"],
+                    input_row["product_color"],
+                    input_row["stage_name"],
+                    input_row["ready_for_position"],
+                    input_row["quantity"],
+                    employee_id,
+                    "cancelled_task",
+                    batch["id"],
+                )
+        elif batch.get("source_stock_id"):
             source_stock = get_warehouse_stock_by_id(batch["source_stock_id"])
 
             if source_stock is not None:
@@ -1609,7 +1691,7 @@ def delete_order_task_for_telegram(telegram_id: int, payload: dict):
                     source_stock["stage_name"],
                     source_stock["ready_for_position"],
                     batch["quantity"],
-                    employee[0] if (employee := get_employee_for_access(telegram_id)) else None,
+                    employee_id,
                     "cancelled_task",
                     batch["id"],
                 )

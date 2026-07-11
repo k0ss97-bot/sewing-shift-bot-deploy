@@ -74,6 +74,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("idx_feedback_entries_employee_date", indexes)
         self.assertIn("idx_route_batches_status_step", indexes)
         self.assertIn("idx_route_batch_history_batch", indexes)
+        self.assertIn("idx_route_batch_inputs_batch", indexes)
+        self.assertIn("idx_route_batch_inputs_stock", indexes)
         self.assertIn("idx_cutting_batches_task", indexes)
         self.assertIn("idx_cutting_batch_matrix_batch", indexes)
         self.assertIn("idx_fabric_stock_color", indexes)
@@ -601,11 +603,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
         )
         stock_items = []
 
-        for product_size in ["80", "92"]:
-            for product_color in ["Бежевый", "Фуксия"]:
+        for product_size in ["86", "92"]:
+            for product_color in ["Бежевый", "Голубой"]:
                 stock_row = self.database.add_warehouse_stock(
                     "semifinished",
-                    "Шорты",
+                    "Легинсы",
                     product_size,
                     product_color,
                     "Раскроенные",
@@ -615,11 +617,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 )
                 stock_items.append({"stock_id": stock_row["id"], "quantity": "7"})
 
-        sewing_step_index = self.route_step_index("Шорты", "Сборка шорт на оверлоке", "Швея")
+        sewing_step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
         route_result = miniapp_server.create_order_task_for_telegram(
             9001,
             {
-                "product_name": "Шорты",
+                "product_name": "Легинсы",
                 "task_type": "route",
                 "route_step_index": sewing_step_index,
                 "stock_items": stock_items,
@@ -632,7 +634,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual({batch["quantity"] for batch in batches}, {7})
         self.assertEqual({batch["route_step_index"] for batch in batches}, {sewing_step_index})
         self.assertEqual({row["quantity"] for row in self.database.get_warehouse_stock_rows()}, {3})
-        self.assertIn("Сборка шорт на оверлоке", {task["operation"] for task in route_result["routes"]["tasks"]})
+        self.assertIn("Сборка на оверлоке", {task["operation"] for task in route_result["routes"]["tasks"]})
 
     def test_elastic_preparation_completion_creates_sewing_task(self):
         miniapp_server = importlib.import_module("miniapp_server")
@@ -873,6 +875,108 @@ class IsolatedDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(self.database.get_active_route_batches(), [])
 
+    def test_miniapp_route_task_combines_main_and_component_inputs(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9014, "Тест Швея Компоненты", "Швея")
+        seamstress = self.database.get_employee_by_telegram_id(9014)
+        self.database.update_employee_status(seamstress[0], "active")
+
+        main_stock = self.database.add_warehouse_stock(
+            "semifinished",
+            "Шорты",
+            "80",
+            "Бежевый",
+            "Раскроенные",
+            "Швея",
+            10,
+            None,
+        )
+        second_main_stock = self.database.add_warehouse_stock(
+            "semifinished",
+            "Шорты",
+            "86",
+            "Голубой",
+            "Раскроенные",
+            "Швея",
+            15,
+            None,
+        )
+        elastic_stock = self.database.add_warehouse_stock(
+            "semifinished",
+            "Шорты",
+            "80, 86 (43 см)",
+            "Черный",
+            "Резинка сшита в кольцо",
+            "Швея",
+            25,
+            None,
+        )
+        assembly_step_index = self.route_step_index("Шорты", "Сборка шорт на оверлоке", "Швея")
+
+        missing_component = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Шорты",
+                "task_type": "route",
+                "route_step_index": assembly_step_index,
+                "stock_items": [{"stock_id": main_stock["id"], "quantity": "10"}],
+            },
+        )
+        self.assertFalse(missing_component["ok"], missing_component)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(main_stock["id"])["quantity"], 10)
+        self.assertEqual(self.database.get_active_route_batches(), [])
+
+        created = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Шорты",
+                "task_type": "route",
+                "route_step_index": assembly_step_index,
+                "stock_items": [
+                    {"stock_id": main_stock["id"], "quantity": "10"},
+                    {"stock_id": second_main_stock["id"], "quantity": "15"},
+                    {"stock_id": elastic_stock["id"], "quantity": "25"},
+                ],
+            },
+        )
+        self.assertTrue(created["ok"], created)
+        batches = self.database.get_active_route_batches()
+        self.assertEqual(len(batches), 2)
+        inputs = [
+            input_row
+            for batch in batches
+            for input_row in self.database.get_route_batch_inputs(batch["id"])
+        ]
+        self.assertEqual(
+            {(row["input_role"], row["stage_name"], row["quantity"]) for row in inputs},
+            {
+                ("main", "Раскроенные", 10),
+                ("main", "Раскроенные", 15),
+                ("component", "Резинка сшита в кольцо", 10),
+                ("component", "Резинка сшита в кольцо", 15),
+            },
+        )
+        self.assertEqual(self.database.get_warehouse_stock_by_id(main_stock["id"])["quantity"], 0)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(second_main_stock["id"])["quantity"], 0)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(elastic_stock["id"])["quantity"], 0)
+
+        employee_tasks = miniapp_server.get_route_tasks_for_telegram(9014)
+        self.assertTrue(employee_tasks["ok"], employee_tasks)
+        self.assertEqual(len(employee_tasks["tasks"]), 2)
+        self.assertTrue(all(len(task["inputs"]) == 2 for task in employee_tasks["tasks"]))
+
+        for batch in batches:
+            deleted = miniapp_server.delete_order_task_for_telegram(
+                9001,
+                {"task_kind": "route", "task_id": batch["id"]},
+            )
+            self.assertTrue(deleted["ok"], deleted)
+
+        self.assertEqual(self.database.get_warehouse_stock_by_id(main_stock["id"])["quantity"], 10)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(second_main_stock["id"])["quantity"], 15)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(elastic_stock["id"])["quantity"], 25)
+
     def test_miniapp_admin_deletes_order_tasks(self):
         os.environ["ADMIN_IDS"] = "9001"
         miniapp_server = importlib.import_module("miniapp_server")
@@ -893,8 +997,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(cutting_result["production"]["fabric_stock"][0]["quantity"], 3)
         stock_row = self.database.add_warehouse_stock(
             "semifinished",
-            "Шорты",
-            "80",
+            "Легинсы",
+            "86",
             "Бежевый",
             "Раскроенные",
             "Швея",
@@ -902,11 +1006,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
             None,
         )
 
-        sewing_step_index = self.route_step_index("Шорты", "Сборка шорт на оверлоке", "Швея")
+        sewing_step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
         route_result = miniapp_server.create_order_task_for_telegram(
             9001,
             {
-                "product_name": "Шорты",
+                "product_name": "Легинсы",
                 "task_type": "route",
                 "route_step_index": sewing_step_index,
                 "stock_items": [{"stock_id": stock_row["id"], "quantity": "3"}],

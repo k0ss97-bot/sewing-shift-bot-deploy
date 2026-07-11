@@ -659,6 +659,34 @@ MINIAPP_HTML = """<!doctype html>
       gap: 8px;
     }
 
+    .stock-component-group {
+      display: grid;
+      gap: 7px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(49,39,33,.10);
+    }
+
+    .stock-component-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .stock-component-title span {
+      color: var(--accent-dark);
+      font-size: 10px;
+    }
+
+    .stock-component-title b,
+    .route-input-row span:first-child {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
     .stock-pick-row {
       display: grid;
       grid-template-columns: 24px minmax(0, 1fr) 92px;
@@ -711,6 +739,34 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 16px;
       font-weight: 900;
       outline: none;
+    }
+
+    .route-inputs {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 9px;
+      border-top: 1px solid rgba(49,39,33,.10);
+    }
+
+    .route-inputs > b {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .route-input-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 11px;
+      font-weight: 850;
+      line-height: 1.3;
+    }
+
+    .route-input-row span:last-child {
+      flex: 0 0 auto;
+      color: var(--accent-dark);
+      font-weight: 950;
     }
 
     .report-row input,
@@ -2217,6 +2273,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="section-title"><b>Сдача задания</b><span>${escapeHtml(selectedTask.quantity)} шт</span></div>
             <div class="card field-card">
               <label>${escapeHtml(selectedTask.operation)}</label>
+              ${renderRouteTaskInputs(selectedTask)}
               <div class="form-grid">
                 <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(selectedTask.quantity)}"></div>
                 <div class="field"><label>Брак</label><input id="taskDefectQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="0"></div>
@@ -2402,7 +2459,8 @@ MINIAPP_HTML = """<!doctype html>
     function renderStockPicker(stockRows, selectedOperation) {
       const selectedRows = stockRows.filter((row) => stockQuantity(row) > 0);
       const selectedTotal = selectedRows.reduce((total, row) => total + stockQuantity(row), 0);
-      const stockHtml = stockRows.length ? stockRows.map((row) => {
+      const acceptedStages = selectedOperation ? selectedOperation.accepted_stock_stages || [] : [];
+      const renderStockRow = (row) => {
         const quantity = stockQuantity(row);
         const isSelected = quantity > 0;
 
@@ -2418,13 +2476,24 @@ MINIAPP_HTML = """<!doctype html>
             </div>
           </div>
         `;
-      }).join("") : itemEmpty(`На складе нет полуфабрикатов после раскроя${selectedOperation ? ` для ${selectedOperation.position}` : ""}.`);
+      };
+      const stockHtml = acceptedStages.length ? acceptedStages.map((stage) => {
+        const stageRows = stockRows.filter((row) => row.stage_name === stage);
+        const selectedStageRows = stageRows.filter((row) => stockQuantity(row) > 0);
+
+        return `
+          <div class="stock-component-group">
+            <div class="stock-component-title"><b>${escapeHtml(stage)}</b><span>${selectedStageRows.length ? `выбрано ${selectedStageRows.length}` : "обязательно"}</span></div>
+            ${stageRows.length ? stageRows.map(renderStockRow).join("") : itemEmpty(`Нет доступного компонента: ${stage}.`)}
+          </div>
+        `;
+      }).join("") : itemEmpty(`На складе нет подходящих полуфабрикатов${selectedOperation ? ` для ${selectedOperation.position}` : ""}.`);
 
       return `
         <div class="card field-card">
           <label>Вход</label>
           <div class="stock-picker">
-            <div class="stock-picker-head"><span>Полуфабрикаты после раскроя</span><span>${selectedRows.length} поз. · ${selectedTotal} шт</span></div>
+            <div class="stock-picker-head"><span>Компоненты операции</span><span>${selectedRows.length} поз. · ${selectedTotal} шт</span></div>
             ${stockRows.length ? `<div class="stock-picker-actions"><button class="small-button secondary" data-stock-action="clear">Очистить</button><button class="small-button" data-stock-action="all">Взять всё</button></div>` : ""}
             ${stockHtml}
           </div>
@@ -2850,7 +2919,26 @@ MINIAPP_HTML = """<!doctype html>
             <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
           </div>
           <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.quantity)} шт</strong></div>
+          ${renderRouteTaskInputs(task)}
           ${deleteButton}
+        </div>
+      `;
+    }
+
+    function renderRouteTaskInputs(task) {
+      const inputs = task && task.inputs ? task.inputs : [];
+
+      if (!inputs.length) return "";
+
+      return `
+        <div class="route-inputs">
+          <b>Состав задания · ${inputs.length} ${inputs.length === 1 ? "вход" : "входа"}</b>
+          ${inputs.map((input) => `
+            <div class="route-input-row">
+              <span>${escapeHtml(input.stage_name)} · ${escapeHtml(input.product_size)} · ${escapeHtml(input.product_color_label || input.product_color)}</span>
+              <span>${escapeHtml(input.quantity_text || input.quantity)} ${escapeHtml(input.unit || "шт")}</span>
+            </div>
+          `).join("")}
         </div>
       `;
     }
@@ -2894,7 +2982,7 @@ MINIAPP_HTML = """<!doctype html>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
         ` : current ? `
-          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}${current.assigned_employee_name ? `<br>В работе: ${escapeHtml(current.assigned_employee_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div></div>
+          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}${current.assigned_employee_name ? `<br>В работе: ${escapeHtml(current.assigned_employee_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}</div>
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
         ${state.data && state.data.is_admin && current ? `<div class="button-row"><button class="small-button danger" data-order-action="delete" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Удалить задание</button></div>` : ""}
       `;

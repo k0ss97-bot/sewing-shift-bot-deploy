@@ -1034,6 +1034,20 @@ def init_db():
         cursor.execute("ALTER TABLE route_batches ADD COLUMN defect_quantity INTEGER NOT NULL DEFAULT 0")
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS route_batch_inputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            stock_id INTEGER NOT NULL,
+            input_role TEXT NOT NULL DEFAULT 'main',
+            quantity INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(batch_id, stock_id, input_role),
+            FOREIGN KEY (batch_id) REFERENCES route_batches (id),
+            FOREIGN KEY (stock_id) REFERENCES warehouse_stock (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batch_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             batch_id INTEGER NOT NULL,
@@ -1060,6 +1074,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_employee_date ON feedback_entries (employee_id, feedback_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batches_status_step ON route_batches (status, route_step_index)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_history_batch ON route_batch_history (batch_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_inputs_batch ON route_batch_inputs (batch_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_inputs_stock ON route_batch_inputs (stock_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_fabric_stock_color ON fabric_stock (product_color)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_tasks_status ON production_tasks (status, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_items_task ON production_task_items (task_id)")
@@ -2244,6 +2260,185 @@ def create_route_batch(
     conn.commit()
     conn.close()
     return get_route_batch_by_id(batch_id)
+
+
+def create_route_batch_with_inputs(
+    product_name: str,
+    product_size: str,
+    product_color: str,
+    quantity: int,
+    employee_id: int | None,
+    route_step_index: int,
+    input_items: list[dict],
+):
+    if quantity <= 0 or not input_items:
+        return None
+
+    normalized_inputs = []
+    stock_totals = {}
+
+    for item in input_items:
+        try:
+            stock_id = int(item.get("stock_id") or 0)
+            input_quantity = int(item.get("quantity") or 0)
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+        input_role = str(item.get("input_role") or "component").strip()
+
+        if stock_id <= 0 or input_quantity <= 0 or input_role not in {"main", "component"}:
+            return None
+
+        normalized_inputs.append((stock_id, input_role, input_quantity))
+        stock_totals[stock_id] = stock_totals.get(stock_id, 0) + input_quantity
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        stock_rows = {}
+
+        for stock_id, total_quantity in stock_totals.items():
+            cursor.execute(
+                f"SELECT {WAREHOUSE_STOCK_SELECT} FROM warehouse_stock WHERE id = ?",
+                (stock_id,),
+            )
+            stock = warehouse_stock_from_row(cursor.fetchone())
+
+            if stock is None or stock["quantity"] < total_quantity:
+                raise ValueError("insufficient stock")
+
+            stock_rows[stock_id] = stock
+
+        main_stock_id = next(
+            (stock_id for stock_id, input_role, _input_quantity in normalized_inputs if input_role == "main"),
+            normalized_inputs[0][0],
+        )
+        cursor.execute(
+            """
+            INSERT INTO route_batches (
+                product_name, product_size, product_color, quantity,
+                route_step_index, status, created_by_employee_id,
+                created_at, updated_at, completed_at, source_stock_id
+            )
+            VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?)
+            """,
+            (
+                product_name,
+                product_size,
+                product_color,
+                quantity,
+                route_step_index,
+                employee_id,
+                now,
+                now,
+                main_stock_id,
+            ),
+        )
+        batch_id = cursor.lastrowid
+
+        for stock_id, input_role, input_quantity in normalized_inputs:
+            stock = stock_rows[stock_id]
+            cursor.execute(
+                """
+                UPDATE warehouse_stock
+                SET quantity = quantity - ?, updated_at = ?
+                WHERE id = ? AND quantity >= ?
+                """,
+                (input_quantity, now, stock_id, input_quantity),
+            )
+
+            if cursor.rowcount != 1:
+                raise ValueError("stock changed")
+
+            cursor.execute(
+                """
+                INSERT INTO warehouse_stock_movements (
+                    stock_id, item_type, product_name, product_size, product_color, stage_name,
+                    ready_for_position, quantity, unit, movement_type, source_type, source_id,
+                    created_by_employee_id, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issue', 'route_batch', ?, ?, ?)
+                """,
+                (
+                    stock_id,
+                    stock["item_type"],
+                    stock["product_name"],
+                    stock["product_size"],
+                    stock["product_color"],
+                    stock["stage_name"],
+                    stock["ready_for_position"],
+                    -input_quantity,
+                    stock["unit"],
+                    batch_id,
+                    employee_id,
+                    now,
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO route_batch_inputs (
+                    batch_id, stock_id, input_role, quantity, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (batch_id, stock_id, input_role, input_quantity, now),
+            )
+
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+
+    conn.close()
+    return get_route_batch_by_id(batch_id)
+
+
+def get_route_batch_inputs(batch_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            route_batch_inputs.id,
+            route_batch_inputs.stock_id,
+            route_batch_inputs.input_role,
+            route_batch_inputs.quantity,
+            warehouse_stock.item_type,
+            warehouse_stock.product_name,
+            warehouse_stock.product_size,
+            warehouse_stock.product_color,
+            warehouse_stock.stage_name,
+            warehouse_stock.ready_for_position,
+            warehouse_stock.unit
+        FROM route_batch_inputs
+        JOIN warehouse_stock ON warehouse_stock.id = route_batch_inputs.stock_id
+        WHERE route_batch_inputs.batch_id = ?
+        ORDER BY route_batch_inputs.input_role DESC, route_batch_inputs.id ASC
+        """,
+        (batch_id,),
+    )
+    rows = [
+        {
+            "id": row[0],
+            "stock_id": row[1],
+            "input_role": row[2],
+            "quantity": row[3],
+            "item_type": row[4],
+            "product_name": row[5],
+            "product_size": row[6],
+            "product_color": row[7],
+            "stage_name": row[8],
+            "ready_for_position": row[9],
+            "unit": row[10],
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return rows
 
 
 def complete_route_batch_step(
