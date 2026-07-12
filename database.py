@@ -97,6 +97,8 @@ PRODUCTION_TASK_COLUMNS = [
     "note",
     "priority",
     "due_date",
+    "assigned_employee_id",
+    "assigned_at",
 ]
 WAREHOUSE_STOCK_COLUMNS = [
     "id",
@@ -555,6 +557,19 @@ def seed_production_operations(cursor):
 def backfill_cutting_progress_reports(cursor):
     cursor.execute(
         """
+        DELETE FROM shift_operations
+        WHERE product_size = 'готовность'
+          AND product_color = 'без цвета'
+          AND EXISTS (
+              SELECT 1
+              FROM cutting_batches
+              WHERE cutting_batches.cutting_shift_id = shift_operations.shift_id
+                AND cutting_batches.cutting_operation_id = shift_operations.operation_id
+          )
+        """
+    )
+    cursor.execute(
+        """
         INSERT INTO shift_operations (
             shift_id, employee_id, operation_id,
             product_size, product_color, quantity, created_at, updated_at
@@ -563,7 +578,7 @@ def backfill_cutting_progress_reports(cursor):
             cutting_shift_id,
             cutting_employee_id,
             cutting_operation_id,
-            'готовность',
+            'партия #' || id,
             'без цвета',
             cutting_progress,
             updated_at,
@@ -579,7 +594,7 @@ def backfill_cutting_progress_reports(cursor):
             quantity = excluded.quantity,
             updated_at = excluded.updated_at
         WHERE shift_operations.updated_at < excluded.updated_at
-          AND shift_operations.quantity < excluded.quantity
+           OR shift_operations.quantity < excluded.quantity
         """
     )
 
@@ -950,9 +965,17 @@ def init_db():
             updated_at TEXT NOT NULL,
             completed_at TEXT,
             note TEXT,
+            assigned_employee_id INTEGER,
+            assigned_at TEXT,
             FOREIGN KEY (created_by_employee_id) REFERENCES employees (id)
         )
     """)
+    cursor.execute("PRAGMA table_info(production_tasks)")
+    production_task_columns = {row[1] for row in cursor.fetchall()}
+    if "assigned_employee_id" not in production_task_columns:
+        cursor.execute("ALTER TABLE production_tasks ADD COLUMN assigned_employee_id INTEGER")
+    if "assigned_at" not in production_task_columns:
+        cursor.execute("ALTER TABLE production_tasks ADD COLUMN assigned_at TEXT")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS production_task_sizes (
@@ -1137,6 +1160,7 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batches_cutting_source ON route_batches (source_cutting_batch_id, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_fabric_stock_color ON fabric_stock (product_color)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_tasks_status ON production_tasks (status, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_tasks_assignee ON production_tasks (assigned_employee_id, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_items_task ON production_task_items (task_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_fabric_rolls_task ON production_task_fabric_rolls (task_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_type_position ON warehouse_stock (item_type, ready_for_position)")
@@ -2110,7 +2134,7 @@ def add_shift_operation(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(shift_id, operation_id, product_size, product_color)
         DO UPDATE SET
-            quantity = quantity + excluded.quantity,
+            quantity = shift_operations.quantity + excluded.quantity,
             updated_at = excluded.updated_at
         """,
         (shift_id, employee_id, operation_id, product_size, product_color, quantity, now, now)
@@ -2923,8 +2947,8 @@ def complete_route_batch_step_atomic(
 
         if batch is None or batch["status"] != "active" or batch["route_step_index"] != expected_step_index:
             raise ValueError("batch already completed")
-        if batch.get("assigned_employee_id") not in (None, employee_id):
-            raise ValueError("batch assigned to another employee")
+        if batch.get("assigned_employee_id") != employee_id or shift_id is None:
+            raise ValueError("batch is not assigned in an open shift")
         if good_quantity < 0 or defect_quantity < 0 or good_quantity + defect_quantity != batch["quantity"]:
             raise ValueError("invalid quantities")
 
@@ -2942,17 +2966,13 @@ def complete_route_batch_step_atomic(
             """
             UPDATE route_batches
             SET route_step_index = ?, status = 'done',
-                assigned_employee_id = COALESCE(assigned_employee_id, ?),
-                assigned_at = COALESCE(assigned_at, ?),
                 good_quantity = ?, defect_quantity = ?,
                 updated_at = ?, completed_at = ?
             WHERE id = ? AND status = 'active' AND route_step_index = ?
-              AND (assigned_employee_id IS NULL OR assigned_employee_id = ?)
+              AND assigned_employee_id = ?
             """,
             (
                 next_step_index,
-                employee_id,
-                now,
                 good_quantity,
                 defect_quantity,
                 now,
@@ -3911,6 +3931,38 @@ def add_cutting_layout(
         [(batch_id, product_color, layers) for product_color, layers in color_layers.items()]
     )
 
+    cursor.execute(
+        "SELECT DISTINCT product_size FROM cutting_batch_matrix WHERE batch_id = ?",
+        (batch_id,),
+    )
+    product_sizes = [row[0] for row in cursor.fetchall()]
+    if not product_sizes:
+        cursor.execute(
+            "SELECT product_size FROM cutting_batch_sizes WHERE batch_id = ?",
+            (batch_id,),
+        )
+        product_sizes = [row[0] for row in cursor.fetchall()]
+
+    cursor.executemany(
+        """
+        INSERT INTO shift_operations (
+            shift_id, employee_id, operation_id,
+            product_size, product_color, quantity, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(shift_id, operation_id, product_size, product_color)
+        DO UPDATE SET
+            employee_id = excluded.employee_id,
+            quantity = shift_operations.quantity + excluded.quantity,
+            updated_at = excluded.updated_at
+        """,
+        [
+            (shift_id, employee_id, operation_id, product_size, product_color, layers, now_text, now_text)
+            for product_color, layers in color_layers.items()
+            for product_size in product_sizes
+        ],
+    )
+
     _create_preparation_route_batches_for_layout(cursor, batch_id, employee_id, now_text)
 
     cursor.execute("SELECT production_task_id FROM cutting_batches WHERE id = ?", (batch_id,))
@@ -3993,8 +4045,9 @@ def update_cutting_batch_progress(
             updated_at = ?
         WHERE id = ?
           AND status IN ('layout_done', 'cutting_in_progress')
+          AND cutting_progress <= ?
         """,
-        (status, shift_id, operation_id, employee_id, progress, now_text, batch_id)
+        (status, shift_id, operation_id, employee_id, progress, now_text, batch_id, progress)
     )
 
     changed = cursor.rowcount > 0
@@ -4037,14 +4090,14 @@ def update_cutting_batch_progress(
                 shift_id, employee_id, operation_id,
                 product_size, product_color, quantity, created_at, updated_at
             )
-            VALUES (?, ?, ?, 'готовность', 'без цвета', ?, ?, ?)
+            VALUES (?, ?, ?, ?, 'без цвета', ?, ?, ?)
             ON CONFLICT(shift_id, operation_id, product_size, product_color)
             DO UPDATE SET
                 employee_id = excluded.employee_id,
                 quantity = excluded.quantity,
                 updated_at = excluded.updated_at
             """,
-            (shift_id, employee_id, operation_id, progress, now_text, now_text),
+            (shift_id, employee_id, operation_id, f"партия #{batch_id}", progress, now_text, now_text),
         )
 
     conn.commit()
@@ -4084,6 +4137,31 @@ def get_cutting_batch_result_rows(batch_id: int):
     rows = _get_cutting_batch_result_rows(cursor, batch_id)
     conn.close()
     return rows
+
+
+def get_cutting_batch_owner(batch_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            production_task_id,
+            COALESCE(cutting_employee_id, layout_employee_id, contour_employee_id),
+            COALESCE(updated_at, layout_date, contour_date)
+        FROM cutting_batches
+        WHERE id = ?
+        """,
+        (batch_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return {
+        "production_task_id": row[0],
+        "employee_id": row[1],
+        "assigned_at": row[2] or "",
+    }
 
 
 def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, operation_id: int):
@@ -4178,6 +4256,22 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
             for product_size, product_color, quantity in result_rows:
                 if quantity <= 0:
                     continue
+
+                cursor.execute(
+                    """
+                    INSERT INTO shift_operations (
+                        shift_id, employee_id, operation_id,
+                        product_size, product_color, quantity, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(shift_id, operation_id, product_size, product_color)
+                    DO UPDATE SET
+                        employee_id = excluded.employee_id,
+                        quantity = shift_operations.quantity + excluded.quantity,
+                        updated_at = excluded.updated_at
+                    """,
+                    (shift_id, employee_id, operation_id, product_size, product_color, quantity, now_text, now_text),
+                )
 
                 now_stock_text = local_now().isoformat()
                 cursor.execute(
@@ -4997,7 +5091,9 @@ def get_production_task_by_id(task_id: int):
             completed_at,
             note,
             priority,
-            due_date
+            due_date,
+            assigned_employee_id,
+            assigned_at
         FROM production_tasks
         WHERE id = ?
         """,
@@ -5007,6 +5103,36 @@ def get_production_task_by_id(task_id: int):
     task = production_task_from_row(cursor.fetchone())
     conn.close()
     return task
+
+
+def assign_production_task(task_id: int, employee_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            UPDATE production_tasks
+            SET assigned_employee_id = ?,
+                assigned_at = COALESCE(assigned_at, ?),
+                updated_at = ?
+            WHERE id = ?
+              AND status IN ('active', 'contours_done', 'in_cutting')
+              AND (assigned_employee_id IS NULL OR assigned_employee_id = ?)
+            """,
+            (employee_id, now, now, task_id, employee_id),
+        )
+        changed = cursor.rowcount > 0
+        conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        conn.close()
+        return None
+
+    conn.close()
+    return get_production_task_by_id(task_id) if changed else None
 
 
 def get_production_task_fabric_rolls(task_id: int):
@@ -5053,30 +5179,50 @@ def get_production_task_attachment(task_id: int):
 
 
 def cancel_production_task(task_id: int, employee_id: int | None = None):
-    task = get_production_task_by_id(task_id)
-
-    if task is None or task["status"] not in {"active", "contours_done", "in_cutting"}:
-        return None
-
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     now = local_now().isoformat()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            SELECT product_name
+            FROM production_tasks
+            WHERE id = ? AND status = 'active'
+            """,
+            (task_id,),
+        )
+        task_row = cursor.fetchone()
 
-    cursor.execute(
-        """
-        UPDATE production_tasks
-        SET status = 'cancelled',
-            updated_at = ?,
-            completed_at = ?
-        WHERE id = ?
-          AND status IN ('active', 'contours_done', 'in_cutting')
-        """,
-        (now, now, task_id),
-    )
+        if task_row is None:
+            conn.rollback()
+            conn.close()
+            return None
 
-    changed = cursor.rowcount > 0
+        cursor.execute(
+            "SELECT 1 FROM cutting_batches WHERE production_task_id = ? AND status != 'cancelled' LIMIT 1",
+            (task_id,),
+        )
+        if cursor.fetchone() is not None:
+            conn.rollback()
+            conn.close()
+            return None
 
-    if changed:
+        cursor.execute(
+            """
+            UPDATE production_tasks
+            SET status = 'cancelled',
+                updated_at = ?,
+                completed_at = ?
+            WHERE id = ? AND status = 'active'
+            """,
+            (now, now, task_id),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            conn.close()
+            return None
+
         cursor.execute(
             """
             SELECT material_name, product_color, rolls
@@ -5111,27 +5257,19 @@ def cancel_production_task(task_id: int, employee_id: int | None = None):
                     material_name,
                     product_color,
                     rolls,
-                    f"Возврат рулонов после отмены задания на раскрой #{task_id}: {task['product_name']}",
+                    f"Возврат рулонов после отмены задания на раскрой #{task_id}: {task_row[0]}",
                     employee_id,
                     now,
                 ),
             )
+        conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        conn.close()
+        return None
 
-        cursor.execute(
-            """
-            UPDATE cutting_batches
-            SET status = 'cancelled',
-                updated_at = ?
-            WHERE production_task_id = ?
-              AND status IN ('contours_done', 'layout_done', 'cutting_in_progress', 'cutting_done')
-            """,
-            (now, task_id),
-        )
-
-    conn.commit()
     conn.close()
-
-    return get_production_task_by_id(task_id) if changed else None
+    return get_production_task_by_id(task_id)
 
 
 def get_production_task_options(task_id: int):
@@ -5178,7 +5316,9 @@ def get_active_production_tasks():
             COALESCE(GROUP_CONCAT(DISTINCT production_task_sizes.product_size), '') AS sizes_text,
             COALESCE(GROUP_CONCAT(DISTINCT production_task_colors.product_color), '') AS colors_text,
             production_tasks.priority,
-            production_tasks.due_date
+            production_tasks.due_date,
+            production_tasks.assigned_employee_id,
+            production_tasks.assigned_at
         FROM production_tasks
         LEFT JOIN production_task_sizes ON production_task_sizes.task_id = production_tasks.id
         LEFT JOIN production_task_colors ON production_task_colors.task_id = production_tasks.id
@@ -5189,7 +5329,9 @@ def get_active_production_tasks():
             production_tasks.status,
             production_tasks.created_at,
             production_tasks.priority,
-            production_tasks.due_date
+            production_tasks.due_date,
+            production_tasks.assigned_employee_id,
+            production_tasks.assigned_at
         ORDER BY production_tasks.created_at ASC, production_tasks.id ASC
         """
     )
@@ -5252,6 +5394,7 @@ def get_cutting_batch_task_options(batch_id: int):
 def close_shift(shift_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    cursor.execute("BEGIN IMMEDIATE")
 
     now = local_now()
     end_time = now.strftime("%H:%M")
@@ -5286,9 +5429,15 @@ def close_shift(shift_id: int):
             edit_until = ?,
             closed_at = ?
         WHERE id = ?
+          AND status = 'open'
         """,
         (end_time, total_minutes, edit_until, closed_at, shift_id)
     )
+
+    if cursor.rowcount != 1:
+        conn.rollback()
+        conn.close()
+        return None
 
     conn.commit()
     conn.close()
@@ -5451,6 +5600,7 @@ def delete_shift_by_id(shift_id: int):
 def admin_close_shift(shift_id: int, end_time: str):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    cursor.execute("BEGIN IMMEDIATE")
 
     cursor.execute(
         """
@@ -5476,6 +5626,7 @@ def admin_close_shift(shift_id: int, end_time: str):
         end_dt += timedelta(days=1)
 
     if end_dt > local_now() + timedelta(minutes=5) or end_dt - start_dt > timedelta(hours=24):
+        conn.rollback()
         conn.close()
         return "bad_time"
 
@@ -5493,9 +5644,15 @@ def admin_close_shift(shift_id: int, end_time: str):
             edit_until = ?,
             closed_at = ?
         WHERE id = ?
+          AND status = 'open'
         """,
         (end_time, total_minutes, edit_until, closed_at, shift_id)
     )
+
+    if cursor.rowcount != 1:
+        conn.rollback()
+        conn.close()
+        return None
 
     conn.commit()
     conn.close()

@@ -16,10 +16,10 @@ from database import (
     add_edit_log,
     add_feedback_entry,
     add_operation,
-    add_shift_operation,
     add_cutting_layout,
     add_warehouse_stock,
     admin_close_shift,
+    assign_production_task,
     assign_route_batch,
     cancel_production_task,
     cancel_route_batch_and_restore_inputs,
@@ -44,6 +44,7 @@ from database import (
     get_cutting_batches_for_formation,
     get_cutting_batches_for_layout,
     get_cutting_batch_result_rows,
+    get_cutting_batch_owner,
     get_employee_by_telegram_id,
     get_employee_by_id,
     get_employee_route_batches,
@@ -85,7 +86,6 @@ from database import (
     local_today,
     mark_cutting_batch_formed,
     restore_operation,
-    set_shift_operation_quantity,
     update_cutting_batch_progress,
     update_employee_position,
     update_employee_status,
@@ -707,6 +707,12 @@ def start_route_task_for_telegram(telegram_id: int, batch_id: int):
     if employee is None or employee[5] != "active":
         return {"ok": False, "message": "Нет активного профиля."}
 
+    if is_admin(telegram_id):
+        return {"ok": False, "message": "Администратор не выполняет производственные задания."}
+
+    if get_open_shift_for_today(employee[0]) is None:
+        return {"ok": False, "message": "Откройте смену перед выбором задания."}
+
     batch = get_route_batch_by_id(batch_id)
 
     if batch is None or batch["status"] != "active":
@@ -813,6 +819,13 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     if employee is None or employee[5] != "active":
         return {"ok": False, "message": "Нет активного профиля."}
 
+    if is_admin(telegram_id):
+        return {"ok": False, "message": "Администратор не выполняет производственные задания."}
+
+    open_shift = get_open_shift_for_today(employee[0])
+    if open_shift is None:
+        return {"ok": False, "message": "Откройте смену перед выполнением задания."}
+
     batch = get_route_batch_by_id(batch_id)
 
     if batch is None or batch["status"] != "active":
@@ -820,13 +833,14 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
 
     current_step = get_route_step(batch["product_name"], batch["route_step_index"])
 
-    if not is_admin(telegram_id) and not can_employee_work_route_step(employee, current_step):
+    if not can_employee_work_route_step(employee, current_step):
         return {"ok": False, "message": "Это задание сейчас доступно другой должности."}
 
-    if batch.get("assigned_employee_id") and batch["assigned_employee_id"] != employee[0]:
+    if batch.get("assigned_employee_id") != employee[0]:
         assignee = route_batch_assignee_to_dict(batch)
-        assignee_name = assignee["full_name"] if assignee else "другого сотрудника"
-        return {"ok": False, "message": f"Задание в работе у {assignee_name}."}
+        if assignee:
+            return {"ok": False, "message": f"Задание в работе у {assignee['full_name']}."}
+        return {"ok": False, "message": "Сначала выберите задание во вкладке «Задания»."}
 
     try:
         good_quantity = int(payload.get("good_quantity") if payload.get("good_quantity") not in (None, "") else batch["quantity"])
@@ -856,7 +870,6 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     ready_for_position = next_step["position"] if next_step else "Склад"
     stage_name = current_step["status_after"]
 
-    open_shift = get_open_shift_for_today(employee[0])
     operation_row = next(
         (
             row for row in get_active_operations(position=current_step["position"])
@@ -1122,23 +1135,42 @@ def production_catalog_to_dict():
     return catalog
 
 
-def production_task_to_dict(row):
-    task_id, product_name, status, created_at, sizes_text, colors_text, priority, due_date = row
+def production_task_to_dict(row, viewer_employee=None):
+    (
+        task_id,
+        product_name,
+        status,
+        created_at,
+        sizes_text,
+        colors_text,
+        priority,
+        due_date,
+        assigned_employee_id,
+        assigned_at,
+    ) = row
     colors = split_group_concat(colors_text)
     fabric_rolls = task_fabric_rolls_to_dict(task_id)
     attachment = task_attachment_to_dict(task_id)
+    assigned_employee = get_employee_by_id(assigned_employee_id) if assigned_employee_id else None
+    assignee = employee_to_dict(assigned_employee) if assigned_employee else None
+    viewer_employee_id = viewer_employee[0] if viewer_employee else None
+    is_assigned_to_viewer = bool(viewer_employee_id and assigned_employee_id == viewer_employee_id)
+    is_free = not assigned_employee_id
+    process_status_text = {
+        "active": "ожидает контуров",
+        "contours_done": "контуры нанесены",
+        "in_cutting": "в раскрое",
+        "formed": "готовый крой сформирован",
+        "cancelled": "отменено",
+    }.get(status, status)
 
     return {
         "id": task_id,
         "product_name": product_name,
         "status": status,
-        "status_text": {
-            "active": "ожидает контуров",
-            "contours_done": "контуры нанесены",
-            "in_cutting": "в раскрое",
-            "formed": "готовый крой сформирован",
-            "cancelled": "отменено",
-        }.get(status, status),
+        "status_text": "Свободно" if is_free else "В работе",
+        "process_status_text": process_status_text,
+        "work_status": "free" if is_free else "in_work",
         "created_at": created_at,
         "priority": priority or "normal",
         "due_date": due_date or "",
@@ -1147,6 +1179,12 @@ def production_task_to_dict(row):
         "color_labels": [format_color_label(color) for color in colors],
         "fabric_rolls": fabric_rolls,
         "attachment": attachment,
+        "assigned_employee_id": assigned_employee_id,
+        "assigned_employee": assignee,
+        "assigned_employee_name": assignee["full_name"] if assignee else "",
+        "assigned_at": assigned_at or "",
+        "is_assigned_to_me": is_assigned_to_viewer,
+        "can_take": is_free,
     }
 
 
@@ -1208,9 +1246,30 @@ def cutting_product_names():
     return product_names
 
 
-def cutting_stage_task_to_dict(stage: str, row):
+def cutting_task_assignment_fields(task_id: int | None, viewer_employee=None, batch_id: int | None = None):
+    task = get_production_task_by_id(task_id) if task_id else None
+    legacy_owner = get_cutting_batch_owner(batch_id) if not task and batch_id else None
+    assigned_employee_id = task.get("assigned_employee_id") if task else (legacy_owner.get("employee_id") if legacy_owner else None)
+    assigned_employee = get_employee_by_id(assigned_employee_id) if assigned_employee_id else None
+    assignee = employee_to_dict(assigned_employee) if assigned_employee else None
+    viewer_employee_id = viewer_employee[0] if viewer_employee else None
+    is_assigned_to_viewer = bool(viewer_employee_id and assigned_employee_id == viewer_employee_id)
+    is_free = not assigned_employee_id
+    return {
+        "assigned_employee_id": assigned_employee_id,
+        "assigned_employee": assignee,
+        "assigned_employee_name": assignee["full_name"] if assignee else "",
+        "assigned_at": task.get("assigned_at") if task else (legacy_owner.get("assigned_at") if legacy_owner else ""),
+        "work_status": "free" if is_free else "in_work",
+        "status_text": "Свободно" if is_free else "В работе",
+        "is_assigned_to_me": is_assigned_to_viewer,
+        "can_take": is_free,
+    }
+
+
+def cutting_stage_task_to_dict(stage: str, row, viewer_employee=None):
     if stage == "contours":
-        task = production_task_to_dict(row)
+        task = production_task_to_dict(row, viewer_employee)
         return {
             **task,
             "task_kind": "cutting_stage",
@@ -1225,6 +1284,7 @@ def cutting_stage_task_to_dict(stage: str, row):
         batch_id, product_name, contour_date, production_task_id, employee_name, sizes_text, colors_text = row
         colors = split_group_concat(colors_text)
         return {
+            **cutting_task_assignment_fields(production_task_id, viewer_employee, batch_id),
             "id": batch_id,
             "source_id": batch_id,
             "production_task_id": production_task_id,
@@ -1235,7 +1295,7 @@ def cutting_stage_task_to_dict(stage: str, row):
             "next_action": "Сохранить настил",
             "product_name": product_name,
             "status": "contours_done",
-            "status_text": "контуры нанесены",
+            "process_status_text": "контуры нанесены",
             "created_at": contour_date,
             "employee": employee_name or "",
             "sizes_text": sizes_text or "",
@@ -1248,6 +1308,7 @@ def cutting_stage_task_to_dict(stage: str, row):
     if stage == "cutting":
         batch_id, product_name, contour_date, layout_date, progress, production_task_id, colors_text = row
         return {
+            **cutting_task_assignment_fields(production_task_id, viewer_employee, batch_id),
             "id": batch_id,
             "source_id": batch_id,
             "production_task_id": production_task_id,
@@ -1258,7 +1319,7 @@ def cutting_stage_task_to_dict(stage: str, row):
             "next_action": "Обновить процент",
             "product_name": product_name,
             "status": "in_cutting" if progress else "layout_done",
-            "status_text": f"готовность {progress or 0}%",
+            "process_status_text": f"готовность {progress or 0}%",
             "created_at": layout_date or contour_date,
             "progress": progress or 0,
             "colors_text": colors_text or "",
@@ -1268,6 +1329,7 @@ def cutting_stage_task_to_dict(stage: str, row):
 
     batch_id, product_name, contour_date, layout_date, progress, production_task_id = row
     return {
+        **cutting_task_assignment_fields(production_task_id, viewer_employee, batch_id),
         "id": batch_id,
         "source_id": batch_id,
         "production_task_id": production_task_id,
@@ -1278,7 +1340,7 @@ def cutting_stage_task_to_dict(stage: str, row):
         "next_action": "Принять крой на склад",
         "product_name": product_name,
         "status": "cutting_done",
-        "status_text": "раскрой завершён",
+        "process_status_text": "раскрой завершён",
         "created_at": layout_date or contour_date,
         "progress": progress or 100,
         "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
@@ -1291,16 +1353,90 @@ def get_cutting_stage_tasks(employee):
         return []
 
     tasks = [
-        cutting_stage_task_to_dict("contours", row)
+        cutting_stage_task_to_dict("contours", row, employee)
         for row in get_active_production_tasks_for_contours()
     ]
 
     for product_name in cutting_product_names():
-        tasks.extend(cutting_stage_task_to_dict("layout", row) for row in get_cutting_batches_for_layout(product_name))
-        tasks.extend(cutting_stage_task_to_dict("cutting", row) for row in get_cutting_batches_for_cutting(product_name))
-        tasks.extend(cutting_stage_task_to_dict("formation", row) for row in get_cutting_batches_for_formation(product_name))
+        tasks.extend(cutting_stage_task_to_dict("layout", row, employee) for row in get_cutting_batches_for_layout(product_name))
+        tasks.extend(cutting_stage_task_to_dict("cutting", row, employee) for row in get_cutting_batches_for_cutting(product_name))
+        tasks.extend(cutting_stage_task_to_dict("formation", row, employee) for row in get_cutting_batches_for_formation(product_name))
 
     return tasks
+
+
+def start_cutting_task_for_telegram(telegram_id: int, task_id: int):
+    employee = get_employee_for_access(telegram_id)
+
+    if employee is None or employee[5] != "active":
+        return {"ok": False, "message": "Нет активного профиля."}
+
+    if employee[3] != "Раскройщик":
+        return {"ok": False, "message": "Задания на раскрой доступны раскройщику."}
+
+    if get_open_shift_for_today(employee[0]) is None:
+        return {"ok": False, "message": "Откройте смену перед выбором задания."}
+
+    task = get_production_task_by_id(task_id)
+
+    if task is None or task["status"] not in {"active", "contours_done", "in_cutting"}:
+        return {"ok": False, "message": "Задание уже недоступно."}
+
+    if task.get("assigned_employee_id") not in (None, employee[0]):
+        assignee = get_employee_by_id(task["assigned_employee_id"])
+        assignee_name = assignee[1] if assignee else "другого сотрудника"
+        return {"ok": False, "message": f"Задание уже в работе у {assignee_name}."}
+
+    assigned_task = assign_production_task(task_id, employee[0])
+
+    if assigned_task is None:
+        current_task = get_production_task_by_id(task_id)
+        assignee = get_employee_by_id(current_task.get("assigned_employee_id")) if current_task else None
+        assignee_name = assignee[1] if assignee else "другого сотрудника"
+        return {"ok": False, "message": f"Задание уже в работе у {assignee_name}."}
+
+    add_edit_log(
+        telegram_id,
+        "employee",
+        "Взял задание на раскрой в работу из миниаппа",
+        "production_task",
+        task_id,
+        assigned_task["product_name"],
+    )
+
+    return {
+        "ok": True,
+        "message": "Задание взято в работу.",
+        "production": get_production_state_for_telegram(telegram_id),
+    }
+
+
+def cutting_task_access_error(employee, task_id: int | None, batch_id: int | None = None):
+    task = get_production_task_by_id(task_id) if task_id else None
+
+    if task is None and batch_id:
+        legacy_owner = get_cutting_batch_owner(batch_id)
+        if legacy_owner and legacy_owner.get("employee_id") == employee[0]:
+            return ""
+        if legacy_owner and legacy_owner.get("employee_id"):
+            assignee = get_employee_by_id(legacy_owner["employee_id"])
+            assignee_name = assignee[1] if assignee else "другого сотрудника"
+            return f"Задание в работе у {assignee_name}."
+
+    if task is None or task["status"] not in {"active", "contours_done", "in_cutting"}:
+        return "Задание уже недоступно."
+
+    assigned_employee_id = task.get("assigned_employee_id")
+
+    if assigned_employee_id is None:
+        return "Сначала выберите задание во вкладке «Задания»."
+
+    if assigned_employee_id != employee[0]:
+        assignee = get_employee_by_id(assigned_employee_id)
+        assignee_name = assignee[1] if assignee else "другого сотрудника"
+        return f"Задание в работе у {assignee_name}."
+
+    return ""
 
 
 def get_production_state_for_telegram(telegram_id: int):
@@ -1316,10 +1452,10 @@ def get_production_state_for_telegram(telegram_id: int):
         "order_color_labels": [format_color_label(color) for color in order_colors],
         "fabric_stock": [fabric_stock_to_dict(row) for row in get_fabric_stock_rows()] if is_admin_user else [],
         "warehouse_stock": warehouse_rows if is_admin_user else [],
-        "tasks": [production_task_to_dict(row) for row in get_active_production_tasks()] if is_admin_user else [],
+        "tasks": [production_task_to_dict(row, employee) for row in get_active_production_tasks()] if is_admin_user else [],
         "cutting_tasks": get_cutting_stage_tasks(employee),
         "contour_tasks": [
-            production_task_to_dict(row)
+            production_task_to_dict(row, employee)
             for row in get_active_production_tasks_for_contours()
         ] if can_work_contours else [],
         "can_admin": is_admin_user,
@@ -1790,7 +1926,11 @@ def submit_production_contours_for_telegram(telegram_id: int, payload: dict):
     if not task_rows:
         return {"ok": False, "message": "Задание уже недоступно."}
 
-    task = production_task_to_dict(task_rows[0])
+    access_error = cutting_task_access_error(employee, task_id)
+    if access_error:
+        return {"ok": False, "message": access_error}
+
+    task = production_task_to_dict(task_rows[0], employee)
     operation = get_cutting_contour_operation(task["product_name"])
 
     if operation is None:
@@ -1902,6 +2042,10 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
         if batch_row is None:
             return {"ok": False, "message": "Сначала нужно выполнить нанесение контуров."}
 
+        access_error = cutting_task_access_error(employee, batch_row[3], batch_id)
+        if access_error:
+            return {"ok": False, "message": access_error}
+
         operation = get_cutting_operation(batch_row[1], CUTTING_LAYOUT_OPERATION)
 
         if operation is None:
@@ -1929,13 +2073,7 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
         if not add_cutting_layout(batch_id, shift[0], employee[0], operation["id"], color_layers):
             return {"ok": False, "message": "Настил уже недоступен."}
 
-        sizes = parse_cutting_sizes_text(batch_row[5])
-        added_count = 0
-
-        for color, layers in color_layers.items():
-            for product_size in sizes:
-                add_shift_operation(shift[0], employee[0], operation["id"], product_size, color, layers)
-                added_count += 1
+        added_count = len(parse_cutting_sizes_text(batch_row[5])) * len(color_layers)
 
         add_edit_log(
             telegram_id,
@@ -1966,6 +2104,10 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
         if batch_row is None:
             return {"ok": False, "message": "Сначала нужно выполнить формирование настила."}
 
+        access_error = cutting_task_access_error(employee, batch_row[5], batch_id)
+        if access_error:
+            return {"ok": False, "message": access_error}
+
         operation = get_cutting_operation(batch_row[1], CUTTING_CUT_OPERATION)
 
         if operation is None:
@@ -1982,14 +2124,6 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
         if not update_cutting_batch_progress(batch_id, shift[0], employee[0], operation["id"], progress):
             return {"ok": False, "message": "Раскрой уже недоступен."}
 
-        set_shift_operation_quantity(
-            shift[0],
-            employee[0],
-            operation["id"],
-            "готовность",
-            "без цвета",
-            progress,
-        )
         add_edit_log(
             telegram_id,
             "employee",
@@ -2021,6 +2155,10 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
         if batch_row is None:
             return {"ok": False, "message": "Сначала нужно завершить раскрой на 100%."}
 
+        access_error = cutting_task_access_error(employee, batch_row[5], batch_id)
+        if access_error:
+            return {"ok": False, "message": access_error}
+
         operation = get_cutting_operation(batch_row[1], CUTTING_FORM_OPERATION)
 
         if operation is None:
@@ -2030,10 +2168,6 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
 
         if not mark_cutting_batch_formed(batch_id, shift[0], employee[0], operation["id"]):
             return {"ok": False, "message": "Готовый крой уже недоступен."}
-
-        for product_size, color, quantity in result_rows:
-            if quantity > 0:
-                add_shift_operation(shift[0], employee[0], operation["id"], product_size, color, quantity)
 
         add_edit_log(
             telegram_id,
@@ -3684,6 +3818,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/production/create-task",
                 "/api/production/create-order-task",
                 "/api/production/delete-order-task",
+                "/api/production/start-cutting-task",
                 "/api/production/submit-contours",
                 "/api/production/submit-cutting-stage",
                 "/api/routes/create-batch",
@@ -3759,6 +3894,12 @@ def make_handler(bot_token: str, debug: bool):
                 result = create_order_task_for_telegram(telegram_id, payload)
             elif path == "/api/production/delete-order-task":
                 result = delete_order_task_for_telegram(telegram_id, payload)
+            elif path == "/api/production/start-cutting-task":
+                try:
+                    task_id = int(payload.get("task_id") or 0)
+                except (TypeError, ValueError):
+                    task_id = 0
+                result = start_cutting_task_for_telegram(telegram_id, task_id)
             elif path == "/api/production/submit-contours":
                 result = submit_production_contours_for_telegram(telegram_id, payload)
             elif path == "/api/production/submit-cutting-stage":

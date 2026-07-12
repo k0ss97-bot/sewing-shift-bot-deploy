@@ -1206,7 +1206,7 @@ MINIAPP_HTML = """<!doctype html>
       z-index: 6;
       left: 16px;
       right: 16px;
-      bottom: calc(78px + env(safe-area-inset-bottom));
+      bottom: calc(88px + env(safe-area-inset-bottom));
       border: none;
       border-radius: 18px;
       padding: 15px 16px;
@@ -1358,12 +1358,16 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     const authToken = queryAuthToken || storedAuthToken;
-    const uiStateStorageKey = `miniapp_ui_state_${debugTelegramId || "telegram"}`;
+    const telegramUserId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? String(tg.initDataUnsafe.user.id || "") : "";
+    const uiStateStorageKey = `miniapp_ui_state_${debugTelegramId || telegramUserId || "telegram_anonymous"}`;
     const persistedUiStateKeys = [
       "screen",
       "selectedOrder",
+      "selectedOrderKey",
       "selectedReportTask",
+      "selectedReportTaskKey",
       "selectedCuttingReportTask",
+      "selectedCuttingReportTaskKey",
       "orderCategory",
       "orderMode",
       "orderProduct",
@@ -1420,8 +1424,11 @@ MINIAPP_HTML = """<!doctype html>
       screen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
+      selectedOrderKey: "",
       selectedReportTask: 0,
+      selectedReportTaskKey: "",
       selectedCuttingReportTask: 0,
+      selectedCuttingReportTaskKey: "",
       orderCategory: "",
       reportSection: "work",
       orderMode: "list",
@@ -1449,6 +1456,7 @@ MINIAPP_HTML = """<!doctype html>
       adminStartDate: "",
       adminEndDate: "",
       adminEmployeeId: "",
+      adminAppliedReportPayload: null,
       adminShiftEndTime: "",
       adminHomePeriod: "today",
       adminHomeView: "overview",
@@ -1506,7 +1514,7 @@ MINIAPP_HTML = """<!doctype html>
     function updateKeyboardState(forceOpen = null) {
       const viewport = window.visualViewport;
       const activeElement = document.activeElement;
-      const editing = Boolean(activeElement && activeElement.matches("input, textarea, select"));
+      const editing = Boolean(activeElement && activeElement.matches("input, textarea"));
       const viewportReduced = Boolean(viewport && window.innerHeight - viewport.height > 140);
       document.body.classList.toggle("keyboard-open", forceOpen === null ? editing || viewportReduced : forceOpen);
     }
@@ -1517,7 +1525,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     document.addEventListener("focusin", (event) => {
-      if (event.target.matches("input, textarea, select")) updateKeyboardState(true);
+      if (event.target.matches("input, textarea")) updateKeyboardState(true);
     });
     document.addEventListener("focusout", () => window.setTimeout(() => updateKeyboardState(), 80));
 
@@ -1595,7 +1603,7 @@ MINIAPP_HTML = """<!doctype html>
       return url.toString();
     }
 
-    function openTaskAttachment(taskId, action) {
+    async function openTaskAttachment(taskId, action) {
       const url = attachmentFileUrl(taskId, action);
 
       if (!url) {
@@ -1605,7 +1613,26 @@ MINIAPP_HTML = """<!doctype html>
 
       try {
         if (action === "download") {
-          window.location.href = url;
+          const actionKey = `download-attachment:${taskId}`;
+          if (!beginAction(actionKey)) return;
+          try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("download failed");
+            const disposition = response.headers.get("Content-Disposition") || "";
+            const utfName = disposition.match(/filename\\*=UTF-8''([^;]+)/i);
+            const plainName = disposition.match(/filename="?([^";]+)"?/i);
+            const fileName = decodeURIComponent((utfName && utfName[1]) || (plainName && plainName[1]) || `attachment-${taskId}`);
+            const blobUrl = URL.createObjectURL(await response.blob());
+            const link = document.createElement("a");
+            link.href = blobUrl;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+          } finally {
+            endAction(actionKey);
+          }
           showToast("Файл", "Скачивание запущено.");
           return;
         }
@@ -1701,6 +1728,21 @@ MINIAPP_HTML = """<!doctype html>
       return state.data && state.data.routes && state.data.routes.tasks ? state.data.routes.tasks : [];
     }
 
+    function taskIdentity(task) {
+      if (!task) return "";
+      const kind = task.task_kind || (task.stage ? "cutting_stage" : "route");
+      const sourceId = kind === "cutting_stage" ? (task.production_task_id || task.source_id || task.id) : task.id;
+      return `${kind}:${sourceId}:${task.stage || ""}`;
+    }
+
+    function selectedTaskIndex(tasks, selectedKey, fallbackIndex = 0) {
+      if (selectedKey) {
+        const matchedIndex = tasks.findIndex((task) => taskIdentity(task) === selectedKey);
+        if (matchedIndex >= 0) return matchedIndex;
+      }
+      return fallbackIndex >= 0 && fallbackIndex < tasks.length ? fallbackIndex : 0;
+    }
+
     function getCompletedRouteTasks() {
       return state.data && state.data.routes && state.data.routes.completed_tasks ? state.data.routes.completed_tasks : [];
     }
@@ -1712,7 +1754,9 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function getMyCuttingTasks() {
-      return getCuttingTasks().map((task) => ({...task, task_kind: "cutting_stage"}));
+      return getCuttingTasks()
+        .filter((task) => task.is_assigned_to_me)
+        .map((task) => ({...task, task_kind: "cutting_stage"}));
     }
 
     function getOrderColors() {
@@ -1818,12 +1862,52 @@ MINIAPP_HTML = """<!doctype html>
       return rows.filter((task) => (task.category || "") === state.orderCategory);
     }
 
-    function selectCuttingTaskForReport(task) {
-      const tasks = getMyCuttingTasks();
-      const index = tasks.findIndex((row) => row.id === task.id && row.stage === task.stage);
-      state.selectedCuttingReportTask = index >= 0 ? index : 0;
-      state.reportSection = "work";
-      setScreen("report");
+    async function selectCuttingTaskForReport(task) {
+      if (!task || state.data.is_admin) return;
+
+      if (task.is_assigned_to_me) {
+        const tasks = getMyCuttingTasks();
+        const index = tasks.findIndex((row) => row.id === task.id && row.stage === task.stage);
+        state.selectedCuttingReportTask = index >= 0 ? index : 0;
+        state.selectedCuttingReportTaskKey = taskIdentity(tasks[state.selectedCuttingReportTask] || task);
+        state.reportSection = "work";
+        setScreen("report");
+        return;
+      }
+
+      if (!task.can_take) {
+        showToast("Задание", task.assigned_employee_name ? `Задание в работе у ${task.assigned_employee_name}.` : "Задание уже в работе.");
+        return;
+      }
+
+      const productionTaskId = task.production_task_id || task.source_id || task.id;
+      const actionKey = `start-cutting-task:${productionTaskId}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/production/start-cutting-task", {task_id: productionTaskId});
+
+        if (!data.ok) {
+          showToast("Задание", data.message || "Не удалось взять задание.");
+          mainButton.disabled = false;
+          return;
+        }
+
+        state.data.production = data.production || state.data.production;
+        const tasks = getMyCuttingTasks();
+        const index = tasks.findIndex((row) => (row.production_task_id || row.source_id || row.id) === productionTaskId && row.stage === task.stage);
+        state.selectedCuttingReportTask = index >= 0 ? index : 0;
+        state.selectedCuttingReportTaskKey = taskIdentity(tasks[state.selectedCuttingReportTask] || task);
+        state.reportSection = "work";
+        setScreen("report");
+        showToast("Задание", data.message || "Задание взято в работу.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось взять задание.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
     }
 
     function shiftText() {
@@ -2187,6 +2271,8 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     async function loadHistory() {
+      const actionKey = "load-history";
+      if (!beginAction(actionKey)) return;
       syncHistoryForm();
       mainButton.disabled = true;
 
@@ -2203,10 +2289,14 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось загрузить историю.");
         mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
     async function sendFeedback() {
+      const actionKey = "send-feedback";
+      if (!beginAction(actionKey)) return;
       const category = document.getElementById("feedbackCategory");
       const message = document.getElementById("feedbackMessage");
       mainButton.disabled = true;
@@ -2231,6 +2321,8 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось отправить сообщение.");
         mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -2351,6 +2443,7 @@ MINIAPP_HTML = """<!doctype html>
           ...state.data.admin,
           reports: data.report,
         };
+        state.adminAppliedReportPayload = {...getAdminReportPayload()};
         render();
         showToast("Отчёт", "Данные обновлены.");
       } catch (error) {
@@ -2361,7 +2454,8 @@ MINIAPP_HTML = """<!doctype html>
 
     async function exportAdminReport() {
       if (!state.data || !state.data.is_admin) return;
-      syncAdminForm();
+      const actionKey = "export-admin-report";
+      if (!beginAction(actionKey)) return;
       mainButton.disabled = true;
 
       try {
@@ -2369,7 +2463,7 @@ MINIAPP_HTML = """<!doctype html>
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
-            ...getAdminReportPayload(),
+            ...(state.adminAppliedReportPayload || getAdminReportPayload()),
             initData: state.initData,
             authToken,
             telegram_id: debugTelegramId,
@@ -2399,6 +2493,7 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось выгрузить отчёт.");
       } finally {
+        endAction(actionKey);
         mainButton.disabled = false;
       }
     }
@@ -2465,11 +2560,13 @@ MINIAPP_HTML = """<!doctype html>
       ensureUserDefaults();
       if (!["work", "done", "feedback"].includes(state.reportSection)) state.reportSection = "work";
 
-      if (state.selectedReportTask >= workTasks.length) state.selectedReportTask = 0;
-      if (state.selectedCuttingReportTask >= cuttingWorkTasks.length) state.selectedCuttingReportTask = 0;
+      state.selectedReportTask = selectedTaskIndex(workTasks, state.selectedReportTaskKey, state.selectedReportTask);
+      state.selectedCuttingReportTask = selectedTaskIndex(cuttingWorkTasks, state.selectedCuttingReportTaskKey, state.selectedCuttingReportTask);
 
       const selectedTask = workTasks[state.selectedReportTask] || workTasks[0];
       const selectedCuttingTask = cuttingWorkTasks[state.selectedCuttingReportTask] || cuttingWorkTasks[0];
+      state.selectedReportTaskKey = taskIdentity(selectedTask);
+      state.selectedCuttingReportTaskKey = taskIdentity(selectedCuttingTask);
       const taskDraft = selectedTask ? (state.taskCompletionDrafts[selectedTask.id] || {}) : {};
       const quality = state.data && state.data.quality ? state.data.quality : {defect_reasons: [], defect_dispositions: []};
       mainButton.textContent = state.reportSection === "work" && (selectedCuttingTask || selectedTask) ? (selectedCuttingTask ? "Выполнить этап" : "Выполнить задание") : "Обновить отчёт";
@@ -2787,6 +2884,7 @@ MINIAPP_HTML = """<!doctype html>
         state.data.production = data.production || state.data.production;
         if (data.routes) state.data.routes = data.routes;
         state.orderMode = "list";
+        state.selectedOrderKey = "";
         render();
         showToast("Задание", data.message || "Задание создано.");
       } catch (error) {
@@ -2931,6 +3029,7 @@ MINIAPP_HTML = """<!doctype html>
         state.data.production = data.production || state.data.production;
         if (data.routes) state.data.routes = data.routes;
         state.selectedOrder = 0;
+        state.selectedOrderKey = "";
         render();
         showToast("Задание", data.message || "Задание удалено.");
       } catch (error) {
@@ -3063,7 +3162,9 @@ MINIAPP_HTML = """<!doctype html>
         state.data.production = data.production || state.data.production;
         delete state.cuttingStageDrafts[cuttingDraftKey(current)];
         state.selectedOrder = 0;
+        state.selectedOrderKey = "";
         state.selectedCuttingReportTask = 0;
+        state.selectedCuttingReportTaskKey = "";
         render();
         showToast("Задание", data.message || "Этап выполнен.");
       } catch (error) {
@@ -3103,7 +3204,9 @@ MINIAPP_HTML = """<!doctype html>
         state.data.production = data.production || state.data.production;
         delete state.taskCompletionDrafts[current.id];
         state.selectedOrder = 0;
+        state.selectedOrderKey = "";
         state.selectedReportTask = 0;
+        state.selectedReportTaskKey = "";
         render();
         showToast("Задание", data.message || "Операция завершена.");
       } catch (error) {
@@ -3119,6 +3222,7 @@ MINIAPP_HTML = """<!doctype html>
 
       if (current.is_assigned_to_me) {
         state.reportSection = "work";
+        state.selectedReportTaskKey = taskIdentity(current);
         setScreen("report");
         return;
       }
@@ -3148,6 +3252,7 @@ MINIAPP_HTML = """<!doctype html>
         }
         state.reportSection = "work";
         state.selectedReportTask = 0;
+        state.selectedReportTaskKey = taskIdentity(current);
         setScreen("report");
         showToast("Задание", data.message || "Задание взято в работу.");
       } catch (error) {
@@ -3273,11 +3378,14 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       const allTasks = visibleOrderRows();
-      if (state.selectedOrder >= allTasks.length) state.selectedOrder = 0;
+      state.selectedOrder = selectedTaskIndex(allTasks, state.selectedOrderKey, state.selectedOrder);
       const tasks = allTasks.filter((task) => task.task_kind !== "route");
       const routeRows = allTasks.filter((task) => task.task_kind === "route");
       const current = allTasks[state.selectedOrder] || allTasks[0];
-      mainButton.textContent = state.data && state.data.is_admin ? "Создать задание" : (current && current.task_kind === "route" && current.is_assigned_to_me ? "Открыть отчёт" : (current ? "Выбрать задание" : "Обновить статус"));
+      state.selectedOrderKey = taskIdentity(current);
+      mainButton.textContent = state.data && state.data.is_admin
+        ? "Создать задание"
+        : (current && current.is_assigned_to_me ? "Открыть отчёт" : (current ? "Выбрать задание" : "Обновить статус"));
       mainButton.disabled = false;
 
       mount.innerHTML = `
@@ -3287,7 +3395,7 @@ MINIAPP_HTML = """<!doctype html>
           ${allTasks.length ? `
           ${tasks.map((task, index) => `
             <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
-              <div class="order-head"><div class="op-icon">▣</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip ${task.status === "active" ? "warn" : ""}">${escapeHtml(task.status_text || task.status)}</span></div>
+              <div class="order-head"><div class="op-icon">▣</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${task.work_status === "free" ? "gray" : "warn"}">${escapeHtml(task.status_text || task.status)}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
               <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
               ${state.data && state.data.is_admin ? `<div class="order-card-actions"><button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button></div>` : ""}
@@ -3461,9 +3569,9 @@ MINIAPP_HTML = """<!doctype html>
         mount.innerHTML = `
           <div class="screen-head"><div><h2>Моя работа</h2><p>Текущие и завершённые задания.</p></div><div class="date">сейчас</div></div>
           <div class="summary-grid">
-            <button class="card summary-card clickable" data-go="report"><span>В работе</span><strong>${myRouteTasks.length + myCuttingTasks.length}</strong><small>активных заданий</small></button>
+            <button class="card summary-card clickable" data-go="report" data-report-target="work"><span>В работе</span><strong>${myRouteTasks.length + myCuttingTasks.length}</strong><small>активных заданий</small></button>
             <button class="card summary-card clickable" data-go="orders"><span>Свободно</span><strong>${freeTasks}</strong><small>можно взять</small></button>
-            <button class="card summary-card clickable" data-go="report"><span>Завершено</span><strong>${completedTasks.length}</strong><small>в истории заданий</small></button>
+            <button class="card summary-card clickable" data-go="report" data-report-target="done"><span>Завершено</span><strong>${completedTasks.length}</strong><small>в истории заданий</small></button>
             <button class="card summary-card clickable" data-go="report"><span>В отчёте</span><strong>${operations.length}</strong><small>операций смены</small></button>
           </div>
           <div class="section-title"><b>Последние завершённые</b><button data-go="report">открыть</button></div>
@@ -3841,11 +3949,13 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     async function refreshState(message = "") {
+      const actionKey = "refresh-state";
+      if (!beginAction(actionKey)) return;
       mainButton.disabled = true;
       try {
         const data = await api("/api/app/state", {message});
 
-        if (state.userStartDate && state.userEndDate && !data.is_admin) {
+        if (state.screen === "report" && state.reportSection === "done" && state.userStartDate && state.userEndDate && !data.is_admin) {
           try {
             const history = await api("/api/report/history", getHistoryPayload());
             if (history.ok) data.history = history;
@@ -3854,10 +3964,13 @@ MINIAPP_HTML = """<!doctype html>
           }
         }
 
-        if (data.is_admin && data.admin && state.adminStartDate && state.adminEndDate) {
+        if (state.screen === "admin" && state.adminSection === "reports" && data.is_admin && data.admin && state.adminStartDate && state.adminEndDate) {
           try {
             const report = await api("/api/admin/report", getAdminReportPayload());
-            if (report.ok) data.admin.reports = report.report;
+            if (report.ok) {
+              data.admin.reports = report.report;
+              state.adminAppliedReportPayload = {...getAdminReportPayload()};
+            }
           } catch (error) {
             // Keep the dashboard response and let the administrator retry the report separately.
           }
@@ -3875,6 +3988,8 @@ MINIAPP_HTML = """<!doctype html>
         mainButton.textContent = "Повторить";
         mainButton.disabled = false;
         showToast("Ошибка", error.apiMessage || "Не удалось связаться с сервером.");
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -3983,6 +4098,7 @@ MINIAPP_HTML = """<!doctype html>
       if (orderCategory) {
         state.orderCategory = orderCategory.dataset.orderCategory;
         state.selectedOrder = 0;
+        state.selectedOrderKey = "";
         render();
         return;
       }
@@ -3991,7 +4107,9 @@ MINIAPP_HTML = """<!doctype html>
       if (reportSection) {
         state.reportSection = reportSection.dataset.reportSection;
         state.selectedReportTask = 0;
+        state.selectedReportTaskKey = "";
         state.selectedCuttingReportTask = 0;
+        state.selectedCuttingReportTaskKey = "";
         render();
         return;
       }
@@ -4051,6 +4169,13 @@ MINIAPP_HTML = """<!doctype html>
 
       const go = event.target.closest("[data-go]");
       if (go) {
+        if (go.dataset.reportTarget) {
+          state.reportSection = go.dataset.reportTarget;
+          state.selectedReportTask = 0;
+          state.selectedReportTaskKey = "";
+          state.selectedCuttingReportTask = 0;
+          state.selectedCuttingReportTaskKey = "";
+        }
         setScreen(go.dataset.go);
         return;
       }
@@ -4120,6 +4245,7 @@ MINIAPP_HTML = """<!doctype html>
         state.selectedOrder = Number(order.dataset.selectOrder);
         const rows = visibleOrderRows();
         const current = rows[state.selectedOrder] || rows[0];
+        state.selectedOrderKey = taskIdentity(current);
         if (current && current.task_kind === "route" && !state.data.is_admin) {
           startOperationTask(current);
           return;
@@ -4135,12 +4261,16 @@ MINIAPP_HTML = """<!doctype html>
       const reportTask = event.target.closest("[data-select-report-task]");
       if (reportTask) {
         state.selectedReportTask = Number(reportTask.dataset.selectReportTask);
+        const tasks = getMyRouteTasks();
+        state.selectedReportTaskKey = taskIdentity(tasks[state.selectedReportTask] || tasks[0]);
         render();
       }
 
       const cuttingReportTask = event.target.closest("[data-select-cutting-report-task]");
       if (cuttingReportTask) {
         state.selectedCuttingReportTask = Number(cuttingReportTask.dataset.selectCuttingReportTask);
+        const tasks = getMyCuttingTasks();
+        state.selectedCuttingReportTaskKey = taskIdentity(tasks[state.selectedCuttingReportTask] || tasks[0]);
         render();
       }
     });

@@ -259,7 +259,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             )
         )
         self.assertIn(
-            ("Брюки-ползунки: Раскрой", "готовность", "без цвета", 100, "%"),
+            ("Брюки-ползунки: Раскрой", f"партия #{batch_id}", "без цвета", 100, "%"),
             self.database.get_shift_report(self.shift_id),
         )
 
@@ -270,17 +270,17 @@ class IsolatedDatabaseTest(unittest.TestCase):
             DELETE FROM shift_operations
             WHERE shift_id = ?
               AND operation_id = ?
-              AND product_size = 'готовность'
+              AND product_size = ?
               AND product_color = 'без цвета'
             """,
-            (self.shift_id, cutting_operation_id),
+            (self.shift_id, cutting_operation_id, f"партия #{batch_id}"),
         )
         conn.commit()
         conn.close()
 
         self.database.init_db()
         self.assertIn(
-            ("Брюки-ползунки: Раскрой", "готовность", "без цвета", 100, "%"),
+            ("Брюки-ползунки: Раскрой", f"партия #{batch_id}", "без цвета", 100, "%"),
             self.database.get_shift_report(self.shift_id),
         )
 
@@ -307,7 +307,9 @@ class IsolatedDatabaseTest(unittest.TestCase):
 
         self.assertEqual(len(cutting_tasks), 1)
         self.assertEqual(cutting_tasks[0]["progress"], 75)
-        self.assertEqual(cutting_tasks[0]["status_text"], "готовность 75%")
+        self.assertEqual(cutting_tasks[0]["status_text"], "В работе")
+        self.assertEqual(cutting_tasks[0]["process_status_text"], "готовность 75%")
+        self.assertTrue(cutting_tasks[0]["is_assigned_to_me"])
 
     def test_incomplete_cutting_survives_closed_shift_and_can_be_reopened_once(self):
         batch_id = self._create_layout_done_batch()
@@ -554,6 +556,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(cutter_state["contour_tasks"][0]["id"], task_id)
         self.assertEqual(cutter_state["contour_tasks"][0]["attachment"]["mime_type"], "application/pdf")
         self.assertEqual(cutter_state["contour_tasks"][0]["fabric_rolls"][0]["rolls"], 2)
+        started = miniapp_server.start_cutting_task_for_telegram(9002, task_id)
+        self.assertTrue(started["ok"], started)
 
         contour_result = miniapp_server.submit_production_contours_for_telegram(
             9002,
@@ -659,6 +663,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         seamstress = self.database.get_employee_by_telegram_id(9004)
         self.database.update_employee_status(packer[0], "active")
         self.database.update_employee_status(seamstress[0], "active")
+        self.database.create_shift(packer[0])
         elastic_step_index = self.route_step_index("Шорты", "Шорты — резинка 25 мм", "Упаковщик")
 
         batch = self.database.create_route_batch(
@@ -669,6 +674,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             packer[0],
             route_step_index=elastic_step_index,
         )
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(9003, batch["id"])["ok"])
         result = miniapp_server.complete_route_task_for_telegram(9003, batch["id"])
 
         self.assertTrue(result["ok"], result)
@@ -692,6 +698,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.database.create_employee(9013, "Тест Упаковщик", "Упаковщик")
         packer = self.database.get_employee_by_telegram_id(9013)
         self.database.update_employee_status(packer[0], "active")
+        self.database.create_shift(packer[0])
         elastic_step_index = self.route_step_index("Шорты", "Шорты — резинка 25 мм", "Упаковщик")
         batch = self.database.create_route_batch(
             "Шорты",
@@ -872,8 +879,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             employee = self.database.get_employee_by_telegram_id(telegram_id)
             self.database.update_employee_status(employee[0], "active")
             employee_rows[position] = employee
-
-        self.database.create_shift(employee_rows["Раскройщик"][0])
+            self.database.create_shift(employee[0])
 
         receipt = miniapp_server.add_fabric_receipt_for_telegram(
             9001,
@@ -895,6 +901,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(cutting_task["ok"], cutting_task)
         self.assertEqual(cutting_task["production"]["fabric_stock"][0]["quantity"], 2)
         task_id = self.database.get_active_production_tasks()[0][0]
+        started_cutting = miniapp_server.start_cutting_task_for_telegram(9002, task_id)
+        self.assertTrue(started_cutting["ok"], started_cutting)
 
         blocked_layout = miniapp_server.submit_cutting_stage_for_telegram(
             9002,
@@ -1377,6 +1385,22 @@ class IsolatedDatabaseTest(unittest.TestCase):
         conn.close()
         self.assertEqual(count, 1)
 
+    def test_concurrent_shift_close_is_applied_once(self):
+        self.database.create_employee(1105, "Тест Закрытие Смены", "Швея")
+        employee = self.database.get_employee_by_telegram_id(1105)
+        self.database.update_employee_status(employee[0], "active")
+        shift = self.database.create_shift(employee[0])
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _index: self.database.close_shift(shift["id"]), range(2)))
+
+        self.assertEqual(sum(result is not None for result in results), 1)
+        conn = sqlite3.connect(self.database.DB_NAME)
+        row = conn.execute("SELECT status, end_time FROM shifts WHERE id = ?", (shift["id"],)).fetchone()
+        conn.close()
+        self.assertEqual(row[0], "closed")
+        self.assertTrue(row[1])
+
     def test_concurrent_contour_submission_creates_one_batch(self):
         self.database.create_employee(1102, "Тест Контуры Один Раз", "Раскройщик")
         employee = self.database.get_employee_by_telegram_id(1102)
@@ -1533,6 +1557,86 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 10)
         self.assertEqual(self.database.get_active_route_batches(), [])
+
+    def test_concurrent_cutting_claim_has_one_owner_and_survives_new_shift(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        cutters = []
+        for telegram_id, full_name in ((1201, "Первый Раскройщик"), (1202, "Второй Раскройщик")):
+            self.database.create_employee(telegram_id, full_name, "Раскройщик")
+            employee = self.database.get_employee_by_telegram_id(telegram_id)
+            self.database.update_employee_status(employee[0], "active")
+            self.database.create_shift(employee[0])
+            cutters.append((telegram_id, employee[0]))
+
+        task = self.database.create_production_task("Легинсы", ["86"], ["Бежевый"], None)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(
+                lambda cutter: miniapp_server.start_cutting_task_for_telegram(cutter[0], task["id"]),
+                cutters,
+            ))
+
+        self.assertEqual(sum(result["ok"] for result in results), 1)
+        assigned_task = self.database.get_production_task_by_id(task["id"])
+        self.assertIn(assigned_task["assigned_employee_id"], {employee_id for _, employee_id in cutters})
+
+        owner_telegram_id = next(
+            telegram_id for telegram_id, employee_id in cutters
+            if employee_id == assigned_task["assigned_employee_id"]
+        )
+        owner_shift = self.database.get_open_shift_for_today(assigned_task["assigned_employee_id"])
+        self.database.close_shift(owner_shift[0])
+        self.database.create_shift(assigned_task["assigned_employee_id"])
+        state = miniapp_server.get_production_state_for_telegram(owner_telegram_id)
+        self.assertTrue(state["cutting_tasks"][0]["is_assigned_to_me"])
+        self.assertEqual(state["cutting_tasks"][0]["status_text"], "В работе")
+
+    def test_cutting_progress_cannot_move_backwards(self):
+        batch_id = self._create_layout_done_batch()
+        self.assertTrue(self.database.update_cutting_batch_progress(
+            batch_id, self.shift_id, self.employee_id, self.operation_id, 75,
+        ))
+        self.assertFalse(self.database.update_cutting_batch_progress(
+            batch_id, self.shift_id, self.employee_id, self.operation_id, 25,
+        ))
+        row = next(row for row in self.database.get_cutting_batches_for_cutting("Брюки-ползунки") if row[0] == batch_id)
+        self.assertEqual(row[4], 75)
+
+    def test_started_cutting_task_cannot_be_cancelled_and_return_rolls(self):
+        self.database.add_fabric_receipt("Ткань", "Бежевый", 2, None)
+        task = self.database.create_production_task(
+            "Легинсы", ["86"], ["Бежевый"], None,
+            fabric_rolls={"Бежевый": 1},
+        )
+        self.database.create_employee(1203, "Раскройщик Отмена", "Раскройщик")
+        employee = self.database.get_employee_by_telegram_id(1203)
+        self.database.update_employee_status(employee[0], "active")
+        shift = self.database.create_shift(employee[0])
+        self.database.assign_production_task(task["id"], employee[0])
+        operation = self.database.get_active_operations(position="Раскройщик")[0]
+        batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"], "Легинсы", shift["id"], employee[0], operation[0], {("86", "Бежевый"): 5},
+        )
+
+        self.assertIsNotNone(batch_id)
+        self.assertIsNone(self.database.cancel_production_task(task["id"], employee[0]))
+        self.assertEqual(self.database.get_fabric_stock_rows()[0][2], 1)
+        self.assertEqual(self.database.get_production_task_by_id(task["id"])["status"], "contours_done")
+
+    def test_route_completion_requires_assignment_and_open_shift(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(1204, "Швея Проверка", "Швея")
+        employee = self.database.get_employee_by_telegram_id(1204)
+        self.database.update_employee_status(employee[0], "active")
+        step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
+        batch = self.database.create_route_batch("Легинсы", "86", "Бежевый", 5, None, step_index)
+
+        no_shift = miniapp_server.complete_route_task_for_telegram(1204, batch["id"])
+        self.assertFalse(no_shift["ok"])
+        self.database.create_shift(employee[0])
+        not_assigned = miniapp_server.complete_route_task_for_telegram(1204, batch["id"])
+        self.assertFalse(not_assigned["ok"])
+        self.assertIn("выберите задание", not_assigned["message"].lower())
 
     def _create_layout_done_batch(self):
         self.database.create_employee(1001, "Тест Раскройщик", "Раскройщик")
