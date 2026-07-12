@@ -1237,6 +1237,15 @@ MINIAPP_HTML = """<!doctype html>
       gap: 2px;
     }
 
+    body.keyboard-open .main-button,
+    body.keyboard-open .bottom-nav {
+      display: none;
+    }
+
+    body.keyboard-open .app {
+      padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    }
+
     .nav-btn {
       min-width: 0;
       border: none;
@@ -1470,6 +1479,17 @@ MINIAPP_HTML = """<!doctype html>
     const topTabs = document.getElementById("topTabs");
     const bottomNav = document.getElementById("bottomNav");
     const toast = document.getElementById("toast");
+    const pendingActions = new Set();
+
+    function beginAction(key) {
+      if (pendingActions.has(key)) return false;
+      pendingActions.add(key);
+      return true;
+    }
+
+    function endAction(key) {
+      pendingActions.delete(key);
+    }
 
     const baseNav = [
       { id: "shift", label: "Главная", icon: "⌂" },
@@ -1482,6 +1502,24 @@ MINIAPP_HTML = """<!doctype html>
       tg.ready();
       tg.expand();
     }
+
+    function updateKeyboardState(forceOpen = null) {
+      const viewport = window.visualViewport;
+      const activeElement = document.activeElement;
+      const editing = Boolean(activeElement && activeElement.matches("input, textarea, select"));
+      const viewportReduced = Boolean(viewport && window.innerHeight - viewport.height > 140);
+      document.body.classList.toggle("keyboard-open", forceOpen === null ? editing || viewportReduced : forceOpen);
+    }
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", () => updateKeyboardState());
+      window.visualViewport.addEventListener("scroll", () => updateKeyboardState());
+    }
+
+    document.addEventListener("focusin", (event) => {
+      if (event.target.matches("input, textarea, select")) updateKeyboardState(true);
+    });
+    document.addEventListener("focusout", () => window.setTimeout(() => updateKeyboardState(), 80));
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -2716,6 +2754,8 @@ MINIAPP_HTML = """<!doctype html>
 
     async function createOrderTask() {
       if (!state.data || !state.data.is_admin) return;
+      const actionKey = "create-order-task";
+      if (!beginAction(actionKey)) return;
       syncOrderDraft();
       mainButton.disabled = true;
       const stockItems = Object.entries(state.orderStockQuantities)
@@ -2752,6 +2792,8 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось создать задание.");
         mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -2824,6 +2866,8 @@ MINIAPP_HTML = """<!doctype html>
 
     async function addFabricReceipt() {
       if (!state.data || !state.data.is_admin) return;
+      const actionKey = "add-fabric-receipt";
+      if (!beginAction(actionKey)) return;
       syncWarehouseReceiptForm();
       mainButton.disabled = true;
 
@@ -2847,6 +2891,8 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось сохранить приход.");
         mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -2864,6 +2910,9 @@ MINIAPP_HTML = """<!doctype html>
 
       const confirmed = window.confirm(`Удалить задание #${current.id}?`);
       if (!confirmed) return;
+
+      const actionKey = `delete-order-task:${current.task_kind}:${current.id}`;
+      if (!beginAction(actionKey)) return;
 
       mainButton.disabled = true;
 
@@ -2887,6 +2936,8 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось удалить задание.");
         mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -2972,6 +3023,8 @@ MINIAPP_HTML = """<!doctype html>
 
     async function submitCuttingStage(current) {
       if (!current) return;
+      const actionKey = `submit-cutting-stage:${current.stage}:${current.id}`;
+      if (!beginAction(actionKey)) return;
       const payload = {stage: current.stage};
 
       if (current.stage === "contours") {
@@ -3016,11 +3069,15 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось выполнить этап.");
         mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
     async function completeOperationTask(current) {
       if (!current) return;
+      const actionKey = `complete-operation-task:${current.id}`;
+      if (!beginAction(actionKey)) return;
       const goodInput = document.getElementById("taskGoodQuantity");
       const defectInput = document.getElementById("taskDefectQuantity");
       mainButton.disabled = true;
@@ -3052,6 +3109,8 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось завершить операцию.");
         mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -3068,6 +3127,9 @@ MINIAPP_HTML = """<!doctype html>
         showToast("Задание", current.assigned_employee_name ? `Задание в работе у ${current.assigned_employee_name}.` : "Задание уже в работе.");
         return;
       }
+
+      const actionKey = `start-operation-task:${current.id}`;
+      if (!beginAction(actionKey)) return;
 
       mainButton.disabled = true;
 
@@ -3091,6 +3153,8 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось взять задание.");
         mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -3815,6 +3879,8 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     async function shiftAction(action) {
+      const actionKey = `shift-action:${action}`;
+      if (!beginAction(actionKey)) return;
       mainButton.disabled = true;
       try {
         const shiftData = await api(`/api/shift/${action}`);
@@ -3824,6 +3890,8 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось обновить смену.");
         mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 

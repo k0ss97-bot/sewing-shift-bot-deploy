@@ -13,7 +13,6 @@ from urllib.parse import parse_qsl, quote, urlparse
 
 from database import (
     add_fabric_receipt,
-    add_route_batch_defect,
     add_edit_log,
     add_feedback_entry,
     add_operation,
@@ -23,13 +22,13 @@ from database import (
     admin_close_shift,
     assign_route_batch,
     cancel_production_task,
-    cancel_route_batch,
+    cancel_route_batch_and_restore_inputs,
     close_shift,
-    complete_route_batch_step,
+    complete_route_batch_step_atomic,
     create_cutting_contour_batch_for_task,
     create_production_task,
     create_route_batch,
-    create_route_batch_with_inputs,
+    create_route_batches_with_inputs,
     create_shift,
     delete_shift_by_id,
     ensure_admin_employee,
@@ -99,6 +98,8 @@ from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 
 
 AUTH_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+MAX_REQUEST_BODY_BYTES = 15 * 1024 * 1024
 ROUTES_MINIAPP_ENABLED = False
 CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
 CUTTING_LAYOUT_OPERATION = "Формирование настила"
@@ -744,6 +745,9 @@ def start_route_task_for_telegram(telegram_id: int, batch_id: int):
 
 
 def create_route_batch_for_telegram(telegram_id: int, payload: dict):
+    if not ROUTES_MINIAPP_ENABLED:
+        return {"ok": False, "message": "Создание маршрутов в мини-приложении отключено."}
+
     employee = get_employee_for_access(telegram_id)
 
     if employee is None or employee[5] != "active":
@@ -847,100 +851,45 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
             return {"ok": False, "message": "Выберите решение по браку."}
 
     next_step_index = batch["route_step_index"] + 1
-    updated_batch = complete_route_batch_step(
-        batch["id"],
-        employee[0],
-        current_step["operation"],
-        current_step["position"],
-        next_step_index,
-        "done",
-        good_quantity,
-        defect_quantity,
-    )
-
-    if updated_batch is None:
-        return {"ok": False, "message": "Не удалось завершить этап."}
-
-    next_step = get_route_step(updated_batch["product_name"], updated_batch["route_step_index"])
+    next_step = get_route_step(batch["product_name"], next_step_index)
     item_type = "semifinished" if next_step else "finished"
     ready_for_position = next_step["position"] if next_step else "Склад"
     stage_name = current_step["status_after"]
 
-    stock_row = None
-
-    if good_quantity > 0:
-        stock_row = add_warehouse_stock(
-            item_type,
-            batch["product_name"],
-            batch["product_size"],
-            batch["product_color"],
-            stage_name,
-            ready_for_position,
-            good_quantity,
-            employee[0],
-            "route_batch",
-            batch["id"],
-        )
-    auto_batch = None
-
-    if stock_row and should_auto_create_next_preparation_task(current_step, next_step):
-        auto_batch = create_route_batch_with_inputs(
-            batch["product_name"],
-            batch["product_size"],
-            batch["product_color"],
-            good_quantity,
-            employee[0],
-            updated_batch["route_step_index"],
-            [{"stock_id": stock_row["id"], "quantity": good_quantity, "input_role": "main"}],
-            priority=batch.get("priority") or "normal",
-            due_date=batch.get("due_date") or "",
-        )
-
-    rework_batch = None
-    if defect_quantity > 0 and defect_disposition == "На переделку":
-        rework_batch = create_route_batch(
-            batch["product_name"],
-            batch["product_size"],
-            batch["product_color"],
-            defect_quantity,
-            employee[0],
-            route_step_index=batch["route_step_index"],
-            priority="urgent",
-            due_date=batch.get("due_date") or "",
-            parent_batch_id=batch["id"],
-        )
-
-    if defect_quantity > 0:
-        add_route_batch_defect(
-            batch["id"],
-            employee[0],
-            current_step["operation"],
-            current_step["position"],
-            defect_quantity,
-            defect_reason,
-            defect_disposition,
-            defect_comment,
-            rework_batch["id"] if rework_batch else None,
-        )
-
     open_shift = get_open_shift_for_today(employee[0])
-    if open_shift and good_quantity > 0:
-        operation_row = next(
-            (
-                row for row in get_active_operations(position=current_step["position"])
-                if row[2] == current_step["operation"]
-            ),
-            None,
-        )
-        if operation_row:
-            add_shift_operation(
-                open_shift[0],
-                employee[0],
-                operation_row[0],
-                batch["product_size"],
-                batch["product_color"],
-                good_quantity,
-            )
+    operation_row = next(
+        (
+            row for row in get_active_operations(position=current_step["position"])
+            if row[2] == current_step["operation"]
+        ),
+        None,
+    )
+    completion = complete_route_batch_step_atomic(
+        batch["id"],
+        employee[0],
+        batch["route_step_index"],
+        current_step["operation"],
+        current_step["position"],
+        next_step_index,
+        good_quantity,
+        defect_quantity,
+        item_type,
+        stage_name,
+        ready_for_position,
+        auto_create_next=should_auto_create_next_preparation_task(current_step, next_step),
+        defect_reason=defect_reason,
+        defect_disposition=defect_disposition,
+        defect_comment=defect_comment,
+        shift_id=open_shift[0] if open_shift else None,
+        operation_id=operation_row[0] if operation_row else None,
+    )
+
+    if completion is None:
+        return {"ok": False, "message": "Задание уже завершено или данные изменились. Обновите список."}
+
+    updated_batch = completion["batch"]
+    auto_batch = completion["auto_batch"]
+    rework_batch = completion["rework_batch"]
 
     add_edit_log(
         telegram_id,
@@ -1082,6 +1031,17 @@ def normalize_task_attachment(payload: dict):
 
     if not file_name or not content_base64:
         return None
+
+    if len(content_base64) > ((MAX_ATTACHMENT_BYTES + 2) // 3) * 4 + 8:
+        return {"error": "Файл должен быть не больше 10 МБ."}
+
+    try:
+        decoded_content = base64.b64decode(content_base64, validate=True)
+    except (ValueError, TypeError):
+        return {"error": "Файл повреждён или передан в неверном формате."}
+
+    if len(decoded_content) > MAX_ATTACHMENT_BYTES:
+        return {"error": "Файл должен быть не больше 10 МБ."}
 
     if not file_name.lower().endswith(allowed_extensions):
         return {"error": "Можно прикрепить только Word, Excel или PDF."}
@@ -1698,25 +1658,25 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
 
         input_groups.append((primary_row, group_inputs))
 
-    created_batches = []
+    created_batches = create_route_batches_with_inputs(
+        product_name,
+        employee_id,
+        route_step_index,
+        [
+            {
+                "product_size": primary_row["product_size"],
+                "product_color": primary_row["product_color"],
+                "quantity": primary_row["selected_quantity"],
+                "input_items": group_inputs,
+            }
+            for primary_row, group_inputs in input_groups
+        ],
+        priority=priority,
+        due_date=due_date,
+    )
 
-    for primary_row, group_inputs in input_groups:
-        batch = create_route_batch_with_inputs(
-            product_name,
-            primary_row["product_size"],
-            primary_row["product_color"],
-            primary_row["selected_quantity"],
-            employee_id,
-            route_step_index,
-            group_inputs,
-            priority=priority,
-            due_date=due_date,
-        )
-
-        if batch is None:
-            return {"ok": False, "message": "Не удалось одновременно списать все компоненты задания."}
-
-        created_batches.append(batch)
+    if not created_batches:
+        return {"ok": False, "message": "Не удалось одновременно списать все компоненты задания."}
 
     add_edit_log(
         telegram_id,
@@ -1781,42 +1741,10 @@ def delete_order_task_for_telegram(telegram_id: int, payload: dict):
         if batch is None:
             return {"ok": False, "message": "Задание не найдено."}
 
-        batch_inputs = get_route_batch_inputs(task_id)
-        cancelled_batch = cancel_route_batch(task_id)
+        cancelled_batch = cancel_route_batch_and_restore_inputs(task_id, employee_id)
 
         if cancelled_batch is None:
             return {"ok": False, "message": "Это задание уже нельзя удалить."}
-
-        if batch_inputs:
-            for input_row in batch_inputs:
-                add_warehouse_stock(
-                    input_row["item_type"],
-                    input_row["product_name"],
-                    input_row["product_size"],
-                    input_row["product_color"],
-                    input_row["stage_name"],
-                    input_row["ready_for_position"],
-                    input_row["quantity"],
-                    employee_id,
-                    "cancelled_task",
-                    batch["id"],
-                )
-        elif batch.get("source_stock_id"):
-            source_stock = get_warehouse_stock_by_id(batch["source_stock_id"])
-
-            if source_stock is not None:
-                add_warehouse_stock(
-                    source_stock["item_type"],
-                    source_stock["product_name"],
-                    source_stock["product_size"],
-                    source_stock["product_color"],
-                    source_stock["stage_name"],
-                    source_stock["ready_for_position"],
-                    batch["quantity"],
-                    employee_id,
-                    "cancelled_task",
-                    batch["id"],
-                )
 
         add_edit_log(
             telegram_id,
@@ -1904,16 +1832,6 @@ def submit_production_contours_for_telegram(telegram_id: int, payload: dict):
 
     if batch_id is None:
         return {"ok": False, "message": "Не удалось создать партию раскроя."}
-
-    for product_size, color, quantity in positive_rows:
-        add_shift_operation(
-            shift[0],
-            employee[0],
-            operation["id"],
-            product_size,
-            color,
-            quantity,
-        )
 
     add_edit_log(
         telegram_id,
@@ -2659,8 +2577,8 @@ def create_period_excel_bytes(start_date: str, end_date: str):
     summary_sheet.append(["Производственный показатель", "Значение"])
     summary_sheet.append(["Маршрутных заданий", len(route_rows)])
     summary_sheet.append(["План, шт", production_control["plan"]])
-    summary_sheet.append(["Годная продукция, шт", sum(int(row[14] or 0) for row in route_rows)])
-    summary_sheet.append(["Брак, шт", sum(int(row[15] or 0) for row in route_rows)])
+    summary_sheet.append(["Годная продукция, шт", production_control["fact"]])
+    summary_sheet.append(["Брак, шт", production_control["defect_quantity"]])
     summary_sheet.append(["Заданий раскроя", len({row[0] for row in production_rows})])
     summary_sheet.append(["FPY, %", production_control["fpy"]])
     summary_sheet.append(["Средний cycle time, мин", production_control["average_cycle_minutes"]])
@@ -2760,8 +2678,8 @@ def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str
         "План, шт",
         sum(int(row[4] or 0) for row in route_rows if row[6] != "cancelled" and date_in_period(row[7], start_date, end_date)),
     ])
-    summary_sheet.append(["Годная продукция, шт", sum(int(row[14] or 0) for row in route_rows)])
-    summary_sheet.append(["Брак, шт", sum(int(row[15] or 0) for row in route_rows)])
+    summary_sheet.append(["Годная продукция, шт", employee_good_quantity])
+    summary_sheet.append(["Брак, шт", employee_defect_quantity])
     summary_sheet.append([
         "FPY, %",
         round(employee_good_quantity * 100 / (employee_good_quantity + employee_defect_quantity), 1)
@@ -3787,6 +3705,9 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             payload = self.read_json_body()
+            if payload.pop("_request_too_large", False):
+                self.send_json({"ok": False, "message": "Запрос или файл слишком большой."}, status=413)
+                return
             user = authenticate_payload(payload, bot_token, debug)
 
             if not user or not user.get("id"):
@@ -3880,7 +3801,15 @@ def make_handler(bot_token: str, debug: bool):
             self.send_json(result)
 
         def read_json_body(self):
-            content_length = int(self.headers.get("Content-Length", "0") or "0")
+            try:
+                content_length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                return {}
+
+            if content_length < 0 or content_length > MAX_REQUEST_BODY_BYTES:
+                self.close_connection = True
+                return {"_request_too_large": True}
+
             raw_body = self.rfile.read(content_length) if content_length else b"{}"
 
             try:

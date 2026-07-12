@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 
@@ -70,8 +71,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
         conn.close()
 
         self.assertIn("idx_shifts_employee_date", indexes)
+        self.assertIn("idx_shifts_one_open", indexes)
         self.assertIn("idx_operations_navigation", indexes)
         self.assertIn("idx_cutting_batches_product_status", indexes)
+        self.assertIn("idx_cutting_batches_active_task", indexes)
+        self.assertIn("idx_route_batch_history_step", indexes)
         self.assertIn("idx_feedback_entries_date", indexes)
         self.assertIn("idx_feedback_entries_employee_date", indexes)
         self.assertIn("idx_route_batches_status_step", indexes)
@@ -1333,6 +1337,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
         cursor = conn.cursor()
         cursor.execute("SELECT status, cutting_progress FROM cutting_batches WHERE id = ?", (batch_id,))
         self.assertEqual(cursor.fetchone(), ("layout_done", 0))
+        cursor.execute(
+            "SELECT COUNT(*) FROM route_batches WHERE source_cutting_batch_id = ? AND status = 'active'",
+            (batch_id,),
+        )
+        self.assertGreater(cursor.fetchone()[0], 0)
         conn.close()
 
         rollback_to_contours = self.database.rollback_cutting_batch(batch_id, "contours_done")
@@ -1344,7 +1353,186 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(cursor.fetchone()[0], 0)
         cursor.execute("SELECT status, layout_date, cutting_progress FROM cutting_batches WHERE id = ?", (batch_id,))
         self.assertEqual(cursor.fetchone(), ("contours_done", None, 0))
+        cursor.execute(
+            "SELECT COUNT(*) FROM route_batches WHERE source_cutting_batch_id = ? AND status = 'active'",
+            (batch_id,),
+        )
+        self.assertEqual(cursor.fetchone()[0], 0)
         conn.close()
+
+    def test_concurrent_shift_open_returns_single_open_shift(self):
+        self.database.create_employee(1101, "Тест Одна Смена", "Швея")
+        employee = self.database.get_employee_by_telegram_id(1101)
+        self.database.update_employee_status(employee[0], "active")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _index: self.database.create_shift(employee[0]), range(2)))
+
+        self.assertEqual(results[0]["id"], results[1]["id"])
+        conn = sqlite3.connect(self.database.DB_NAME)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM shifts WHERE employee_id = ? AND status = 'open'",
+            (employee[0],),
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 1)
+
+    def test_concurrent_contour_submission_creates_one_batch(self):
+        self.database.create_employee(1102, "Тест Контуры Один Раз", "Раскройщик")
+        employee = self.database.get_employee_by_telegram_id(1102)
+        self.database.update_employee_status(employee[0], "active")
+        shift = self.database.create_shift(employee[0])
+        operation = self.database.get_active_operations(position="Раскройщик")[0]
+        task = self.database.create_production_task(
+            "Легинсы",
+            ["86"],
+            ["Бежевый"],
+            employee[0],
+        )
+
+        def submit(_index):
+            return self.database.create_cutting_contour_batch_for_task(
+                task["id"],
+                "Легинсы",
+                shift["id"],
+                employee[0],
+                operation[0],
+                {("86", "Бежевый"): 7},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(submit, range(2)))
+
+        self.assertEqual(sum(result is not None for result in results), 1)
+        conn = sqlite3.connect(self.database.DB_NAME)
+        batch_count = conn.execute(
+            "SELECT COUNT(*) FROM cutting_batches WHERE production_task_id = ? AND status != 'cancelled'",
+            (task["id"],),
+        ).fetchone()[0]
+        reported = conn.execute(
+            "SELECT quantity FROM shift_operations WHERE shift_id = ? AND operation_id = ?",
+            (shift["id"], operation[0]),
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(batch_count, 1)
+        self.assertEqual(reported, 7)
+
+    def test_concurrent_route_completion_posts_stock_once(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+        last_step_index = len(route_maps.PRODUCT_ROUTE_MAPS["Легинсы"]) - 1
+        last_step = route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][last_step_index]
+        telegram_id = 1103
+        self.database.create_employee(telegram_id, "Тест Завершение Один Раз", last_step["position"])
+        employee = self.database.get_employee_by_telegram_id(telegram_id)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        batch = self.database.create_route_batch(
+            "Легинсы",
+            "86",
+            "Бежевый",
+            10,
+            employee[0],
+            route_step_index=last_step_index,
+        )
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(telegram_id, batch["id"])["ok"])
+
+        def complete(_index):
+            return miniapp_server.complete_route_task_for_telegram(
+                telegram_id,
+                batch["id"],
+                {"good_quantity": 10, "defect_quantity": 0},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(complete, range(2)))
+
+        self.assertEqual(sum(result["ok"] for result in results), 1)
+        finished = [row for row in self.database.get_warehouse_stock_rows() if row["item_type"] == "finished"]
+        self.assertEqual(sum(row["quantity"] for row in finished), 10)
+        conn = sqlite3.connect(self.database.DB_NAME)
+        history_count = conn.execute(
+            "SELECT COUNT(*) FROM route_batch_history WHERE batch_id = ?",
+            (batch["id"],),
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(history_count, 1)
+
+    def test_concurrent_orders_cannot_consume_same_semifinished_stock(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+        step_index = len(route_maps.CUTTING_ROUTE)
+        step = route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][step_index]
+        stock = self.database.add_warehouse_stock(
+            "semifinished",
+            "Легинсы",
+            "86",
+            "Бежевый",
+            "Раскроенные",
+            step["position"],
+            10,
+            None,
+        )
+        payload = {
+            "product_name": "Легинсы",
+            "task_type": "route",
+            "route_step_index": step_index,
+            "stock_items": [{"stock_id": stock["id"], "quantity": "10"}],
+        }
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _index: miniapp_server.create_order_task_for_telegram(9001, payload), range(2)))
+
+        self.assertEqual(sum(result["ok"] for result in results), 1)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 0)
+        self.assertEqual(len(self.database.get_active_route_batches()), 1)
+
+    def test_concurrent_route_cancellation_restores_stock_once(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        stock = self.database.add_warehouse_stock(
+            "semifinished", "Легинсы", "86", "Бежевый", "Раскроенные", "Швея", 10, None,
+        )
+        batch = self.database.create_route_batch_with_inputs(
+            "Легинсы",
+            "86",
+            "Бежевый",
+            10,
+            None,
+            4,
+            [{"stock_id": stock["id"], "quantity": 10, "input_role": "main"}],
+        )
+        payload = {"task_kind": "route", "task_id": batch["id"]}
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _index: miniapp_server.delete_order_task_for_telegram(9001, payload), range(2)))
+
+        self.assertEqual(sum(result["ok"] for result in results), 1)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 10)
+
+    def test_mass_route_creation_rolls_back_every_batch_on_shortage(self):
+        stock = self.database.add_warehouse_stock(
+            "semifinished", "Легинсы", "86, 92", "Бежевый", "Раскроенные", "Швея", 10, None,
+        )
+        specs = [
+            {
+                "product_size": product_size,
+                "product_color": "Бежевый",
+                "quantity": 6,
+                "input_items": [{"stock_id": stock["id"], "quantity": 6, "input_role": "main"}],
+            }
+            for product_size in ("86", "92")
+        ]
+
+        result = self.database.create_route_batches_with_inputs(
+            "Легинсы", None, 4, specs,
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 10)
+        self.assertEqual(self.database.get_active_route_batches(), [])
 
     def _create_layout_done_batch(self):
         self.database.create_employee(1001, "Тест Раскройщик", "Раскройщик")
