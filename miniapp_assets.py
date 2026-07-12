@@ -347,6 +347,56 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--sage-dark);
     }
 
+    .analytics-card {
+      width: 100%;
+      text-align: left;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+      border-color: rgba(195,111,85,.28);
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    }
+
+    .analytics-card:hover,
+    .analytics-row:hover {
+      transform: translateY(-1px);
+      border-color: rgba(195,111,85,.54);
+      background: rgba(255,255,255,.74);
+      box-shadow: 0 14px 28px rgba(195,111,85,.15);
+    }
+
+    .analytics-card:active,
+    .analytics-row:active {
+      transform: translateY(0);
+    }
+
+    .analytics-card > span:last-child {
+      color: var(--accent-dark);
+      font-weight: 850;
+    }
+
+    .analytics-row {
+      cursor: pointer;
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    }
+
+    .analytics-formula {
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .analytics-formula strong {
+      display: block;
+      font-size: 22px;
+      margin-bottom: 5px;
+    }
+
+    .analytics-formula span {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
     .progress {
       height: 7px;
       border-radius: 99px;
@@ -1335,6 +1385,10 @@ MINIAPP_HTML = """<!doctype html>
       "adminHomePeriod",
       "adminHomeView",
       "adminHomeEmployee",
+      "analyticsView",
+      "analyticsStage",
+      "analyticsTaskId",
+      "analyticsReturnView",
       "userStartDate",
       "userEndDate",
       "taskCompletionDrafts",
@@ -1390,6 +1444,10 @@ MINIAPP_HTML = """<!doctype html>
       adminHomePeriod: "today",
       adminHomeView: "overview",
       adminHomeEmployee: "",
+      analyticsView: "overview",
+      analyticsStage: "",
+      analyticsTaskId: "",
+      analyticsReturnView: "overview",
       userStartDate: "",
       userEndDate: "",
       taskCompletionDrafts: {},
@@ -3189,6 +3247,133 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function analyticsDuration(minutes) {
+      const value = Number(minutes || 0);
+      if (value < 60) return `${Math.round(value)} мин`;
+      return `${Math.floor(value / 60)} ч ${Math.round(value % 60)} мин`;
+    }
+
+    function analyticsTaskMetric(task, metric) {
+      if (metric === "cycle") return analyticsDuration(task.cycle_minutes);
+      if (metric === "lead") return analyticsDuration(task.lead_minutes);
+      if (metric === "quality") return `${Number(task.good_quantity || 0)} / ${Number(task.defect_quantity || 0)}`;
+      if (metric === "schedule") return task.on_time === true ? "в срок" : task.on_time === false ? "просрочено" : "без срока";
+      if (metric === "quantity") return `${Number(task.quantity || 0)} шт`;
+      return task.status_text || task.status || "открыть";
+    }
+
+    function analyticsTaskRows(tasks, metric = "status") {
+      return tasks.length ? tasks.map((task) => `
+        <div class="card report-row analytics-row" data-analytics-task-id="${escapeHtml(task.id)}">
+          <div><b>${escapeHtml(task.operation || "Задание")}</b><span>#${escapeHtml(task.id)} · ${escapeHtml(task.product || "-")}<br>${escapeHtml(task.size || "-")} · ${escapeHtml(task.color || "-")}${task.employee ? ` · ${escapeHtml(task.employee)}` : ""}</span></div>
+          <span class="status-chip ${metric === "schedule" && task.on_time === false ? "warn" : "gray"}">${escapeHtml(analyticsTaskMetric(task, metric))}</span>
+        </div>
+      `).join("") : itemEmpty("Данных за выбранный период нет.");
+    }
+
+    function analyticsDefectRows(defects) {
+      return defects.length ? defects.map((defect) => `
+        <div class="card report-row analytics-row" data-analytics-task-id="${escapeHtml(defect.batch_id)}">
+          <div><b>${escapeHtml(defect.product)} · ${escapeHtml(defect.stage)}</b><span>${escapeHtml(defect.size)} · ${escapeHtml(defect.color)} · ${escapeHtml(defect.reason)}<br>${escapeHtml(defect.disposition)}${defect.employee ? ` · ${escapeHtml(defect.employee)}` : ""}</span></div>
+          <span class="status-chip warn">${escapeHtml(defect.quantity)} шт</span>
+        </div>
+      `).join("") : itemEmpty("Брак за выбранный период не зарегистрирован.");
+    }
+
+    function analyticsAllTasks(control) {
+      const details = control.details || {};
+      const unique = new Map();
+      [details.active_tasks || [], details.completed_tasks || [], details.planned_tasks || []]
+        .flat()
+        .forEach((task) => unique.set(String(task.id), task));
+      return [...unique.values()];
+    }
+
+    function renderAdminAnalyticsDetail(control) {
+      const details = control.details || {};
+      const view = state.analyticsView || "overview";
+      const period = control.start_date === control.end_date
+        ? control.start_date || ""
+        : `${control.start_date || ""} — ${control.end_date || ""}`;
+      const titles = {
+        planfact: ["План / факт", "Задания, вошедшие в расчёт плана и выпуска."],
+        fpy: ["Качество FPY", "Годная продукция и брак с первого прохождения."],
+        active: ["В работе", "Все активные производственные задания."],
+        semifinished: ["Полуфабрикаты", "Текущие остатки незавершённого производства."],
+        cycle: ["Cycle time", "Время от взятия задания до завершения."],
+        lead: ["Lead time", "Время от создания задания до завершения."],
+        schedule: ["Соблюдение сроков", "Задания со сроком выполнения."],
+        defects: ["Брак", "Изделие, этап, причина и принятое решение."],
+        wip: ["WIP по этапам", "Незавершённое производство по участкам."],
+        stage: [state.analyticsStage || "Этап", "Активные задания выбранного этапа."],
+        alerts: ["Требует внимания", "Свободные, просроченные задания и брак."],
+        task: ["Карточка задания", "Подробные данные производственного задания."],
+      };
+      const heading = titles[view] || titles.planfact;
+      const head = `
+        <div class="screen-head"><div><h2>${escapeHtml(heading[0])}</h2><p>${escapeHtml(heading[1])}</p></div><div class="date">${escapeHtml(period)}</div></div>
+        <div class="section-title"><b>Аналитика</b><button type="button" data-analytics-back>К обзору</button></div>
+      `;
+
+      if (view === "task") {
+        const task = analyticsAllTasks(control).find((row) => String(row.id) === String(state.analyticsTaskId));
+        if (!task) return `${head}${itemEmpty("Задание не найдено в текущем периоде.")}`;
+        const taskDefects = (details.defects || control.defects || []).filter((row) => String(row.batch_id) === String(task.id));
+        return `${head}
+          <div class="card order-detail">
+            <div class="order-head"><div class="op-icon">▣</div><div><b>${escapeHtml(task.operation)}</b><span>#${escapeHtml(task.id)} · ${escapeHtml(task.product)}</span></div><span class="status-chip ${task.on_time === false ? "warn" : "gray"}">${escapeHtml(task.status_text)}</span></div>
+            <div class="detail-grid">
+              <div class="detail-box"><span>Размер</span><strong>${escapeHtml(task.size || "-")}</strong></div>
+              <div class="detail-box"><span>Цвет</span><strong>${escapeHtml(task.color || "-")}</strong></div>
+              <div class="detail-box"><span>План</span><strong>${escapeHtml(task.quantity || 0)} шт</strong></div>
+              <div class="detail-box"><span>Годно / брак</span><strong>${escapeHtml(task.good_quantity || 0)} / ${escapeHtml(task.defect_quantity || 0)}</strong></div>
+              <div class="detail-box"><span>Сотрудник</span><strong>${escapeHtml(task.employee || "Не назначен")}</strong></div>
+              <div class="detail-box"><span>Приоритет</span><strong>${escapeHtml(priorityLabel(task.priority))}</strong></div>
+              <div class="detail-box"><span>Срок</span><strong>${escapeHtml(task.due_date || "Не задан")}</strong></div>
+              <div class="detail-box"><span>Этап</span><strong>${escapeHtml(task.stage || "-")}</strong></div>
+              <div class="detail-box"><span>Cycle time</span><strong>${escapeHtml(task.cycle_minutes == null ? "-" : analyticsDuration(task.cycle_minutes))}</strong></div>
+              <div class="detail-box"><span>Lead time</span><strong>${escapeHtml(task.lead_minutes == null ? "-" : analyticsDuration(task.lead_minutes))}</strong></div>
+            </div>
+          </div>
+          <div class="section-title"><b>Брак задания</b><span>${taskDefects.length}</span></div>
+          <div class="op-list">${analyticsDefectRows(taskDefects)}</div>
+        `;
+      }
+
+      if (view === "planfact") return `${head}
+        <div class="card analytics-formula"><strong>${escapeHtml(control.fact || 0)} / ${escapeHtml(control.plan || 0)} шт</strong><span>Факт годной продукции относительно количества во всех созданных заданиях периода.</span></div>
+        <div class="section-title"><b>Созданные задания</b><span>${(details.planned_tasks || []).length}</span></div><div class="op-list">${analyticsTaskRows(details.planned_tasks || [], "quantity")}</div>
+        <div class="section-title"><b>Завершённые задания</b><span>${(details.completed_tasks || []).length}</span></div><div class="op-list">${analyticsTaskRows(details.completed_tasks || [], "quality")}</div>`;
+
+      if (view === "fpy") return `${head}
+        <div class="card analytics-formula"><strong>${escapeHtml(control.fpy || 0)}%</strong><span>FPY = годное количество / (годное количество + брак). Переделка отображается в карточке исходного задания.</span></div>
+        <div class="op-list">${analyticsTaskRows((details.completed_tasks || []).slice().sort((a, b) => Number(b.defect_quantity || 0) - Number(a.defect_quantity || 0)), "quality")}</div>`;
+
+      if (view === "active") return `${head}<div class="op-list">${analyticsTaskRows(details.active_tasks || [], "quantity")}</div>`;
+
+      if (view === "semifinished") return `${head}<div class="op-list">${(details.semifinished || []).length ? (details.semifinished || []).map((row) => `
+        <div class="card report-row"><div><b>${escapeHtml(row.product)} · ${escapeHtml(row.stage)}</b><span>${escapeHtml(row.size)} · ${escapeHtml(row.color)}<br>Для: ${escapeHtml(row.ready_for || "-")}</span></div><span class="status-chip gray">${escapeHtml(row.quantity)} ${escapeHtml(row.unit)}</span></div>
+      `).join("") : itemEmpty("На складе нет полуфабрикатов.")}</div>`;
+
+      if (view === "cycle") return `${head}<div class="op-list">${analyticsTaskRows((details.cycle_tasks || []).slice().sort((a, b) => Number(b.cycle_minutes || 0) - Number(a.cycle_minutes || 0)), "cycle")}</div>`;
+      if (view === "lead") return `${head}<div class="op-list">${analyticsTaskRows((details.lead_tasks || []).slice().sort((a, b) => Number(b.lead_minutes || 0) - Number(a.lead_minutes || 0)), "lead")}</div>`;
+      if (view === "schedule") return `${head}<div class="op-list">${analyticsTaskRows((details.schedule_tasks || []).slice().sort((a, b) => String(a.due_date).localeCompare(String(b.due_date))), "schedule")}</div>`;
+      if (view === "defects") return `${head}<div class="op-list">${analyticsDefectRows(details.defects || control.defects || [])}</div>`;
+
+      if (view === "wip") return `${head}<div class="op-list">${(control.stages || []).length ? (control.stages || []).map((stage) => `
+        <div class="card report-row analytics-row" data-analytics-stage="${escapeHtml(stage.stage)}"><div><b>${escapeHtml(stage.stage)}</b><span>${escapeHtml(stage.tasks)} заданий · свободно ${escapeHtml(stage.free)} · просрочено ${escapeHtml(stage.overdue)}</span></div><span class="status-chip ${stage.overdue ? "warn" : "gray"}">${escapeHtml(stage.quantity)} шт ›</span></div>
+      `).join("") : itemEmpty("Активных производственных этапов сейчас нет.")}</div>`;
+
+      if (view === "stage") {
+        const stageTasks = (details.active_tasks || []).filter((task) => task.stage === state.analyticsStage);
+        return `${head}<div class="op-list">${analyticsTaskRows(stageTasks, "quantity")}</div>`;
+      }
+
+      return `${head}<div class="op-list">${(control.alerts || []).length ? (control.alerts || []).map((alert) => `
+        <div class="card report-row analytics-row" ${alert.batch_id ? `data-analytics-task-id="${escapeHtml(alert.batch_id)}"` : ""}><div><b>${escapeHtml(alert.title)}</b><span>${escapeHtml(alert.detail)}</span></div><span class="status-chip ${alert.type === "overdue" || alert.type === "defect" ? "warn" : "gray"}">${alert.type === "defect" ? "брак" : alert.type === "overdue" ? "срок" : "свободно"} ›</span></div>
+      `).join("") : itemEmpty("Отклонений не найдено.")}</div>`;
+    }
+
     function renderAnalytics() {
       const operations = getReportOperations();
       const feedback = getFeedbackRows();
@@ -3230,33 +3415,33 @@ MINIAPP_HTML = """<!doctype html>
       const control = state.data.admin && state.data.admin.production_control ? state.data.admin.production_control : {};
       const stages = control.stages || [];
       const alerts = control.alerts || [];
-      const durationLabel = (minutes) => {
-        const value = Number(minutes || 0);
-        if (value < 60) return `${Math.round(value)} мин`;
-        return `${Math.floor(value / 60)} ч ${Math.round(value % 60)} мин`;
-      };
+
+      if (state.analyticsView && state.analyticsView !== "overview") {
+        mount.innerHTML = renderAdminAnalyticsDetail(control);
+        return;
+      }
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Контроль производства</h2><p>План, качество, незавершёнка и отклонения.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>План / факт</span><div class="kpi-ico">◎</div></div><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Годная продукция</span></div>
-          <div class="card kpi good"><div class="kpi-top"><span>FPY</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Без брака и переделки</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>В работе</span><div class="kpi-ico">▣</div></div><strong>${escapeHtml(control.active_quantity || 0)}<small> шт</small></strong><span>${escapeHtml(control.active_tasks || 0)} заданий</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Полуфабрикаты</span><div class="kpi-ico">▦</div></div><strong>${escapeHtml(control.semifinished_quantity || 0)}<small> шт</small></strong><span>Незавершённое производство</span></div>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="planfact"><span class="kpi-top"><span>План / факт</span><span class="kpi-ico">◎</span></span><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi good analytics-card" data-analytics-view="fpy"><span class="kpi-top"><span>FPY</span><span class="kpi-ico">✓</span></span><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="active"><span class="kpi-top"><span>В работе</span><span class="kpi-ico">▣</span></span><strong>${escapeHtml(control.active_quantity || 0)}<small> шт</small></strong><span>${escapeHtml(control.active_tasks || 0)} заданий · подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">▦</span></span><strong>${escapeHtml(control.semifinished_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
         </div>
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Cycle time</span><div class="kpi-ico">◷</div></div><strong>${escapeHtml(durationLabel(control.average_cycle_minutes))}</strong><span>От взятия до завершения</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Lead time</span><div class="kpi-ico">◎</div></div><strong>${escapeHtml(durationLabel(control.average_lead_minutes))}</strong><span>От создания задания</span></div>
-          <div class="card kpi good"><div class="kpi-top"><span>В срок</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(control.schedule_adherence || 0)}<small>%</small></strong><span>Заданий со сроком</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Брак</span><div class="kpi-ico">!</div></div><strong>${escapeHtml(control.defect_quantity || 0)}<small> шт</small></strong><span>За выбранный период</span></div>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="cycle"><span class="kpi-top"><span>Cycle time</span><span class="kpi-ico">◷</span></span><strong>${escapeHtml(analyticsDuration(control.average_cycle_minutes))}</strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="lead"><span class="kpi-top"><span>Lead time</span><span class="kpi-ico">◎</span></span><strong>${escapeHtml(analyticsDuration(control.average_lead_minutes))}</strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi good analytics-card" data-analytics-view="schedule"><span class="kpi-top"><span>В срок</span><span class="kpi-ico">✓</span></span><strong>${escapeHtml(control.schedule_adherence || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="defects"><span class="kpi-top"><span>Брак</span><span class="kpi-ico">!</span></span><strong>${escapeHtml(control.defect_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
         </div>
-        <div class="section-title"><b>WIP по этапам</b><span>${stages.length}</span></div>
+        <div class="section-title"><b>WIP по этапам</b><button type="button" data-analytics-view="wip">все этапы</button></div>
         <div class="op-list">
-          ${stages.length ? stages.map((stage) => `<div class="card report-row"><div><b>${escapeHtml(stage.stage)}</b><span>${escapeHtml(stage.tasks)} заданий · свободно ${escapeHtml(stage.free)} · просрочено ${escapeHtml(stage.overdue)}</span></div><span class="status-chip ${stage.overdue ? "warn" : "gray"}">${escapeHtml(stage.quantity)} шт</span></div>`).join("") : itemEmpty("Активных производственных этапов сейчас нет.")}
+          ${stages.length ? stages.map((stage) => `<div class="card report-row analytics-row" data-analytics-stage="${escapeHtml(stage.stage)}"><div><b>${escapeHtml(stage.stage)}</b><span>${escapeHtml(stage.tasks)} заданий · свободно ${escapeHtml(stage.free)} · просрочено ${escapeHtml(stage.overdue)}</span></div><span class="status-chip ${stage.overdue ? "warn" : "gray"}">${escapeHtml(stage.quantity)} шт ›</span></div>`).join("") : itemEmpty("Активных производственных этапов сейчас нет.")}
         </div>
-        <div class="section-title"><b>Требует внимания</b><span>${alerts.length}</span></div>
+        <div class="section-title"><b>Требует внимания</b><button type="button" data-analytics-view="alerts">все ${alerts.length}</button></div>
         <div class="op-list">
-          ${alerts.length ? alerts.map((alert) => `<div class="card report-row"><div><b>${escapeHtml(alert.title)}</b><span>${escapeHtml(alert.detail)}</span></div><span class="status-chip ${alert.type === "overdue" || alert.type === "defect" ? "warn" : "gray"}">${alert.type === "defect" ? "брак" : alert.type === "overdue" ? "срок" : "свободно"}</span></div>`).join("") : itemEmpty("Отклонений не найдено.")}
+          ${alerts.length ? alerts.slice(0, 5).map((alert) => `<div class="card report-row analytics-row" ${alert.batch_id ? `data-analytics-task-id="${escapeHtml(alert.batch_id)}"` : `data-analytics-view="alerts"`}><div><b>${escapeHtml(alert.title)}</b><span>${escapeHtml(alert.detail)}</span></div><span class="status-chip ${alert.type === "overdue" || alert.type === "defect" ? "warn" : "gray"}">${alert.type === "defect" ? "брак" : alert.type === "overdue" ? "срок" : "свободно"} ›</span></div>`).join("") : itemEmpty("Отклонений не найдено.")}
         </div>
       `;
     }
@@ -3759,6 +3944,43 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const analyticsBack = event.target.closest("[data-analytics-back]");
+      if (analyticsBack) {
+        state.analyticsView = "overview";
+        state.analyticsStage = "";
+        state.analyticsTaskId = "";
+        state.analyticsReturnView = "overview";
+        render();
+        return;
+      }
+
+      const analyticsTask = event.target.closest("[data-analytics-task-id]");
+      if (analyticsTask) {
+        state.analyticsReturnView = state.analyticsView === "task" ? "overview" : state.analyticsView || "overview";
+        state.analyticsTaskId = analyticsTask.dataset.analyticsTaskId;
+        state.analyticsView = "task";
+        render();
+        return;
+      }
+
+      const analyticsStage = event.target.closest("[data-analytics-stage]");
+      if (analyticsStage) {
+        state.analyticsStage = analyticsStage.dataset.analyticsStage;
+        state.analyticsView = "stage";
+        state.analyticsTaskId = "";
+        render();
+        return;
+      }
+
+      const analyticsView = event.target.closest("[data-analytics-view]");
+      if (analyticsView) {
+        state.analyticsView = analyticsView.dataset.analyticsView;
+        state.analyticsStage = "";
+        state.analyticsTaskId = "";
+        render();
+        return;
+      }
+
       const go = event.target.closest("[data-go]");
       if (go) {
         setScreen(go.dataset.go);
@@ -4024,6 +4246,18 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
+      if (state.screen === "analytics" && state.data && state.data.is_admin && state.analyticsView !== "overview") {
+        if (state.analyticsView === "task" && state.analyticsReturnView && state.analyticsReturnView !== "task") {
+          state.analyticsView = state.analyticsReturnView;
+        } else {
+          state.analyticsView = "overview";
+          state.analyticsStage = "";
+        }
+        state.analyticsTaskId = "";
+        render();
+        return;
+      }
+
       if (state.screen === "warehouse" && state.warehouseView !== "overview") {
         state.warehouseView = "overview";
         resetWarehouseFilters();

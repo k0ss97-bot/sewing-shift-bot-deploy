@@ -758,6 +758,12 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(control["schedule_adherence"], 100)
         self.assertEqual(control["active_tasks"], 2)
         self.assertTrue(any(alert["type"] == "defect" for alert in control["alerts"]))
+        self.assertTrue(control["details"]["planned_tasks"])
+        self.assertEqual(control["details"]["completed_tasks"][0]["id"], batch["id"])
+        self.assertEqual(control["details"]["completed_tasks"][0]["employee"], "Тест Упаковщик")
+        self.assertEqual(control["details"]["defects"][0]["batch_id"], batch["id"])
+        self.assertTrue(all(task["stage"] for task in control["details"]["active_tasks"]))
+        self.assertTrue(all("batch_id" in alert for alert in control["alerts"]))
 
     def test_open_shift_survives_midnight_and_remains_current(self):
         miniapp_server = importlib.import_module("miniapp_server")

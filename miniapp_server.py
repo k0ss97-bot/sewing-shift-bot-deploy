@@ -82,6 +82,7 @@ from database import (
     get_warehouse_stock_rows,
     get_today_shifts,
     hide_operation,
+    local_now,
     local_today,
     mark_cutting_batch_formed,
     restore_operation,
@@ -2849,11 +2850,82 @@ def minutes_between(start_value: str | None, end_value: str | None):
     return max(0, round(delta.total_seconds() / 60, 1))
 
 
+def production_control_route_row_to_dict(row):
+    step_index = int(row[5] or 0)
+    if row[6] == "done":
+        step_index = max(0, step_index - 1)
+    step = get_route_step(row[1], step_index) or {}
+    cycle_minutes = minutes_between(row[10], row[9])
+    lead_minutes = minutes_between(row[7], row[9])
+    due_date = row[17] or ""
+    completed_date = (row[9] or "")[:10]
+
+    return {
+        "id": row[0],
+        "product": row[1],
+        "size": row[2],
+        "color": format_color_label(row[3]),
+        "quantity": int(row[4] or 0),
+        "status": row[6],
+        "status_text": {
+            "active": "В работе" if row[11] else "Свободно",
+            "done": "Завершено",
+            "cancelled": "Отменено",
+        }.get(row[6], row[6]),
+        "operation": step.get("operation", "Операция"),
+        "position": step.get("position", row[13] or ""),
+        "stage": f"{route_step_category(step)} · {step.get('position', '')}".strip(" ·"),
+        "employee": row[12] or "",
+        "good_quantity": int(row[14] or 0),
+        "defect_quantity": int(row[15] or 0),
+        "priority": row[16] or "normal",
+        "due_date": due_date,
+        "created_at": row[7] or "",
+        "assigned_at": row[10] or "",
+        "completed_at": row[9] or "",
+        "cycle_minutes": cycle_minutes,
+        "lead_minutes": lead_minutes,
+        "on_time": completed_date <= due_date if due_date and completed_date else None,
+        "parent_batch_id": row[18],
+    }
+
+
+def production_control_active_batch_to_dict(batch, step, employee_names):
+    stage = f"{route_step_category(step)} · {step['position']}"
+    now = local_now().isoformat()
+
+    return {
+        "id": batch["id"],
+        "product": batch["product_name"],
+        "size": batch["product_size"],
+        "color": format_color_label(batch["product_color"]),
+        "quantity": int(batch["quantity"] or 0),
+        "status": batch["status"],
+        "status_text": "В работе" if batch.get("assigned_employee_id") else "Свободно",
+        "operation": step["operation"],
+        "position": step["position"],
+        "stage": stage,
+        "employee": employee_names.get(batch.get("assigned_employee_id"), ""),
+        "good_quantity": int(batch.get("good_quantity") or 0),
+        "defect_quantity": int(batch.get("defect_quantity") or 0),
+        "priority": batch.get("priority") or "normal",
+        "due_date": batch.get("due_date") or "",
+        "created_at": batch.get("created_at") or "",
+        "assigned_at": batch.get("assigned_at") or "",
+        "completed_at": "",
+        "cycle_minutes": minutes_between(batch.get("assigned_at"), now),
+        "lead_minutes": minutes_between(batch.get("created_at"), now),
+        "on_time": None,
+        "parent_batch_id": batch.get("parent_batch_id"),
+    }
+
+
 def get_production_control_payload(start_date: str, end_date: str):
     route_rows = get_period_route_batch_rows(start_date, end_date)
     defect_rows = get_route_batch_defect_rows(start_date, end_date)
     active_batches = get_active_route_batches()
     warehouse_rows = get_warehouse_stock_rows()
+    employee_names = {row[0]: row[1] for row in get_all_employees()}
 
     planned_rows = [
         row for row in route_rows
@@ -2879,6 +2951,7 @@ def get_production_control_payload(start_date: str, end_date: str):
     schedule_adherence = round(len(on_time) * 100 / len(due_completed), 1) if due_completed else 0
 
     stage_map = {}
+    active_task_details = []
     alerts = []
     today = local_today().isoformat()
 
@@ -2887,6 +2960,7 @@ def get_production_control_payload(start_date: str, end_date: str):
         if step is None:
             continue
         stage_key = f"{route_step_category(step)} · {step['position']}"
+        active_task_details.append(production_control_active_batch_to_dict(batch, step, employee_names))
         stage = stage_map.setdefault(
             stage_key,
             {"stage": stage_key, "tasks": 0, "quantity": 0, "free": 0, "overdue": 0},
@@ -2900,6 +2974,7 @@ def get_production_control_payload(start_date: str, end_date: str):
             alerts.append(
                 {
                     "type": "overdue",
+                    "batch_id": batch["id"],
                     "title": f"Просрочено задание #{batch['id']}",
                     "detail": f"{batch['product_name']} · {step['operation']} · срок {batch['due_date']}",
                 }
@@ -2908,6 +2983,7 @@ def get_production_control_payload(start_date: str, end_date: str):
             alerts.append(
                 {
                     "type": "free",
+                    "batch_id": batch["id"],
                     "title": f"Свободное задание #{batch['id']}",
                     "detail": f"{batch['product_name']} · {step['position']} · {batch['quantity']} шт",
                 }
@@ -2917,6 +2993,7 @@ def get_production_control_payload(start_date: str, end_date: str):
         alerts.append(
             {
                 "type": "defect",
+                "batch_id": row[1],
                 "title": f"Брак: {row[8]} шт · {row[3]}",
                 "detail": f"{row[6]} · {row[9]} · {row[10]}",
             }
@@ -2925,6 +3002,42 @@ def get_production_control_payload(start_date: str, end_date: str):
     semifinished_quantity = sum(
         int(row["quantity"] or 0) for row in warehouse_rows if row["item_type"] == "semifinished"
     )
+    defect_details = [
+        {
+            "id": row[0],
+            "batch_id": row[1],
+            "date": row[2][:10],
+            "product": row[3],
+            "size": row[4],
+            "color": format_color_label(row[5]),
+            "stage": row[6],
+            "position": row[7],
+            "quantity": row[8],
+            "reason": row[9],
+            "disposition": row[10],
+            "comment": row[11] or "",
+            "rework_batch_id": row[12],
+            "employee": row[14] or "",
+        }
+        for row in defect_rows
+    ]
+    planned_task_details = [production_control_route_row_to_dict(row) for row in planned_rows]
+    completed_task_details = [production_control_route_row_to_dict(row) for row in completed_rows]
+    semifinished_details = [
+        {
+            "id": row["id"],
+            "product": row["product_name"],
+            "size": row["product_size"],
+            "color": format_color_label(row["product_color"]),
+            "stage": row["stage_name"],
+            "ready_for": row["ready_for_position"],
+            "quantity": int(row["quantity"] or 0),
+            "unit": row["unit"] or "шт",
+            "updated_at": row["updated_at"] or "",
+        }
+        for row in warehouse_rows
+        if row["item_type"] == "semifinished"
+    ]
 
     return {
         "start_date": start_date,
@@ -2942,25 +3055,17 @@ def get_production_control_payload(start_date: str, end_date: str):
         "semifinished_quantity": semifinished_quantity,
         "stages": sorted(stage_map.values(), key=lambda row: (-row["overdue"], -row["quantity"], row["stage"])),
         "alerts": alerts[:20],
-        "defects": [
-            {
-                "id": row[0],
-                "batch_id": row[1],
-                "date": row[2][:10],
-                "product": row[3],
-                "size": row[4],
-                "color": format_color_label(row[5]),
-                "stage": row[6],
-                "position": row[7],
-                "quantity": row[8],
-                "reason": row[9],
-                "disposition": row[10],
-                "comment": row[11] or "",
-                "rework_batch_id": row[12],
-                "employee": row[14] or "",
-            }
-            for row in defect_rows
-        ],
+        "defects": defect_details,
+        "details": {
+            "planned_tasks": planned_task_details,
+            "completed_tasks": completed_task_details,
+            "active_tasks": active_task_details,
+            "semifinished": semifinished_details,
+            "cycle_tasks": [row for row in completed_task_details if row["cycle_minutes"] is not None],
+            "lead_tasks": [row for row in completed_task_details if row["lead_minutes"] is not None],
+            "schedule_tasks": [row for row in completed_task_details if row["due_date"]],
+            "defects": defect_details,
+        },
     }
 
 
