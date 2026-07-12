@@ -673,6 +673,144 @@ def restore_incomplete_cutting_shift(
     return True
 
 
+def repair_legacy_uniqueness_conflicts(cursor):
+    now = local_now()
+    now_text = now.isoformat()
+
+    cursor.execute(
+        """
+        SELECT employee_id
+        FROM shifts
+        WHERE status = 'open'
+        GROUP BY employee_id
+        HAVING COUNT(*) > 1
+        """
+    )
+    duplicate_employee_ids = [row[0] for row in cursor.fetchall()]
+
+    for employee_id in duplicate_employee_ids:
+        cursor.execute(
+            """
+            SELECT id, shift_date, start_time, end_time, total_minutes
+            FROM shifts
+            WHERE employee_id = ? AND status = 'open'
+            ORDER BY shift_date DESC, start_time DESC, id DESC
+            """,
+            (employee_id,),
+        )
+        shifts = cursor.fetchall()
+
+        for shift_id, shift_date, start_time, end_time, total_minutes in shifts[1:]:
+            repaired_end_time = end_time or start_time
+            repaired_total_minutes = int(total_minutes or 0)
+            cursor.execute(
+                "SELECT MAX(updated_at) FROM shift_operations WHERE shift_id = ?",
+                (shift_id,),
+            )
+            operation_timestamp = cursor.fetchone()[0]
+
+            if operation_timestamp:
+                try:
+                    start_dt = datetime.strptime(f"{shift_date} {start_time}", "%Y-%m-%d %H:%M")
+                    operation_dt = datetime.fromisoformat(operation_timestamp).replace(tzinfo=None)
+                    elapsed = operation_dt - start_dt
+                    if timedelta(0) <= elapsed <= timedelta(hours=24):
+                        repaired_end_time = operation_dt.strftime("%H:%M")
+                        repaired_total_minutes = int(elapsed.total_seconds() // 60)
+                except (TypeError, ValueError):
+                    pass
+
+            cursor.execute(
+                """
+                UPDATE shifts
+                SET end_time = ?,
+                    total_minutes = ?,
+                    status = 'closed',
+                    edit_until = NULL,
+                    closed_at = COALESCE(closed_at, ?)
+                WHERE id = ? AND status = 'open'
+                """,
+                (repaired_end_time, repaired_total_minutes, now_text, shift_id),
+            )
+            cursor.execute(
+                "INSERT OR IGNORE INTO data_repairs (repair_key, applied_at) VALUES (?, ?)",
+                (f"deduplicate-open-shift-{shift_id}", now_text),
+            )
+
+    cursor.execute(
+        """
+        SELECT production_task_id
+        FROM cutting_batches
+        WHERE production_task_id IS NOT NULL AND status != 'cancelled'
+        GROUP BY production_task_id
+        HAVING COUNT(*) > 1
+        """
+    )
+    duplicate_task_ids = [row[0] for row in cursor.fetchall()]
+    status_priority = {
+        "contours_done": 1,
+        "layout_done": 2,
+        "cutting_in_progress": 3,
+        "cutting_done": 4,
+        "formed": 5,
+    }
+
+    for task_id in duplicate_task_ids:
+        cursor.execute(
+            """
+            SELECT id, status, updated_at
+            FROM cutting_batches
+            WHERE production_task_id = ? AND status != 'cancelled'
+            """,
+            (task_id,),
+        )
+        batches = cursor.fetchall()
+        canonical = max(
+            batches,
+            key=lambda row: (status_priority.get(row[1], 0), row[2] or "", row[0]),
+        )
+
+        for batch_id, _status, _updated_at in batches:
+            if batch_id == canonical[0]:
+                continue
+            cursor.execute(
+                "UPDATE cutting_batches SET status = 'cancelled', updated_at = ? WHERE id = ?",
+                (now_text, batch_id),
+            )
+            cursor.execute(
+                """
+                UPDATE route_batches
+                SET status = 'cancelled', updated_at = ?, completed_at = COALESCE(completed_at, ?)
+                WHERE source_cutting_batch_id = ? AND status = 'active'
+                """,
+                (now_text, now_text, batch_id),
+            )
+            cursor.execute(
+                "INSERT OR IGNORE INTO data_repairs (repair_key, applied_at) VALUES (?, ?)",
+                (f"deduplicate-cutting-batch-{batch_id}", now_text),
+            )
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM route_batch_history
+        WHERE id NOT IN (
+            SELECT MAX(id)
+            FROM route_batch_history
+            GROUP BY batch_id, step_index
+        )
+        """
+    )
+    duplicate_history_ids = [row[0] for row in cursor.fetchall()]
+
+    for history_id in duplicate_history_ids:
+        cursor.execute("DELETE FROM route_batch_history WHERE id = ?", (history_id,))
+        cursor.execute(
+            "INSERT OR IGNORE INTO data_repairs (repair_key, applied_at) VALUES (?, ?)",
+            (f"deduplicate-route-history-{history_id}", now_text),
+        )
+
+
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -1132,6 +1270,8 @@ def init_db():
             FOREIGN KEY (rework_batch_id) REFERENCES route_batches (id)
         )
     """)
+
+    repair_legacy_uniqueness_conflicts(cursor)
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_employee_date ON shifts (employee_id, shift_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_date_status ON shifts (shift_date, status)")

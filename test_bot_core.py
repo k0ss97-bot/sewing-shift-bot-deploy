@@ -91,6 +91,85 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("idx_warehouse_stock_type_position", indexes)
         self.assertIn("idx_warehouse_stock_product", indexes)
 
+    def test_init_db_repairs_legacy_duplicates_before_unique_indexes(self):
+        self.database.create_employee(1099, "Тест Старые Дубли", "Раскройщик")
+        employee = self.database.get_employee_by_telegram_id(1099)
+        self.database.update_employee_status(employee[0], "active")
+        first_shift = self.database.create_shift(employee[0])
+        task = self.database.create_production_task("Легинсы", ["86"], ["Бежевый"], None)
+        route_batch = self.database.create_route_batch("Легинсы", "86", "Бежевый", 5, None, 4)
+        now = self.database.local_now().isoformat()
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("DROP INDEX idx_shifts_one_open")
+        cursor.execute("DROP INDEX idx_cutting_batches_active_task")
+        cursor.execute("DROP INDEX idx_route_batch_history_step")
+        cursor.execute(
+            """
+            INSERT INTO shifts (employee_id, shift_date, start_time, status, created_at)
+            VALUES (?, ?, '23:59', 'open', ?)
+            """,
+            (employee[0], self.database.local_today().isoformat(), now),
+        )
+        cursor.execute(
+            """
+            INSERT INTO cutting_batches (product_name, production_task_id, status, created_at, updated_at)
+            VALUES ('Легинсы', ?, 'contours_done', ?, ?)
+            """,
+            (task["id"], now, now),
+        )
+        cursor.execute(
+            """
+            INSERT INTO cutting_batches (product_name, production_task_id, status, created_at, updated_at)
+            VALUES ('Легинсы', ?, 'layout_done', ?, ?)
+            """,
+            (task["id"], now, now),
+        )
+        for quantity in (4, 5):
+            cursor.execute(
+                """
+                INSERT INTO route_batch_history (
+                    batch_id, step_index, operation_name, position,
+                    employee_id, quantity, completed_at
+                )
+                VALUES (?, 4, 'Тест', 'Швея', ?, ?, ?)
+                """,
+                (route_batch["id"], employee[0], quantity, now),
+            )
+        conn.commit()
+        conn.close()
+
+        self.database.init_db()
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        open_count = conn.execute(
+            "SELECT COUNT(*) FROM shifts WHERE employee_id = ? AND status = 'open'",
+            (employee[0],),
+        ).fetchone()[0]
+        active_cutting_count = conn.execute(
+            "SELECT COUNT(*) FROM cutting_batches WHERE production_task_id = ? AND status != 'cancelled'",
+            (task["id"],),
+        ).fetchone()[0]
+        history_count = conn.execute(
+            "SELECT COUNT(*) FROM route_batch_history WHERE batch_id = ? AND step_index = 4",
+            (route_batch["id"],),
+        ).fetchone()[0]
+        closed_first_shift = conn.execute(
+            "SELECT status FROM shifts WHERE id = ?",
+            (first_shift["id"],),
+        ).fetchone()[0]
+        repair_count = conn.execute(
+            "SELECT COUNT(*) FROM data_repairs WHERE repair_key LIKE 'deduplicate-%'",
+        ).fetchone()[0]
+        conn.close()
+
+        self.assertEqual(open_count, 1)
+        self.assertEqual(active_cutting_count, 1)
+        self.assertEqual(history_count, 1)
+        self.assertEqual(closed_first_shift, "closed")
+        self.assertGreaterEqual(repair_count, 3)
+
     def test_catalog_seed_contains_expected_operations(self):
         operations = self.database.get_active_operations(position="Упаковщик", folder="Нарезание резинки")
         operation_names = {operation[2] for operation in operations}
