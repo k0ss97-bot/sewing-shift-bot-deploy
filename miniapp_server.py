@@ -7,11 +7,13 @@ import os
 import base64
 import threading
 import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, quote, urlparse
 
 from database import (
     add_fabric_receipt,
+    add_route_batch_defect,
     add_edit_log,
     add_feedback_entry,
     add_operation,
@@ -69,6 +71,8 @@ from database import (
     get_recent_shifts,
     get_production_task_attachment,
     get_route_batch_by_id,
+    get_route_batch_defect_rows,
+    get_route_batch_defects,
     get_route_batch_inputs,
     get_production_task_by_id,
     get_production_task_fabric_rolls,
@@ -99,6 +103,18 @@ CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на
 CUTTING_LAYOUT_OPERATION = "Формирование настила"
 CUTTING_CUT_OPERATION = "Раскрой"
 CUTTING_FORM_OPERATION = "Формирование готового кроя"
+DEFECT_REASONS = [
+    "Ошибка раскроя",
+    "Повреждение ткани",
+    "Неверный размер",
+    "Неверный цвет",
+    "Пропуск операции",
+    "Дефект строчки",
+    "Загрязнение",
+    "Повреждение фурнитуры",
+    "Другое",
+]
+DEFECT_DISPOSITIONS = ["Списать", "На переделку", "Уточнить"]
 
 
 def get_admin_ids():
@@ -623,6 +639,10 @@ def route_task_to_dict(batch: dict, current_step: dict, viewer_employee=None):
         "assigned_at": batch.get("assigned_at") or "",
         "good_quantity": batch.get("good_quantity") or 0,
         "defect_quantity": batch.get("defect_quantity") or 0,
+        "priority": batch.get("priority") or "normal",
+        "due_date": batch.get("due_date") or "",
+        "parent_batch_id": batch.get("parent_batch_id"),
+        "defects": get_route_batch_defects(batch["id"]),
         "inputs": [
             {
                 **input_row,
@@ -815,6 +835,16 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     if good_quantity + defect_quantity != batch["quantity"]:
         return {"ok": False, "message": "Распределите всё количество задания между годным и браком."}
 
+    defect_reason = str(payload.get("defect_reason") or "").strip()
+    defect_disposition = str(payload.get("defect_disposition") or "").strip()
+    defect_comment = str(payload.get("defect_comment") or "").strip()
+
+    if defect_quantity > 0:
+        if defect_reason not in DEFECT_REASONS:
+            return {"ok": False, "message": "Выберите причину брака."}
+        if defect_disposition not in DEFECT_DISPOSITIONS:
+            return {"ok": False, "message": "Выберите решение по браку."}
+
     next_step_index = batch["route_step_index"] + 1
     updated_batch = complete_route_batch_step(
         batch["id"],
@@ -861,6 +891,35 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
             employee[0],
             updated_batch["route_step_index"],
             [{"stock_id": stock_row["id"], "quantity": good_quantity, "input_role": "main"}],
+            priority=batch.get("priority") or "normal",
+            due_date=batch.get("due_date") or "",
+        )
+
+    rework_batch = None
+    if defect_quantity > 0 and defect_disposition == "На переделку":
+        rework_batch = create_route_batch(
+            batch["product_name"],
+            batch["product_size"],
+            batch["product_color"],
+            defect_quantity,
+            employee[0],
+            route_step_index=batch["route_step_index"],
+            priority="urgent",
+            due_date=batch.get("due_date") or "",
+            parent_batch_id=batch["id"],
+        )
+
+    if defect_quantity > 0:
+        add_route_batch_defect(
+            batch["id"],
+            employee[0],
+            current_step["operation"],
+            current_step["position"],
+            defect_quantity,
+            defect_reason,
+            defect_disposition,
+            defect_comment,
+            rework_batch["id"] if rework_batch else None,
         )
 
     open_shift = get_open_shift_for_today(employee[0])
@@ -891,7 +950,9 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         f"{route_batch_identity(batch)}. Этап: {current_step['operation']}",
     )
 
-    if auto_batch:
+    if rework_batch:
+        message = f"Этап завершён. Брак: {defect_quantity} шт. Создано задание на переделку #{rework_batch['id']}."
+    elif auto_batch:
         message = f"Этап завершён. Следующее задание создано для должности {next_step['position']}."
     elif next_step:
         message = f"Этап завершён. Результат на складе для должности {next_step['position']}."
@@ -904,6 +965,10 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         "tasks": get_route_tasks_for_telegram(telegram_id)["tasks"],
         "completed_tasks": get_completed_route_tasks_for_telegram(telegram_id),
         "production": get_production_state_for_telegram(telegram_id),
+        "quality": {
+            "defect_reasons": DEFECT_REASONS,
+            "defect_dispositions": DEFECT_DISPOSITIONS,
+        },
     }
 
 
@@ -955,6 +1020,22 @@ def parse_positive_int(value):
         return None
 
     return parsed
+
+
+def parse_task_planning(payload: dict):
+    priority = str(payload.get("priority") or "normal").strip()
+    due_date = str(payload.get("due_date") or "").strip()
+
+    if priority not in {"low", "normal", "high", "urgent"}:
+        return None, None, "Выберите приоритет задания."
+
+    if due_date:
+        try:
+            time.strptime(due_date, "%Y-%m-%d")
+        except ValueError:
+            return None, None, "Укажите срок в формате даты."
+
+    return priority, due_date, ""
 
 
 def infer_attachment_mime_type(file_name: str, mime_type: str):
@@ -1081,7 +1162,7 @@ def production_catalog_to_dict():
 
 
 def production_task_to_dict(row):
-    task_id, product_name, status, created_at, sizes_text, colors_text = row
+    task_id, product_name, status, created_at, sizes_text, colors_text, priority, due_date = row
     colors = split_group_concat(colors_text)
     fabric_rolls = task_fabric_rolls_to_dict(task_id)
     attachment = task_attachment_to_dict(task_id)
@@ -1098,6 +1179,8 @@ def production_task_to_dict(row):
             "cancelled": "отменено",
         }.get(status, status),
         "created_at": created_at,
+        "priority": priority or "normal",
+        "due_date": due_date or "",
         "sizes": split_group_concat(sizes_text, sort_sizes=True),
         "colors": colors,
         "color_labels": [format_color_label(color) for color in colors],
@@ -1338,6 +1421,10 @@ def create_production_task_for_telegram(telegram_id: int, payload: dict):
     sizes = [str(size).strip() for size in payload.get("sizes", []) if str(size).strip()]
     colors = [str(color).strip() for color in payload.get("colors", []) if str(color).strip()]
     raw_fabric_rolls = payload.get("fabric_rolls") or {}
+    priority, due_date, planning_error = parse_task_planning(payload)
+
+    if planning_error:
+        return {"ok": False, "message": planning_error}
 
     if product_name not in PRODUCT_ROUTE_MAPS:
         return {"ok": False, "message": "Выберите изделие."}
@@ -1379,6 +1466,8 @@ def create_production_task_for_telegram(telegram_id: int, payload: dict):
         fabric_rolls=fabric_rolls,
         material_name=material_name,
         attachment=attachment,
+        priority=priority,
+        due_date=due_date,
     )
 
     if task is None:
@@ -1410,6 +1499,10 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     sizes = [str(size).strip() for size in payload.get("sizes", []) if str(size).strip()]
     colors = [str(color).strip() for color in payload.get("colors", []) if str(color).strip()]
     raw_fabric_rolls = payload.get("fabric_rolls") or {}
+    priority, due_date, planning_error = parse_task_planning(payload)
+
+    if planning_error:
+        return {"ok": False, "message": planning_error}
 
     if product_name not in PRODUCT_ROUTE_MAPS:
         return {"ok": False, "message": "Выберите изделие."}
@@ -1459,6 +1552,8 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
             fabric_rolls=fabric_rolls,
             material_name=material_name,
             attachment=attachment,
+            priority=priority,
+            due_date=due_date,
         )
 
         if task is None:
@@ -1613,6 +1708,8 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
             employee_id,
             route_step_index,
             group_inputs,
+            priority=priority,
+            due_date=due_date,
         )
 
         if batch is None:
@@ -2373,6 +2470,7 @@ def append_excel_route_task_rows(sheet, rows):
         "ID задания", "Создано", "Назначено", "Завершено", "Изделие", "Операция",
         "Должность", "Размер", "Цвет", "План", "Годное", "Брак",
         "Выполнение, %", "Брак, %", "Статус", "Сотрудник",
+        "Приоритет", "Срок", "Исходное задание",
     ])
 
     for row in rows:
@@ -2387,6 +2485,7 @@ def append_excel_route_task_rows(sheet, rows):
             round(good * 100 / plan, 1) if plan else 0,
             round(defect * 100 / plan, 1) if plan else 0,
             statuses.get(row[6], row[6]), row[12] or "Свободно",
+            row[16] or "normal", row[17] or "", row[18] or "",
         ])
 
     set_excel_filter_range(sheet)
@@ -2413,19 +2512,15 @@ def append_excel_route_input_rows(sheet, rows):
 
 def append_excel_defect_rows(sheet, rows):
     sheet.append([
-        "ID задания", "Дата", "Сотрудник", "Изделие", "Операция", "Размер",
-        "Цвет", "План", "Брак", "Причина",
+        "ID записи", "ID задания", "Дата", "Сотрудник", "Изделие", "Операция",
+        "Размер", "Цвет", "Брак", "Причина", "Решение", "Комментарий",
+        "Задание на переделку",
     ])
 
     for row in rows:
-        defect = int(row[15] or 0)
-        if defect <= 0:
-            continue
-        step = route_task_excel_step(row)
         sheet.append([
-            row[0], row[9] or row[8] or row[7], row[12] or "", row[1],
-            step.get("operation", ""), row[2], format_color_label(row[3]),
-            int(row[4] or 0), defect, "Нет данных",
+            row[0], row[1], row[2], row[14] or "", row[3], row[6], row[4],
+            format_color_label(row[5]), row[8], row[9], row[10], row[11] or "", row[12] or "",
         ])
 
     set_excel_filter_range(sheet)
@@ -2439,12 +2534,14 @@ def append_excel_production_task_rows(sheet, rows):
     sheet.append([
         "ID задания", "Создано", "Завершено", "Изделие", "Размер", "Цвет",
         "Контуры, шт", "Сформировано, шт", "Статус",
+        "Приоритет", "Срок",
     ])
 
     for row in rows:
         sheet.append([
             row[0], row[3], row[4] or "", row[1], row[5], format_color_label(row[6]),
             int(row[7] or 0), int(row[8] or 0), statuses.get(row[2], row[2]),
+            row[9] or "normal", row[10] or "",
         ])
 
     set_excel_filter_range(sheet)
@@ -2505,6 +2602,21 @@ def append_excel_fabric_balance_rows(sheet, rows):
     set_excel_filter_range(sheet)
 
 
+def append_excel_wip_rows(sheet, rows):
+    sheet.append(["Этап", "Активных заданий", "Количество, шт", "Свободно", "Просрочено"])
+    for row in rows:
+        sheet.append([row["stage"], row["tasks"], row["quantity"], row["free"], row["overdue"]])
+    set_excel_filter_range(sheet)
+
+
+def append_excel_alert_rows(sheet, rows):
+    sheet.append(["Тип", "Событие", "Подробности"])
+    type_labels = {"overdue": "Просрочено", "free": "Свободно", "defect": "Брак"}
+    for row in rows:
+        sheet.append([type_labels.get(row["type"], row["type"]), row["title"], row["detail"]])
+    set_excel_filter_range(sheet)
+
+
 def workbook_to_bytes(workbook):
     output = io.BytesIO()
     workbook.save(output)
@@ -2520,10 +2632,12 @@ def create_period_excel_bytes(start_date: str, end_date: str):
     shift_rows = get_period_shift_details(start_date, end_date)
     feedback_rows = get_feedback_entries(start_date, end_date)
     route_rows = get_period_route_batch_rows(start_date, end_date)
+    defect_rows = get_route_batch_defect_rows(start_date, end_date)
     route_input_rows = get_period_route_batch_input_rows(start_date, end_date)
     production_rows = get_period_production_task_item_rows(start_date, end_date)
     warehouse_movement_rows = get_period_warehouse_movement_rows(start_date, end_date)
     fabric_movement_rows = get_period_fabric_movement_rows(start_date, end_date)
+    production_control = get_production_control_payload(start_date, end_date)
 
     workbook = Workbook()
 
@@ -2543,10 +2657,16 @@ def create_period_excel_bytes(start_date: str, end_date: str):
     summary_sheet.append([])
     summary_sheet.append(["Производственный показатель", "Значение"])
     summary_sheet.append(["Маршрутных заданий", len(route_rows)])
-    summary_sheet.append(["План, шт", sum(int(row[4] or 0) for row in route_rows)])
+    summary_sheet.append(["План, шт", production_control["plan"]])
     summary_sheet.append(["Годная продукция, шт", sum(int(row[14] or 0) for row in route_rows)])
     summary_sheet.append(["Брак, шт", sum(int(row[15] or 0) for row in route_rows)])
     summary_sheet.append(["Заданий раскроя", len({row[0] for row in production_rows})])
+    summary_sheet.append(["FPY, %", production_control["fpy"]])
+    summary_sheet.append(["Средний cycle time, мин", production_control["average_cycle_minutes"]])
+    summary_sheet.append(["Средний lead time, мин", production_control["average_lead_minutes"]])
+    summary_sheet.append(["Выполнено в срок, %", production_control["schedule_adherence"]])
+    summary_sheet.append(["WIP активных заданий, шт", production_control["active_quantity"]])
+    summary_sheet.append(["Полуфабрикаты на складе, шт", production_control["semifinished_quantity"]])
     summary_sheet.append(["Период", f"{start_date} — {end_date}"])
 
     shifts_sheet = workbook.create_sheet("Смены по дням", 1)
@@ -2572,7 +2692,7 @@ def create_period_excel_bytes(start_date: str, end_date: str):
     append_excel_route_input_rows(route_inputs_sheet, route_input_rows)
 
     defects_sheet = workbook.create_sheet("Брак")
-    append_excel_defect_rows(defects_sheet, route_rows)
+    append_excel_defect_rows(defects_sheet, defect_rows)
 
     warehouse_movements_sheet = workbook.create_sheet("Движения склада")
     append_excel_warehouse_movement_rows(warehouse_movements_sheet, warehouse_movement_rows)
@@ -2585,6 +2705,12 @@ def create_period_excel_bytes(start_date: str, end_date: str):
 
     fabric_balance_sheet = workbook.create_sheet("Остатки материалов")
     append_excel_fabric_balance_rows(fabric_balance_sheet, get_fabric_stock_rows())
+
+    wip_sheet = workbook.create_sheet("WIP по этапам")
+    append_excel_wip_rows(wip_sheet, production_control["stages"])
+
+    alerts_sheet = workbook.create_sheet("Отклонения")
+    append_excel_alert_rows(alerts_sheet, production_control["alerts"])
 
     feedback_sheet = workbook.create_sheet("Обратная связь")
     append_excel_feedback_rows(feedback_sheet, feedback_rows)
@@ -2611,9 +2737,12 @@ def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str
     shift_rows = get_employee_shifts_by_period(employee_id, start_date, end_date)
     feedback_rows = get_feedback_entries(start_date, end_date, employee_id=employee_id)
     route_rows = get_period_route_batch_rows(start_date, end_date, employee_id=employee_id)
+    defect_rows = get_route_batch_defect_rows(start_date, end_date, employee_id=employee_id)
     route_input_rows = get_period_route_batch_input_rows(start_date, end_date, employee_id=employee_id)
     warehouse_movement_rows = get_period_warehouse_movement_rows(start_date, end_date, employee_id=employee_id)
     fabric_movement_rows = get_period_fabric_movement_rows(start_date, end_date, employee_id=employee_id)
+    employee_defect_quantity = sum(int(row[8] or 0) for row in defect_rows)
+    employee_good_quantity = sum(int(row[14] or 0) for row in route_rows if date_in_period(row[9], start_date, end_date))
 
     workbook = Workbook()
 
@@ -2626,9 +2755,17 @@ def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str
     summary_sheet.append(["Отработано смен", shift_count])
     summary_sheet.append(["Отработано часов", minutes_to_excel_time(total_minutes)])
     summary_sheet.append(["Маршрутных заданий", len(route_rows)])
-    summary_sheet.append(["План, шт", sum(int(row[4] or 0) for row in route_rows)])
+    summary_sheet.append([
+        "План, шт",
+        sum(int(row[4] or 0) for row in route_rows if row[6] != "cancelled" and date_in_period(row[7], start_date, end_date)),
+    ])
     summary_sheet.append(["Годная продукция, шт", sum(int(row[14] or 0) for row in route_rows)])
     summary_sheet.append(["Брак, шт", sum(int(row[15] or 0) for row in route_rows)])
+    summary_sheet.append([
+        "FPY, %",
+        round(employee_good_quantity * 100 / (employee_good_quantity + employee_defect_quantity), 1)
+        if employee_good_quantity + employee_defect_quantity else 0,
+    ])
 
     shifts_sheet = workbook.create_sheet("Смены по дням", 1)
     append_excel_shift_rows(shifts_sheet, shift_rows, employee_name=full_name)
@@ -2643,7 +2780,7 @@ def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str
     append_excel_route_input_rows(route_inputs_sheet, route_input_rows)
 
     defects_sheet = workbook.create_sheet("Брак")
-    append_excel_defect_rows(defects_sheet, route_rows)
+    append_excel_defect_rows(defects_sheet, defect_rows)
 
     warehouse_movements_sheet = workbook.create_sheet("Движения склада")
     append_excel_warehouse_movement_rows(warehouse_movements_sheet, warehouse_movement_rows)
@@ -2696,6 +2833,137 @@ def quantity_text(value):
     return format_number(quantity_as_float(value))
 
 
+def date_in_period(value: str | None, start_date: str, end_date: str):
+    return bool(value and start_date <= value[:10] <= end_date)
+
+
+def minutes_between(start_value: str | None, end_value: str | None):
+    if not start_value or not end_value:
+        return None
+
+    try:
+        delta = datetime.fromisoformat(end_value) - datetime.fromisoformat(start_value)
+    except ValueError:
+        return None
+
+    return max(0, round(delta.total_seconds() / 60, 1))
+
+
+def get_production_control_payload(start_date: str, end_date: str):
+    route_rows = get_period_route_batch_rows(start_date, end_date)
+    defect_rows = get_route_batch_defect_rows(start_date, end_date)
+    active_batches = get_active_route_batches()
+    warehouse_rows = get_warehouse_stock_rows()
+
+    planned_rows = [
+        row for row in route_rows
+        if row[6] != "cancelled" and date_in_period(row[7], start_date, end_date)
+    ]
+    completed_rows = [row for row in route_rows if date_in_period(row[9], start_date, end_date)]
+    plan = sum(int(row[4] or 0) for row in planned_rows)
+    good = sum(int(row[14] or 0) for row in completed_rows)
+    defect_quantity = sum(int(row[8] or 0) for row in defect_rows)
+    first_pass_total = good + defect_quantity
+    fpy = round(good * 100 / first_pass_total, 1) if first_pass_total else 0
+
+    cycle_values = [
+        value for value in (minutes_between(row[10], row[9]) for row in completed_rows)
+        if value is not None
+    ]
+    lead_values = [
+        value for value in (minutes_between(row[7], row[9]) for row in completed_rows)
+        if value is not None
+    ]
+    due_completed = [row for row in completed_rows if row[17]]
+    on_time = [row for row in due_completed if (row[9] or "")[:10] <= row[17]]
+    schedule_adherence = round(len(on_time) * 100 / len(due_completed), 1) if due_completed else 0
+
+    stage_map = {}
+    alerts = []
+    today = local_today().isoformat()
+
+    for batch in active_batches:
+        step = get_route_step(batch["product_name"], batch["route_step_index"])
+        if step is None:
+            continue
+        stage_key = f"{route_step_category(step)} · {step['position']}"
+        stage = stage_map.setdefault(
+            stage_key,
+            {"stage": stage_key, "tasks": 0, "quantity": 0, "free": 0, "overdue": 0},
+        )
+        stage["tasks"] += 1
+        stage["quantity"] += int(batch["quantity"] or 0)
+        if not batch.get("assigned_employee_id"):
+            stage["free"] += 1
+        if batch.get("due_date") and batch["due_date"] < today:
+            stage["overdue"] += 1
+            alerts.append(
+                {
+                    "type": "overdue",
+                    "title": f"Просрочено задание #{batch['id']}",
+                    "detail": f"{batch['product_name']} · {step['operation']} · срок {batch['due_date']}",
+                }
+            )
+        elif not batch.get("assigned_employee_id"):
+            alerts.append(
+                {
+                    "type": "free",
+                    "title": f"Свободное задание #{batch['id']}",
+                    "detail": f"{batch['product_name']} · {step['position']} · {batch['quantity']} шт",
+                }
+            )
+
+    for row in defect_rows[:10]:
+        alerts.append(
+            {
+                "type": "defect",
+                "title": f"Брак: {row[8]} шт · {row[3]}",
+                "detail": f"{row[6]} · {row[9]} · {row[10]}",
+            }
+        )
+
+    semifinished_quantity = sum(
+        int(row["quantity"] or 0) for row in warehouse_rows if row["item_type"] == "semifinished"
+    )
+
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "plan": plan,
+        "fact": good,
+        "defect_quantity": defect_quantity,
+        "fpy": fpy,
+        "completed_tasks": len(completed_rows),
+        "average_cycle_minutes": round(sum(cycle_values) / len(cycle_values), 1) if cycle_values else 0,
+        "average_lead_minutes": round(sum(lead_values) / len(lead_values), 1) if lead_values else 0,
+        "schedule_adherence": schedule_adherence,
+        "active_tasks": len(active_batches),
+        "active_quantity": sum(int(batch["quantity"] or 0) for batch in active_batches),
+        "semifinished_quantity": semifinished_quantity,
+        "stages": sorted(stage_map.values(), key=lambda row: (-row["overdue"], -row["quantity"], row["stage"])),
+        "alerts": alerts[:20],
+        "defects": [
+            {
+                "id": row[0],
+                "batch_id": row[1],
+                "date": row[2][:10],
+                "product": row[3],
+                "size": row[4],
+                "color": format_color_label(row[5]),
+                "stage": row[6],
+                "position": row[7],
+                "quantity": row[8],
+                "reason": row[9],
+                "disposition": row[10],
+                "comment": row[11] or "",
+                "rework_batch_id": row[12],
+                "employee": row[14] or "",
+            }
+            for row in defect_rows
+        ],
+    }
+
+
 def get_admin_home_period_payload(
     period_id: str,
     title: str,
@@ -2705,6 +2973,8 @@ def get_admin_home_period_payload(
     open_shifts: list[dict],
 ):
     report = get_admin_report_payload("period", start_date, end_date)
+    control = get_production_control_payload(start_date, end_date)
+    route_rows = get_period_route_batch_rows(start_date, end_date)
     employee_by_name = {employee["full_name"]: employee for employee in employees}
     rows_by_name = {}
 
@@ -2740,13 +3010,9 @@ def get_admin_home_period_payload(
             employee["start_time"] = shift.get("start_time") or ""
             employee["date"] = shift.get("date") or start_date
 
-    fact_total = 0.0
-
     for operation in report.get("operations", []):
         employee = ensure_employee(operation.get("employee") or "Сотрудник")
         operation_quantity = quantity_as_float(operation.get("quantity"))
-        fact_total += operation_quantity
-        employee["fact"] += operation_quantity
         employee["operations"].append(
             {
                 "operation": operation.get("operation") or "-",
@@ -2760,8 +3026,18 @@ def get_admin_home_period_payload(
             }
         )
 
+    for row in route_rows:
+        if not row[12]:
+            continue
+        employee = ensure_employee(row[12])
+        if row[6] != "cancelled" and date_in_period(row[7], start_date, end_date):
+            employee["plan"] += int(row[4] or 0)
+        if date_in_period(row[9], start_date, end_date):
+            employee["fact"] += int(row[14] or 0)
+
     for employee in rows_by_name.values():
         employee["fact_text"] = quantity_text(employee["fact"])
+        employee["plan_text"] = quantity_text(employee["plan"])
         employee["operations"].sort(key=lambda row: (row["date"], row["operation"], row["size"], row["color"]))
 
     employee_rows = sorted(
@@ -2774,14 +3050,15 @@ def get_admin_home_period_payload(
         "title": title,
         "start_date": start_date,
         "end_date": end_date,
-        "plan": 0,
-        "plan_text": "0",
-        "fact": fact_total,
-        "fact_text": quantity_text(fact_total),
-        "defect_count": 0,
+        "plan": control["plan"],
+        "plan_text": quantity_text(control["plan"]),
+        "fact": control["fact"],
+        "fact_text": quantity_text(control["fact"]),
+        "defect_count": len(control["defects"]),
         "employees": employee_rows,
-        "defects": [],
+        "defects": control["defects"],
         "defect_fields": ["Изделие", "Этап", "Причина"],
+        "control": control,
     }
 
 
@@ -2855,6 +3132,9 @@ def get_admin_dashboard(telegram_id: int):
             feedback_row_to_dict(row)
             for row in get_feedback_entries(month_start, today)
         ],
+        "production_control": get_production_control_payload(month_start, today),
+        "defect_reasons": DEFECT_REASONS,
+        "defect_dispositions": DEFECT_DISPOSITIONS,
     }
 
 
@@ -3267,6 +3547,10 @@ def get_app_state(telegram_id: int, message: str = ""):
         "history": get_employee_history_for_telegram(telegram_id, {}),
         "routes": get_routes_payload(telegram_id),
         "production": get_production_state_for_telegram(telegram_id),
+        "quality": {
+            "defect_reasons": DEFECT_REASONS,
+            "defect_dispositions": DEFECT_DISPOSITIONS,
+        },
         "admin": get_admin_dashboard(telegram_id) if is_admin_user else None,
         "features": {
             "can_work": bool(employee and employee.get("status") == "active"),

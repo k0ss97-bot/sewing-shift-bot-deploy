@@ -1314,6 +1314,8 @@ MINIAPP_HTML = """<!doctype html>
       "orderSizes",
       "orderColors",
       "orderQuantity",
+      "orderPriority",
+      "orderDueDate",
       "orderStockQuantities",
       "orderFabricRolls",
       "reportSection",
@@ -1367,6 +1369,8 @@ MINIAPP_HTML = """<!doctype html>
       orderSizes: [],
       orderColors: [],
       orderQuantity: "1",
+      orderPriority: "normal",
+      orderDueDate: "",
       orderStockQuantities: {},
       orderFabricRolls: {},
       orderAttachment: null,
@@ -1968,10 +1972,13 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderPlanFactCards(entity) {
+      const plan = Number(entity.plan || 0);
+      const fact = Number(entity.fact || 0);
+      const factPercent = plan > 0 ? Math.min(100, Math.round(fact * 100 / plan)) : 0;
       return `
         <div class="kpi-grid">
           <div class="card kpi"><div class="kpi-top"><span>План</span><div class="kpi-ico">◎</div></div><strong>${escapeHtml(entity.plan_text || "0")}</strong><span>Плановое количество</span><div class="progress"><i style="--w:0%"></i></div></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Факт</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(entity.fact_text || "0")}</strong><span>Сделано по отчётам</span><div class="progress sage"><i style="--w:${Math.min(100, Number(entity.fact || 0))}%"></i></div></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Факт</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(entity.fact_text || "0")}</strong><span>Сделано по заданиям</span><div class="progress sage"><i style="--w:${factPercent}%"></i></div></div>
         </div>
       `;
     }
@@ -2047,7 +2054,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="screen-head"><div><h2>Брак</h2><p>${escapeHtml(period.title)} · изделие, этап, причина.</p></div><div class="date">${escapeHtml(defects.length)} записей</div></div>
         <div class="op-list">
           ${defects.length ? defects.map((defect) => `
-            <div class="card report-row"><div><b>${escapeHtml(defect.product || "-")}</b><span>${escapeHtml(defect.stage || "-")}<br>${escapeHtml(defect.reason || "Причина не указана")}</span></div><span class="status-chip gray">${escapeHtml(defect.date || "")}</span></div>
+            <div class="card report-row"><div><b>${escapeHtml(defect.product || "-")} · ${escapeHtml(defect.quantity || 0)} шт</b><span>${escapeHtml(defect.stage || "-")} · ${escapeHtml(defect.size || "-")} · ${escapeHtml(defect.color || "-")}<br>${escapeHtml(defect.reason || "Причина не указана")} · ${escapeHtml(defect.disposition || "Решение не указано")}${defect.rework_batch_id ? ` · переделка #${escapeHtml(defect.rework_batch_id)}` : ""}</span></div><span class="status-chip gray">${escapeHtml(defect.date || "")}</span></div>
           `).join("") : `
             <div class="card field-card">
               <div class="report-row"><div><b>Изделие</b><span>Этап<br>Причина</span></div><span class="status-chip gray">0</span></div>
@@ -2368,6 +2375,7 @@ MINIAPP_HTML = """<!doctype html>
       const selectedTask = workTasks[state.selectedReportTask] || workTasks[0];
       const selectedCuttingTask = cuttingWorkTasks[state.selectedCuttingReportTask] || cuttingWorkTasks[0];
       const taskDraft = selectedTask ? (state.taskCompletionDrafts[selectedTask.id] || {}) : {};
+      const quality = state.data && state.data.quality ? state.data.quality : {defect_reasons: [], defect_dispositions: []};
       mainButton.textContent = state.reportSection === "work" && (selectedCuttingTask || selectedTask) ? (selectedCuttingTask ? "Выполнить этап" : "Выполнить задание") : "Обновить отчёт";
       mainButton.disabled = false;
 
@@ -2410,6 +2418,13 @@ MINIAPP_HTML = """<!doctype html>
               <div class="form-grid">
                 <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(taskDraft.good ?? selectedTask.quantity)}"></div>
                 <div class="field"><label>Брак</label><input id="taskDefectQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(taskDraft.defect ?? 0)}"></div>
+                <div class="field full" id="taskDefectDetails" style="display:${Number(taskDraft.defect || 0) > 0 ? "block" : "none"}">
+                  <div class="form-grid">
+                    <div class="field full"><label>Причина брака</label><select id="taskDefectReason"><option value="">Выберите причину</option>${(quality.defect_reasons || []).map((reason) => `<option value="${escapeHtml(reason)}" ${taskDraft.defect_reason === reason ? "selected" : ""}>${escapeHtml(reason)}</option>`).join("")}</select></div>
+                    <div class="field full"><label>Решение</label><select id="taskDefectDisposition"><option value="">Выберите решение</option>${(quality.defect_dispositions || []).map((disposition) => `<option value="${escapeHtml(disposition)}" ${taskDraft.defect_disposition === disposition ? "selected" : ""}>${escapeHtml(disposition)}</option>`).join("")}</select></div>
+                    <div class="field full"><label>Комментарий</label><textarea id="taskDefectComment" placeholder="Что произошло">${escapeHtml(taskDraft.defect_comment || "")}</textarea></div>
+                  </div>
+                </div>
                 <div class="field full"><label>Остаток задания</label><input type="text" value="${escapeHtml(selectedTask.product_size)} · ${escapeHtml(selectedTask.product_color)} · ${escapeHtml(selectedTask.quantity)} шт" disabled></div>
               </div>
               <div class="button-row"><button class="small-button" data-report-action="complete-task">Выполнить задание</button></div>
@@ -2428,6 +2443,7 @@ MINIAPP_HTML = """<!doctype html>
               <div class="card order-card">
                 <div class="order-head route-order-head"><div class="op-icon">✓</div><div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">Завершено</span></div>
                 <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.good_quantity || 0)} годн. · ${escapeHtml(task.defect_quantity || 0)} брак</strong></div>
+                ${(task.defects || []).length ? `<div class="route-inputs">${task.defects.map((defect) => `<div class="route-input-row"><span>${escapeHtml(defect.reason)} · ${escapeHtml(defect.disposition)}</span><span>${defect.rework_batch_id ? `переделка #${escapeHtml(defect.rework_batch_id)}` : `${escapeHtml(defect.quantity)} шт`}</span></div>`).join("")}</div>` : ""}
               </div>
             `).join("") : itemEmpty("Завершённых заданий пока нет.")}
           </div>
@@ -2489,6 +2505,8 @@ MINIAPP_HTML = """<!doctype html>
       state.orderSizes = [];
       state.orderColors = [];
       state.orderQuantity = "1";
+      state.orderPriority = "normal";
+      state.orderDueDate = "";
       state.orderStockQuantities = {};
       state.orderFabricRolls = {};
       state.orderAttachment = null;
@@ -2526,6 +2544,8 @@ MINIAPP_HTML = """<!doctype html>
       const routeStep = document.getElementById("orderRouteStep");
       const material = document.getElementById("orderMaterial");
       const quantity = document.getElementById("orderQuantity");
+      const priority = document.getElementById("orderPriority");
+      const dueDate = document.getElementById("orderDueDate");
       const stockQuantityInputs = document.querySelectorAll("[data-stock-quantity]");
       const fabricRollInputs = document.querySelectorAll("[data-fabric-rolls]");
       const previousProduct = state.orderProduct;
@@ -2536,6 +2556,8 @@ MINIAPP_HTML = """<!doctype html>
       if (routeStep) state.orderRouteStep = routeStep.value;
       if (material) state.orderMaterial = material.value;
       if (quantity) state.orderQuantity = quantity.value;
+      if (priority) state.orderPriority = priority.value;
+      if (dueDate) state.orderDueDate = dueDate.value;
       stockQuantityInputs.forEach((input) => {
         state.orderStockQuantities[input.dataset.stockQuantity] = input.value;
       });
@@ -2651,6 +2673,8 @@ MINIAPP_HTML = """<!doctype html>
           sizes: state.orderSizes,
           colors: state.orderColors,
           quantity: state.orderQuantity,
+          priority: state.orderPriority,
+          due_date: state.orderDueDate,
           fabric_rolls: state.orderFabricRolls,
           attachment: state.orderTaskType === "cutting" ? state.orderAttachment : null,
           stock_items: stockItems,
@@ -2948,6 +2972,9 @@ MINIAPP_HTML = """<!doctype html>
           batch_id: current.id,
           good_quantity: goodInput ? goodInput.value : current.quantity,
           defect_quantity: defectInput ? defectInput.value : 0,
+          defect_reason: document.getElementById("taskDefectReason") ? document.getElementById("taskDefectReason").value : "",
+          defect_disposition: document.getElementById("taskDefectDisposition") ? document.getElementById("taskDefectDisposition").value : "",
+          defect_comment: document.getElementById("taskDefectComment") ? document.getElementById("taskDefectComment").value : "",
         });
 
         if (!data.ok) {
@@ -3050,6 +3077,13 @@ MINIAPP_HTML = """<!doctype html>
             ${state.orderTaskType === "cutting" ? `<div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>` : ""}
           </div>
         </div>
+        <div class="card field-card">
+          <label>Планирование</label>
+          <div class="form-grid">
+            <div class="field"><label>Приоритет</label><select id="orderPriority"><option value="low" ${state.orderPriority === "low" ? "selected" : ""}>Низкий</option><option value="normal" ${state.orderPriority === "normal" ? "selected" : ""}>Обычный</option><option value="high" ${state.orderPriority === "high" ? "selected" : ""}>Высокий</option><option value="urgent" ${state.orderPriority === "urgent" ? "selected" : ""}>Срочный</option></select></div>
+            <div class="field"><label>Срок</label><input id="orderDueDate" type="date" value="${escapeHtml(state.orderDueDate || "")}"></div>
+          </div>
+        </div>
         ${state.orderTaskType === "cutting" ? `
           <div class="card field-card"><label>Размеры</label>${sizes.length ? renderChoiceChips("size", sizes, state.orderSizes) : itemEmpty("У изделия нет размеров.")}</div>
           <div class="card field-card"><label>Цвета ткани</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
@@ -3060,6 +3094,10 @@ MINIAPP_HTML = """<!doctype html>
         `}
         <div class="button-row"><button class="small-button secondary" data-order-action="cancel">К списку</button><button class="small-button" data-order-action="create">Создать</button></div>
       `;
+    }
+
+    function priorityLabel(priority) {
+      return {low: "Низкий", normal: "Обычный", high: "Высокий", urgent: "Срочный"}[priority] || "Обычный";
     }
 
     function routeTaskCard(task, index, options = {}) {
@@ -3081,6 +3119,7 @@ MINIAPP_HTML = """<!doctype html>
             <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
           </div>
           <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.quantity)} шт</strong></div>
+          ${(task.due_date || task.priority === "urgent" || task.parent_batch_id) ? `<div class="route-inputs"><div class="route-input-row"><span>${task.parent_batch_id ? `Переделка задания #${escapeHtml(task.parent_batch_id)}` : `Приоритет: ${escapeHtml(priorityLabel(task.priority))}`}</span><span>${task.due_date ? `до ${escapeHtml(task.due_date)}` : ""}</span></div></div>` : ""}
           ${renderRouteTaskInputs(task)}
           ${deleteButton}
         </div>
@@ -3140,7 +3179,7 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="section-title"><b>Детали выбранного</b><span>${current ? progressForTask(current) : 0}%</span></div>
         ${current && current.task_kind === "cutting_stage" ? renderCuttingStageSummary(current) : current && current.task_kind === "production" ? `
-          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.status_text || current.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || current.status)}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
+          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.status_text || current.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Приоритет</span><strong>${escapeHtml(priorityLabel(current.priority))}</strong></div><div class="detail-box"><span>Срок</span><strong>${escapeHtml(current.due_date || "Не задан")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || current.status)}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
         ` : current ? `
@@ -3161,7 +3200,7 @@ MINIAPP_HTML = """<!doctype html>
       const total = Math.max(tasks.length, 1);
       const donePercent = Math.round(formed / total * 100);
 
-      mainButton.textContent = state.data && state.data.is_admin ? "Открыть заказы" : "Открыть задания";
+      mainButton.textContent = state.data && state.data.is_admin ? "Обновить контроль" : "Открыть задания";
       mainButton.disabled = false;
 
       if (!state.data || !state.data.is_admin) {
@@ -3188,26 +3227,36 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const control = state.data.admin && state.data.admin.production_control ? state.data.admin.production_control : {};
+      const stages = control.stages || [];
+      const alerts = control.alerts || [];
+      const durationLabel = (minutes) => {
+        const value = Number(minutes || 0);
+        if (value < 60) return `${Math.round(value)} мин`;
+        return `${Math.floor(value / 60)} ч ${Math.round(value % 60)} мин`;
+      };
+
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Статус производства</h2><p>Аналитика по текущим данным миниаппа.</p></div><div class="date">сейчас</div></div>
-        <div class="card chart-card">
-          <div class="chart-top"><div><b>Готовый крой</b><strong>${formed}<small> из ${tasks.length}</small></strong><small>сформированные задания</small></div><div class="ring" style="--p:${donePercent}"><strong>${donePercent}%</strong></div></div>
-          <svg class="chart" viewBox="0 0 330 150" role="img" aria-label="График производства">
-            <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#c36f55" stop-opacity=".28"/><stop offset="1" stop-color="#c36f55" stop-opacity="0"/></linearGradient></defs>
-            <path d="M10 130H320" stroke="rgba(80,55,36,.16)"/><path d="M10 95H320" stroke="rgba(80,55,36,.12)"/><path d="M10 60H320" stroke="rgba(80,55,36,.12)"/><path d="M10 25H320" stroke="rgba(80,55,36,.12)"/>
-            <path d="M12 126 C45 108,54 106,78 92 C103 78,110 85,132 70 C155 52,168 64,190 48 C215 32,232 54,258 42 C282 31,296 30,318 22 L318 136 L12 136 Z" fill="url(#area)"/>
-            <path d="M12 126 C45 108,54 106,78 92 C103 78,110 85,132 70 C155 52,168 64,190 48 C215 32,232 54,258 42 C282 31,296 30,318 22" fill="none" stroke="#c36f55" stroke-width="4" stroke-linecap="round"/>
-          </svg>
-          <div class="mini-metrics">
-            <div class="card mini-metric"><div class="ring" style="--p:${Math.round(operations.length / Math.max(operations.length, 1) * 100)}"><strong>${operations.length}</strong></div><b>Операции</b><span>в отчёте</span></div>
-            <div class="card mini-metric"><div class="ring" style="--p:${Math.round(inCutting / total * 100)}"><strong>${inCutting}</strong></div><b>В раскрое</b><span>заданий</span></div>
-            <div class="card mini-metric"><div class="ring" style="--p:${Math.round(active / total * 100)}"><strong>${active}</strong></div><b>Ожидают</b><span>контуры</span></div>
-          </div>
+        <div class="screen-head"><div><h2>Контроль производства</h2><p>План, качество, незавершёнка и отклонения.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>План / факт</span><div class="kpi-ico">◎</div></div><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Годная продукция</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>FPY</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Без брака и переделки</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>В работе</span><div class="kpi-ico">▣</div></div><strong>${escapeHtml(control.active_quantity || 0)}<small> шт</small></strong><span>${escapeHtml(control.active_tasks || 0)} заданий</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Полуфабрикаты</span><div class="kpi-ico">▦</div></div><strong>${escapeHtml(control.semifinished_quantity || 0)}<small> шт</small></strong><span>Незавершённое производство</span></div>
         </div>
-        <div class="section-title"><b>Показатели</b><button data-go="orders">${state.data && state.data.is_admin ? "все заказы" : "все задания"}</button></div>
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>Cycle time</span><div class="kpi-ico">◷</div></div><strong>${escapeHtml(durationLabel(control.average_cycle_minutes))}</strong><span>От взятия до завершения</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Lead time</span><div class="kpi-ico">◎</div></div><strong>${escapeHtml(durationLabel(control.average_lead_minutes))}</strong><span>От создания задания</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>В срок</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(control.schedule_adherence || 0)}<small>%</small></strong><span>Заданий со сроком</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Брак</span><div class="kpi-ico">!</div></div><strong>${escapeHtml(control.defect_quantity || 0)}<small> шт</small></strong><span>За выбранный период</span></div>
+        </div>
+        <div class="section-title"><b>WIP по этапам</b><span>${stages.length}</span></div>
         <div class="op-list">
-          <div class="card shift-card"><div><b>Остатки ткани</b><span>${fabricRows.length} позиций</span></div><span class="status-chip gray">склад</span></div>
-          <div class="card shift-card"><div><b>Обратная связь</b><span>${feedback.length} сообщений за смену</span></div><span class="status-chip gray">связь</span></div>
+          ${stages.length ? stages.map((stage) => `<div class="card report-row"><div><b>${escapeHtml(stage.stage)}</b><span>${escapeHtml(stage.tasks)} заданий · свободно ${escapeHtml(stage.free)} · просрочено ${escapeHtml(stage.overdue)}</span></div><span class="status-chip ${stage.overdue ? "warn" : "gray"}">${escapeHtml(stage.quantity)} шт</span></div>`).join("") : itemEmpty("Активных производственных этапов сейчас нет.")}
+        </div>
+        <div class="section-title"><b>Требует внимания</b><span>${alerts.length}</span></div>
+        <div class="op-list">
+          ${alerts.length ? alerts.map((alert) => `<div class="card report-row"><div><b>${escapeHtml(alert.title)}</b><span>${escapeHtml(alert.detail)}</span></div><span class="status-chip ${alert.type === "overdue" || alert.type === "defect" ? "warn" : "gray"}">${alert.type === "defect" ? "брак" : alert.type === "overdue" ? "срок" : "свободно"}</span></div>`).join("") : itemEmpty("Отклонений не найдено.")}
         </div>
       `;
     }
@@ -3831,7 +3880,11 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       if (state.screen === "warehouse") { refreshState("Склад обновлён."); return; }
-      if (state.screen === "analytics") { setScreen("orders"); return; }
+      if (state.screen === "analytics") {
+        if (state.data && state.data.is_admin) { refreshAdminDashboard("Контроль производства обновлён."); return; }
+        setScreen("orders");
+        return;
+      }
       if (state.screen === "orders" && state.data && state.data.is_admin) {
         if (state.orderMode === "create") { createOrderTask(); return; }
         resetOrderDraft();
@@ -3854,7 +3907,7 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("input", (event) => {
-      if (event.target.closest("#orderProduct, #orderTaskType, #orderRouteStep, #orderMaterial, #orderQuantity, [data-stock-quantity], [data-fabric-rolls]")) {
+      if (event.target.closest("#orderProduct, #orderTaskType, #orderRouteStep, #orderMaterial, #orderQuantity, #orderPriority, #orderDueDate, [data-stock-quantity], [data-fabric-rolls]")) {
         syncOrderDraft();
       }
       if (event.target.closest("#fabricReceiptMaterial, #fabricReceiptColor, #fabricReceiptQuantity")) {
@@ -3864,10 +3917,17 @@ MINIAPP_HTML = """<!doctype html>
       const routeTasks = getMyRouteTasks();
       const routeTask = routeTasks[state.selectedReportTask] || routeTasks[0];
 
-      if (routeTask && (event.target.closest("#taskGoodQuantity") || event.target.closest("#taskDefectQuantity"))) {
+      if (routeTask && event.target.closest("#taskGoodQuantity, #taskDefectQuantity, #taskDefectReason, #taskDefectDisposition, #taskDefectComment")) {
         const draft = state.taskCompletionDrafts[routeTask.id] || {};
         if (event.target.id === "taskGoodQuantity") draft.good = event.target.value;
-        if (event.target.id === "taskDefectQuantity") draft.defect = event.target.value;
+        if (event.target.id === "taskDefectQuantity") {
+          draft.defect = event.target.value;
+          const defectDetails = document.getElementById("taskDefectDetails");
+          if (defectDetails) defectDetails.style.display = Number(event.target.value || 0) > 0 ? "block" : "none";
+        }
+        if (event.target.id === "taskDefectReason") draft.defect_reason = event.target.value;
+        if (event.target.id === "taskDefectDisposition") draft.defect_disposition = event.target.value;
+        if (event.target.id === "taskDefectComment") draft.defect_comment = event.target.value;
         state.taskCompletionDrafts[routeTask.id] = draft;
       }
 
@@ -3930,7 +3990,7 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      if (event.target.closest("#orderProduct") || event.target.closest("#orderTaskType") || event.target.closest("#orderRouteStep") || event.target.closest("#orderMaterial") || event.target.closest("#orderQuantity") || event.target.closest("[data-stock-quantity]") || event.target.closest("[data-fabric-rolls]")) {
+      if (event.target.closest("#orderProduct") || event.target.closest("#orderTaskType") || event.target.closest("#orderRouteStep") || event.target.closest("#orderMaterial") || event.target.closest("#orderQuantity") || event.target.closest("#orderPriority") || event.target.closest("#orderDueDate") || event.target.closest("[data-stock-quantity]") || event.target.closest("[data-fabric-rolls]")) {
         syncOrderDraft();
         const stockQuantity = event.target.closest("[data-stock-quantity]");
         const fabricRolls = event.target.closest("[data-fabric-rolls]");
@@ -3945,7 +4005,7 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      if (event.target.closest("#feedbackCategory") || event.target.closest("#cuttingProgress")) {
+      if (event.target.closest("#feedbackCategory") || event.target.closest("#cuttingProgress") || event.target.closest("#taskDefectReason") || event.target.closest("#taskDefectDisposition")) {
         event.target.dispatchEvent(new Event("input", {bubbles: true}));
         return;
       }

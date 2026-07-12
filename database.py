@@ -76,6 +76,9 @@ ROUTE_BATCH_COLUMNS = [
     "assigned_at",
     "good_quantity",
     "defect_quantity",
+    "priority",
+    "due_date",
+    "parent_batch_id",
 ]
 ROUTE_BATCH_SELECT = ", ".join(ROUTE_BATCH_COLUMNS)
 PRODUCTION_TASK_COLUMNS = [
@@ -87,6 +90,8 @@ PRODUCTION_TASK_COLUMNS = [
     "updated_at",
     "completed_at",
     "note",
+    "priority",
+    "due_date",
 ]
 WAREHOUSE_STOCK_COLUMNS = [
     "id",
@@ -1032,6 +1037,20 @@ def init_db():
         cursor.execute("ALTER TABLE route_batches ADD COLUMN good_quantity INTEGER NOT NULL DEFAULT 0")
     if "defect_quantity" not in route_batch_columns:
         cursor.execute("ALTER TABLE route_batches ADD COLUMN defect_quantity INTEGER NOT NULL DEFAULT 0")
+    if "priority" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'")
+    if "due_date" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN due_date TEXT")
+    if "parent_batch_id" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN parent_batch_id INTEGER")
+
+    cursor.execute("PRAGMA table_info(production_tasks)")
+    production_task_columns = [column[1] for column in cursor.fetchall()]
+
+    if "priority" not in production_task_columns:
+        cursor.execute("ALTER TABLE production_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'")
+    if "due_date" not in production_task_columns:
+        cursor.execute("ALTER TABLE production_tasks ADD COLUMN due_date TEXT")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batch_inputs (
@@ -1062,6 +1081,28 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS route_batch_defects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            employee_id INTEGER,
+            operation_name TEXT NOT NULL,
+            position TEXT NOT NULL,
+            product_name TEXT NOT NULL,
+            product_size TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            disposition TEXT NOT NULL,
+            comment TEXT,
+            rework_batch_id INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (batch_id) REFERENCES route_batches (id),
+            FOREIGN KEY (employee_id) REFERENCES employees (id),
+            FOREIGN KEY (rework_batch_id) REFERENCES route_batches (id)
+        )
+    """)
+
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_employee_date ON shifts (employee_id, shift_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_date_status ON shifts (shift_date, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_shift ON shift_operations (shift_id)")
@@ -1076,6 +1117,9 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_history_batch ON route_batch_history (batch_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_inputs_batch ON route_batch_inputs (batch_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_inputs_stock ON route_batch_inputs (stock_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_defects_batch ON route_batch_defects (batch_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_defects_date ON route_batch_defects (created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batches_due_date ON route_batches (status, due_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_fabric_stock_color ON fabric_stock (product_color)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_tasks_status ON production_tasks (status, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_items_task ON production_task_items (task_id)")
@@ -2184,12 +2228,18 @@ def create_route_batch(
     route_step_index: int = 0,
     status: str = "active",
     source_stock_id: int | None = None,
+    priority: str = "normal",
+    due_date: str = "",
+    parent_batch_id: int | None = None,
 ):
     if quantity <= 0:
         return None
 
     if status not in {"active", "done"}:
         return None
+
+    if priority not in {"low", "normal", "high", "urgent"}:
+        priority = "normal"
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -2210,9 +2260,12 @@ def create_route_batch(
             created_at,
             updated_at,
             completed_at,
-            source_stock_id
+            source_stock_id,
+            priority,
+            due_date,
+            parent_batch_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             product_name,
@@ -2226,6 +2279,9 @@ def create_route_batch(
             now,
             completed_at,
             source_stock_id,
+            priority,
+            due_date or None,
+            parent_batch_id,
         )
     )
 
@@ -2243,9 +2299,14 @@ def create_route_batch_with_inputs(
     employee_id: int | None,
     route_step_index: int,
     input_items: list[dict],
+    priority: str = "normal",
+    due_date: str = "",
 ):
     if quantity <= 0 or not input_items:
         return None
+
+    if priority not in {"low", "normal", "high", "urgent"}:
+        priority = "normal"
 
     normalized_inputs = []
     stock_totals = {}
@@ -2294,9 +2355,10 @@ def create_route_batch_with_inputs(
             INSERT INTO route_batches (
                 product_name, product_size, product_color, quantity,
                 route_step_index, status, created_by_employee_id,
-                created_at, updated_at, completed_at, source_stock_id
+                created_at, updated_at, completed_at, source_stock_id,
+                priority, due_date
             )
-            VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?)
             """,
             (
                 product_name,
@@ -2308,6 +2370,8 @@ def create_route_batch_with_inputs(
                 now,
                 now,
                 main_stock_id,
+                priority,
+                due_date or None,
             ),
         )
         batch_id = cursor.lastrowid
@@ -2487,6 +2551,117 @@ def complete_route_batch_step(
     conn.commit()
     conn.close()
     return get_route_batch_by_id(batch_id)
+
+
+def add_route_batch_defect(
+    batch_id: int,
+    employee_id: int | None,
+    operation_name: str,
+    position: str,
+    quantity: int,
+    reason: str,
+    disposition: str,
+    comment: str = "",
+    rework_batch_id: int | None = None,
+):
+    batch = get_route_batch_by_id(batch_id)
+
+    if batch is None or quantity <= 0 or not reason.strip() or not disposition.strip():
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO route_batch_defects (
+            batch_id, employee_id, operation_name, position, product_name,
+            product_size, product_color, quantity, reason, disposition,
+            comment, rework_batch_id, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            batch_id,
+            employee_id,
+            operation_name,
+            position,
+            batch["product_name"],
+            batch["product_size"],
+            batch["product_color"],
+            quantity,
+            reason.strip(),
+            disposition.strip(),
+            comment.strip(),
+            rework_batch_id,
+            local_now().isoformat(),
+        ),
+    )
+    defect_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return defect_id
+
+
+def get_route_batch_defect_rows(start_date: str, end_date: str, employee_id: int | None = None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            route_batch_defects.id,
+            route_batch_defects.batch_id,
+            route_batch_defects.created_at,
+            route_batch_defects.product_name,
+            route_batch_defects.product_size,
+            route_batch_defects.product_color,
+            route_batch_defects.operation_name,
+            route_batch_defects.position,
+            route_batch_defects.quantity,
+            route_batch_defects.reason,
+            route_batch_defects.disposition,
+            route_batch_defects.comment,
+            route_batch_defects.rework_batch_id,
+            employees.id,
+            employees.full_name
+        FROM route_batch_defects
+        LEFT JOIN employees ON employees.id = route_batch_defects.employee_id
+        WHERE date(route_batch_defects.created_at) BETWEEN ? AND ?
+          AND (? IS NULL OR route_batch_defects.employee_id = ?)
+        ORDER BY route_batch_defects.created_at DESC, route_batch_defects.id DESC
+        """,
+        (start_date, end_date, employee_id, employee_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_route_batch_defects(batch_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, quantity, reason, disposition, comment, rework_batch_id, created_at
+        FROM route_batch_defects
+        WHERE batch_id = ?
+        ORDER BY id ASC
+        """,
+        (batch_id,),
+    )
+    rows = [
+        {
+            "id": row[0],
+            "quantity": row[1],
+            "reason": row[2],
+            "disposition": row[3],
+            "comment": row[4] or "",
+            "rework_batch_id": row[5],
+            "created_at": row[6],
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return rows
 
 
 def get_shift_report(shift_id: int):
@@ -3986,12 +4161,17 @@ def create_production_task(
     fabric_rolls: dict[str, int] | None = None,
     material_name: str = "Ткань",
     attachment: dict | None = None,
+    priority: str = "normal",
+    due_date: str = "",
 ):
     product_name = product_name.strip()
     sizes = [str(size).strip() for size in sizes if str(size).strip()]
     colors = [str(color).strip() for color in colors if str(color).strip()]
     material_name = material_name.strip() or "Ткань"
     fabric_rolls = fabric_rolls or {}
+
+    if priority not in {"low", "normal", "high", "urgent"}:
+        priority = "normal"
 
     if not product_name or not sizes or not colors:
         return None
@@ -4027,11 +4207,12 @@ def create_production_task(
     cursor.execute(
         """
         INSERT INTO production_tasks (
-            product_name, status, created_by_employee_id, created_at, updated_at, note
+            product_name, status, created_by_employee_id, created_at, updated_at, note,
+            priority, due_date
         )
-        VALUES (?, 'active', ?, ?, ?, ?)
+        VALUES (?, 'active', ?, ?, ?, ?, ?, ?)
         """,
-        (product_name, employee_id, now, now, note.strip()),
+        (product_name, employee_id, now, now, note.strip(), priority, due_date or None),
     )
     task_id = cursor.lastrowid
 
@@ -4145,7 +4326,9 @@ def get_production_task_by_id(task_id: int):
             created_at,
             updated_at,
             completed_at,
-            note
+            note,
+            priority,
+            due_date
         FROM production_tasks
         WHERE id = ?
         """,
@@ -4324,7 +4507,9 @@ def get_active_production_tasks():
             production_tasks.status,
             production_tasks.created_at,
             COALESCE(GROUP_CONCAT(DISTINCT production_task_sizes.product_size), '') AS sizes_text,
-            COALESCE(GROUP_CONCAT(DISTINCT production_task_colors.product_color), '') AS colors_text
+            COALESCE(GROUP_CONCAT(DISTINCT production_task_colors.product_color), '') AS colors_text,
+            production_tasks.priority,
+            production_tasks.due_date
         FROM production_tasks
         LEFT JOIN production_task_sizes ON production_task_sizes.task_id = production_tasks.id
         LEFT JOIN production_task_colors ON production_task_colors.task_id = production_tasks.id
@@ -4333,7 +4518,9 @@ def get_active_production_tasks():
             production_tasks.id,
             production_tasks.product_name,
             production_tasks.status,
-            production_tasks.created_at
+            production_tasks.created_at,
+            production_tasks.priority,
+            production_tasks.due_date
         ORDER BY production_tasks.created_at ASC, production_tasks.id ASC
         """
     )
@@ -5049,7 +5236,10 @@ def get_period_route_batch_rows(start_date: str, end_date: str, employee_id: int
             employees.full_name,
             employees.position,
             route_batches.good_quantity,
-            route_batches.defect_quantity
+            route_batches.defect_quantity,
+            route_batches.priority,
+            route_batches.due_date,
+            route_batches.parent_batch_id
         FROM route_batches
         LEFT JOIN employees ON employees.id = route_batches.assigned_employee_id
         WHERE (
@@ -5118,7 +5308,9 @@ def get_period_production_task_item_rows(start_date: str, end_date: str):
             production_task_items.product_size,
             production_task_items.product_color,
             production_task_items.contour_quantity,
-            production_task_items.formed_quantity
+            production_task_items.formed_quantity,
+            production_tasks.priority,
+            production_tasks.due_date
         FROM production_tasks
         JOIN production_task_items ON production_task_items.task_id = production_tasks.id
         WHERE (

@@ -5516,7 +5516,10 @@ def parse_positive_float(text: str):
 
 
 def format_production_task_line(task_row):
-    task_id, product_name, status, created_at, sizes_text, colors_text = task_row
+    task_id, product_name, status, created_at, sizes_text, colors_text = task_row[:6]
+    priority = task_row[6] if len(task_row) > 6 else "normal"
+    due_date = task_row[7] if len(task_row) > 7 else ""
+    priority_text = {"low": "низкий", "normal": "обычный", "high": "высокий", "urgent": "срочный"}.get(priority, "обычный")
     sizes = ", ".join(sorted((sizes_text or "").split(","), key=size_sort_key))
     colors = ", ".join(color for color in (colors_text or "").split(",") if color)
     created_date = created_at[:10] if created_at else "-"
@@ -5524,6 +5527,8 @@ def format_production_task_line(task_row):
         f"ID {task_id} — {product_name}\n"
         f"   статус: {format_production_task_status(status)}\n"
         f"   дата: {created_date}\n"
+        f"   приоритет: {priority_text}\n"
+        f"   срок: {due_date or '-'}\n"
         f"   размеры: {sizes or '-'}\n"
         f"   цвета: {colors or '-'}"
     )

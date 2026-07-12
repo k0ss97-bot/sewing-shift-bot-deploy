@@ -580,6 +580,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "sizes": ["80", "92"],
                 "colors": ["Бежевый", "Фуксия"],
                 "fabric_rolls": {"Бежевый": "1", "Фуксия": "2"},
+                "priority": "high",
+                "due_date": "2026-07-20",
                 "attachment": {
                     "file_name": "cutting.xlsx",
                     "mime_type": "application/octet-stream",
@@ -589,6 +591,9 @@ class IsolatedDatabaseTest(unittest.TestCase):
         )
 
         self.assertTrue(cutting_result["ok"], cutting_result)
+        cutting_task = self.database.get_production_task_by_id(1)
+        self.assertEqual(cutting_task["priority"], "high")
+        self.assertEqual(cutting_task["due_date"], "2026-07-20")
         self.assertEqual(len(self.database.get_active_production_tasks()), 1)
         self.assertEqual(set(self.database.get_production_task_options(1)[1]), {"Бежевый", "Фуксия"})
         self.assertEqual(
@@ -627,6 +632,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "task_type": "route",
                 "route_step_index": sewing_step_index,
                 "stock_items": stock_items,
+                "priority": "urgent",
+                "due_date": "2026-07-21",
             },
         )
 
@@ -635,6 +642,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(len(batches), 4)
         self.assertEqual({batch["quantity"] for batch in batches}, {7})
         self.assertEqual({batch["route_step_index"] for batch in batches}, {sewing_step_index})
+        self.assertEqual({batch["priority"] for batch in batches}, {"urgent"})
+        self.assertEqual({batch["due_date"] for batch in batches}, {"2026-07-21"})
         self.assertEqual({row["quantity"] for row in self.database.get_warehouse_stock_rows()}, {3})
         self.assertIn("Сборка на оверлоке", {task["operation"] for task in route_result["routes"]["tasks"]})
 
@@ -687,6 +696,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
             10,
             None,
             route_step_index=elastic_step_index,
+            priority="high",
+            due_date=self.database.local_today().isoformat(),
         )
 
         free_tasks = miniapp_server.get_route_tasks_for_telegram(9013)
@@ -701,10 +712,23 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(started_task["assigned_employee_name"], "Тест Упаковщик")
         self.assertTrue(started_task["can_complete"])
 
-        completed = miniapp_server.complete_route_task_for_telegram(
+        missing_reason = miniapp_server.complete_route_task_for_telegram(
             9013,
             batch["id"],
             {"good_quantity": 9, "defect_quantity": 1},
+        )
+        self.assertFalse(missing_reason["ok"], missing_reason)
+
+        completed = miniapp_server.complete_route_task_for_telegram(
+            9013,
+            batch["id"],
+            {
+                "good_quantity": 9,
+                "defect_quantity": 1,
+                "defect_reason": "Повреждение фурнитуры",
+                "defect_disposition": "На переделку",
+                "defect_comment": "Проверить установку",
+            },
         )
         self.assertTrue(completed["ok"], completed)
         completed_batch = self.database.get_route_batch_by_id(batch["id"])
@@ -715,6 +739,25 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(completed["completed_tasks"][0]["status_text"], "Завершено")
         self.assertEqual(completed["completed_tasks"][0]["good_quantity"], 9)
         self.assertEqual(completed["completed_tasks"][0]["defect_quantity"], 1)
+        defect_rows = self.database.get_route_batch_defects(batch["id"])
+        self.assertEqual(defect_rows[0]["reason"], "Повреждение фурнитуры")
+        self.assertEqual(defect_rows[0]["disposition"], "На переделку")
+        self.assertIsNotNone(defect_rows[0]["rework_batch_id"])
+        rework = self.database.get_route_batch_by_id(defect_rows[0]["rework_batch_id"])
+        self.assertEqual(rework["parent_batch_id"], batch["id"])
+        self.assertEqual(rework["priority"], "urgent")
+        self.assertEqual(rework["quantity"], 1)
+        control = miniapp_server.get_production_control_payload(
+            self.database.local_today().isoformat(),
+            self.database.local_today().isoformat(),
+        )
+        self.assertEqual(control["plan"], 20)
+        self.assertEqual(control["fact"], 9)
+        self.assertEqual(control["defect_quantity"], 1)
+        self.assertEqual(control["fpy"], 90)
+        self.assertEqual(control["schedule_adherence"], 100)
+        self.assertEqual(control["active_tasks"], 2)
+        self.assertTrue(any(alert["type"] == "defect" for alert in control["alerts"]))
 
     def test_open_shift_survives_midnight_and_remains_current(self):
         miniapp_server = importlib.import_module("miniapp_server")
@@ -764,7 +807,14 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIsNotNone(batch)
         self.assertTrue(miniapp_server.start_route_task_for_telegram(9041, batch["id"])["ok"])
         completed = miniapp_server.complete_route_task_for_telegram(
-            9041, batch["id"], {"good_quantity": 9, "defect_quantity": 1},
+            9041,
+            batch["id"],
+            {
+                "good_quantity": 9,
+                "defect_quantity": 1,
+                "defect_reason": "Повреждение ткани",
+                "defect_disposition": "Списать",
+            },
         )
         self.assertTrue(completed["ok"], completed)
 
@@ -780,6 +830,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             "Сводка", "Смены по дням", "Операции", "Раскрой", "Пошив", "Упаковка",
             "Задания раскроя", "Маршрутные задания", "Входы заданий", "Брак",
             "Движения склада", "Движения материалов", "Остатки склада", "Остатки материалов",
+            "WIP по этапам", "Отклонения",
         }
         self.assertTrue(expected_sheets.issubset(set(workbook.sheetnames)))
 
@@ -789,7 +840,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(route_values[1][15], "Тест Выгрузка")
         defect_values = list(workbook["Брак"].values)
         self.assertEqual(defect_values[1][8], 1)
-        self.assertEqual(defect_values[1][9], "Нет данных")
+        self.assertEqual(defect_values[1][9], "Повреждение ткани")
+        self.assertEqual(defect_values[1][10], "Списать")
         self.assertGreaterEqual(workbook["Движения склада"].max_row, 3)
         self.assertGreaterEqual(workbook["Движения материалов"].max_row, 2)
 
