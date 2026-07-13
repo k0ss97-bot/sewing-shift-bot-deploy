@@ -20,7 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      DB_DIR: ${{ runner.temp }}/sewing-web-quality-db
       PYTHONDONTWRITEBYTECODE: "1"
       RUN_HTTP_TESTS: "1"
 
@@ -39,7 +38,8 @@ jobs:
         run: |
           test ! -e .env
           test ! -e bot.db
-          mkdir -p "$DB_DIR"
+          echo "DB_DIR=$RUNNER_TEMP/sewing-web-quality-db" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/sewing-web-quality-db"
 
       - name: Compile Python sources
         run: python scripts/check_python_compile.py
