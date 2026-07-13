@@ -59,6 +59,7 @@ from database import (
     get_open_shift_for_today,
     get_pending_employees,
     get_period_employee_summary,
+    get_period_employee_production_performance,
     get_period_fabric_movement_rows,
     get_period_operation_rows,
     get_period_production_task_item_rows,
@@ -3131,7 +3132,7 @@ def get_admin_home_period_payload(
 ):
     report = get_admin_report_payload("period", start_date, end_date)
     control = get_production_control_payload(start_date, end_date)
-    route_rows = get_period_route_batch_rows(start_date, end_date)
+    performance_rows = get_period_employee_production_performance(start_date, end_date)
     employee_by_name = {employee["full_name"]: employee for employee in employees}
     rows_by_name = {}
 
@@ -3183,14 +3184,12 @@ def get_admin_home_period_payload(
             }
         )
 
-    for row in route_rows:
-        if not row[12]:
-            continue
-        employee = ensure_employee(row[12])
-        if row[6] != "cancelled" and date_in_period(row[7], start_date, end_date):
-            employee["plan"] += int(row[4] or 0)
-        if date_in_period(row[9], start_date, end_date):
-            employee["fact"] += int(row[14] or 0)
+    for _employee_id, full_name, position, plan, fact in performance_rows:
+        employee = ensure_employee(full_name)
+        if employee["position"] == "-":
+            employee["position"] = position or "-"
+        employee["plan"] += int(plan or 0)
+        employee["fact"] += int(fact or 0)
 
     for employee in rows_by_name.values():
         employee["fact_text"] = quantity_text(employee["fact"])

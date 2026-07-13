@@ -281,6 +281,83 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(cursor.fetchone(), (first_step["operation"], first_step["position"], 12))
         conn.close()
 
+    def test_period_employee_performance_includes_every_production_position(self):
+        today = self.database.local_today().isoformat()
+        employees = {}
+        for telegram_id, full_name, position in (
+            (4101, "Тест Раскрой Отчёт", "Раскройщик"),
+            (4102, "Тест Швея Отчёт", "Швея"),
+            (4103, "Тест Упаковка Отчёт", "Упаковщик"),
+        ):
+            self.database.create_employee(telegram_id, full_name, position)
+            employee = self.database.get_employee_by_telegram_id(telegram_id)
+            self.database.update_employee_status(employee[0], "active")
+            employees[position] = employee[0]
+
+        cutter_shift = self.database.create_shift(employees["Раскройщик"])
+        task = self.database.create_production_task("Легинсы", ["86"], ["Бежевый"], None)
+        batch = self.database.create_route_batch("Легинсы", "86", "Бежевый", 10, None, 4)
+        now = self.database.local_now().isoformat()
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE production_task_items
+            SET contour_quantity = 8, formed_quantity = 8
+            WHERE task_id = ?
+            """,
+            (task["id"],),
+        )
+        cursor.execute(
+            """
+            INSERT INTO cutting_batches (
+                product_name, production_task_id, status,
+                contour_shift_id, contour_employee_id, contour_date,
+                layout_shift_id, layout_employee_id, layout_date,
+                cutting_shift_id, cutting_employee_id, cutting_progress,
+                formed_shift_id, formed_employee_id, formed_date,
+                created_at, updated_at
+            )
+            VALUES (?, ?, 'formed', ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, ?)
+            """,
+            (
+                "Легинсы",
+                task["id"],
+                cutter_shift["id"], employees["Раскройщик"], today,
+                cutter_shift["id"], employees["Раскройщик"], today,
+                cutter_shift["id"], employees["Раскройщик"],
+                cutter_shift["id"], employees["Раскройщик"], today,
+                now, now,
+            ),
+        )
+        cursor.executemany(
+            """
+            INSERT INTO route_batch_history (
+                batch_id, step_index, operation_name, position,
+                employee_id, quantity, completed_at
+            )
+            VALUES (?, ?, ?, ?, ?, 9, ?)
+            """,
+            (
+                (batch["id"], 4, "Тестовая швейная операция", "Швея", employees["Швея"], now),
+                (batch["id"], 5, "Тестовая упаковочная операция", "Упаковщик", employees["Упаковщик"], now),
+            ),
+        )
+        cursor.execute("UPDATE route_batches SET status = 'done' WHERE id = ?", (batch["id"],))
+        conn.commit()
+        conn.close()
+
+        performance = {
+            position: (plan, fact)
+            for _employee_id, _full_name, position, plan, fact
+            in self.database.get_period_employee_production_performance(today, today)
+        }
+
+        self.assertEqual(performance["Раскройщик"], (32, 32))
+        self.assertEqual(performance["Швея"], (10, 9))
+        self.assertEqual(performance["Упаковщик"], (10, 9))
+
     def test_cutting_batch_flow_multiplies_sizes_by_layers(self):
         batch_id = self._create_layout_done_batch()
 

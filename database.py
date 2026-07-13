@@ -6241,6 +6241,184 @@ def get_period_route_batch_rows(start_date: str, end_date: str, employee_id: int
     return rows
 
 
+def get_period_employee_production_performance(start_date: str, end_date: str):
+    totals = {}
+
+    def add_rows(rows):
+        for employee_id, full_name, position, plan, fact in rows:
+            if employee_id is None:
+                continue
+            employee = totals.setdefault(
+                employee_id,
+                {
+                    "full_name": full_name or "Сотрудник",
+                    "position": position or "-",
+                    "plan": 0,
+                    "fact": 0,
+                },
+            )
+            employee["plan"] += int(plan or 0)
+            employee["fact"] += int(fact or 0)
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            route_batch_history.employee_id,
+            employees.full_name,
+            employees.position,
+            SUM(route_batches.quantity),
+            SUM(route_batch_history.quantity)
+        FROM route_batch_history
+        JOIN route_batches ON route_batches.id = route_batch_history.batch_id
+        JOIN employees ON employees.id = route_batch_history.employee_id
+        WHERE date(route_batch_history.completed_at) BETWEEN ? AND ?
+          AND employees.role != 'admin'
+        GROUP BY route_batch_history.employee_id, employees.full_name, employees.position
+        """,
+        (start_date, end_date),
+    )
+    add_rows(cursor.fetchall())
+
+    cursor.execute(
+        """
+        SELECT
+            route_batches.assigned_employee_id,
+            employees.full_name,
+            employees.position,
+            SUM(route_batches.quantity),
+            0
+        FROM route_batches
+        JOIN employees ON employees.id = route_batches.assigned_employee_id
+        WHERE route_batches.status = 'active'
+          AND date(COALESCE(route_batches.assigned_at, route_batches.created_at)) BETWEEN ? AND ?
+          AND employees.role != 'admin'
+        GROUP BY route_batches.assigned_employee_id, employees.full_name, employees.position
+        """,
+        (start_date, end_date),
+    )
+    add_rows(cursor.fetchall())
+
+    cursor.execute(
+        """
+        WITH task_totals AS (
+            SELECT
+                task_id,
+                SUM(
+                    CASE
+                        WHEN formed_quantity > contour_quantity THEN formed_quantity
+                        ELSE contour_quantity
+                    END
+                ) AS plan_quantity,
+                SUM(formed_quantity) AS formed_quantity
+            FROM production_task_items
+            GROUP BY task_id
+        ),
+        matrix_totals AS (
+            SELECT batch_id, SUM(quantity) AS quantity
+            FROM cutting_batch_matrix
+            GROUP BY batch_id
+        ),
+        size_totals AS (
+            SELECT batch_id, SUM(quantity) AS quantity
+            FROM cutting_batch_sizes
+            GROUP BY batch_id
+        ),
+        batch_totals AS (
+            SELECT
+                cutting_batches.id,
+                COALESCE(task_totals.plan_quantity, matrix_totals.quantity, size_totals.quantity, 0)
+                    AS plan_quantity,
+                COALESCE(task_totals.formed_quantity, matrix_totals.quantity, 0)
+                    AS formed_quantity
+            FROM cutting_batches
+            LEFT JOIN task_totals ON task_totals.task_id = cutting_batches.production_task_id
+            LEFT JOIN matrix_totals ON matrix_totals.batch_id = cutting_batches.id
+            LEFT JOIN size_totals ON size_totals.batch_id = cutting_batches.id
+            WHERE cutting_batches.status != 'cancelled'
+        ),
+        cutting_stages AS (
+            SELECT
+                cutting_batches.contour_employee_id AS employee_id,
+                cutting_batches.contour_shift_id AS shift_id,
+                cutting_batches.contour_date AS fallback_date,
+                batch_totals.plan_quantity AS plan_quantity,
+                batch_totals.plan_quantity AS fact_quantity
+            FROM cutting_batches
+            JOIN batch_totals ON batch_totals.id = cutting_batches.id
+            WHERE cutting_batches.contour_employee_id IS NOT NULL
+
+            UNION ALL
+
+            SELECT
+                cutting_batches.layout_employee_id,
+                cutting_batches.layout_shift_id,
+                cutting_batches.layout_date,
+                batch_totals.plan_quantity,
+                batch_totals.plan_quantity
+            FROM cutting_batches
+            JOIN batch_totals ON batch_totals.id = cutting_batches.id
+            WHERE cutting_batches.layout_employee_id IS NOT NULL
+
+            UNION ALL
+
+            SELECT
+                cutting_batches.cutting_employee_id,
+                cutting_batches.cutting_shift_id,
+                date(cutting_batches.updated_at),
+                batch_totals.plan_quantity,
+                ROUND(batch_totals.plan_quantity * cutting_batches.cutting_progress / 100.0)
+            FROM cutting_batches
+            JOIN batch_totals ON batch_totals.id = cutting_batches.id
+            WHERE cutting_batches.cutting_employee_id IS NOT NULL
+
+            UNION ALL
+
+            SELECT
+                cutting_batches.formed_employee_id,
+                cutting_batches.formed_shift_id,
+                cutting_batches.formed_date,
+                batch_totals.plan_quantity,
+                batch_totals.formed_quantity
+            FROM cutting_batches
+            JOIN batch_totals ON batch_totals.id = cutting_batches.id
+            WHERE cutting_batches.formed_employee_id IS NOT NULL
+        )
+        SELECT
+            cutting_stages.employee_id,
+            employees.full_name,
+            employees.position,
+            SUM(cutting_stages.plan_quantity),
+            SUM(cutting_stages.fact_quantity)
+        FROM cutting_stages
+        LEFT JOIN shifts ON shifts.id = cutting_stages.shift_id
+        JOIN employees ON employees.id = cutting_stages.employee_id
+        WHERE COALESCE(shifts.shift_date, date(cutting_stages.fallback_date)) BETWEEN ? AND ?
+          AND employees.role != 'admin'
+        GROUP BY cutting_stages.employee_id, employees.full_name, employees.position
+        """,
+        (start_date, end_date),
+    )
+    add_rows(cursor.fetchall())
+
+    conn.close()
+    return [
+        (
+            employee_id,
+            employee["full_name"],
+            employee["position"],
+            employee["plan"],
+            employee["fact"],
+        )
+        for employee_id, employee in sorted(
+            totals.items(),
+            key=lambda item: (item[1]["full_name"], item[0]),
+        )
+    ]
+
+
 def get_period_route_batch_input_rows(start_date: str, end_date: str, employee_id: int | None = None):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
