@@ -63,7 +63,9 @@ from database import (
     get_period_fabric_movement_rows,
     get_period_operation_rows,
     get_period_production_task_item_rows,
+    get_period_production_trace_event_rows,
     get_period_route_batch_input_rows,
+    get_period_route_batch_input_lot_rows,
     get_period_route_batch_rows,
     get_period_shift_details,
     get_period_warehouse_movement_rows,
@@ -72,9 +74,13 @@ from database import (
     get_recent_shifts,
     get_production_task_attachment,
     get_route_batch_by_id,
+    get_route_batch_by_trace_code,
     get_route_batch_defect_rows,
+    get_route_batch_defect_photo,
     get_route_batch_defects,
+    get_route_batch_input_lots,
     get_route_batch_inputs,
+    get_route_batch_passport,
     get_production_task_by_id,
     get_production_task_fabric_rolls,
     get_shift_for_today,
@@ -83,10 +89,13 @@ from database import (
     get_warehouse_stock_rows,
     get_today_shifts,
     hide_operation,
+    has_route_completion_request,
     local_now,
     local_today,
     mark_cutting_batch_formed,
+    route_steps_from_snapshot,
     restore_operation,
+    set_route_batch_work_state,
     update_cutting_batch_progress,
     update_employee_position,
     update_employee_status,
@@ -96,10 +105,22 @@ from catalog import PREPARATION_OPERATION_OPTIONS, format_color_label
 from miniapp_auth import parse_auth_token
 from miniapp_assets import MINIAPP_HTML
 from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
+from webapp_auth import (
+    build_clear_cookie,
+    build_session_cookie,
+    create_web_session,
+    get_web_session,
+    init_web_auth,
+    authenticate_web_credentials,
+    revoke_web_session,
+    session_token_from_cookie,
+)
+from webapp_pwa import app_shell_revision, inject_pwa_markup, send_pwa_resource
 
 
-AUTH_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+AUTH_MAX_AGE_SECONDS = 24 * 60 * 60
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+MAX_DEFECT_PHOTO_BYTES = 2 * 1024 * 1024
 MAX_REQUEST_BODY_BYTES = 15 * 1024 * 1024
 ROUTES_MINIAPP_ENABLED = False
 CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
@@ -118,6 +139,8 @@ DEFECT_REASONS = [
     "Другое",
 ]
 DEFECT_DISPOSITIONS = ["Списать", "На переделку", "Уточнить"]
+PWA_HTML = inject_pwa_markup(MINIAPP_HTML)
+PWA_SHELL_REVISION = app_shell_revision(PWA_HTML)
 
 
 def get_admin_ids():
@@ -190,7 +213,8 @@ def parse_telegram_init_data(init_data: str, bot_token: str):
     except ValueError:
         return None
 
-    if auth_date <= 0 or time.time() - auth_date > AUTH_MAX_AGE_SECONDS:
+    now_epoch = time.time()
+    if auth_date <= 0 or auth_date > now_epoch + 60 or now_epoch - auth_date > AUTH_MAX_AGE_SECONDS:
         return None
 
     try:
@@ -454,9 +478,24 @@ def get_route_step(product_name: str, step_index: int):
     return steps[step_index]
 
 
+def get_route_steps_for_batch(batch: dict):
+    return route_steps_from_snapshot(
+        batch.get("route_snapshot") or "",
+        batch.get("product_name") or "",
+    )
+
+
+def get_route_step_for_batch(batch: dict, step_index: int | None = None):
+    steps = get_route_steps_for_batch(batch)
+    index = batch.get("route_step_index", 0) if step_index is None else step_index
+    if index < 0 or index >= len(steps):
+        return None
+    return steps[index]
+
+
 def get_route_previous_status(batch: dict):
     if batch["status"] == "done":
-        steps = PRODUCT_ROUTE_MAPS.get(batch["product_name"], [])
+        steps = get_route_steps_for_batch(batch)
         return steps[-1]["status_after"] if steps else "Процесс завершён"
 
     step_index = batch["route_step_index"]
@@ -464,7 +503,7 @@ def get_route_previous_status(batch: dict):
     if step_index == 0:
         return "Партия создана"
 
-    previous_step = get_route_step(batch["product_name"], step_index - 1)
+    previous_step = get_route_step_for_batch(batch, step_index - 1)
     return previous_step["status_after"] if previous_step else "Партия в работе"
 
 
@@ -623,6 +662,15 @@ def route_task_to_dict(batch: dict, current_step: dict, viewer_employee=None):
     is_assigned_to_viewer = bool(viewer_employee_id and batch.get("assigned_employee_id") == viewer_employee_id)
     is_free = not batch.get("assigned_employee_id")
     is_done = batch.get("status") == "done"
+    work_state = "done" if is_done else (batch.get("work_state") or ("free" if is_free else "in_work"))
+    status_text = {
+        "free": "Свободно",
+        "in_work": "В работе",
+        "paused": "Пауза",
+        "blocked": "Заблокировано",
+        "done": "Завершено",
+        "cancelled": "Отменено",
+    }.get(work_state, "В работе")
 
     return {
         "id": batch["id"],
@@ -645,6 +693,13 @@ def route_task_to_dict(batch: dict, current_step: dict, viewer_employee=None):
         "priority": batch.get("priority") or "normal",
         "due_date": batch.get("due_date") or "",
         "parent_batch_id": batch.get("parent_batch_id"),
+        "trace_code": batch.get("trace_code") or f"RB-{batch['id']:06d}",
+        "route_version": batch.get("route_version") or "",
+        "work_state": work_state,
+        "blocked_reason": batch.get("blocked_reason") or "",
+        "paused_at": batch.get("paused_at") or "",
+        "last_activity_at": batch.get("last_activity_at") or batch.get("updated_at") or "",
+        "handover_count": int(batch.get("handover_count") or 0),
         "defects": get_route_batch_defects(batch["id"]),
         "inputs": [
             {
@@ -654,11 +709,15 @@ def route_task_to_dict(batch: dict, current_step: dict, viewer_employee=None):
             }
             for input_row in get_route_batch_inputs(batch["id"])
         ],
-        "work_status": "done" if is_done else ("free" if is_free else "in_work"),
-        "status_text": "Завершено" if is_done else ("Свободно" if is_free else "В работе"),
+        "input_lots": get_route_batch_input_lots(batch["id"]),
+        "work_status": work_state,
+        "status_text": status_text,
         "is_assigned_to_me": is_assigned_to_viewer,
-        "can_take": is_free,
-        "can_complete": is_assigned_to_viewer,
+        "can_take": is_free and work_state == "free",
+        "can_complete": is_assigned_to_viewer and work_state == "in_work",
+        "can_pause": is_assigned_to_viewer and work_state == "in_work",
+        "can_resume": is_assigned_to_viewer and work_state in {"paused", "blocked"},
+        "can_release": is_assigned_to_viewer and not is_done,
     }
 
 
@@ -671,7 +730,7 @@ def get_route_tasks_for_telegram(telegram_id: int):
     tasks = []
 
     for batch in get_active_route_batches():
-        current_step = get_route_step(batch["product_name"], batch["route_step_index"])
+        current_step = get_route_step_for_batch(batch)
 
         if current_step is None:
             continue
@@ -692,7 +751,7 @@ def get_completed_route_tasks_for_telegram(telegram_id: int):
 
     for batch in get_employee_route_batches(employee[0], "done"):
         step_index = max(0, batch["route_step_index"] - 1)
-        completed_step = get_route_step(batch["product_name"], step_index)
+        completed_step = get_route_step_for_batch(batch, step_index)
 
         if completed_step is None:
             continue
@@ -719,7 +778,7 @@ def start_route_task_for_telegram(telegram_id: int, batch_id: int):
     if batch is None or batch["status"] != "active":
         return {"ok": False, "message": "Это задание уже недоступно."}
 
-    current_step = get_route_step(batch["product_name"], batch["route_step_index"])
+    current_step = get_route_step_for_batch(batch)
 
     if not can_employee_work_route_step(employee, current_step):
         return {"ok": False, "message": "Это задание доступно другой должности."}
@@ -795,7 +854,7 @@ def create_route_batch_for_telegram(telegram_id: int, payload: dict):
     if batch is None:
         return {"ok": False, "message": "Не удалось создать партию."}
 
-    current_step = get_route_step(batch["product_name"], batch["route_step_index"])
+    current_step = get_route_step_for_batch(batch)
     add_edit_log(
         telegram_id,
         "admin" if is_admin(telegram_id) else "employee",
@@ -813,6 +872,33 @@ def create_route_batch_for_telegram(telegram_id: int, payload: dict):
     }
 
 
+def normalize_defect_photo(payload: dict):
+    photo = payload.get("defect_photo") or {}
+    if not isinstance(photo, dict) or not photo:
+        return None, ""
+
+    file_name = str(photo.get("file_name") or "defect-photo.jpg").strip()
+    mime_type = str(photo.get("mime_type") or "").strip().lower()
+    content_base64 = str(photo.get("content_base64") or "").strip()
+    if not content_base64:
+        return None, ""
+    if mime_type not in {"image/jpeg", "image/png", "image/webp"}:
+        return None, "Фото брака должно быть в формате JPG, PNG или WebP."
+    if content_base64.startswith("data:"):
+        content_base64 = content_base64.split(",", 1)[-1]
+    try:
+        raw_content = base64.b64decode(content_base64, validate=True)
+    except (TypeError, ValueError):
+        return None, "Не удалось прочитать фотографию брака."
+    if not raw_content or len(raw_content) > MAX_DEFECT_PHOTO_BYTES:
+        return None, "Фотография брака должна быть не больше 2 МБ."
+    return {
+        "file_name": file_name[:160],
+        "mime_type": mime_type,
+        "content_base64": content_base64,
+    }, ""
+
+
 def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: dict | None = None):
     payload = payload or {}
     employee = get_employee_for_access(telegram_id)
@@ -823,6 +909,20 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     if is_admin(telegram_id):
         return {"ok": False, "message": "Администратор не выполняет производственные задания."}
 
+    request_id = str(payload.get("request_id") or "").strip()
+    if request_id and has_route_completion_request(batch_id, employee[0], request_id):
+        return {
+            "ok": True,
+            "message": "Задание уже было синхронизировано. Данные обновлены.",
+            "tasks": get_route_tasks_for_telegram(telegram_id)["tasks"],
+            "completed_tasks": get_completed_route_tasks_for_telegram(telegram_id),
+            "production": get_production_state_for_telegram(telegram_id),
+            "quality": {
+                "defect_reasons": DEFECT_REASONS,
+                "defect_dispositions": DEFECT_DISPOSITIONS,
+            },
+        }
+
     open_shift = get_open_shift_for_today(employee[0])
     if open_shift is None:
         return {"ok": False, "message": "Откройте смену перед выполнением задания."}
@@ -832,7 +932,7 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     if batch is None or batch["status"] != "active":
         return {"ok": False, "message": "Эта партия уже недоступна."}
 
-    current_step = get_route_step(batch["product_name"], batch["route_step_index"])
+    current_step = get_route_step_for_batch(batch)
 
     if not can_employee_work_route_step(employee, current_step):
         return {"ok": False, "message": "Это задание сейчас доступно другой должности."}
@@ -842,6 +942,10 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         if assignee:
             return {"ok": False, "message": f"Задание в работе у {assignee['full_name']}."}
         return {"ok": False, "message": "Сначала выберите задание во вкладке «Задания»."}
+
+    work_state = batch.get("work_state") or "in_work"
+    if work_state in {"paused", "blocked"}:
+        return {"ok": False, "message": "Сначала возобновите задание."}
 
     try:
         good_quantity = int(payload.get("good_quantity") if payload.get("good_quantity") not in (None, "") else batch["quantity"])
@@ -865,8 +969,12 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         if defect_disposition not in DEFECT_DISPOSITIONS:
             return {"ok": False, "message": "Выберите решение по браку."}
 
+    defect_photo, photo_error = normalize_defect_photo(payload)
+    if photo_error:
+        return {"ok": False, "message": photo_error}
+
     next_step_index = batch["route_step_index"] + 1
-    next_step = get_route_step(batch["product_name"], next_step_index)
+    next_step = get_route_step_for_batch(batch, next_step_index)
     item_type = "semifinished" if next_step else "finished"
     ready_for_position = next_step["position"] if next_step else "Склад"
     stage_name = current_step["status_after"]
@@ -894,8 +1002,12 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         defect_reason=defect_reason,
         defect_disposition=defect_disposition,
         defect_comment=defect_comment,
+        defect_photo_name=(defect_photo or {}).get("file_name", ""),
+        defect_photo_mime_type=(defect_photo or {}).get("mime_type", ""),
+        defect_photo_base64=(defect_photo or {}).get("content_base64", ""),
         shift_id=open_shift[0] if open_shift else None,
         operation_id=operation_row[0] if operation_row else None,
+        request_id=request_id,
     )
 
     if completion is None:
@@ -914,7 +1026,9 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         f"{route_batch_identity(batch)}. Этап: {current_step['operation']}",
     )
 
-    if rework_batch:
+    if completion.get("replayed"):
+        message = "Задание уже было синхронизировано. Данные обновлены."
+    elif rework_batch:
         message = f"Этап завершён. Брак: {defect_quantity} шт. Создано задание на переделку #{rework_batch['id']}."
     elif auto_batch:
         message = f"Этап завершён. Следующее задание создано для должности {next_step['position']}."
@@ -933,6 +1047,130 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
             "defect_reasons": DEFECT_REASONS,
             "defect_dispositions": DEFECT_DISPOSITIONS,
         },
+    }
+
+
+def route_task_work_action_for_telegram(telegram_id: int, batch_id: int, payload: dict):
+    employee = get_employee_for_access(telegram_id)
+    if employee is None or employee[5] != "active":
+        return {"ok": False, "message": "Нет активного профиля."}
+
+    action = str(payload.get("action") or "").strip().lower()
+    reason = str(payload.get("reason") or "").strip()
+    if action not in {"pause", "block", "resume", "release"}:
+        return {"ok": False, "message": "Неизвестное действие с заданием."}
+    if action in {"block", "release"} and not reason:
+        return {"ok": False, "message": "Укажите причину."}
+    if action == "resume" and not is_admin(telegram_id) and get_open_shift_for_today(employee[0]) is None:
+        return {"ok": False, "message": "Откройте смену перед продолжением задания."}
+
+    batch = get_route_batch_by_id(batch_id)
+    if batch is None or batch["status"] != "active":
+        return {"ok": False, "message": "Задание уже недоступно."}
+    current_step = get_route_step_for_batch(batch)
+    if not is_admin(telegram_id) and not can_employee_work_route_step(employee, current_step):
+        return {"ok": False, "message": "Это задание доступно другой должности."}
+
+    updated_batch = set_route_batch_work_state(
+        batch_id,
+        employee[0],
+        action,
+        reason,
+        force=is_admin(telegram_id),
+    )
+    if updated_batch is None:
+        return {"ok": False, "message": "Не удалось изменить состояние задания. Обновите список."}
+
+    messages = {
+        "pause": "Задание поставлено на паузу.",
+        "block": "Проблема зафиксирована. Администратор увидит блокировку.",
+        "resume": "Работа по заданию продолжена.",
+        "release": "Задание передано обратно в свободные.",
+    }
+    add_edit_log(
+        telegram_id,
+        "admin" if is_admin(telegram_id) else "employee",
+        messages[action],
+        "route_batch",
+        batch_id,
+        reason or route_batch_identity(updated_batch),
+    )
+    return {
+        "ok": True,
+        "message": messages[action],
+        "batch": route_task_to_dict(updated_batch, get_route_step_for_batch(updated_batch), employee),
+        "tasks": get_route_tasks_for_telegram(telegram_id).get("tasks", []),
+        "completed_tasks": get_completed_route_tasks_for_telegram(telegram_id),
+    }
+
+
+def can_access_route_batch(telegram_id: int, batch: dict | None):
+    if batch is None:
+        return False
+    if is_admin(telegram_id):
+        return True
+    employee = get_employee_for_access(telegram_id)
+    if employee is None or employee[5] != "active":
+        return False
+    if batch.get("assigned_employee_id") == employee[0]:
+        return True
+    return batch.get("status") == "active" and can_employee_work_route_step(employee, get_route_step_for_batch(batch))
+
+
+def get_route_passport_for_telegram(telegram_id: int, batch_id: int):
+    batch = get_route_batch_by_id(batch_id)
+    if not can_access_route_batch(telegram_id, batch):
+        return {"ok": False, "message": "Нет доступа к паспорту партии."}
+    passport = get_route_batch_passport(batch_id)
+    if passport is None:
+        return {"ok": False, "message": "Паспорт партии не найден."}
+
+    event_labels = {
+        "task_created": "Создано задание на раскрой",
+        "materials_reserved": "Материал зарезервирован",
+        "task_started": "Задание взято в работу",
+        "cutting_contours_done": "Контуры нанесены",
+        "cutting_layout_done": "Настил сформирован",
+        "cutting_progress": "Раскрой обновлён",
+        "cutting_output_received": "Крой принят на склад",
+        "cutting_formed": "Раскрой завершён",
+        "batch_created": "Создано производственное задание",
+        "inputs_reserved": "Компоненты зарезервированы",
+        "task_paused": "Работа приостановлена",
+        "task_blocked": "Зафиксирована блокировка",
+        "task_resumed": "Работа продолжена",
+        "task_released": "Задание передано",
+        "operation_completed": "Операция завершена",
+        "task_cancelled": "Задание отменено",
+    }
+    passport["events"] = [
+        {**event, "event_text": event_labels.get(event["event_type"], event["event_type"])}
+        for event in passport.get("events", [])
+    ]
+    passport["batches"] = [
+        {
+            **item,
+            "product_color_label": format_color_label(item.get("product_color") or ""),
+            "assignee": route_batch_assignee_to_dict(item),
+            "step": get_route_step_for_batch(
+                item,
+                max(0, item["route_step_index"] - 1) if item.get("status") == "done" else item["route_step_index"],
+            ),
+        }
+        for item in passport.get("batches", [])
+    ]
+    return {"ok": True, "passport": passport}
+
+
+def lookup_route_trace_for_telegram(telegram_id: int, trace_code: str):
+    batch = get_route_batch_by_trace_code(trace_code)
+    if not can_access_route_batch(telegram_id, batch):
+        return {"ok": False, "message": "Партия не найдена или недоступна."}
+    employee = get_employee_for_access(telegram_id)
+    step_index = max(0, batch["route_step_index"] - 1) if batch["status"] == "done" else batch["route_step_index"]
+    return {
+        "ok": True,
+        "batch": route_task_to_dict(batch, get_route_step_for_batch(batch, step_index), employee),
     }
 
 
@@ -2515,7 +2753,8 @@ def route_task_excel_step(row):
     if row[6] == "done":
         step_index = max(0, step_index - 1)
 
-    return get_route_step(row[1], step_index) or {}
+    batch = get_route_batch_by_id(row[0])
+    return (get_route_step_for_batch(batch, step_index) if batch else get_route_step(row[1], step_index)) or {}
 
 
 def append_excel_route_task_rows(sheet, rows):
@@ -2524,11 +2763,13 @@ def append_excel_route_task_rows(sheet, rows):
         "ID задания", "Создано", "Назначено", "Завершено", "Изделие", "Операция",
         "Должность", "Размер", "Цвет", "План", "Годное", "Брак",
         "Выполнение, %", "Брак, %", "Статус", "Сотрудник",
-        "Приоритет", "Срок", "Исходное задание",
+        "Приоритет", "Срок", "Исходное задание", "Код партии", "Версия маршрута",
+        "Состояние работы", "Причина остановки", "Передач",
     ])
 
     for row in rows:
         step = route_task_excel_step(row)
+        batch = get_route_batch_by_id(row[0]) or {}
         plan = int(row[4] or 0)
         good = int(row[14] or 0)
         defect = int(row[15] or 0)
@@ -2540,6 +2781,9 @@ def append_excel_route_task_rows(sheet, rows):
             round(defect * 100 / plan, 1) if plan else 0,
             statuses.get(row[6], row[6]), row[12] or "Свободно",
             row[16] or "normal", row[17] or "", row[18] or "",
+            batch.get("trace_code") or f"RB-{row[0]:06d}", batch.get("route_version") or "",
+            batch.get("work_state") or "", batch.get("blocked_reason") or "",
+            int(batch.get("handover_count") or 0),
         ])
 
     set_excel_filter_range(sheet)
@@ -2561,6 +2805,56 @@ def append_excel_route_input_rows(sheet, rows):
             row[11], row[12], row[13] or "Свободно",
         ])
 
+    set_excel_filter_range(sheet)
+
+
+def append_excel_route_input_lot_rows(sheet, rows):
+    roles = {"main": "Основной", "component": "Компонент"}
+    types = {"semifinished": "Полуфабрикат", "finished": "Готовая продукция"}
+    sheet.append([
+        "ID задания", "Код задания", "Роль", "Количество", "ID складской партии",
+        "Код складской партии", "Источник", "ID источника", "Тип", "Номенклатура",
+        "Размер", "Цвет", "Этап", "Для должности", "Создано", "Сотрудник",
+    ])
+    for row in rows:
+        sheet.append([
+            row[0], row[1] or f"RB-{row[0]:06d}", roles.get(row[2], row[2]), row[3],
+            row[4], row[5], row[6], row[7] or "", types.get(row[8], row[8]), row[9],
+            row[10], format_color_label(row[11]), row[12], row[13], row[14], row[15] or "Свободно",
+        ])
+    set_excel_filter_range(sheet)
+
+
+def append_excel_trace_event_rows(sheet, rows):
+    event_labels = {
+        "task_created": "Создано задание на раскрой",
+        "materials_reserved": "Материал зарезервирован",
+        "task_started": "Задание взято в работу",
+        "cutting_contours_done": "Контуры нанесены",
+        "cutting_layout_done": "Настил сформирован",
+        "cutting_progress": "Прогресс раскроя",
+        "cutting_output_received": "Крой принят на склад",
+        "cutting_formed": "Раскрой завершён",
+        "batch_created": "Создано задание операции",
+        "inputs_reserved": "Компоненты зарезервированы",
+        "task_paused": "Пауза",
+        "task_blocked": "Блокировка",
+        "task_resumed": "Продолжено",
+        "task_released": "Передано",
+        "operation_completed": "Операция завершена",
+        "task_cancelled": "Задание отменено",
+    }
+    sheet.append([
+        "ID события", "Дата и время", "Событие", "ID задания", "Код партии",
+        "ID задания раскроя", "ID партии раскроя", "Сотрудник", "ID смены",
+        "Операция", "Должность", "Количество", "Годное", "Брак", "Причина", "Подробности",
+    ])
+    for row in rows:
+        sheet.append([
+            row[0], row[1], event_labels.get(row[2], row[2]), row[3] or "", row[4] or "",
+            row[5] or "", row[6] or "", row[8] or "Система", row[9] or "",
+            row[10] or "", row[11] or "", row[12], row[13], row[14], row[15] or "", row[16] or "",
+        ])
     set_excel_filter_range(sheet)
 
 
@@ -2665,7 +2959,10 @@ def append_excel_wip_rows(sheet, rows):
 
 def append_excel_alert_rows(sheet, rows):
     sheet.append(["Тип", "Событие", "Подробности"])
-    type_labels = {"overdue": "Просрочено", "free": "Свободно", "defect": "Брак"}
+    type_labels = {
+        "overdue": "Просрочено", "free": "Свободно", "defect": "Брак",
+        "blocked": "Заблокировано", "paused": "Пауза", "stalled": "Нет движения",
+    }
     for row in rows:
         sheet.append([type_labels.get(row["type"], row["type"]), row["title"], row["detail"]])
     set_excel_filter_range(sheet)
@@ -2688,6 +2985,8 @@ def create_period_excel_bytes(start_date: str, end_date: str):
     route_rows = get_period_route_batch_rows(start_date, end_date)
     defect_rows = get_route_batch_defect_rows(start_date, end_date)
     route_input_rows = get_period_route_batch_input_rows(start_date, end_date)
+    route_input_lot_rows = get_period_route_batch_input_lot_rows(start_date, end_date)
+    trace_event_rows = get_period_production_trace_event_rows(start_date, end_date)
     production_rows = get_period_production_task_item_rows(start_date, end_date)
     warehouse_movement_rows = get_period_warehouse_movement_rows(start_date, end_date)
     fabric_movement_rows = get_period_fabric_movement_rows(start_date, end_date)
@@ -2745,6 +3044,12 @@ def create_period_excel_bytes(start_date: str, end_date: str):
     route_inputs_sheet = workbook.create_sheet("Входы заданий")
     append_excel_route_input_rows(route_inputs_sheet, route_input_rows)
 
+    route_input_lots_sheet = workbook.create_sheet("Партии компонентов")
+    append_excel_route_input_lot_rows(route_input_lots_sheet, route_input_lot_rows)
+
+    trace_sheet = workbook.create_sheet("Хронология партий")
+    append_excel_trace_event_rows(trace_sheet, trace_event_rows)
+
     defects_sheet = workbook.create_sheet("Брак")
     append_excel_defect_rows(defects_sheet, defect_rows)
 
@@ -2793,6 +3098,8 @@ def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str
     route_rows = get_period_route_batch_rows(start_date, end_date, employee_id=employee_id)
     defect_rows = get_route_batch_defect_rows(start_date, end_date, employee_id=employee_id)
     route_input_rows = get_period_route_batch_input_rows(start_date, end_date, employee_id=employee_id)
+    route_input_lot_rows = get_period_route_batch_input_lot_rows(start_date, end_date, employee_id=employee_id)
+    trace_event_rows = get_period_production_trace_event_rows(start_date, end_date, employee_id=employee_id)
     warehouse_movement_rows = get_period_warehouse_movement_rows(start_date, end_date, employee_id=employee_id)
     fabric_movement_rows = get_period_fabric_movement_rows(start_date, end_date, employee_id=employee_id)
     employee_defect_quantity = sum(int(row[8] or 0) for row in defect_rows)
@@ -2832,6 +3139,12 @@ def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str
 
     route_inputs_sheet = workbook.create_sheet("Входы заданий")
     append_excel_route_input_rows(route_inputs_sheet, route_input_rows)
+
+    route_input_lots_sheet = workbook.create_sheet("Партии компонентов")
+    append_excel_route_input_lot_rows(route_input_lots_sheet, route_input_lot_rows)
+
+    trace_sheet = workbook.create_sheet("Хронология партий")
+    append_excel_trace_event_rows(trace_sheet, trace_event_rows)
 
     defects_sheet = workbook.create_sheet("Брак")
     append_excel_defect_rows(defects_sheet, defect_rows)
@@ -2907,7 +3220,9 @@ def production_control_route_row_to_dict(row):
     step_index = int(row[5] or 0)
     if row[6] == "done":
         step_index = max(0, step_index - 1)
-    step = get_route_step(row[1], step_index) or {}
+    batch = get_route_batch_by_id(row[0])
+    step = get_route_step_for_batch(batch, step_index) if batch else get_route_step(row[1], step_index)
+    step = step or {}
     cycle_minutes = minutes_between(row[10], row[9])
     lead_minutes = minutes_between(row[7], row[9])
     due_date = row[17] or ""
@@ -2940,6 +3255,10 @@ def production_control_route_row_to_dict(row):
         "lead_minutes": lead_minutes,
         "on_time": completed_date <= due_date if due_date and completed_date else None,
         "parent_batch_id": row[18],
+        "trace_code": (batch or {}).get("trace_code") or f"RB-{row[0]:06d}",
+        "route_version": (batch or {}).get("route_version") or "",
+        "work_state": (batch or {}).get("work_state") or row[6],
+        "blocked_reason": (batch or {}).get("blocked_reason") or "",
     }
 
 
@@ -2954,7 +3273,12 @@ def production_control_active_batch_to_dict(batch, step, employee_names):
         "color": format_color_label(batch["product_color"]),
         "quantity": int(batch["quantity"] or 0),
         "status": batch["status"],
-        "status_text": "В работе" if batch.get("assigned_employee_id") else "Свободно",
+        "status_text": {
+            "free": "Свободно",
+            "in_work": "В работе",
+            "paused": "Пауза",
+            "blocked": "Заблокировано",
+        }.get(batch.get("work_state") or ("in_work" if batch.get("assigned_employee_id") else "free"), "В работе"),
         "operation": step["operation"],
         "position": step["position"],
         "stage": stage,
@@ -2970,6 +3294,12 @@ def production_control_active_batch_to_dict(batch, step, employee_names):
         "lead_minutes": minutes_between(batch.get("created_at"), now),
         "on_time": None,
         "parent_batch_id": batch.get("parent_batch_id"),
+        "trace_code": batch.get("trace_code") or f"RB-{batch['id']:06d}",
+        "route_version": batch.get("route_version") or "",
+        "work_state": batch.get("work_state") or "",
+        "blocked_reason": batch.get("blocked_reason") or "",
+        "last_activity_at": batch.get("last_activity_at") or batch.get("updated_at") or "",
+        "handover_count": int(batch.get("handover_count") or 0),
     }
 
 
@@ -3009,7 +3339,7 @@ def get_production_control_payload(start_date: str, end_date: str):
     today = local_today().isoformat()
 
     for batch in active_batches:
-        step = get_route_step(batch["product_name"], batch["route_step_index"])
+        step = get_route_step_for_batch(batch)
         if step is None:
             continue
         stage_key = f"{route_step_category(step)} · {step['position']}"
@@ -3022,6 +3352,35 @@ def get_production_control_payload(start_date: str, end_date: str):
         stage["quantity"] += int(batch["quantity"] or 0)
         if not batch.get("assigned_employee_id"):
             stage["free"] += 1
+        work_state = batch.get("work_state") or ("in_work" if batch.get("assigned_employee_id") else "free")
+        if work_state == "blocked":
+            alerts.append(
+                {
+                    "type": "blocked",
+                    "batch_id": batch["id"],
+                    "title": f"Заблокировано задание #{batch['id']}",
+                    "detail": batch.get("blocked_reason") or f"{batch['product_name']} · {step['operation']}",
+                }
+            )
+        elif work_state == "paused":
+            alerts.append(
+                {
+                    "type": "paused",
+                    "batch_id": batch["id"],
+                    "title": f"Пауза по заданию #{batch['id']}",
+                    "detail": batch.get("blocked_reason") or f"{batch['product_name']} · {step['operation']}",
+                }
+            )
+        elif batch.get("assigned_employee_id") and (minutes_between(batch.get("last_activity_at"), local_now().isoformat()) or 0) >= 240:
+            alerts.append(
+                {
+                    "type": "stalled",
+                    "batch_id": batch["id"],
+                    "title": f"Нет движения по заданию #{batch['id']}",
+                    "detail": f"{batch['product_name']} · {step['operation']} · более 4 часов",
+                }
+            )
+
         if batch.get("due_date") and batch["due_date"] < today:
             stage["overdue"] += 1
             alerts.append(
@@ -3739,17 +4098,114 @@ def can_access_task_attachment(telegram_id: int, task_id: int):
 def make_handler(bot_token: str, debug: bool):
     class MiniAppRequestHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        login_attempts = {}
+        login_attempts_lock = threading.Lock()
+
+        def client_ip(self):
+            if os.getenv("TRUST_PROXY_HEADERS") == "1":
+                forwarded = self.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
+                if forwarded:
+                    return forwarded
+            return str(self.client_address[0] if self.client_address else "")
+
+        def secure_cookie(self):
+            if os.getenv("WEBAPP_COOKIE_SECURE") == "1":
+                return True
+            if os.getenv("TRUST_PROXY_HEADERS") == "1":
+                return self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+            return False
+
+        def expected_origin(self):
+            configured = os.getenv("WEBAPP_PUBLIC_ORIGIN", "").strip().rstrip("/")
+            if configured:
+                return configured
+            scheme = "https" if self.secure_cookie() else "http"
+            return f"{scheme}://{self.headers.get('Host', '').strip()}".rstrip("/")
+
+        def origin_is_valid(self):
+            origin = self.headers.get("Origin", "").strip().rstrip("/")
+            return bool(origin and hmac.compare_digest(origin, self.expected_origin()))
+
+        def web_session_token(self):
+            return session_token_from_cookie(self.headers.get("Cookie", ""))
+
+        def authenticate_request(self, payload: dict, *, require_csrf: bool):
+            has_telegram_credentials = bool(
+                payload.get("initData") or payload.get("authToken") or (debug and payload.get("telegram_id"))
+            )
+            if has_telegram_credentials:
+                return authenticate_payload(payload, bot_token, debug)
+            session_token = self.web_session_token()
+            if session_token:
+                session = get_web_session(
+                    session_token,
+                    self.headers.get("X-CSRF-Token", ""),
+                    require_csrf=require_csrf,
+                )
+                if session:
+                    employee = get_employee_for_access(session["telegram_id"])
+                    if employee and employee[5] == "active":
+                        return {"id": session["telegram_id"], "web_username": session["username"]}
+                return None
+            return None
+
+        def login_is_rate_limited(self):
+            now_epoch = time.time()
+            client_ip = self.client_ip()
+            with self.login_attempts_lock:
+                attempts = [stamp for stamp in self.login_attempts.get(client_ip, []) if now_epoch - stamp < 300]
+                self.login_attempts[client_ip] = attempts
+                return len(attempts) >= 10
+
+        def record_login_failure(self):
+            client_ip = self.client_ip()
+            with self.login_attempts_lock:
+                self.login_attempts.setdefault(client_ip, []).append(time.time())
+
+        def clear_login_failures(self):
+            with self.login_attempts_lock:
+                self.login_attempts.pop(self.client_ip(), None)
 
         def do_GET(self):
             parsed_url = urlparse(self.path)
             path = parsed_url.path
 
+            if send_pwa_resource(
+                self,
+                path,
+                app_shell_revision_token=PWA_SHELL_REVISION,
+            ):
+                return
+
+            if path == "/favicon.ico":
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
             if path in {"/", "/app"}:
-                self.send_html(MINIAPP_HTML)
+                self.send_html(PWA_HTML)
                 return
 
             if path == "/health":
                 self.send_json({"ok": True})
+                return
+
+            if path == "/api/web/session":
+                session_token = self.web_session_token()
+                session = get_web_session(session_token) if session_token else None
+                if session is None:
+                    self.send_json({"ok": False, "code": "unauthorized", "message": "Войдите в приложение."}, status=401)
+                    return
+                self.send_json(
+                    {
+                        "ok": True,
+                        "username": session["username"],
+                        "telegram_id": session["telegram_id"],
+                        "csrf_token": session["csrf_token"],
+                        "expires_at": session["expires_at"],
+                    }
+                )
                 return
 
             if path == "/api/production/task-attachment":
@@ -3759,7 +4215,7 @@ def make_handler(bot_token: str, debug: bool):
                     "authToken": query.get("authToken", "") or query.get("auth", ""),
                     "telegram_id": query.get("telegram_id", "") or query.get("debug_tg_id", ""),
                 }
-                user = authenticate_payload(payload, bot_token, debug)
+                user = self.authenticate_request(payload, require_csrf=False)
 
                 if not user or not user.get("id"):
                     self.send_json({"ok": False, "message": "Откройте приложение из Telegram."}, status=401)
@@ -3801,12 +4257,81 @@ def make_handler(bot_token: str, debug: bool):
                 )
                 return
 
+            if path in {"/api/routes/qr", "/api/routes/defect-photo"}:
+                query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+                payload = {
+                    "initData": query.get("initData", ""),
+                    "authToken": query.get("authToken", "") or query.get("auth", ""),
+                    "telegram_id": query.get("telegram_id", "") or query.get("debug_tg_id", ""),
+                }
+                user = self.authenticate_request(payload, require_csrf=False)
+                if not user or not user.get("id"):
+                    self.send_json({"ok": False, "message": "Откройте приложение из Telegram."}, status=401)
+                    return
+                telegram_id = int(user["id"])
+
+                if path == "/api/routes/defect-photo":
+                    try:
+                        defect_id = int(query.get("defect_id") or 0)
+                    except (TypeError, ValueError):
+                        defect_id = 0
+                    photo = get_route_batch_defect_photo(defect_id)
+                    if photo is None:
+                        self.send_json({"ok": False, "message": "Фото не найдено."}, status=404)
+                        return
+                    batch = get_route_batch_by_id(photo["batch_id"])
+                    if not can_access_route_batch(telegram_id, batch):
+                        self.send_json({"ok": False, "message": "Нет доступа к фото."}, status=403)
+                        return
+                    try:
+                        content = base64.b64decode(photo["content_base64"], validate=True)
+                    except (TypeError, ValueError):
+                        self.send_json({"ok": False, "message": "Фото повреждено."}, status=500)
+                        return
+                    self.send_binary_file(content, photo["file_name"], photo["mime_type"], "inline")
+                    return
+
+                try:
+                    batch_id = int(query.get("batch_id") or 0)
+                except (TypeError, ValueError):
+                    batch_id = 0
+                batch = get_route_batch_by_id(batch_id)
+                if not can_access_route_batch(telegram_id, batch):
+                    self.send_json({"ok": False, "message": "Нет доступа к QR партии."}, status=403)
+                    return
+                try:
+                    import qrcode
+                    image = qrcode.make(f"TRACE:{batch.get('trace_code') or f'RB-{batch_id:06d}'}")
+                    buffer = io.BytesIO()
+                    image.save(buffer, format="PNG")
+                except (ImportError, OSError):
+                    self.send_json({"ok": False, "message": "Не удалось сформировать QR-код."}, status=503)
+                    return
+                self.send_binary_file(buffer.getvalue(), f"party-{batch_id}.png", "image/png", "inline")
+                return
+
             self.send_json({"ok": False, "message": "Not found"}, status=404)
+
+        def do_HEAD(self):
+            path = urlparse(self.path).path
+            if send_pwa_resource(
+                self,
+                path,
+                app_shell_revision_token=PWA_SHELL_REVISION,
+                head_only=True,
+            ):
+                return
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.send_security_headers()
+            self.end_headers()
 
         def do_POST(self):
             path = urlparse(self.path).path
 
             allowed_paths = {
+                "/api/web/login",
+                "/api/web/logout",
                 "/api/app/state",
                 "/api/shift/status",
                 "/api/shift/open",
@@ -3823,6 +4348,9 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/routes/create-batch",
                 "/api/routes/start",
                 "/api/routes/complete",
+                "/api/routes/work-action",
+                "/api/routes/passport",
+                "/api/routes/lookup",
                 "/api/admin/dashboard",
                 "/api/admin/report",
                 "/api/admin/report/export",
@@ -3838,18 +4366,94 @@ def make_handler(bot_token: str, debug: bool):
                 self.send_json({"ok": False, "message": "Not found"}, status=404)
                 return
 
+            if not self.headers.get("Content-Type", "").lower().split(";", 1)[0].strip() == "application/json":
+                self.send_json({"ok": False, "message": "Ожидается JSON-запрос."}, status=415)
+                return
+
+            has_telegram_credentials = bool(
+                self.headers.get("X-Telegram-Init-Data")
+            )
+            uses_web_cookie = bool(self.web_session_token()) and not has_telegram_credentials
+            if (path in {"/api/web/login", "/api/web/logout"} or uses_web_cookie) and not self.origin_is_valid():
+                self.send_json({"ok": False, "code": "invalid_origin", "message": "Запрос отклонён."}, status=403)
+                return
+
             payload = self.read_json_body()
             if payload.pop("_request_too_large", False):
                 self.send_json({"ok": False, "message": "Запрос или файл слишком большой."}, status=413)
                 return
-            user = authenticate_payload(payload, bot_token, debug)
+
+            if path == "/api/web/login":
+                if self.login_is_rate_limited():
+                    self.send_json(
+                        {"ok": False, "code": "rate_limited", "message": "Слишком много попыток. Повторите вход через несколько минут."},
+                        status=429,
+                    )
+                    return
+                account = authenticate_web_credentials(payload.get("username", ""), payload.get("password", ""))
+                if account is None:
+                    self.record_login_failure()
+                    self.send_json(
+                        {"ok": False, "code": "invalid_credentials", "message": "Неверный логин или пароль."},
+                        status=401,
+                    )
+                    return
+                employee = get_employee_for_access(account["telegram_id"])
+                if employee is None or employee[5] != "active":
+                    self.record_login_failure()
+                    self.send_json(
+                        {"ok": False, "code": "invalid_credentials", "message": "Неверный логин или пароль."},
+                        status=401,
+                    )
+                    return
+                self.clear_login_failures()
+                session = create_web_session(
+                    account,
+                    ip_address=self.client_ip(),
+                    user_agent=self.headers.get("User-Agent", ""),
+                )
+                cookie = build_session_cookie(
+                    session["session_token"],
+                    secure=self.secure_cookie(),
+                    max_age=max(0, session["expires_at"] - int(time.time())),
+                )
+                self.send_json(
+                    {
+                        "ok": True,
+                        "username": session["username"],
+                        "telegram_id": session["telegram_id"],
+                        "csrf_token": session["csrf_token"],
+                        "expires_at": session["expires_at"],
+                    },
+                    extra_headers={"Set-Cookie": cookie},
+                )
+                return
+
+            if path == "/api/web/logout":
+                session_token = self.web_session_token()
+                session = get_web_session(
+                    session_token,
+                    self.headers.get("X-CSRF-Token", ""),
+                    require_csrf=True,
+                ) if session_token else None
+                if session is None:
+                    self.send_json({"ok": False, "code": "invalid_csrf", "message": "Сессия устарела."}, status=403)
+                    return
+                revoke_web_session(session_token)
+                self.send_json(
+                    {"ok": True, "message": "Вы вышли из приложения."},
+                    extra_headers={"Set-Cookie": build_clear_cookie(secure=self.secure_cookie())},
+                )
+                return
+
+            user = self.authenticate_request(payload, require_csrf=True)
 
             if not user or not user.get("id"):
                 self.send_json(
                     {
                         "ok": False,
                         "code": "unauthorized",
-                        "message": "Откройте приложение из Telegram.",
+                        "message": "Войдите в веб-приложение или откройте его из Telegram.",
                         "employee": None,
                         "shift": None,
                     },
@@ -3919,6 +4523,20 @@ def make_handler(bot_token: str, debug: bool):
                     batch_id = 0
 
                 result = complete_route_task_for_telegram(telegram_id, batch_id, payload)
+            elif path == "/api/routes/work-action":
+                try:
+                    batch_id = int(payload.get("batch_id") or 0)
+                except (TypeError, ValueError):
+                    batch_id = 0
+                result = route_task_work_action_for_telegram(telegram_id, batch_id, payload)
+            elif path == "/api/routes/passport":
+                try:
+                    batch_id = int(payload.get("batch_id") or 0)
+                except (TypeError, ValueError):
+                    batch_id = 0
+                result = get_route_passport_for_telegram(telegram_id, batch_id)
+            elif path == "/api/routes/lookup":
+                result = lookup_route_trace_for_telegram(telegram_id, str(payload.get("trace_code") or ""))
             elif path == "/api/admin/dashboard":
                 result = get_admin_dashboard(telegram_id)
             elif path == "/api/admin/report":
@@ -3957,21 +4575,30 @@ def make_handler(bot_token: str, debug: bool):
             except json.JSONDecodeError:
                 return {}
 
+        def send_security_headers(self):
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "same-origin")
+            self.send_header("Permissions-Policy", "geolocation=(), microphone=(), camera=(self)")
+
         def send_html(self, html_text: str, status: int = 200):
             body = html_text.encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_security_headers()
             self.end_headers()
             self.wfile.write(body)
 
-        def send_json(self, payload: dict, status: int = 200):
+        def send_json(self, payload: dict, status: int = 200, extra_headers: dict | None = None):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_security_headers()
+            for header_name, header_value in (extra_headers or {}).items():
+                self.send_header(header_name, header_value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -3993,6 +4620,7 @@ def make_handler(bot_token: str, debug: bool):
                 f"{disposition}; filename*=UTF-8''{safe_filename}",
             )
             self.send_header("Cache-Control", "no-store")
+            self.send_security_headers()
             self.end_headers()
             self.wfile.write(content)
 
@@ -4010,6 +4638,18 @@ def start_miniapp_server(bot_token: str, host: str, port: int, debug: bool = Fal
     if os.getenv("MINIAPP_ENABLED", "1") == "0":
         logging.info("Miniapp server disabled")
         return None
+
+    is_loopback = host in {"127.0.0.1", "localhost", "::1"}
+    if debug and not is_loopback:
+        logging.critical("Miniapp debug impersonation is allowed only on a loopback host")
+        return None
+    if os.getenv("WEBAPP_ENV", "").strip().lower() == "production":
+        public_origin = os.getenv("WEBAPP_PUBLIC_ORIGIN", "").strip()
+        if debug or os.getenv("WEBAPP_COOKIE_SECURE") != "1" or not public_origin.startswith("https://"):
+            logging.critical("Production webapp requires HTTPS origin, secure cookies, and debug disabled")
+            return None
+
+    init_web_auth()
 
     try:
         server = ReusableThreadingHTTPServer(

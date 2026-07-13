@@ -1,4 +1,4 @@
-"""Static HTML assets for the Telegram miniapp."""
+"""Shared HTML assets for Telegram Mini App and the standalone web app."""
 
 MINIAPP_HTML = """<!doctype html>
 <html lang="ru">
@@ -29,6 +29,8 @@ MINIAPP_HTML = """<!doctype html>
 
     * { box-sizing: border-box; }
 
+    [hidden] { display: none !important; }
+
     html, body {
       margin: 0;
       min-height: 100%;
@@ -55,6 +57,107 @@ MINIAPP_HTML = """<!doctype html>
     button {
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
+    }
+
+    .login-view {
+      min-height: 100dvh;
+      padding: calc(28px + env(safe-area-inset-top)) 18px calc(28px + env(safe-area-inset-bottom));
+      display: grid;
+      place-items: center;
+      background-color: #f4eee6;
+      background-image: radial-gradient(circle, rgba(195,111,85,.10) 1px, transparent 1.6px);
+      background-size: 22px 22px;
+    }
+
+    .login-shell {
+      width: min(100%, 430px);
+      display: grid;
+      gap: 22px;
+    }
+
+    .login-brand {
+      display: grid;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .login-brand img {
+      width: 78px;
+      height: 78px;
+      margin-bottom: 14px;
+      border-radius: 20px;
+      box-shadow: 0 16px 32px rgba(80,55,36,.16);
+    }
+
+    .login-brand h1 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .login-brand p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    .login-card {
+      display: grid;
+      gap: 14px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(255,255,255,.92);
+      box-shadow: var(--shadow), var(--inset-shadow);
+    }
+
+    .login-card label {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .login-card input {
+      width: 100%;
+      min-height: 50px;
+      border: 1px solid rgba(78,56,42,.16);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: #fff;
+      color: var(--text);
+      outline: none;
+    }
+
+    .login-card input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(195,111,85,.13);
+    }
+
+    .login-submit {
+      min-height: 52px;
+      border: none;
+      border-radius: 14px;
+      background: var(--accent);
+      color: white;
+      font-weight: 950;
+    }
+
+    .login-submit:disabled {
+      opacity: .58;
+      cursor: wait;
+    }
+
+    .login-error {
+      min-height: 18px;
+      margin: 0;
+      color: var(--danger);
+      font-size: 12px;
+      line-height: 1.35;
+      text-align: center;
     }
 
     .app {
@@ -1113,8 +1216,14 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .route-order-head {
-      grid-template-columns: 44px minmax(0, 1fr) auto;
+      grid-template-columns: 44px minmax(0, 1fr);
       align-items: start;
+    }
+
+    .route-order-head > .status-chip {
+      grid-column: 2;
+      justify-self: start;
+      margin-top: 0;
     }
 
     .route-assignee {
@@ -1167,6 +1276,131 @@ MINIAPP_HTML = """<!doctype html>
     .order-detail {
       padding: 14px;
       background: linear-gradient(135deg, rgba(195,111,85,.12), rgba(143,159,127,.10));
+    }
+
+    .task-completion-card {
+      padding: 13px;
+      margin-top: 10px;
+    }
+
+    .task-completion-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 11px;
+    }
+
+    .task-completion-head b {
+      min-width: 0;
+      font-size: 14px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .task-action-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .task-action-grid .small-button {
+      min-height: 40px;
+    }
+
+    .task-note {
+      margin-top: 9px;
+      padding: 9px 10px;
+      border-left: 3px solid var(--accent);
+      background: rgba(195,111,85,.08);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+
+    .trace-code {
+      display: inline-flex;
+      margin-top: 7px;
+      color: var(--accent-dark);
+      font-size: 10.5px;
+      font-weight: 950;
+    }
+
+    .passport-timeline {
+      display: grid;
+      gap: 0;
+    }
+
+    .passport-event {
+      position: relative;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 9px;
+      padding: 0 0 14px;
+    }
+
+    .passport-event::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 14px;
+      bottom: 0;
+      width: 2px;
+      background: rgba(195,111,85,.18);
+    }
+
+    .passport-event:last-child::before {
+      display: none;
+    }
+
+    .passport-dot {
+      position: relative;
+      z-index: 1;
+      width: 16px;
+      height: 16px;
+      border: 4px solid rgba(195,111,85,.18);
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .passport-event b,
+    .passport-event span {
+      display: block;
+      overflow-wrap: anywhere;
+    }
+
+    .passport-event b {
+      font-size: 12px;
+      line-height: 1.25;
+    }
+
+    .passport-event span {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.35;
+    }
+
+    .party-qr {
+      display: block;
+      width: min(190px, 70vw);
+      aspect-ratio: 1;
+      margin: 10px auto;
+      border: 8px solid white;
+      background: white;
+    }
+
+    .scan-row {
+      display: flex;
+      justify-content: flex-end;
+      margin: -4px 0 10px;
+    }
+
+    .scan-row .small-button {
+      width: auto;
+      padding-inline: 14px;
     }
 
     .chart-card {
@@ -1430,11 +1664,52 @@ MINIAPP_HTML = """<!doctype html>
       .toast {
         bottom: 104px;
       }
+
+      body.web-mode .app {
+        width: min(760px, calc(100% - 32px));
+      }
+
+      body.web-mode .main-button,
+      body.web-mode .bottom-nav {
+        width: min(760px, calc(100% - 32px));
+      }
+
+      body.web-mode .login-shell {
+        width: min(100%, 460px);
+      }
+    }
+
+    body.web-mode .app {
+      padding-bottom: calc(92px + env(safe-area-inset-bottom));
+    }
+
+    body.web-mode .main-button {
+      position: static;
+      inset: auto;
+      width: 100%;
+      transform: none;
+      margin: 18px 0 4px;
     }
   </style>
 </head>
 <body>
-  <main class="app">
+  <section class="login-view" id="loginView" hidden>
+    <div class="login-shell">
+      <div class="login-brand">
+        <img src="/pwa/icon.svg" alt="Шагаем вместе">
+        <h1>Шагаем вместе</h1>
+        <p>Управление производством</p>
+      </div>
+      <form class="login-card" id="webLoginForm">
+        <label>Логин<input id="webUsername" name="username" autocomplete="username" autocapitalize="none" required></label>
+        <label>Пароль<input id="webPassword" name="password" type="password" autocomplete="current-password" required></label>
+        <p class="login-error" id="webLoginError" role="alert"></p>
+        <button class="login-submit" id="webLoginButton" type="submit">Войти</button>
+      </form>
+    </div>
+  </section>
+
+  <main class="app" id="appRoot" hidden>
     <div class="appbar">
       <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
       <div class="app-title">Шагаем вместе<small id="roleLabel">Загрузка</small></div>
@@ -1444,11 +1719,12 @@ MINIAPP_HTML = """<!doctype html>
     <div class="body">
       <div class="tabs" id="topTabs" hidden></div>
       <div id="mount"></div>
+      <div id="webActionSlot"></div>
     </div>
   </main>
 
-  <button class="main-button" id="mainButton">Загрузка</button>
-  <nav class="bottom-nav" id="bottomNav" aria-label="Навигация миниаппа"></nav>
+  <button class="main-button" id="mainButton" hidden>Загрузка</button>
+  <nav class="bottom-nav" id="bottomNav" aria-label="Навигация приложения" hidden></nav>
   <div class="toast" id="toast"><b></b><span></span></div>
 
   <script>
@@ -1469,7 +1745,17 @@ MINIAPP_HTML = """<!doctype html>
 
     const authToken = queryAuthToken || storedAuthToken;
     const telegramUserId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? String(tg.initDataUnsafe.user.id || "") : "";
-    const uiStateStorageKey = `miniapp_ui_state_${debugTelegramId || telegramUserId || "telegram_anonymous"}`;
+    const isStandaloneWeb = !debugTelegramId && !authToken && !(tg && tg.initData);
+    let webCsrfToken = "";
+    let storedWebIdentity = "";
+    try {
+      storedWebIdentity = window.sessionStorage.getItem("webapp_identity") || "";
+    } catch (error) {
+      storedWebIdentity = "";
+    }
+    const authIdentity = debugTelegramId || telegramUserId || storedWebIdentity || (isStandaloneWeb ? "web_anonymous" : "telegram_anonymous");
+    const uiStateStorageKey = `miniapp_ui_state_${authIdentity}`;
+    const completionQueueKey = `miniapp_completion_queue_${authIdentity}`;
     const persistedUiStateKeys = [
       "screen",
       "selectedOrder",
@@ -1518,6 +1804,8 @@ MINIAPP_HTML = """<!doctype html>
       "taskCompletionDrafts",
       "cuttingStageDrafts",
       "feedbackDraft",
+      "passportBatchId",
+      "passportReturnScreen",
     ];
     let persistedUiState = {};
 
@@ -1582,6 +1870,10 @@ MINIAPP_HTML = """<!doctype html>
       taskCompletionDrafts: {},
       cuttingStageDrafts: {},
       feedbackDraft: {category: "Производство", message: ""},
+      passportBatchId: "",
+      passportData: null,
+      passportReturnScreen: "orders",
+      taskDefectPhotos: {},
       ...persistedUiState,
       data: null,
     };
@@ -1593,8 +1885,13 @@ MINIAPP_HTML = """<!doctype html>
     if (!Array.isArray(state.orderColors)) state.orderColors = [];
     if (!state.orderStockQuantities || typeof state.orderStockQuantities !== "object") state.orderStockQuantities = {};
     if (!state.orderFabricRolls || typeof state.orderFabricRolls !== "object") state.orderFabricRolls = {};
+    if (!state.taskDefectPhotos || typeof state.taskDefectPhotos !== "object") state.taskDefectPhotos = {};
 
     const mount = document.getElementById("mount");
+    const appRoot = document.getElementById("appRoot");
+    const loginView = document.getElementById("loginView");
+    const webLoginForm = document.getElementById("webLoginForm");
+    const webActionSlot = document.getElementById("webActionSlot");
     const mainButton = document.getElementById("mainButton");
     const topTabs = document.getElementById("topTabs");
     const bottomNav = document.getElementById("bottomNav");
@@ -1651,9 +1948,12 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     async function api(path, payload = {}) {
+      const headers = {"Content-Type": "application/json"};
+      if (isStandaloneWeb && webCsrfToken) headers["X-CSRF-Token"] = webCsrfToken;
       const response = await fetch(path, {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
+        headers,
+        credentials: "same-origin",
         body: JSON.stringify({
           ...payload,
           initData: state.initData,
@@ -1666,11 +1966,67 @@ MINIAPP_HTML = """<!doctype html>
       if (!response.ok) {
         const error = new Error(data.message || `HTTP ${response.status}`);
         error.apiMessage = data.message || "";
+        error.status = response.status;
+        if (response.status === 401 && isStandaloneWeb) showWebLogin(data.message || "Войдите в приложение.");
         throw error;
       }
 
       return data;
     }
+
+    function createRequestId() {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function getCompletionQueue() {
+      try {
+        const rows = JSON.parse(window.localStorage.getItem(completionQueueKey) || "[]");
+        return Array.isArray(rows) ? rows : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function saveCompletionQueue(rows) {
+      try {
+        window.localStorage.setItem(completionQueueKey, JSON.stringify(rows.slice(-20)));
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function queueCompletion(payload) {
+      const rows = getCompletionQueue().filter((row) => row.request_id !== payload.request_id);
+      rows.push(payload);
+      return saveCompletionQueue(rows);
+    }
+
+    async function flushCompletionQueue(showResult = false) {
+      const rows = getCompletionQueue();
+      if (!rows.length || !navigator.onLine) return;
+      const remaining = [];
+      let synced = 0;
+
+      for (const payload of rows) {
+        try {
+          const result = await api("/api/routes/complete", payload);
+          if (result.ok) synced += 1;
+          else remaining.push(payload);
+        } catch (error) {
+          remaining.push(payload);
+        }
+      }
+
+      saveCompletionQueue(remaining);
+      if (synced) {
+        if (showResult) showToast("Синхронизация", `Отправлено заданий: ${synced}`);
+        window.setTimeout(() => refreshState(), 0);
+      }
+    }
+
+    window.addEventListener("online", () => flushCompletionQueue(true));
 
     function showToast(title, text) {
       toast.querySelector("b").textContent = title;
@@ -1863,6 +2219,16 @@ MINIAPP_HTML = """<!doctype html>
       return getRouteTasks()
         .filter((task) => task.is_assigned_to_me)
         .map((task) => ({...task, task_kind: "route"}));
+    }
+
+    function getDisplayedRouteTask() {
+      if (state.screen === "orders") {
+        const rows = visibleOrderRows();
+        const task = rows[state.selectedOrder] || rows[0];
+        return task && task.task_kind === "route" && task.is_assigned_to_me ? task : null;
+      }
+      const tasks = getMyRouteTasks();
+      return tasks[state.selectedReportTask] || tasks[0] || null;
     }
 
     function getMyCuttingTasks() {
@@ -2598,9 +2964,12 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.disabled = true;
 
       try {
+        const exportHeaders = {"Content-Type": "application/json"};
+        if (isStandaloneWeb && webCsrfToken) exportHeaders["X-CSRF-Token"] = webCsrfToken;
         const response = await fetch("/api/admin/report/export", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: exportHeaders,
+          credentials: "same-origin",
           body: JSON.stringify({
             ...(state.adminAppliedReportPayload || getAdminReportPayload()),
             initData: state.initData,
@@ -2766,6 +3135,46 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderTaskCompletionForm(task) {
+      if (!task) return "";
+      const draft = state.taskCompletionDrafts[task.id] || {};
+      if (!draft.request_id) draft.request_id = createRequestId();
+      state.taskCompletionDrafts[task.id] = draft;
+      const quality = state.data && state.data.quality ? state.data.quality : {defect_reasons: [], defect_dispositions: []};
+      const defectVisible = Number(draft.defect || 0) > 0;
+      const photo = state.taskDefectPhotos[task.id];
+      const paused = task.work_state === "paused";
+      const blocked = task.work_state === "blocked";
+
+      return `
+        <div class="card task-completion-card">
+          <div class="task-completion-head"><b>${escapeHtml(task.operation)}</b><span class="status-chip ${task.work_state === "in_work" ? "" : "warn"}">${escapeHtml(task.status_text || "В работе")}</span></div>
+          ${renderRouteTaskInputs(task)}
+          ${(paused || blocked) ? `<div class="task-note">${escapeHtml(task.blocked_reason || (paused ? "Работа приостановлена" : "Задание заблокировано"))}</div>` : ""}
+          <div class="form-grid" style="margin-top:11px">
+            <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.good ?? task.quantity)}"></div>
+            <div class="field"><label>Брак</label><input id="taskDefectQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.defect ?? 0)}"></div>
+            <div class="field full"><button type="button" class="small-button secondary" data-task-action="all-good" data-task-id="${escapeHtml(task.id)}">Всё годное: ${escapeHtml(task.quantity)} шт</button></div>
+            <div class="field full" id="taskDefectDetails" style="display:${defectVisible ? "block" : "none"}">
+              <div class="form-grid">
+                <div class="field full"><label>Причина брака</label><select id="taskDefectReason"><option value="">Выберите причину</option>${(quality.defect_reasons || []).map((reason) => `<option value="${escapeHtml(reason)}" ${draft.defect_reason === reason ? "selected" : ""}>${escapeHtml(reason)}</option>`).join("")}</select></div>
+                <div class="field full"><label>Решение</label><select id="taskDefectDisposition"><option value="">Выберите решение</option>${(quality.defect_dispositions || []).map((disposition) => `<option value="${escapeHtml(disposition)}" ${draft.defect_disposition === disposition ? "selected" : ""}>${escapeHtml(disposition)}</option>`).join("")}</select></div>
+                <div class="field full"><label>Комментарий</label><textarea id="taskDefectComment" placeholder="Что произошло">${escapeHtml(draft.defect_comment || "")}</textarea></div>
+                <div class="field full"><label>Фото брака</label><input id="taskDefectPhoto" type="file" accept="image/jpeg,image/png,image/webp"><div class="task-note">${escapeHtml(photo ? photo.file_name : "Фото не выбрано")}</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="task-action-grid">
+            ${(paused || blocked) ? `<button type="button" class="small-button" data-task-action="resume" data-task-id="${escapeHtml(task.id)}">Продолжить</button>` : `<button type="button" class="small-button secondary" data-task-action="pause" data-task-id="${escapeHtml(task.id)}">Пауза</button>`}
+            ${!blocked ? `<button type="button" class="small-button secondary" data-task-action="block" data-task-id="${escapeHtml(task.id)}">Есть проблема</button>` : ""}
+            <button type="button" class="small-button secondary" data-task-action="release" data-task-id="${escapeHtml(task.id)}">Передать</button>
+            <button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button>
+          </div>
+          <div class="button-row"><button type="button" class="small-button" data-report-action="complete-task" ${task.can_complete ? "" : "disabled"}>Выполнить задание</button></div>
+        </div>
+      `;
+    }
+
     function renderReport() {
       const feedback = getFeedbackRows();
       const history = getHistory();
@@ -2782,9 +3191,9 @@ MINIAPP_HTML = """<!doctype html>
       const selectedCuttingTask = cuttingWorkTasks[state.selectedCuttingReportTask] || cuttingWorkTasks[0];
       state.selectedReportTaskKey = taskIdentity(selectedTask);
       state.selectedCuttingReportTaskKey = taskIdentity(selectedCuttingTask);
-      const taskDraft = selectedTask ? (state.taskCompletionDrafts[selectedTask.id] || {}) : {};
-      const quality = state.data && state.data.quality ? state.data.quality : {defect_reasons: [], defect_dispositions: []};
-      mainButton.textContent = state.reportSection === "work" && (selectedCuttingTask || selectedTask) ? (selectedCuttingTask ? "Выполнить этап" : "Выполнить задание") : "Обновить отчёт";
+      mainButton.textContent = state.reportSection === "work" && (selectedCuttingTask || selectedTask)
+        ? (selectedCuttingTask ? "Выполнить этап" : (selectedTask.can_complete ? "Выполнить задание" : "Продолжить задание"))
+        : "Обновить отчёт";
       mainButton.disabled = false;
 
       const historySummary = history && history.summary ? history.summary : null;
@@ -2820,23 +3229,7 @@ MINIAPP_HTML = """<!doctype html>
           </div>
           ${selectedTask ? `
             <div class="section-title"><b>Сдача задания</b><span>${escapeHtml(selectedTask.quantity)} шт</span></div>
-            <div class="card field-card">
-              <label>${escapeHtml(selectedTask.operation)}</label>
-              ${renderRouteTaskInputs(selectedTask)}
-              <div class="form-grid">
-                <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(taskDraft.good ?? selectedTask.quantity)}"></div>
-                <div class="field"><label>Брак</label><input id="taskDefectQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(taskDraft.defect ?? 0)}"></div>
-                <div class="field full" id="taskDefectDetails" style="display:${Number(taskDraft.defect || 0) > 0 ? "block" : "none"}">
-                  <div class="form-grid">
-                    <div class="field full"><label>Причина брака</label><select id="taskDefectReason"><option value="">Выберите причину</option>${(quality.defect_reasons || []).map((reason) => `<option value="${escapeHtml(reason)}" ${taskDraft.defect_reason === reason ? "selected" : ""}>${escapeHtml(reason)}</option>`).join("")}</select></div>
-                    <div class="field full"><label>Решение</label><select id="taskDefectDisposition"><option value="">Выберите решение</option>${(quality.defect_dispositions || []).map((disposition) => `<option value="${escapeHtml(disposition)}" ${taskDraft.defect_disposition === disposition ? "selected" : ""}>${escapeHtml(disposition)}</option>`).join("")}</select></div>
-                    <div class="field full"><label>Комментарий</label><textarea id="taskDefectComment" placeholder="Что произошло">${escapeHtml(taskDraft.defect_comment || "")}</textarea></div>
-                  </div>
-                </div>
-                <div class="field full"><label>Остаток задания</label><input type="text" value="${escapeHtml(selectedTask.product_size)} · ${escapeHtml(selectedTask.product_color)} · ${escapeHtml(selectedTask.quantity)} шт" disabled></div>
-              </div>
-              <div class="button-row"><button class="small-button" data-report-action="complete-task">Выполнить задание</button></div>
-            </div>
+            ${renderTaskCompletionForm(selectedTask)}
           ` : ""}
         `;
         return;
@@ -2851,7 +3244,8 @@ MINIAPP_HTML = """<!doctype html>
               <div class="card order-card">
                 <div class="order-head route-order-head"><div class="op-icon">✓</div><div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">Завершено</span></div>
                 <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.good_quantity || 0)} годн. · ${escapeHtml(task.defect_quantity || 0)} брак</strong></div>
-                ${(task.defects || []).length ? `<div class="route-inputs">${task.defects.map((defect) => `<div class="route-input-row"><span>${escapeHtml(defect.reason)} · ${escapeHtml(defect.disposition)}</span><span>${defect.rework_batch_id ? `переделка #${escapeHtml(defect.rework_batch_id)}` : `${escapeHtml(defect.quantity)} шт`}</span></div>`).join("")}</div>` : ""}
+                ${(task.defects || []).length ? `<div class="route-inputs">${task.defects.map((defect) => `<div class="route-input-row"><span>${escapeHtml(defect.reason)} · ${escapeHtml(defect.disposition)}${defect.has_photo ? `<br><a href="${escapeHtml(defectPhotoUrl(defect.id))}" target="_blank" rel="noopener">Открыть фото</a>` : ""}</span><span>${defect.rework_batch_id ? `переделка #${escapeHtml(defect.rework_batch_id)}` : `${escapeHtml(defect.quantity)} шт`}</span></div>`).join("")}</div>` : ""}
+                <div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button></div>
               </div>
             `).join("") : itemEmpty("Завершённых заданий пока нет.")}
           </div>
@@ -3390,23 +3784,50 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function readDefectPhoto(file, task) {
+      if (!file || !task) return;
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) {
+        showToast("Фото брака", "Выберите JPG, PNG или WebP размером не больше 2 МБ.");
+        return;
+      }
+      const contentBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || "").split(",", 2)[1] || "");
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      state.taskDefectPhotos[task.id] = {
+        file_name: file.name || `defect-${task.id}.jpg`,
+        mime_type: file.type,
+        content_base64: contentBase64,
+      };
+      render();
+      showToast("Фото брака", "Фотография прикреплена.");
+    }
+
     async function completeOperationTask(current) {
       if (!current) return;
       const actionKey = `complete-operation-task:${current.id}`;
       if (!beginAction(actionKey)) return;
       const goodInput = document.getElementById("taskGoodQuantity");
       const defectInput = document.getElementById("taskDefectQuantity");
+      const draft = state.taskCompletionDrafts[current.id] || {};
+      if (!draft.request_id) draft.request_id = createRequestId();
+      state.taskCompletionDrafts[current.id] = draft;
+      const completionPayload = {
+        batch_id: current.id,
+        request_id: draft.request_id,
+        good_quantity: goodInput ? goodInput.value : (draft.good ?? current.quantity),
+        defect_quantity: defectInput ? defectInput.value : (draft.defect ?? 0),
+        defect_reason: document.getElementById("taskDefectReason") ? document.getElementById("taskDefectReason").value : (draft.defect_reason || ""),
+        defect_disposition: document.getElementById("taskDefectDisposition") ? document.getElementById("taskDefectDisposition").value : (draft.defect_disposition || ""),
+        defect_comment: document.getElementById("taskDefectComment") ? document.getElementById("taskDefectComment").value : (draft.defect_comment || ""),
+        defect_photo: state.taskDefectPhotos[current.id] || null,
+      };
       mainButton.disabled = true;
 
       try {
-        const data = await api("/api/routes/complete", {
-          batch_id: current.id,
-          good_quantity: goodInput ? goodInput.value : current.quantity,
-          defect_quantity: defectInput ? defectInput.value : 0,
-          defect_reason: document.getElementById("taskDefectReason") ? document.getElementById("taskDefectReason").value : "",
-          defect_disposition: document.getElementById("taskDefectDisposition") ? document.getElementById("taskDefectDisposition").value : "",
-          defect_comment: document.getElementById("taskDefectComment") ? document.getElementById("taskDefectComment").value : "",
-        });
+        const data = await api("/api/routes/complete", completionPayload);
 
         if (!data.ok) {
           showToast("Задание", data.message || "Не удалось завершить операцию.");
@@ -3418,6 +3839,7 @@ MINIAPP_HTML = """<!doctype html>
         if (state.data.routes) state.data.routes.completed_tasks = data.completed_tasks || [];
         state.data.production = data.production || state.data.production;
         delete state.taskCompletionDrafts[current.id];
+        delete state.taskDefectPhotos[current.id];
         state.selectedOrder = 0;
         state.selectedOrderKey = "";
         state.selectedReportTask = 0;
@@ -3425,8 +3847,14 @@ MINIAPP_HTML = """<!doctype html>
         render();
         showToast("Задание", data.message || "Операция завершена.");
       } catch (error) {
-        showToast("Ошибка", "Не удалось завершить операцию.");
-        mainButton.disabled = false;
+        if (!navigator.onLine || error instanceof TypeError) {
+          const saved = queueCompletion(completionPayload);
+          showToast(saved ? "Сохранено" : "Ошибка", saved ? "Отчёт отправится автоматически после появления связи." : "Не удалось сохранить отчёт на устройстве.");
+          mainButton.disabled = false;
+        } else {
+          showToast("Ошибка", "Не удалось завершить операцию.");
+          mainButton.disabled = false;
+        }
       } finally {
         endAction(actionKey);
       }
@@ -3436,9 +3864,8 @@ MINIAPP_HTML = """<!doctype html>
       if (!current || current.task_kind !== "route" || state.data.is_admin) return;
 
       if (current.is_assigned_to_me) {
-        state.reportSection = "work";
-        state.selectedReportTaskKey = taskIdentity(current);
-        setScreen("report");
+        state.selectedOrderKey = taskIdentity(current);
+        render();
         return;
       }
 
@@ -3465,10 +3892,9 @@ MINIAPP_HTML = """<!doctype html>
           state.data.routes.tasks = data.tasks || [];
           state.data.routes.completed_tasks = data.completed_tasks || state.data.routes.completed_tasks || [];
         }
-        state.reportSection = "work";
-        state.selectedReportTask = 0;
-        state.selectedReportTaskKey = taskIdentity(current);
-        setScreen("report");
+        state.selectedOrderKey = taskIdentity(current);
+        state.screen = "orders";
+        render();
         showToast("Задание", data.message || "Задание взято в работу.");
       } catch (error) {
         showToast("Ошибка", "Не удалось взять задание.");
@@ -3476,6 +3902,154 @@ MINIAPP_HTML = """<!doctype html>
       } finally {
         endAction(actionKey);
       }
+    }
+
+    function authenticatedFileUrl(path, params = {}) {
+      const url = new URL(path, window.location.href);
+      Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+      if (state.initData) url.searchParams.set("initData", state.initData);
+      if (authToken) url.searchParams.set("authToken", authToken);
+      if (debugTelegramId) url.searchParams.set("telegram_id", debugTelegramId);
+      return url.toString();
+    }
+
+    function routeQrUrl(batchId) {
+      return authenticatedFileUrl("/api/routes/qr", {batch_id: batchId});
+    }
+
+    function defectPhotoUrl(defectId) {
+      return authenticatedFileUrl("/api/routes/defect-photo", {defect_id: defectId});
+    }
+
+    async function updateRouteTaskState(task, action) {
+      if (!task) return;
+      let reason = "";
+      if (action === "pause") reason = "Перерыв";
+      if (action === "block") {
+        reason = window.prompt("Что мешает продолжить работу?", task.blocked_reason || "") || "";
+        if (!reason.trim()) return;
+      }
+      if (action === "release") {
+        reason = window.prompt("Почему передаёте задание?", "Передача следующей смене") || "";
+        if (!reason.trim()) return;
+      }
+
+      const actionKey = `route-work-action:${task.id}:${action}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/routes/work-action", {batch_id: task.id, action, reason});
+        if (!data.ok) {
+          showToast("Задание", data.message || "Не удалось изменить состояние.");
+          mainButton.disabled = false;
+          return;
+        }
+        if (state.data.routes) {
+          state.data.routes.tasks = data.tasks || [];
+          state.data.routes.completed_tasks = data.completed_tasks || state.data.routes.completed_tasks || [];
+        }
+        state.selectedOrderKey = taskIdentity(data.batch || task);
+        render();
+        showToast("Задание", data.message || "Состояние обновлено.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось изменить состояние задания.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function openRoutePassport(batchId) {
+      if (!batchId) return;
+      const actionKey = `route-passport:${batchId}`;
+      if (!beginAction(actionKey)) return;
+      try {
+        const data = await api("/api/routes/passport", {batch_id: batchId});
+        if (!data.ok) {
+          showToast("Паспорт партии", data.message || "Паспорт не найден.");
+          return;
+        }
+        state.passportReturnScreen = state.screen === "passport" ? (state.passportReturnScreen || "orders") : state.screen;
+        state.passportBatchId = String(batchId);
+        state.passportData = data.passport;
+        state.screen = "passport";
+        render();
+      } catch (error) {
+        showToast("Ошибка", "Не удалось открыть паспорт партии.");
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function openTraceCode(rawValue) {
+      const traceCode = String(rawValue || "").trim().replace(/^TRACE:/i, "").toUpperCase();
+      if (!traceCode) return;
+      try {
+        const data = await api("/api/routes/lookup", {trace_code: traceCode});
+        if (!data.ok || !data.batch) {
+          showToast("QR партии", data.message || "Партия не найдена.");
+          return;
+        }
+        const task = {...data.batch, task_kind: "route"};
+        if (task.work_status === "done") {
+          openRoutePassport(task.id);
+          return;
+        }
+        state.screen = "orders";
+        state.orderCategory = state.data.is_admin ? adminOrderCategoryForTask(task) : (task.category || state.orderCategory);
+        state.selectedOrderKey = taskIdentity(task);
+        render();
+        showToast("QR партии", `Открыто задание ${task.trace_code || task.id}.`);
+      } catch (error) {
+        showToast("Ошибка", "Не удалось найти партию.");
+      }
+    }
+
+    function scanRouteQr() {
+      if (tg && typeof tg.showScanQrPopup === "function") {
+        tg.showScanQrPopup({text: "Наведите камеру на QR-код партии"}, (value) => {
+          openTraceCode(value);
+          return true;
+        });
+        return;
+      }
+      const value = window.prompt("Введите код партии", "RB-");
+      if (value) openTraceCode(value);
+    }
+
+    function renderPassport() {
+      const passport = state.passportData;
+      mainButton.textContent = "Назад к заданиям";
+      mainButton.disabled = false;
+      if (!passport) {
+        mount.innerHTML = `<div class="screen-head"><div><h2>Паспорт партии</h2><p>Данные не загружены.</p></div></div>`;
+        return;
+      }
+      const events = passport.events || [];
+      const batches = passport.batches || [];
+      const fabricLots = passport.fabric_lots || [];
+      const workStateText = {
+        free: "Свободно",
+        in_work: "В работе",
+        paused: "Пауза",
+        blocked: "Заблокировано",
+        done: "Готово",
+      };
+      const focusBatch = batches.find((batch) => String(batch.id) === String(passport.focus_batch_id)) || batches[0];
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Паспорт партии</h2><p>${escapeHtml(focusBatch ? focusBatch.product_name : "Производственная партия")}</p></div><div class="date">${escapeHtml(passport.trace_code || "-")}</div></div>
+        <div class="card field-card">
+          <label>QR-код партии</label>
+          <img class="party-qr" src="${escapeHtml(routeQrUrl(passport.focus_batch_id))}" alt="QR-код ${escapeHtml(passport.trace_code || "партии")}">
+          <div class="detail-grid"><div class="detail-box"><span>Код</span><strong>${escapeHtml(passport.trace_code || "-")}</strong></div><div class="detail-box"><span>Версия маршрута</span><strong>${escapeHtml(passport.route_version || "-")}</strong></div></div>
+        </div>
+        <div class="section-title"><b>Материал и партии</b><span>${fabricLots.length}</span></div>
+        <div class="op-list">${fabricLots.length ? fabricLots.map((lot) => `<div class="card report-row"><div><b>${escapeHtml(lot.lot_code)}</b><span>${escapeHtml(lot.material_name)} · ${escapeHtml(lot.product_color)}</span></div><span class="status-chip gray">${escapeHtml(lot.rolls)} рул.</span></div>`).join("") : itemEmpty("Для этой части маршрута партии ткани пока не связаны.")}</div>
+        <div class="section-title"><b>Операции партии</b><span>${batches.length}</span></div>
+        <div class="op-list">${batches.map((batch) => `<div class="card report-row"><div><b>${escapeHtml((batch.step || {}).operation || "Производственный этап")}</b><span>${escapeHtml(batch.product_size)} · ${escapeHtml(batch.product_color_label || batch.product_color)}${batch.assignee ? `<br>${escapeHtml(batch.assignee.full_name)}` : ""}</span></div><span class="status-chip ${batch.status === "done" ? "" : "warn"}">${escapeHtml(workStateText[batch.status === "done" ? "done" : batch.work_state] || "Открыто")}</span></div>`).join("")}</div>
+        <div class="section-title"><b>Хронология</b><span>${events.length}</span></div>
+        <div class="card field-card"><div class="passport-timeline">${events.length ? events.map((event) => `<div class="passport-event"><i class="passport-dot"></i><div><b>${escapeHtml(event.event_text || event.event_type)}</b><span>${escapeHtml((event.created_at || "").replace("T", " ").slice(0, 16))}${event.employee_name ? ` · ${escapeHtml(event.employee_name)}` : ""}${event.operation_name ? `<br>${escapeHtml(event.operation_name)}` : ""}${event.reason ? `<br>${escapeHtml(event.reason)}` : ""}${Number(event.good_quantity || 0) || Number(event.defect_quantity || 0) ? `<br>Годно ${escapeHtml(event.good_quantity || 0)} · брак ${escapeHtml(event.defect_quantity || 0)}` : ""}</span></div></div>`).join("") : itemEmpty("Событий пока нет.")}</div></div>
+      `;
     }
 
     function renderOrderCreate() {
@@ -3557,10 +4131,11 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card order-card ${isSelected ? "selected" : ""}" ${selectAttr}="${index}">
           <div class="order-head route-order-head">
             <div class="op-icon">▣</div>
-            <div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}${assignee}</span></div>
+            <div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span>${assignee}<span class="trace-code">${escapeHtml(task.trace_code || `RB-${task.id}`)}</span></div>
             <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
           </div>
           <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.quantity)} шт</strong></div>
+          ${task.blocked_reason ? `<div class="task-note">${escapeHtml(task.blocked_reason)}</div>` : ""}
           ${(task.due_date || task.priority === "urgent" || task.parent_batch_id) ? `<div class="route-inputs"><div class="route-input-row"><span>${task.parent_batch_id ? `Переделка задания #${escapeHtml(task.parent_batch_id)}` : `Приоритет: ${escapeHtml(priorityLabel(task.priority))}`}</span><span>${task.due_date ? `до ${escapeHtml(task.due_date)}` : ""}</span></div></div>` : ""}
           ${renderRouteTaskInputs(task)}
           ${deleteButton}
@@ -3600,11 +4175,14 @@ MINIAPP_HTML = """<!doctype html>
       state.selectedOrderKey = taskIdentity(current);
       mainButton.textContent = state.data && state.data.is_admin
         ? "Создать задание"
-        : (current && current.is_assigned_to_me ? "Открыть отчёт" : (current ? "Выбрать задание" : "Обновить статус"));
+        : (current && current.task_kind === "route" && current.is_assigned_to_me
+          ? (current.can_complete ? "Выполнить задание" : "Продолжить задание")
+          : (current && current.is_assigned_to_me ? "Открыть отчёт" : (current ? "Выбрать задание" : "Обновить статус")));
       mainButton.disabled = false;
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>${state.data && state.data.is_admin ? "Заказы в работе" : "Задания"}</h2><p>${state.data && state.data.is_admin ? "Создание и контроль заданий." : "Выберите свободное задание, чтобы взять его в работу."}</p></div><div class="date">${allTasks.length} активных</div></div>
+        <div class="scan-row"><button type="button" class="small-button secondary" data-task-action="scan">Сканировать QR</button></div>
         ${state.data && state.data.is_admin ? `<div class="card shift-card" data-order-action="new"><div><b>Создать задание</b><span>Раскрой и следующие операции из складского остатка.</span></div><span class="status-chip">+</span></div>` : ""}
         <div class="op-list">
           ${allTasks.length ? `
@@ -3628,7 +4206,8 @@ MINIAPP_HTML = """<!doctype html>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
         ` : current ? `
-          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}${current.assigned_employee_name ? `<br>В работе: ${escapeHtml(current.assigned_employee_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}</div>
+          <div class="card order-detail"><div class="order-head route-order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}</span>${current.assigned_employee_name ? `<span class="route-assignee">В работе: ${escapeHtml(current.assigned_employee_name)}</span>` : ""}<span class="trace-code">${escapeHtml(current.trace_code || `RB-${current.id}`)}</span></div><span class="status-chip ${current.work_state === "free" ? "gray" : "warn"}">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}${current.blocked_reason ? `<div class="task-note">${escapeHtml(current.blocked_reason)}</div>` : ""}<div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(current.id)}">Паспорт / QR</button></div></div>
+          ${!state.data.is_admin && current.is_assigned_to_me ? renderTaskCompletionForm(current) : ""}
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
         ${state.data && state.data.is_admin && current ? `<div class="button-row"><button class="small-button danger" data-order-action="delete" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Удалить задание</button></div>` : ""}
       `;
@@ -3720,7 +4299,11 @@ MINIAPP_HTML = """<!doctype html>
               <div class="detail-box"><span>Этап</span><strong>${escapeHtml(task.stage || "-")}</strong></div>
               <div class="detail-box"><span>Cycle time</span><strong>${escapeHtml(task.cycle_minutes == null ? "-" : analyticsDuration(task.cycle_minutes))}</strong></div>
               <div class="detail-box"><span>Lead time</span><strong>${escapeHtml(task.lead_minutes == null ? "-" : analyticsDuration(task.lead_minutes))}</strong></div>
+              <div class="detail-box"><span>Код партии</span><strong>${escapeHtml(task.trace_code || `RB-${task.id}`)}</strong></div>
+              <div class="detail-box"><span>Версия маршрута</span><strong>${escapeHtml(task.route_version || "-")}</strong></div>
             </div>
+            ${task.blocked_reason ? `<div class="task-note">${escapeHtml(task.blocked_reason)}</div>` : ""}
+            <div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button></div>
           </div>
           <div class="section-title"><b>Брак задания</b><span>${taskDefects.length}</span></div>
           <div class="op-list">${analyticsDefectRows(taskDefects)}</div>
@@ -4141,8 +4724,8 @@ MINIAPP_HTML = """<!doctype html>
     function render() {
       if (!state.data) return;
       const allowedScreens = state.data.is_admin
-        ? ["shift", "warehouse", "analytics", "orders", "admin"]
-        : ["shift", "report", "analytics", "orders", "admin"];
+        ? ["shift", "warehouse", "analytics", "orders", "admin", "passport"]
+        : ["shift", "report", "analytics", "orders", "admin", "passport"];
 
       if (!allowedScreens.includes(state.screen)) state.screen = "shift";
       document.getElementById("roleLabel").textContent = roleLabel();
@@ -4153,6 +4736,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "analytics") renderAnalytics();
       if (state.screen === "orders") renderOrders();
       if (state.screen === "admin") renderAdmin();
+      if (state.screen === "passport") renderPassport();
       renderBottomNav();
       renderTopTabs();
       persistUiState();
@@ -4194,6 +4778,7 @@ MINIAPP_HTML = """<!doctype html>
         state.data = data;
         if (message) showToast("Готово", message);
         render();
+        if (getCompletionQueue().length && navigator.onLine) window.setTimeout(() => flushCompletionQueue(true), 0);
       } catch (error) {
         state.data = null;
         document.getElementById("roleLabel").textContent = "Нет соединения";
@@ -4226,6 +4811,39 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     document.addEventListener("click", (event) => {
+      const taskAction = event.target.closest("[data-task-action]");
+      if (taskAction) {
+        const action = taskAction.dataset.taskAction;
+        if (action === "scan") {
+          scanRouteQr();
+          return;
+        }
+        const taskId = Number(taskAction.dataset.taskId || 0);
+        const task = getRouteTasks().find((row) => Number(row.id) === taskId) || getCompletedRouteTasks().find((row) => Number(row.id) === taskId);
+        if (action === "passport") {
+          openRoutePassport(taskId);
+          return;
+        }
+        if (action === "all-good" && task) {
+          const goodInput = document.getElementById("taskGoodQuantity");
+          const defectInput = document.getElementById("taskDefectQuantity");
+          if (goodInput) goodInput.value = task.quantity;
+          if (defectInput) defectInput.value = "0";
+          const details = document.getElementById("taskDefectDetails");
+          if (details) details.style.display = "none";
+          const draft = state.taskCompletionDrafts[task.id] || {request_id: createRequestId()};
+          draft.good = String(task.quantity);
+          draft.defect = "0";
+          state.taskCompletionDrafts[task.id] = draft;
+          persistUiState();
+          return;
+        }
+        if (["pause", "block", "resume", "release"].includes(action)) {
+          updateRouteTaskState(task, action);
+          return;
+        }
+      }
+
       const orderAction = event.target.closest("[data-order-action]");
       if (orderAction) {
         syncOrderDraft();
@@ -4453,8 +5071,7 @@ MINIAPP_HTML = """<!doctype html>
       const reportAction = event.target.closest("[data-report-action]");
       if (reportAction) {
         if (reportAction.dataset.reportAction === "complete-task") {
-          const tasks = getMyRouteTasks();
-          completeOperationTask(tasks[state.selectedReportTask] || tasks[0]);
+          completeOperationTask(getDisplayedRouteTask());
         }
         if (reportAction.dataset.reportAction === "complete-cutting-stage") {
           const tasks = getMyCuttingTasks();
@@ -4528,6 +5145,7 @@ MINIAPP_HTML = """<!doctype html>
           if (cuttingCurrent) { submitCuttingStage(cuttingCurrent); return; }
           const tasks = getMyRouteTasks();
           const current = tasks[state.selectedReportTask] || tasks[0];
+          if (current && current.can_resume) { updateRouteTaskState(current, "resume"); return; }
           if (current) { completeOperationTask(current); return; }
         }
         refreshState("Отчёт обновлён.");
@@ -4549,8 +5167,19 @@ MINIAPP_HTML = """<!doctype html>
         const rows = visibleOrderRows();
         const current = rows[state.selectedOrder] || rows[0];
         if (current && current.task_kind === "cutting_stage") { selectCuttingTaskForReport(current); return; }
-        if (current && current.task_kind === "route") { startOperationTask(current); return; }
+        if (current && current.task_kind === "route") {
+          if (current.is_assigned_to_me && current.can_complete) { completeOperationTask(current); return; }
+          if (current.is_assigned_to_me && current.can_resume) { updateRouteTaskState(current, "resume"); return; }
+          startOperationTask(current);
+          return;
+        }
         refreshState("Статус обновлён.");
+        return;
+      }
+      if (state.screen === "passport") {
+        state.screen = state.passportReturnScreen || "orders";
+        state.passportData = null;
+        render();
         return;
       }
       if (state.screen === "admin") {
@@ -4568,8 +5197,7 @@ MINIAPP_HTML = """<!doctype html>
         syncWarehouseReceiptForm();
       }
 
-      const routeTasks = getMyRouteTasks();
-      const routeTask = routeTasks[state.selectedReportTask] || routeTasks[0];
+      const routeTask = getDisplayedRouteTask();
 
       if (routeTask && event.target.closest("#taskGoodQuantity, #taskDefectQuantity, #taskDefectReason, #taskDefectDisposition, #taskDefectComment")) {
         const draft = state.taskCompletionDrafts[routeTask.id] || {};
@@ -4615,6 +5243,15 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
+      const defectPhotoInput = event.target.closest("#taskDefectPhoto");
+      if (defectPhotoInput) {
+        const task = getDisplayedRouteTask();
+        readDefectPhoto(defectPhotoInput.files && defectPhotoInput.files[0], task).catch(() => {
+          showToast("Фото брака", "Не удалось прочитать фотографию.");
+        });
+        return;
+      }
+
       const attachmentInput = event.target.closest("#orderAttachment");
       if (attachmentInput) {
         readOrderAttachment(attachmentInput.files && attachmentInput.files[0]);
@@ -4678,6 +5315,13 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
+      if (state.screen === "passport") {
+        state.screen = state.passportReturnScreen || "orders";
+        state.passportData = null;
+        render();
+        return;
+      }
+
       if (state.screen === "analytics" && state.data && state.data.is_admin && state.analyticsView !== "overview") {
         if (state.analyticsView === "task" && state.analyticsReturnView && state.analyticsReturnView !== "task") {
           state.analyticsView = state.analyticsReturnView;
@@ -4724,6 +5368,10 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("menuBtn").addEventListener("click", () => {
+      if (isStandaloneWeb) {
+        logoutWebApp();
+        return;
+      }
       if (state.data && state.data.is_admin) {
         setScreen("admin");
         return;
@@ -4731,7 +5379,101 @@ MINIAPP_HTML = """<!doctype html>
       showToast("Меню", "Настройки профиля и уведомления подключим позже.");
     });
 
-    refreshState();
+    function showWebLogin(message = "") {
+      state.data = null;
+      appRoot.hidden = true;
+      mainButton.hidden = true;
+      bottomNav.hidden = true;
+      loginView.hidden = false;
+      const errorNode = document.getElementById("webLoginError");
+      if (errorNode) errorNode.textContent = message;
+      window.setTimeout(() => document.getElementById("webUsername")?.focus(), 60);
+    }
+
+    function showWebApp() {
+      loginView.hidden = true;
+      appRoot.hidden = false;
+      mainButton.hidden = false;
+      bottomNav.hidden = false;
+    }
+
+    async function restoreWebSession() {
+      try {
+        const response = await fetch("/api/web/session", {credentials: "same-origin", cache: "no-store"});
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) return false;
+        webCsrfToken = data.csrf_token || "";
+        const identity = String(data.telegram_id || data.username || "web");
+        if (identity !== storedWebIdentity) {
+          window.sessionStorage.setItem("webapp_identity", identity);
+          window.location.reload();
+          return false;
+        }
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    async function loginWebApp(event) {
+      event.preventDefault();
+      const username = document.getElementById("webUsername");
+      const password = document.getElementById("webPassword");
+      const button = document.getElementById("webLoginButton");
+      const errorNode = document.getElementById("webLoginError");
+      button.disabled = true;
+      errorNode.textContent = "";
+      try {
+        const response = await fetch("/api/web/login", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          credentials: "same-origin",
+          body: JSON.stringify({username: username.value, password: password.value}),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error(data.message || "Не удалось войти.");
+        window.sessionStorage.setItem("webapp_identity", String(data.telegram_id || data.username || "web"));
+        window.location.reload();
+      } catch (error) {
+        errorNode.textContent = error.message || "Не удалось войти.";
+        password.value = "";
+        password.focus();
+        button.disabled = false;
+      }
+    }
+
+    async function logoutWebApp() {
+      if (!window.confirm("Выйти из приложения?")) return;
+      try {
+        await fetch("/api/web/logout", {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "X-CSRF-Token": webCsrfToken},
+          credentials: "same-origin",
+          body: "{}",
+        });
+      } finally {
+        try { window.sessionStorage.removeItem("webapp_identity"); } catch (error) {}
+        webCsrfToken = "";
+        window.location.reload();
+      }
+    }
+
+    async function bootstrapApplication() {
+      if (isStandaloneWeb) {
+        document.body.classList.add("web-mode");
+        webActionSlot.appendChild(mainButton);
+        const restored = await restoreWebSession();
+        if (!restored) {
+          if (document.visibilityState !== "hidden") showWebLogin();
+          return;
+        }
+      }
+      showWebApp();
+      await refreshState();
+    }
+
+    webLoginForm.addEventListener("submit", loginWebApp);
+    bootstrapApplication();
   </script>
 </body>
 </html>
