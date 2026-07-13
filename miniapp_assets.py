@@ -265,6 +265,114 @@ MINIAPP_HTML = """<!doctype html>
       min-height: 104px;
     }
 
+    .home-kpi {
+      width: 100%;
+      min-width: 0;
+      text-align: left;
+      color: inherit;
+      border-color: rgba(195,111,85,.24);
+      cursor: pointer;
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    }
+
+    .home-kpi:hover {
+      transform: translateY(-1px);
+      border-color: rgba(195,111,85,.52);
+      background: rgba(255,255,255,.74);
+      box-shadow: 0 14px 28px rgba(195,111,85,.16);
+    }
+
+    .home-kpi:active {
+      transform: translateY(0);
+    }
+
+    .home-kpi > span:last-child {
+      color: var(--accent-dark);
+      font-weight: 850;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 12px 0 18px;
+    }
+
+    .summary-card {
+      width: 100%;
+      min-width: 0;
+      min-height: 112px;
+      padding: 14px;
+      color: inherit;
+      text-align: left;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 8px;
+      overflow: hidden;
+    }
+
+    .summary-card > span {
+      display: block;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+      font-weight: 900;
+      overflow-wrap: anywhere;
+    }
+
+    .summary-card > strong {
+      display: block;
+      align-self: end;
+      min-width: 0;
+      font-size: 28px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .summary-card > small {
+      display: block;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.3;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .employee-detail-head {
+      align-items: center;
+    }
+
+    .employee-detail-title {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .employee-detail-back {
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      border: 1px solid rgba(195,111,85,.22);
+      border-radius: 15px;
+      color: var(--accent-dark);
+      background: rgba(255,255,255,.64);
+      font-size: 25px;
+      line-height: 1;
+      box-shadow: var(--inset-shadow);
+    }
+
+    .employee-detail-back:hover {
+      border-color: rgba(195,111,85,.5);
+      background: rgba(255,255,255,.84);
+    }
+
+    .employee-detail-row {
+      width: 100%;
+      color: inherit;
+      text-align: left;
+    }
+
     .warehouse-category {
       width: 100%;
       text-align: left;
@@ -628,6 +736,8 @@ MINIAPP_HTML = """<!doctype html>
     [data-report-section],
     [data-admin-home-view],
     [data-admin-home-employee],
+    [data-employee-home-detail],
+    [data-employee-home-back],
     [data-admin-section],
     [data-admin-action],
     [data-order-action],
@@ -1402,6 +1512,7 @@ MINIAPP_HTML = """<!doctype html>
       "analyticsStage",
       "analyticsTaskId",
       "analyticsReturnView",
+      "employeeHomeView",
       "userStartDate",
       "userEndDate",
       "taskCompletionDrafts",
@@ -1465,6 +1576,7 @@ MINIAPP_HTML = """<!doctype html>
       analyticsStage: "",
       analyticsTaskId: "",
       analyticsReturnView: "overview",
+      employeeHomeView: "overview",
       userStartDate: "",
       userEndDate: "",
       taskCompletionDrafts: {},
@@ -1757,6 +1869,33 @@ MINIAPP_HTML = """<!doctype html>
       return getCuttingTasks()
         .filter((task) => task.is_assigned_to_me)
         .map((task) => ({...task, task_kind: "cutting_stage"}));
+    }
+
+    function getEmployeeContourTasks() {
+      const cuttingContours = getCuttingTasks().filter((task) => task.stage === "contours");
+      return cuttingContours.length ? cuttingContours : getContourTasks();
+    }
+
+    function getEmployeeFabricRows() {
+      const rows = [];
+      const seen = new Set();
+
+      getCuttingTasks().forEach((task) => {
+        (task.fabric_rolls || []).forEach((roll) => {
+          const taskId = task.production_task_id || task.source_id || task.id;
+          const key = `${taskId}|${roll.material_name || "Ткань"}|${roll.product_color || roll.product_color_label || ""}|${roll.rolls || 0}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          rows.push({
+            ...roll,
+            task_id: taskId,
+            product_name: task.product_name || "Изделие",
+            stage_title: task.stage_title || "Раскрой",
+          });
+        });
+      });
+
+      return rows;
     }
 
     function getOrderColors() {
@@ -2498,6 +2637,75 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    function renderEmployeeHomeDetail(view, context) {
+      const titles = {
+        report: ["Отчёт смены", "Операции, внесённые в текущую смену."],
+        tasks: ["Мои задания", "Производственные задания, которые сейчас в работе."],
+        contours: ["Задания раскроя", "Доступные и взятые этапы нанесения контуров."],
+        fabric: ["Ткань в заданиях", "Рулоны ткани, закреплённые за доступными заданиями."],
+      };
+      const [title, description] = titles[view] || titles.report;
+      let rows = "";
+      let count = 0;
+
+      if (view === "report") {
+        count = context.operations.length;
+        rows = context.operations.length ? context.operations.map((operation) => `
+          <button type="button" class="card report-row employee-detail-row" data-go="report" data-report-target="work">
+            <div><b>${escapeHtml(operation.operation_name)}</b><span>${escapeHtml(operation.product_size || "-")} · ${escapeHtml(operation.product_color || "-")}</span></div>
+            <span class="status-chip">${escapeHtml(operation.quantity || 0)} ${escapeHtml(operation.unit || "шт")}</span>
+          </button>
+        `).join("") : itemEmpty("В текущей смене пока нет операций.");
+      } else if (view === "tasks") {
+        const taskRows = [
+          ...context.cuttingTasks.map((task) => ({
+            title: task.stage_title || "Этап раскроя",
+            detail: `${task.product_name || "Изделие"} · ${(task.sizes || []).join(", ") || task.sizes_text || "размер не указан"}`,
+            status: task.status_text || task.status || "В работе",
+          })),
+          ...context.routeTasks.map((task) => ({
+            title: task.operation || "Производственное задание",
+            detail: `${task.product_name || "Изделие"} · ${task.product_size || "-"} · ${task.product_color || "-"}`,
+            status: task.status_text || "В работе",
+          })),
+        ];
+        count = taskRows.length;
+        rows = taskRows.length ? taskRows.map((task) => `
+          <button type="button" class="card report-row employee-detail-row" data-go="report" data-report-target="work">
+            <div><b>${escapeHtml(task.title)}</b><span>${escapeHtml(task.detail)}</span></div>
+            <span class="status-chip warn">${escapeHtml(task.status)} ›</span>
+          </button>
+        `).join("") : itemEmpty("У вас пока нет заданий в работе.");
+      } else if (view === "contours") {
+        count = context.contourTasks.length;
+        rows = context.contourTasks.length ? context.contourTasks.map((task) => `
+          <button type="button" class="card report-row employee-detail-row" data-go="orders">
+            <div><b>${escapeHtml(task.product_name || task.stage_title || "Нанесение контуров")}</b><span>${escapeHtml((task.sizes || []).join(", ") || task.sizes_text || "Размеры не указаны")} · ${escapeHtml((task.color_labels || task.colors || []).join(", ") || task.colors_text || "цвета не указаны")}</span></div>
+            <span class="status-chip ${task.is_assigned_to_me ? "warn" : "gray"}">${escapeHtml(task.status_text || (task.is_assigned_to_me ? "В работе" : "Свободно"))} ›</span>
+          </button>
+        `).join("") : itemEmpty("Заданий на нанесение контуров сейчас нет.");
+      } else {
+        count = context.fabricRows.length;
+        rows = context.fabricRows.length ? context.fabricRows.map((row) => `
+          <div class="card report-row">
+            <div><b>${escapeHtml(row.product_name)}</b><span>${escapeHtml(row.material_name || "Ткань")} · ${escapeHtml(row.product_color_label || row.product_color || "Цвет не указан")}</span></div>
+            <span class="status-chip gray">${escapeHtml(row.rolls || 0)} рул.</span>
+          </div>
+        `).join("") : itemEmpty("В доступных заданиях ткань пока не закреплена.");
+      }
+
+      mainButton.textContent = "Обновить данные";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="screen-head employee-detail-head">
+          <button type="button" class="employee-detail-back" data-employee-home-back aria-label="Вернуться на главную">‹</button>
+          <div class="employee-detail-title"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div>
+          <div class="date">${count}</div>
+        </div>
+        <div class="op-list">${rows}</div>
+      `;
+    }
+
     function renderShift() {
       if (state.data && state.data.is_admin) {
         renderAdminHome();
@@ -2507,10 +2715,17 @@ MINIAPP_HTML = """<!doctype html>
       const employee = state.data && state.data.employee;
       const shift = state.data && state.data.shift;
       const operations = getReportOperations();
-      const tasks = getTasks();
-      const contourTasks = getContourTasks();
-      const fabricRows = getProduction().fabric_stock || [];
+      const routeTasks = getMyRouteTasks();
+      const cuttingTasks = getMyCuttingTasks();
+      const contourTasks = getEmployeeContourTasks();
+      const fabricRows = getEmployeeFabricRows();
+      const activeTasks = routeTasks.length + cuttingTasks.length;
       const hasOpen = state.data && state.data.has_open_shift;
+
+      if (state.employeeHomeView && state.employeeHomeView !== "overview") {
+        renderEmployeeHomeDetail(state.employeeHomeView, {operations, routeTasks, cuttingTasks, contourTasks, fabricRows});
+        return;
+      }
 
       mainButton.textContent = hasOpen ? "Закрыть смену" : "Открыть смену";
       mainButton.disabled = Boolean(shift && shift.status === "closed");
@@ -2519,10 +2734,10 @@ MINIAPP_HTML = """<!doctype html>
         <div class="screen-head"><div><h2>Сегодня</h2><p>${escapeHtml(employee ? employee.full_name : "Откройте приложение из Telegram")}</p></div><div class="date">${escapeHtml(shift ? shift.date : "сегодня")}</div></div>
         <div class="card shift-card"><div><b>${escapeHtml(shiftText())}</b><span>${escapeHtml(employee ? employee.position : "-")} · профиль ${escapeHtml(employee ? employee.status : "-")}<br>${escapeHtml(shift ? `${shift.start_time || "-"}-${shift.end_time || ""}` : "Начните смену, чтобы вести отчёт")}</span></div><span class="status-chip ${hasOpen ? "" : "gray"}">● ${hasOpen ? "в процессе" : "ожидает"}</span></div>
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Отчёт</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${operations.length}<small> строк</small></strong><span>Операции текущей смены</span><div class="progress"><i style="--w:${Math.min(100, operations.length * 12)}%"></i></div></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Задания</span><div class="kpi-ico">✓</div></div><strong>${tasks.length}<small> акт.</small></strong><span>Производственные задания</span><div class="progress sage"><i style="--w:${Math.min(100, tasks.length * 18)}%"></i></div></div>
-          <div class="card kpi"><div class="kpi-top"><span>Контуры</span><div class="kpi-ico">▣</div></div><strong>${contourTasks.length}<small> шт</small></strong><span>Доступно раскройщику</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Ткань</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз.</small></strong><span>Остатки ткани</span></div>
+          <button type="button" class="card kpi home-kpi" data-employee-home-detail="report"><div class="kpi-top"><span>Отчёт</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${operations.length}<small> строк</small></strong><span>Открыть операции ›</span><div class="progress"><i style="--w:${Math.min(100, operations.length * 12)}%"></i></div></button>
+          <button type="button" class="card kpi good home-kpi" data-employee-home-detail="tasks"><div class="kpi-top"><span>Задания</span><div class="kpi-ico">✓</div></div><strong>${activeTasks}<small> акт.</small></strong><span>Открыть задания ›</span><div class="progress sage"><i style="--w:${Math.min(100, activeTasks * 18)}%"></i></div></button>
+          <button type="button" class="card kpi home-kpi" data-employee-home-detail="contours"><div class="kpi-top"><span>Контуры</span><div class="kpi-ico">▣</div></div><strong>${contourTasks.length}<small> шт</small></strong><span>Посмотреть список ›</span></button>
+          <button type="button" class="card kpi home-kpi" data-employee-home-detail="fabric"><div class="kpi-top"><span>Ткань</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз.</small></strong><span>Ткань в заданиях ›</span></button>
         </div>
         <div class="section-title"><b>Активная операция</b><button data-go="report">отчёт</button></div>
         ${operations.length ? `
@@ -3572,7 +3787,7 @@ MINIAPP_HTML = """<!doctype html>
             <button class="card summary-card clickable" data-go="report" data-report-target="work"><span>В работе</span><strong>${myRouteTasks.length + myCuttingTasks.length}</strong><small>активных заданий</small></button>
             <button class="card summary-card clickable" data-go="orders"><span>Свободно</span><strong>${freeTasks}</strong><small>можно взять</small></button>
             <button class="card summary-card clickable" data-go="report" data-report-target="done"><span>Завершено</span><strong>${completedTasks.length}</strong><small>в истории заданий</small></button>
-            <button class="card summary-card clickable" data-go="report"><span>В отчёте</span><strong>${operations.length}</strong><small>операций смены</small></button>
+            <button class="card summary-card clickable" data-go="report" data-report-target="work"><span>В отчёте</span><strong>${operations.length}</strong><small>операций смены</small></button>
           </div>
           <div class="section-title"><b>Последние завершённые</b><button data-go="report">открыть</button></div>
           <div class="op-list">
@@ -4167,6 +4382,20 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const employeeHomeDetail = event.target.closest("[data-employee-home-detail]");
+      if (employeeHomeDetail) {
+        state.employeeHomeView = employeeHomeDetail.dataset.employeeHomeDetail;
+        render();
+        return;
+      }
+
+      const employeeHomeBack = event.target.closest("[data-employee-home-back]");
+      if (employeeHomeBack) {
+        state.employeeHomeView = "overview";
+        render();
+        return;
+      }
+
       const go = event.target.closest("[data-go]");
       if (go) {
         if (go.dataset.reportTarget) {
@@ -4176,6 +4405,7 @@ MINIAPP_HTML = """<!doctype html>
           state.selectedCuttingReportTask = 0;
           state.selectedCuttingReportTaskKey = "";
         }
+        if (go.dataset.go === "shift") state.employeeHomeView = "overview";
         setScreen(go.dataset.go);
         return;
       }
@@ -4280,6 +4510,10 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "shift") {
         if (state.data.is_admin) {
           refreshAdminDashboard("Главная обновлена.");
+          return;
+        }
+        if (state.employeeHomeView && state.employeeHomeView !== "overview") {
+          refreshState("Данные обновлены.");
           return;
         }
         if (state.data.shift && state.data.shift.status === "closed") return;
@@ -4466,6 +4700,12 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "shift" && state.data && state.data.is_admin && state.adminHomeView !== "overview") {
         state.adminHomeView = state.adminHomeView === "employee" ? "employees" : "overview";
         state.adminHomeEmployee = "";
+        render();
+        return;
+      }
+
+      if (state.screen === "shift" && state.data && !state.data.is_admin && state.employeeHomeView !== "overview") {
+        state.employeeHomeView = "overview";
         render();
         return;
       }
