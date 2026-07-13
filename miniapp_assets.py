@@ -668,6 +668,10 @@ MINIAPP_HTML = """<!doctype html>
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
+    .segment-row.admin-segments {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
     .segment-button {
       min-width: 0;
       min-height: 34px;
@@ -736,6 +740,7 @@ MINIAPP_HTML = """<!doctype html>
     [data-report-section],
     [data-admin-home-view],
     [data-admin-home-employee],
+    [data-admin-matrix-product],
     [data-employee-home-detail],
     [data-employee-home-back],
     [data-admin-section],
@@ -759,6 +764,7 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-order-action],
     .card[data-admin-home-view],
     .card[data-admin-home-employee],
+    .card[data-admin-matrix-product],
     .card[data-select-operation],
     .card[data-select-order],
     .card[data-select-report-task],
@@ -772,6 +778,7 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-order-action]:hover,
     .card[data-admin-home-view]:hover,
     .card[data-admin-home-employee]:hover,
+    .card[data-admin-matrix-product]:hover,
     .card[data-select-operation]:hover,
     .card[data-select-order]:hover,
     .card[data-select-report-task]:hover,
@@ -786,6 +793,7 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-order-action]:active,
     .card[data-admin-home-view]:active,
     .card[data-admin-home-employee]:active,
+    .card[data-admin-matrix-product]:active,
     .card[data-select-operation]:active,
     .card[data-select-order]:active,
     .card[data-select-report-task]:active,
@@ -798,6 +806,7 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-order-action] .status-chip.gray,
     .card[data-admin-home-view] .status-chip.gray,
     .card[data-admin-home-employee] .status-chip.gray,
+    .card[data-admin-matrix-product] .status-chip.gray,
     .card[data-select-operation] .status-chip.gray,
     .card[data-select-order] .status-chip.gray,
     .card[data-select-report-task] .status-chip.gray,
@@ -805,6 +814,117 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--accent-dark);
       background: rgba(195,111,85,.13);
       border-color: rgba(195,111,85,.18);
+    }
+
+    .matrix-step {
+      padding: 13px;
+    }
+
+    .matrix-step-head {
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .matrix-step-head > div {
+      min-width: 0;
+    }
+
+    .matrix-step-head b,
+    .matrix-step-head span {
+      overflow-wrap: anywhere;
+    }
+
+    .matrix-step-head b {
+      display: block;
+      font-size: 13px;
+      line-height: 1.18;
+    }
+
+    .matrix-step-head > div > span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10.5px;
+      font-weight: 800;
+    }
+
+    .matrix-step-head .status-chip {
+      max-width: 92px;
+      white-space: normal;
+      text-align: center;
+      line-height: 1.05;
+    }
+
+    .matrix-step-number {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border-radius: 11px;
+      color: var(--accent-dark);
+      background: rgba(195,111,85,.13);
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .matrix-flow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+      align-items: stretch;
+      gap: 5px;
+      margin-top: 11px;
+    }
+
+    .matrix-node {
+      min-width: 0;
+      padding: 9px;
+      border: 1px solid rgba(78,56,42,.10);
+      border-radius: 11px;
+      background: rgba(255,255,255,.45);
+    }
+
+    .matrix-node small,
+    .matrix-meta small {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 950;
+      text-transform: uppercase;
+    }
+
+    .matrix-node strong {
+      display: block;
+      font-size: 10.5px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .matrix-arrow {
+      display: grid;
+      place-items: center;
+      color: var(--accent-dark);
+      font-size: 16px;
+      font-weight: 950;
+    }
+
+    .matrix-component,
+    .matrix-meta {
+      margin-top: 8px;
+      padding: 8px 9px;
+      border-radius: 10px;
+      color: var(--muted);
+      background: rgba(126,145,113,.10);
+      font-size: 10.5px;
+      font-weight: 800;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .matrix-component b {
+      color: var(--text);
     }
 
     .choice-grid {
@@ -1508,6 +1628,7 @@ MINIAPP_HTML = """<!doctype html>
       "adminHomePeriod",
       "adminHomeView",
       "adminHomeEmployee",
+      "adminMatrixProduct",
       "analyticsView",
       "analyticsStage",
       "analyticsTaskId",
@@ -1572,6 +1693,7 @@ MINIAPP_HTML = """<!doctype html>
       adminHomePeriod: "today",
       adminHomeView: "overview",
       adminHomeEmployee: "",
+      adminMatrixProduct: "",
       analyticsView: "overview",
       analyticsStage: "",
       analyticsTaskId: "",
@@ -1648,6 +1770,20 @@ MINIAPP_HTML = """<!doctype html>
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+    }
+
+    function countLabel(value, one, few, many) {
+      const count = Number(value || 0);
+      const lastTwo = Math.abs(count) % 100;
+      const lastOne = lastTwo % 10;
+      const form = lastTwo > 10 && lastTwo < 20
+        ? many
+        : lastOne === 1
+          ? one
+          : lastOne >= 2 && lastOne <= 4
+            ? few
+            : many;
+      return `${count} ${form}`;
     }
 
     async function api(path, payload = {}) {
@@ -3836,14 +3972,74 @@ MINIAPP_HTML = """<!doctype html>
     function renderAdminTabs() {
       const sections = [
         ["reports", "Отчёты"],
+        ["matrix", "Матрица"],
         ["employees", "Сотрудники"],
         ["shifts", "Смены"],
         ["feedback", "Связь"],
       ];
 
-      return `<div class="segment-row">${sections.map(([id, label]) => `
+      return `<div class="segment-row admin-segments">${sections.map(([id, label]) => `
         <button class="segment-button ${state.adminSection === id ? "active" : ""}" data-admin-section="${id}">${label}</button>
       `).join("")}</div>`;
+    }
+
+    function getOperationalMatrix() {
+      const routes = state.data && state.data.routes ? state.data.routes : {};
+      return Array.isArray(routes.operational_matrix) ? routes.operational_matrix : [];
+    }
+
+    function renderAdminMatrix() {
+      const catalog = getOperationalMatrix();
+      const selectedIndex = state.adminMatrixProduct === "" ? -1 : Number(state.adminMatrixProduct);
+      const product = selectedIndex >= 0 ? catalog[selectedIndex] : null;
+      mainButton.textContent = "Обновить матрицу";
+      mainButton.disabled = false;
+
+      if (!product) {
+        state.adminMatrixProduct = "";
+        return `
+          <div class="screen-head"><div><h2>Операционная матрица</h2><p>Движение изделий от ткани до готового склада.</p></div><div class="date">${countLabel(catalog.length, "изделие", "изделия", "изделий")}</div></div>
+          ${renderAdminTabs()}
+          <div class="op-list">
+            ${catalog.length ? catalog.map((route, index) => `
+              <div class="card report-row" data-admin-matrix-product="${index}">
+                <div><b>${escapeHtml(route.product_name)}</b><span>${countLabel(route.step_count, "этап", "этапа", "этапов")} · ${countLabel((route.sizes || []).length, "размер", "размера", "размеров")} · ${countLabel((route.colors || []).length, "цвет", "цвета", "цветов")}</span></div>
+                <span class="status-chip gray">›</span>
+              </div>
+            `).join("") : itemEmpty("Матрица изделий пока не заполнена.")}
+          </div>
+        `;
+      }
+
+      const steps = product.steps || [];
+      return `
+        <div class="screen-head"><div><h2>${escapeHtml(product.product_name)}</h2><p>Операционная матрица движения изделия.</p></div><div class="date">${countLabel(product.step_count, "этап", "этапа", "этапов")}</div></div>
+        ${renderAdminTabs()}
+        <div class="card field-card">
+          <div class="report-row"><div><b>Номенклатура</b><span>${countLabel((product.sizes || []).length, "размер", "размера", "размеров")} · ${countLabel((product.colors || []).length, "цвет", "цвета", "цветов")}</span></div><span class="status-chip">сквозной маршрут</span></div>
+        </div>
+        <div class="section-title"><b>Движение изделия</b><span>${steps.length}</span></div>
+        <div class="op-list">
+          ${steps.map((step) => `
+            <div class="card matrix-step">
+              <div class="matrix-step-head">
+                <span class="matrix-step-number">${escapeHtml(step.number)}</span>
+                <div><b>${escapeHtml(step.operation)}</b><span>${escapeHtml(step.position)}</span></div>
+                <span class="status-chip gray">${escapeHtml(step.category)}</span>
+              </div>
+              <div class="matrix-flow">
+                <div class="matrix-node"><small>Вход</small><strong>${escapeHtml(step.main_input)}</strong></div>
+                <span class="matrix-arrow">→</span>
+                <div class="matrix-node"><small>Выход</small><strong>${escapeHtml(step.output)}</strong></div>
+              </div>
+              ${step.component_input ? `<div class="matrix-component"><b>Компонент:</b> ${escapeHtml(step.component_input)}</div>` : ""}
+              <div class="matrix-meta"><small>Условие запуска</small>${escapeHtml(step.dependency)}</div>
+              <div class="matrix-meta"><small>Движение склада</small>${escapeHtml(step.stock_movement)}</div>
+              <div class="matrix-meta"><small>Следующий этап</small>${escapeHtml(step.next_operation)}</div>
+            </div>
+          `).join("")}
+        </div>
+      `;
     }
 
     function renderAdminWarehouse(includeTabs = false) {
@@ -4122,6 +4318,10 @@ MINIAPP_HTML = """<!doctype html>
       const admin = getAdmin();
       mainButton.disabled = false;
 
+      if (state.adminSection === "matrix") {
+        mount.innerHTML = renderAdminMatrix();
+        return;
+      }
       if (state.adminSection === "employees") {
         mount.innerHTML = renderAdminEmployees(admin);
         return;
@@ -4345,6 +4545,13 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const adminMatrixProduct = event.target.closest("[data-admin-matrix-product]");
+      if (adminMatrixProduct) {
+        state.adminMatrixProduct = adminMatrixProduct.dataset.adminMatrixProduct;
+        render();
+        return;
+      }
+
       const analyticsBack = event.target.closest("[data-analytics-back]");
       if (analyticsBack) {
         state.analyticsView = "overview";
@@ -4413,6 +4620,7 @@ MINIAPP_HTML = """<!doctype html>
       const adminSection = event.target.closest("[data-admin-section]");
       if (adminSection) {
         state.adminSection = adminSection.dataset.adminSection;
+        state.adminMatrixProduct = "";
         render();
         return;
       }
@@ -4678,6 +4886,12 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
+      if (state.screen === "admin" && state.adminSection === "matrix" && state.adminMatrixProduct !== "") {
+        state.adminMatrixProduct = "";
+        render();
+        return;
+      }
+
       if (state.screen === "analytics" && state.data && state.data.is_admin && state.analyticsView !== "overview") {
         if (state.analyticsView === "task" && state.analyticsReturnView && state.analyticsReturnView !== "task") {
           state.analyticsView = state.analyticsReturnView;

@@ -240,6 +240,89 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 self.assertIn(route_step["position"], {"Раскройщик", "Упаковщик", "Швея"}, product_name)
                 self.assertTrue(route_step["status_after"], product_name)
 
+    def test_operational_matrix_covers_full_product_flow_and_keeps_components_separate(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+        catalog = miniapp_server.get_operational_matrix_catalog()
+
+        self.assertEqual(
+            {route["product_name"] for route in catalog},
+            set(route_maps.PRODUCT_ROUTE_MAPS),
+        )
+
+        for route in catalog:
+            source_steps = route_maps.PRODUCT_ROUTE_MAPS[route["product_name"]]
+            steps = route["steps"]
+            self.assertEqual(len(steps), len(source_steps) + 2, route["product_name"])
+            self.assertEqual(steps[0]["operation"], "Приход ткани на склад")
+            self.assertEqual(steps[-1]["operation"], "Размещение на склад")
+            self.assertEqual(steps[-1]["output"], "На складе")
+            self.assertEqual(
+                [step["number"] for step in steps],
+                list(range(1, len(steps) + 1)),
+            )
+            for step, next_step in zip(steps, steps[1:]):
+                self.assertEqual(step["next_operation"], next_step["operation"])
+                self.assertTrue(step["dependency"])
+                self.assertTrue(step["stock_movement"])
+
+        trousers = next(
+            route for route in catalog
+            if route["product_name"] == "Брюки со стрелками детские"
+        )
+        elastic_sewing = next(
+            step for step in trousers["steps"]
+            if step["operation"] == "Сшивание резинок в кольцо"
+        )
+        elastic_attachment = next(
+            step for step in trousers["steps"]
+            if step["operation"] == "Притачивание резинки к поясу"
+        )
+
+        self.assertEqual(elastic_sewing["main_input"], "Готовый крой")
+        self.assertIn("Нарезанная резинка", elastic_sewing["component_input"])
+        self.assertEqual(elastic_attachment["main_input"], "После оверлока")
+        self.assertIn("Резинка", elastic_attachment["component_input"])
+
+        t_shirts = next(
+            route for route in catalog
+            if route["product_name"] == "Футболки"
+        )
+        neckline_preparation = next(
+            step for step in t_shirts["steps"]
+            if step["operation"] == "Стачивание горловин в кольцо"
+        )
+        t_shirt_assembly = next(
+            step for step in t_shirts["steps"]
+            if step["operation"] == "Сборка футболки на оверлоке"
+        )
+        neckline_attachment = next(
+            step for step in t_shirts["steps"]
+            if step["operation"] == "Притачивание горловин к футболке"
+        )
+        self.assertEqual(neckline_preparation["main_input"], "Готовый крой")
+        self.assertIn("Детали горловины", neckline_preparation["component_input"])
+        self.assertEqual(t_shirt_assembly["main_input"], "Готовый крой")
+        self.assertEqual(neckline_attachment["main_input"], "Футболка собрана на оверлоке")
+        self.assertEqual(neckline_attachment["component_input"], "Горловины стачаны")
+
+        teenager_trousers = next(
+            route for route in catalog
+            if route["product_name"] == "Брюки со стрелками подростковые"
+        )
+        waistband_preparation = next(
+            step for step in teenager_trousers["steps"]
+            if step["operation"] == "Стачивание пояса в кольцо"
+        )
+        waistband_attachment = next(
+            step for step in teenager_trousers["steps"]
+            if step["operation"] == "Пришивание пояса к брюкам"
+        )
+        self.assertEqual(waistband_preparation["main_input"], "После оверлока")
+        self.assertIn("Детали пояса", waistband_preparation["component_input"])
+        self.assertEqual(waistband_attachment["main_input"], "После оверлока")
+        self.assertEqual(waistband_attachment["component_input"], "Пояс стачан в кольцо")
+
     def test_route_batch_flow_advances_and_writes_history(self):
         route_maps = importlib.import_module("route_maps")
         self.database.create_employee(4004, "Тест Маршрут", "Раскройщик")
