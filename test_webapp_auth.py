@@ -83,6 +83,51 @@ class WebAppAuthTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.auth.upsert_web_account("valid-user", 1, "short")
 
+    def test_registration_creates_pending_employee_and_supports_email_or_phone_login(self):
+        registration = self.auth.register_web_account(
+            " Worker.Test@Example.RU ",
+            "8 (999) 123-45-67",
+            "Иванова Наталья Сергеевна",
+            "registration-password",
+        )
+
+        self.assertEqual(registration["email"], "worker.test@example.ru")
+        self.assertEqual(registration["phone"], "+79991234567")
+        self.assertEqual(registration["status"], "pending")
+        self.assertLess(registration["telegram_id"], 0)
+        employee = self.database.get_employee_by_telegram_id(registration["telegram_id"])
+        self.assertEqual(employee[2], "Иванова Наталья Сергеевна")
+        self.assertIsNone(employee[3])
+        self.assertEqual(employee[4], "employee")
+        self.assertEqual(employee[5], "pending")
+
+        by_email = self.auth.authenticate_web_credentials(
+            "WORKER.TEST@EXAMPLE.RU", "registration-password"
+        )
+        by_phone = self.auth.authenticate_web_credentials(
+            "+7 999 123-45-67", "registration-password"
+        )
+        self.assertEqual(by_email["telegram_id"], registration["telegram_id"])
+        self.assertEqual(by_phone["telegram_id"], registration["telegram_id"])
+
+        with self.assertRaises(self.auth.WebRegistrationError) as duplicate_email:
+            self.auth.register_web_account(
+                "worker.test@example.ru",
+                "+7 999 765-43-21",
+                "Петров Иван Сергеевич",
+                "registration-password",
+            )
+        self.assertEqual(duplicate_email.exception.code, "email_exists")
+
+        with self.assertRaises(self.auth.WebRegistrationError) as duplicate_phone:
+            self.auth.register_web_account(
+                "second.worker@example.ru",
+                "8 999 123 45 67",
+                "Петров Иван Сергеевич",
+                "registration-password",
+            )
+        self.assertEqual(duplicate_phone.exception.code, "phone_exists")
+
 
 @unittest.skipUnless(os.getenv("RUN_HTTP_TESTS") == "1", "HTTP binding is an opt-in integration test")
 class WebAppHttpTest(unittest.TestCase):
@@ -256,6 +301,50 @@ class WebAppHttpTest(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertIn("Max-Age=0", clear_headers["Set-Cookie"])
+
+    def test_registration_waits_for_admin_approval_then_allows_phone_login(self):
+        payload = {
+            "full_name": "Сидорова Мария Петровна",
+            "email": "new.worker@example.ru",
+            "phone": "+7 921 555-44-33",
+            "password": "new-worker-password",
+        }
+        status, result, _ = self.request("POST", "/api/web/register", payload)
+        self.assertEqual(status, 403)
+        self.assertEqual(result["code"], "invalid_origin")
+
+        status, result, _ = self.request(
+            "POST", "/api/web/register", payload, {"Origin": self.origin}
+        )
+        self.assertEqual(status, 201)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "pending")
+
+        status, result, _ = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "new.worker@example.ru", "password": "new-worker-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(result["code"], "account_pending")
+
+        account = self.auth.authenticate_web_credentials(
+            "new.worker@example.ru", "new-worker-password"
+        )
+        employee = self.database.get_employee_by_telegram_id(account["telegram_id"])
+        self.database.update_employee_position(employee[0], "Швея")
+        self.database.update_employee_status(employee[0], "active")
+
+        status, result, headers = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "8 (921) 555-44-33", "password": "new-worker-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertIn("Set-Cookie", headers)
 
 
 if __name__ == "__main__":

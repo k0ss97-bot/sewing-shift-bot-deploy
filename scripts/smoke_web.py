@@ -233,6 +233,19 @@ def run_smoke() -> None:
             require(headers.get("Cache-Control") == "no-store", "GET / is missing no-store caching.")
             html_text = root_body.decode("utf-8")
             require(len(html_text) > 1_000, "Miniapp HTML response is unexpectedly small.")
+            for registration_marker in (
+                'id="webRegisterForm"',
+                'id="webFullName"',
+                'id="webEmail"',
+                'id="webPhone"',
+                'id="webRegisterPassword"',
+                'id="webPasswordConfirm"',
+                'fetch("/api/web/register"',
+            ):
+                require(
+                    registration_marker in html_text,
+                    f"Registration interface marker is missing: {registration_marker}",
+                )
             local_resources, remote_resources = audit_html_resources(base_url, html_text)
 
             status, headers, app_body = http_request(f"{base_url}/app")

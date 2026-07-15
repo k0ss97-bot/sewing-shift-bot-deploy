@@ -106,12 +106,15 @@ from miniapp_auth import parse_auth_token
 from miniapp_assets import MINIAPP_HTML
 from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 from webapp_auth import (
+    WebRegistrationError,
+    authenticate_web_credentials,
     build_clear_cookie,
     build_session_cookie,
     create_web_session,
+    get_web_account_profiles_by_telegram_ids,
     get_web_session,
     init_web_auth,
-    authenticate_web_credentials,
+    register_web_account,
     revoke_web_session,
     session_token_from_cookie,
 )
@@ -2495,8 +2498,9 @@ def quarter_bounds():
     return today.replace(month=quarter_start_month, day=1).isoformat(), today.isoformat()
 
 
-def employee_admin_to_dict(employee):
+def employee_admin_to_dict(employee, web_profiles=None):
     employee_id, full_name, position, telegram_id_value, employee_status = employee
+    profile = (web_profiles or {}).get(int(telegram_id_value), {})
 
     return {
         "id": employee_id,
@@ -2504,11 +2508,15 @@ def employee_admin_to_dict(employee):
         "position": position or "-",
         "telegram_id": telegram_id_value,
         "status": employee_status,
+        "email": profile.get("email", ""),
+        "phone": profile.get("phone", ""),
+        "is_web_account": bool(profile),
     }
 
 
-def pending_employee_to_dict(employee):
+def pending_employee_to_dict(employee, web_profiles=None):
     employee_id, full_name, position, telegram_id_value, registered_at = employee
+    profile = (web_profiles or {}).get(int(telegram_id_value), {})
 
     return {
         "id": employee_id,
@@ -2516,6 +2524,9 @@ def pending_employee_to_dict(employee):
         "position": position or "-",
         "telegram_id": telegram_id_value,
         "registered_at": registered_at,
+        "email": profile.get("email", ""),
+        "phone": profile.get("phone", ""),
+        "is_web_account": bool(profile),
     }
 
 
@@ -3617,7 +3628,8 @@ def get_admin_dashboard(telegram_id: int):
         return {"ok": False, "message": "Нет прав администратора."}
 
     employees = get_all_employees()
-    employee_rows = [employee_admin_to_dict(employee) for employee in employees]
+    web_profiles = get_web_account_profiles_by_telegram_ids(employee[3] for employee in employees)
+    employee_rows = [employee_admin_to_dict(employee, web_profiles) for employee in employees]
     open_shift_rows = [open_shift_to_dict(shift) for shift in get_open_shifts()]
     month_start, today = month_bounds()
 
@@ -3628,13 +3640,13 @@ def get_admin_dashboard(telegram_id: int):
         "period_defaults": {"start_date": month_start, "end_date": today},
         "employees": employee_rows,
         "active_employees": [
-            employee_admin_to_dict(employee) for employee in get_employees_by_status("active")
+            employee_admin_to_dict(employee, web_profiles) for employee in get_employees_by_status("active")
         ],
         "inactive_employees": [
-            employee_admin_to_dict(employee) for employee in get_employees_by_status("inactive")
+            employee_admin_to_dict(employee, web_profiles) for employee in get_employees_by_status("inactive")
         ],
         "pending_employees": [
-            pending_employee_to_dict(employee) for employee in get_pending_employees()
+            pending_employee_to_dict(employee, web_profiles) for employee in get_pending_employees()
         ],
         "open_shifts": open_shift_rows,
         "recent_shifts": [recent_shift_to_dict(shift) for shift in get_recent_shifts(20)],
@@ -3882,6 +3894,12 @@ def set_employee_status_for_admin(telegram_id: int, payload: dict):
     if status not in {"active", "inactive", "pending"}:
         return {"ok": False, "message": "Некорректный статус."}
 
+    current_employee = get_employee_by_id(employee_id)
+    if current_employee is None:
+        return {"ok": False, "message": "Сотрудник не найден."}
+    if status == "active" and current_employee[3] not in POSITIONS:
+        return {"ok": False, "message": "Перед активацией выберите должность сотрудника."}
+
     employee = update_employee_status(employee_id, status)
 
     if employee is None:
@@ -4100,6 +4118,8 @@ def make_handler(bot_token: str, debug: bool):
         protocol_version = "HTTP/1.1"
         login_attempts = {}
         login_attempts_lock = threading.Lock()
+        registration_attempts = {}
+        registration_attempts_lock = threading.Lock()
 
         def client_ip(self):
             if os.getenv("TRUST_PROXY_HEADERS") == "1":
@@ -4165,6 +4185,22 @@ def make_handler(bot_token: str, debug: bool):
         def clear_login_failures(self):
             with self.login_attempts_lock:
                 self.login_attempts.pop(self.client_ip(), None)
+
+        def registration_is_rate_limited(self):
+            now_epoch = time.time()
+            client_ip = self.client_ip()
+            with self.registration_attempts_lock:
+                attempts = [
+                    stamp
+                    for stamp in self.registration_attempts.get(client_ip, [])
+                    if now_epoch - stamp < 10 * 60
+                ]
+                if len(attempts) >= 30:
+                    self.registration_attempts[client_ip] = attempts
+                    return True
+                attempts.append(now_epoch)
+                self.registration_attempts[client_ip] = attempts
+                return False
 
         def do_GET(self):
             parsed_url = urlparse(self.path)
@@ -4331,6 +4367,7 @@ def make_handler(bot_token: str, debug: bool):
 
             allowed_paths = {
                 "/api/web/login",
+                "/api/web/register",
                 "/api/web/logout",
                 "/api/app/state",
                 "/api/shift/status",
@@ -4374,7 +4411,7 @@ def make_handler(bot_token: str, debug: bool):
                 self.headers.get("X-Telegram-Init-Data")
             )
             uses_web_cookie = bool(self.web_session_token()) and not has_telegram_credentials
-            if (path in {"/api/web/login", "/api/web/logout"} or uses_web_cookie) and not self.origin_is_valid():
+            if (path in {"/api/web/login", "/api/web/register", "/api/web/logout"} or uses_web_cookie) and not self.origin_is_valid():
                 self.send_json({"ok": False, "code": "invalid_origin", "message": "Запрос отклонён."}, status=403)
                 return
 
@@ -4399,11 +4436,30 @@ def make_handler(bot_token: str, debug: bool):
                     )
                     return
                 employee = get_employee_for_access(account["telegram_id"])
-                if employee is None or employee[5] != "active":
-                    self.record_login_failure()
+                if employee is None:
                     self.send_json(
                         {"ok": False, "code": "invalid_credentials", "message": "Неверный логин или пароль."},
                         status=401,
+                    )
+                    return
+                if employee[5] == "pending":
+                    self.send_json(
+                        {
+                            "ok": False,
+                            "code": "account_pending",
+                            "message": "Регистрация принята. Дождитесь активации администратором.",
+                        },
+                        status=403,
+                    )
+                    return
+                if employee[5] != "active":
+                    self.send_json(
+                        {
+                            "ok": False,
+                            "code": "account_disabled",
+                            "message": "Доступ к аккаунту отключён. Обратитесь к администратору.",
+                        },
+                        status=403,
                     )
                     return
                 self.clear_login_failures()
@@ -4426,6 +4482,52 @@ def make_handler(bot_token: str, debug: bool):
                         "expires_at": session["expires_at"],
                     },
                     extra_headers={"Set-Cookie": cookie},
+                )
+                return
+
+            if path == "/api/web/register":
+                if self.registration_is_rate_limited():
+                    self.send_json(
+                        {
+                            "ok": False,
+                            "code": "rate_limited",
+                            "message": "Слишком много регистраций. Повторите попытку позже.",
+                        },
+                        status=429,
+                    )
+                    return
+                try:
+                    registration = register_web_account(
+                        payload.get("email", ""),
+                        payload.get("phone", ""),
+                        payload.get("full_name", ""),
+                        payload.get("password", ""),
+                    )
+                except WebRegistrationError as error:
+                    conflict_codes = {"email_exists", "phone_exists", "registration_conflict"}
+                    self.send_json(
+                        {"ok": False, "code": error.code, "message": str(error)},
+                        status=409 if error.code in conflict_codes else 400,
+                    )
+                    return
+                except Exception:
+                    logging.exception("Web registration failed")
+                    self.send_json(
+                        {
+                            "ok": False,
+                            "code": "registration_unavailable",
+                            "message": "Не удалось завершить регистрацию. Повторите попытку позже.",
+                        },
+                        status=500,
+                    )
+                    return
+                self.send_json(
+                    {
+                        "ok": True,
+                        "status": registration["status"],
+                        "message": "Регистрация завершена. Администратор назначит должность и активирует доступ.",
+                    },
+                    status=201,
                 )
                 return
 

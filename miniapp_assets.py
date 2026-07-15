@@ -103,6 +103,32 @@ MINIAPP_HTML = """<!doctype html>
       font-weight: 750;
     }
 
+    .auth-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255,255,255,.72);
+      box-shadow: var(--inset-shadow);
+    }
+
+    .auth-tab {
+      min-height: 44px;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 900;
+    }
+
+    .auth-tab.active {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 8px 18px rgba(169,86,64,.18);
+    }
+
     .login-card {
       display: grid;
       gap: 14px;
@@ -158,6 +184,39 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 12px;
       line-height: 1.35;
       text-align: center;
+    }
+
+    .login-error.success {
+      color: var(--good);
+    }
+
+    .login-help {
+      margin: -2px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      text-align: center;
+    }
+
+    @media (max-height: 760px) {
+      .login-view {
+        place-items: start center;
+        padding-top: calc(18px + env(safe-area-inset-top));
+      }
+
+      .login-shell {
+        gap: 14px;
+      }
+
+      .login-brand img {
+        width: 58px;
+        height: 58px;
+        margin-bottom: 9px;
+      }
+
+      .login-brand h1 {
+        font-size: 27px;
+      }
     }
 
     .app {
@@ -1700,11 +1759,25 @@ MINIAPP_HTML = """<!doctype html>
         <h1>Шагаем вместе</h1>
         <p>Управление производством</p>
       </div>
+      <div class="auth-tabs" role="tablist" aria-label="Доступ к приложению">
+        <button class="auth-tab active" id="webLoginTab" type="button" role="tab" aria-selected="true" aria-controls="webLoginForm">Вход</button>
+        <button class="auth-tab" id="webRegisterTab" type="button" role="tab" aria-selected="false" aria-controls="webRegisterForm">Регистрация</button>
+      </div>
       <form class="login-card" id="webLoginForm">
-        <label>Логин<input id="webUsername" name="username" autocomplete="username" autocapitalize="none" required></label>
-        <label>Пароль<input id="webPassword" name="password" type="password" autocomplete="current-password" required></label>
-        <p class="login-error" id="webLoginError" role="alert"></p>
+        <label>Почта, телефон или логин<input id="webUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+        <label>Пароль<input id="webPassword" name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+        <p class="login-error" id="webLoginError" role="alert" aria-live="polite"></p>
         <button class="login-submit" id="webLoginButton" type="submit">Войти</button>
+      </form>
+      <form class="login-card" id="webRegisterForm" hidden>
+        <label>Фамилия, имя и отчество<input id="webFullName" name="full_name" autocomplete="name" minlength="5" maxlength="120" required></label>
+        <label>Электронная почта<input id="webEmail" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" maxlength="254" required></label>
+        <label>Номер телефона<input id="webPhone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 999 123-45-67" maxlength="24" required></label>
+        <label>Пароль<input id="webRegisterPassword" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+        <label>Повторите пароль<input id="webPasswordConfirm" name="password_confirm" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+        <p class="login-help">После регистрации администратор назначит должность и откроет доступ.</p>
+        <p class="login-error" id="webRegisterError" role="alert" aria-live="polite"></p>
+        <button class="login-submit" id="webRegisterButton" type="submit">Зарегистрироваться</button>
       </form>
     </div>
   </section>
@@ -1891,6 +1964,7 @@ MINIAPP_HTML = """<!doctype html>
     const appRoot = document.getElementById("appRoot");
     const loginView = document.getElementById("loginView");
     const webLoginForm = document.getElementById("webLoginForm");
+    const webRegisterForm = document.getElementById("webRegisterForm");
     const webActionSlot = document.getElementById("webActionSlot");
     const mainButton = document.getElementById("mainButton");
     const topTabs = document.getElementById("topTabs");
@@ -2852,9 +2926,10 @@ MINIAPP_HTML = """<!doctype html>
           employee_id: employeeId,
           status,
         });
+        if (!data.ok) throw new Error(data.message || "Не удалось изменить статус.");
         replaceAdminDashboard(data, "Статус сотрудника изменён.");
       } catch (error) {
-        showToast("Ошибка", "Не удалось изменить статус.");
+        showToast("Ошибка", error.message || "Не удалось изменить статус.");
         mainButton.disabled = false;
       }
     }
@@ -2868,10 +2943,44 @@ MINIAPP_HTML = """<!doctype html>
           employee_id: employeeId,
           position: select ? select.value : "",
         });
+        if (!data.ok) throw new Error(data.message || "Не удалось изменить должность.");
         replaceAdminDashboard(data, "Должность изменена.");
       } catch (error) {
-        showToast("Ошибка", "Не удалось изменить должность.");
+        showToast("Ошибка", error.message || "Не удалось изменить должность.");
         mainButton.disabled = false;
+      }
+    }
+
+    async function adminApproveEmployee(employeeId) {
+      const actionKey = `approve-employee-${employeeId}`;
+      if (!beginAction(actionKey)) return;
+      const select = document.getElementById(`employeePosition${employeeId}`);
+      const position = select ? select.value : "";
+      if (!position) {
+        showToast("Должность", "Сначала выберите должность сотрудника.");
+        select?.focus();
+        endAction(actionKey);
+        return;
+      }
+      mainButton.disabled = true;
+
+      try {
+        const positionResult = await api("/api/admin/employee/position", {
+          employee_id: employeeId,
+          position,
+        });
+        if (!positionResult.ok) throw new Error(positionResult.message || "Не удалось назначить должность.");
+        const statusResult = await api("/api/admin/employee/status", {
+          employee_id: employeeId,
+          status: "active",
+        });
+        if (!statusResult.ok) throw new Error(statusResult.message || "Не удалось активировать сотрудника.");
+        replaceAdminDashboard(statusResult, "Сотрудник активирован.");
+      } catch (error) {
+        showToast("Ошибка", error.message || "Не удалось активировать сотрудника.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -4606,15 +4715,28 @@ MINIAPP_HTML = """<!doctype html>
       const employees = admin && admin.employees ? admin.employees : [];
       const pending = admin && admin.pending_employees ? admin.pending_employees : [];
       const positions = admin && admin.positions ? admin.positions : [];
+      const listedEmployees = employees.filter((employee) => employee.status !== "pending");
       mainButton.textContent = "Обновить сотрудников";
 
-      const positionOptions = (employee) => positions.map((position) => `
-        <option value="${escapeHtml(position)}" ${employee.position === position ? "selected" : ""}>${escapeHtml(position)}</option>
-      `).join("");
-      const employeeCards = employees.length ? employees.map((employee) => `
+      const positionOptions = (employee) => {
+        const hasPosition = positions.includes(employee.position);
+        return `
+          <option value="" disabled ${hasPosition ? "" : "selected"}>Выберите должность</option>
+          ${positions.map((position) => `
+            <option value="${escapeHtml(position)}" ${employee.position === position ? "selected" : ""}>${escapeHtml(position)}</option>
+          `).join("")}
+        `;
+      };
+      const employeeContact = (employee) => {
+        const contact = [employee.email, employee.phone].filter(Boolean).map(escapeHtml).join(" · ");
+        if (contact) return contact;
+        const telegramId = Number(employee.telegram_id || 0);
+        return telegramId > 0 ? `Telegram ID ${escapeHtml(telegramId)}` : "Контакты не указаны";
+      };
+      const employeeCards = listedEmployees.length ? listedEmployees.map((employee) => `
         <div class="card field-card">
           <label>ID ${escapeHtml(employee.id)} · ${escapeHtml(employee.status)}</label>
-          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · TG ${escapeHtml(employee.telegram_id || "-")}</span></div><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employee.status)}</span></div>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employee.status)}</span></div>
           <div class="form-grid"><div class="field full"><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>
           <div class="button-row"><button class="small-button secondary" data-admin-action="position" data-employee-id="${escapeHtml(employee.id)}">Должность</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button></div>
         </div>
@@ -4622,8 +4744,9 @@ MINIAPP_HTML = """<!doctype html>
       const pendingCards = pending.length ? pending.map((employee) => `
         <div class="card field-card">
           <label>Заявка · ${escapeHtml(employee.registered_at || "")}</label>
-          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · TG ${escapeHtml(employee.telegram_id || "-")}</span></div><span class="status-chip warn">pending</span></div>
-          <div class="button-row"><button class="small-button secondary" data-admin-action="inactive" data-employee-id="${escapeHtml(employee.id)}">Отклонить</button><button class="small-button" data-admin-action="active" data-employee-id="${escapeHtml(employee.id)}">Активировать</button></div>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${employeeContact(employee)}</span></div><span class="status-chip warn">ожидает</span></div>
+          <div class="form-grid"><div class="field full"><label>Должность</label><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>
+          <div class="button-row"><button class="small-button secondary" data-admin-action="inactive" data-employee-id="${escapeHtml(employee.id)}">Отклонить</button><button class="small-button" data-admin-action="approve" data-employee-id="${escapeHtml(employee.id)}">Назначить и активировать</button></div>
         </div>
       `).join("") : itemEmpty("Новых заявок нет.");
 
@@ -5044,6 +5167,7 @@ MINIAPP_HTML = """<!doctype html>
         if (adminAction.dataset.adminAction === "load-feedback") loadAdminFeedback();
         if (adminAction.dataset.adminAction === "active") adminEmployeeStatus(adminAction.dataset.employeeId, "active");
         if (adminAction.dataset.adminAction === "inactive") adminEmployeeStatus(adminAction.dataset.employeeId, "inactive");
+        if (adminAction.dataset.adminAction === "approve") adminApproveEmployee(adminAction.dataset.employeeId);
         if (adminAction.dataset.adminAction === "position") adminEmployeePosition(adminAction.dataset.employeeId);
         if (adminAction.dataset.adminAction === "close-shift") adminCloseShift(adminAction.dataset.shiftId);
         if (adminAction.dataset.adminAction === "delete-shift") adminDeleteShift(adminAction.dataset.shiftId);
@@ -5379,15 +5503,36 @@ MINIAPP_HTML = """<!doctype html>
       showToast("Меню", "Настройки профиля и уведомления подключим позже.");
     });
 
+    function setWebAuthMode(mode, message = "", success = false) {
+      const isRegistration = mode === "register";
+      const loginTab = document.getElementById("webLoginTab");
+      const registerTab = document.getElementById("webRegisterTab");
+      const loginError = document.getElementById("webLoginError");
+      const registerError = document.getElementById("webRegisterError");
+      webLoginForm.hidden = isRegistration;
+      webRegisterForm.hidden = !isRegistration;
+      loginTab.classList.toggle("active", !isRegistration);
+      registerTab.classList.toggle("active", isRegistration);
+      loginTab.setAttribute("aria-selected", String(!isRegistration));
+      registerTab.setAttribute("aria-selected", String(isRegistration));
+      loginError.textContent = "";
+      registerError.textContent = "";
+      loginError.classList.remove("success");
+      registerError.classList.remove("success");
+      const messageNode = isRegistration ? registerError : loginError;
+      messageNode.textContent = message;
+      messageNode.classList.toggle("success", Boolean(message && success));
+      const focusTarget = isRegistration ? "webFullName" : "webUsername";
+      window.setTimeout(() => document.getElementById(focusTarget)?.focus(), 60);
+    }
+
     function showWebLogin(message = "") {
       state.data = null;
       appRoot.hidden = true;
       mainButton.hidden = true;
       bottomNav.hidden = true;
       loginView.hidden = false;
-      const errorNode = document.getElementById("webLoginError");
-      if (errorNode) errorNode.textContent = message;
-      window.setTimeout(() => document.getElementById("webUsername")?.focus(), 60);
+      setWebAuthMode("login", message);
     }
 
     function showWebApp() {
@@ -5423,6 +5568,7 @@ MINIAPP_HTML = """<!doctype html>
       const errorNode = document.getElementById("webLoginError");
       button.disabled = true;
       errorNode.textContent = "";
+      errorNode.classList.remove("success");
       try {
         const response = await fetch("/api/web/login", {
           method: "POST",
@@ -5438,6 +5584,50 @@ MINIAPP_HTML = """<!doctype html>
         errorNode.textContent = error.message || "Не удалось войти.";
         password.value = "";
         password.focus();
+        button.disabled = false;
+      }
+    }
+
+    async function registerWebApp(event) {
+      event.preventDefault();
+      const fullName = document.getElementById("webFullName");
+      const email = document.getElementById("webEmail");
+      const phone = document.getElementById("webPhone");
+      const password = document.getElementById("webRegisterPassword");
+      const passwordConfirm = document.getElementById("webPasswordConfirm");
+      const button = document.getElementById("webRegisterButton");
+      const errorNode = document.getElementById("webRegisterError");
+      errorNode.textContent = "";
+      errorNode.classList.remove("success");
+
+      if (password.value !== passwordConfirm.value) {
+        errorNode.textContent = "Пароли не совпадают.";
+        passwordConfirm.focus();
+        return;
+      }
+
+      button.disabled = true;
+      const loginValue = email.value.trim();
+      try {
+        const response = await fetch("/api/web/register", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          credentials: "same-origin",
+          body: JSON.stringify({
+            full_name: fullName.value,
+            email: email.value,
+            phone: phone.value,
+            password: password.value,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error(data.message || "Не удалось зарегистрироваться.");
+        webRegisterForm.reset();
+        document.getElementById("webUsername").value = loginValue;
+        setWebAuthMode("login", data.message || "Регистрация завершена.", true);
+      } catch (error) {
+        errorNode.textContent = error.message || "Не удалось зарегистрироваться.";
+      } finally {
         button.disabled = false;
       }
     }
@@ -5472,7 +5662,10 @@ MINIAPP_HTML = """<!doctype html>
       await refreshState();
     }
 
+    document.getElementById("webLoginTab").addEventListener("click", () => setWebAuthMode("login"));
+    document.getElementById("webRegisterTab").addEventListener("click", () => setWebAuthMode("register"));
     webLoginForm.addEventListener("submit", loginWebApp);
+    webRegisterForm.addEventListener("submit", registerWebApp);
     bootstrapApplication();
   </script>
 </body>

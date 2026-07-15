@@ -7,6 +7,7 @@ import getpass
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -19,10 +20,17 @@ COOKIE_NAME = "sewing_web_session"
 SECURE_COOKIE_NAME = "__Host-sewing_web_session"
 PASSWORD_ITERATIONS = 310_000
 MIN_PASSWORD_LENGTH = 10
+MAX_PASSWORD_LENGTH = 128
 MAX_FAILED_ATTEMPTS = 5
 LOCK_SECONDS = 5 * 60
 DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60
 DEFAULT_SESSION_IDLE_SECONDS = 2 * 60 * 60
+
+
+class WebRegistrationError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 def _now_text() -> str:
@@ -52,6 +60,75 @@ def _normalize_username(username: str) -> str:
     if any(not (char.isalnum() or char in "._@-") for char in username):
         return ""
     return username
+
+
+def _normalize_email(email: str) -> str:
+    value = str(email or "").strip().casefold()
+    if not value or len(value) > 254 or value.count("@") != 1:
+        return ""
+    local_part, domain = value.rsplit("@", 1)
+    if not local_part or len(local_part) > 64 or local_part.startswith(".") or local_part.endswith("."):
+        return ""
+    if ".." in local_part or re.search(r"\s", local_part):
+        return ""
+    try:
+        ascii_domain = domain.encode("idna").decode("ascii")
+    except UnicodeError:
+        return ""
+    labels = ascii_domain.split(".")
+    if len(labels) < 2 or any(
+        not label
+        or len(label) > 63
+        or label.startswith("-")
+        or label.endswith("-")
+        or not re.fullmatch(r"[a-z0-9-]+", label)
+        for label in labels
+    ):
+        return ""
+    return f"{local_part}@{ascii_domain}"
+
+
+def _normalize_phone(phone: str) -> str:
+    value = str(phone or "").strip()
+    if not value or not re.fullmatch(r"[+\d\s().-]+", value):
+        return ""
+    digits = re.sub(r"\D", "", value)
+    if len(digits) == 10:
+        digits = f"7{digits}"
+    elif len(digits) == 11 and digits.startswith("8"):
+        digits = f"7{digits[1:]}"
+    if not 10 <= len(digits) <= 15:
+        return ""
+    return f"+{digits}"
+
+
+def _normalize_full_name(full_name: str) -> str:
+    value = " ".join(str(full_name or "").strip().split())
+    parts = value.split()
+    if not 5 <= len(value) <= 120 or not 2 <= len(parts) <= 5:
+        return ""
+    if any(
+        not any(char.isalpha() for char in part)
+        or any(not (char.isalpha() or char in "-'’") for char in part)
+        for part in parts
+    ):
+        return ""
+    return value
+
+
+def _validated_password(password: str) -> str:
+    value = str(password or "")
+    if len(value) < MIN_PASSWORD_LENGTH:
+        raise WebRegistrationError(
+            "weak_password",
+            f"Пароль должен содержать не менее {MIN_PASSWORD_LENGTH} символов.",
+        )
+    if len(value) > MAX_PASSWORD_LENGTH:
+        raise WebRegistrationError(
+            "password_too_long",
+            f"Пароль должен содержать не более {MAX_PASSWORD_LENGTH} символов.",
+        )
+    return value
 
 
 def _hash_secret(value: str) -> str:
@@ -94,6 +171,29 @@ def init_web_auth() -> None:
         )
         """
     )
+    cursor.execute("PRAGMA table_info(web_accounts)")
+    account_columns = {column[1] for column in cursor.fetchall()}
+    for column_name, definition in {
+        "email": "TEXT",
+        "phone": "TEXT",
+        "full_name": "TEXT",
+    }.items():
+        if column_name not in account_columns:
+            cursor.execute(f"ALTER TABLE web_accounts ADD COLUMN {column_name} {definition}")
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_web_accounts_email
+        ON web_accounts (email COLLATE NOCASE)
+        WHERE email IS NOT NULL AND email != ''
+        """
+    )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_web_accounts_phone
+        ON web_accounts (phone)
+        WHERE phone IS NOT NULL AND phone != ''
+        """
+    )
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS web_sessions (
@@ -132,6 +232,8 @@ def upsert_web_account(username: str, telegram_id: int, password: str, active: b
         raise ValueError("Логин должен содержать от 3 до 64 букв, цифр или символов . _ @ -")
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(f"Пароль должен содержать не менее {MIN_PASSWORD_LENGTH} символов.")
+    if len(password) > MAX_PASSWORD_LENGTH:
+        raise ValueError(f"Пароль должен содержать не более {MAX_PASSWORD_LENGTH} символов.")
     try:
         telegram_id = int(telegram_id)
     except (TypeError, ValueError) as error:
@@ -185,21 +287,154 @@ def upsert_web_account(username: str, telegram_id: int, password: str, active: b
     return {"id": account_id, "telegram_id": telegram_id, "username": normalized_username, "status": status}
 
 
+def register_web_account(email: str, phone: str, full_name: str, password: str) -> dict:
+    normalized_email = _normalize_email(email)
+    normalized_phone = _normalize_phone(phone)
+    normalized_full_name = _normalize_full_name(full_name)
+    if not normalized_email:
+        raise WebRegistrationError("invalid_email", "Введите корректный адрес электронной почты.")
+    if not normalized_phone:
+        raise WebRegistrationError("invalid_phone", "Введите корректный номер телефона.")
+    if not normalized_full_name:
+        raise WebRegistrationError("invalid_full_name", "Введите фамилию и имя полностью.")
+    password = _validated_password(password)
+
+    init_web_auth()
+    salt_hex = secrets.token_hex(16)
+    password_digest = _password_hash(password, salt_hex)
+    now_text = _now_text()
+    conn = sqlite3.connect(DB_NAME, timeout=30)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.execute("BEGIN IMMEDIATE")
+        if cursor.execute(
+            "SELECT 1 FROM web_accounts WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE",
+            (normalized_email, normalized_email),
+        ).fetchone():
+            raise WebRegistrationError("email_exists", "Пользователь с такой почтой уже зарегистрирован.")
+        if cursor.execute(
+            "SELECT 1 FROM web_accounts WHERE phone = ? OR username = ? COLLATE NOCASE",
+            (normalized_phone, normalized_phone),
+        ).fetchone():
+            raise WebRegistrationError("phone_exists", "Пользователь с таким телефоном уже зарегистрирован.")
+
+        minimum_telegram_id = cursor.execute(
+            "SELECT COALESCE(MIN(telegram_id), 0) FROM employees WHERE telegram_id < 0"
+        ).fetchone()[0]
+        telegram_id = min(-1, int(minimum_telegram_id or 0) - 1)
+        cursor.execute(
+            """
+            INSERT INTO employees (
+                telegram_id, full_name, position, role, status, registered_at
+            )
+            VALUES (?, ?, NULL, 'employee', 'pending', ?)
+            """,
+            (telegram_id, normalized_full_name, now_text),
+        )
+        employee_id = cursor.lastrowid
+        cursor.execute(
+            """
+            INSERT INTO web_accounts (
+                telegram_id, username, email, phone, full_name,
+                password_salt, password_hash, password_iterations,
+                status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            """,
+            (
+                telegram_id,
+                normalized_email,
+                normalized_email,
+                normalized_phone,
+                normalized_full_name,
+                salt_hex,
+                password_digest,
+                PASSWORD_ITERATIONS,
+                now_text,
+                now_text,
+            ),
+        )
+        account_id = cursor.lastrowid
+        conn.commit()
+    except WebRegistrationError:
+        conn.rollback()
+        raise
+    except sqlite3.IntegrityError as error:
+        conn.rollback()
+        raise WebRegistrationError(
+            "registration_conflict",
+            "Почта или телефон уже используются другим пользователем.",
+        ) from error
+    finally:
+        conn.close()
+
+    return {
+        "id": account_id,
+        "employee_id": employee_id,
+        "telegram_id": telegram_id,
+        "username": normalized_email,
+        "email": normalized_email,
+        "phone": normalized_phone,
+        "full_name": normalized_full_name,
+        "status": "pending",
+    }
+
+
+def get_web_account_profiles_by_telegram_ids(telegram_ids) -> dict[int, dict]:
+    normalized_ids = sorted({int(value) for value in telegram_ids})
+    if not normalized_ids:
+        return {}
+    init_web_auth()
+    placeholders = ",".join("?" for _ in normalized_ids)
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        f"""
+        SELECT telegram_id, email, phone, full_name
+        FROM web_accounts
+        WHERE telegram_id IN ({placeholders})
+        ORDER BY id ASC
+        """,
+        normalized_ids,
+    ).fetchall()
+    conn.close()
+    return {
+        int(row["telegram_id"]): {
+            "email": row["email"] or "",
+            "phone": row["phone"] or "",
+            "full_name": row["full_name"] or "",
+        }
+        for row in rows
+    }
+
+
 def authenticate_web_credentials(username: str, password: str) -> dict | None:
-    normalized_username = _normalize_username(username)
+    raw_username = str(username or "").strip()
+    normalized_username = _normalize_username(raw_username)
+    normalized_email = _normalize_email(raw_username)
+    normalized_phone = _normalize_phone(raw_username)
     password = str(password or "")
+    password_to_check = password if len(password) <= MAX_PASSWORD_LENGTH else password[:MAX_PASSWORD_LENGTH]
     init_web_auth()
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     account = cursor.execute(
-        "SELECT * FROM web_accounts WHERE username = ? COLLATE NOCASE",
-        (normalized_username,),
+        """
+        SELECT * FROM web_accounts
+        WHERE username = ? COLLATE NOCASE
+           OR email = ? COLLATE NOCASE
+           OR phone = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (normalized_username, normalized_email, normalized_phone),
     ).fetchone()
 
     # Keep unknown-user attempts computationally comparable to known-user attempts.
     if account is None:
-        _password_hash(password, "0" * 32)
+        _password_hash(password_to_check, "0" * 32)
         conn.close()
         return None
 
@@ -208,7 +443,7 @@ def authenticate_web_credentials(username: str, password: str) -> dict | None:
         conn.close()
         return None
 
-    expected = _password_hash(password, account["password_salt"], account["password_iterations"])
+    expected = _password_hash(password_to_check, account["password_salt"], account["password_iterations"])
     if not hmac.compare_digest(expected, account["password_hash"]):
         failed_attempts = int(account["failed_attempts"] or 0) + 1
         locked_until = now_epoch + LOCK_SECONDS if failed_attempts >= MAX_FAILED_ATTEMPTS else None
@@ -229,7 +464,14 @@ def authenticate_web_credentials(username: str, password: str) -> dict | None:
         (_now_text(), _now_text(), account["id"]),
     )
     conn.commit()
-    result = {"id": account["id"], "telegram_id": account["telegram_id"], "username": account["username"]}
+    result = {
+        "id": account["id"],
+        "telegram_id": account["telegram_id"],
+        "username": account["username"],
+        "email": account["email"] or "",
+        "phone": account["phone"] or "",
+        "full_name": account["full_name"] or "",
+    }
     conn.close()
     return result
 
