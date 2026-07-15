@@ -4407,17 +4407,17 @@ def make_handler(bot_token: str, debug: bool):
                 self.send_json({"ok": False, "message": "Ожидается JSON-запрос."}, status=415)
                 return
 
+            payload = self.read_json_body()
+            if payload.pop("_request_too_large", False):
+                self.send_json({"ok": False, "message": "Запрос или файл слишком большой."}, status=413)
+                return
+
             has_telegram_credentials = bool(
                 self.headers.get("X-Telegram-Init-Data")
             )
             uses_web_cookie = bool(self.web_session_token()) and not has_telegram_credentials
             if (path in {"/api/web/login", "/api/web/register", "/api/web/logout"} or uses_web_cookie) and not self.origin_is_valid():
                 self.send_json({"ok": False, "code": "invalid_origin", "message": "Запрос отклонён."}, status=403)
-                return
-
-            payload = self.read_json_body()
-            if payload.pop("_request_too_large", False):
-                self.send_json({"ok": False, "message": "Запрос или файл слишком большой."}, status=413)
                 return
 
             if path == "/api/web/login":

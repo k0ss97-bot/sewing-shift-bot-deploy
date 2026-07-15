@@ -346,6 +346,29 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("Set-Cookie", headers)
 
+    def test_rejected_origin_consumes_request_body_on_keep_alive_connection(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        body = json.dumps({"email": "blocked@example.ru", "password": "blocked-password"})
+        connection.request(
+            "POST",
+            "/api/web/register",
+            body=body,
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "https://invalid.example",
+            },
+        )
+        rejected = connection.getresponse()
+        rejected.read()
+        self.assertEqual(rejected.status, 403)
+
+        connection.request("GET", "/health")
+        health = connection.getresponse()
+        health_payload = json.loads(health.read().decode("utf-8"))
+        connection.close()
+        self.assertEqual(health.status, 200)
+        self.assertEqual(health_payload, {"ok": True})
+
 
 if __name__ == "__main__":
     unittest.main()
