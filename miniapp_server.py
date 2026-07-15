@@ -39,6 +39,7 @@ from database import (
     get_active_route_batches,
     get_all_product_colors,
     get_all_employees,
+    get_all_user_accounts,
     get_all_operations,
     get_cutting_batches_for_cutting,
     get_cutting_batches_for_formation,
@@ -97,8 +98,9 @@ from database import (
     restore_operation,
     set_route_batch_work_state,
     update_cutting_batch_progress,
+    update_employee_access_status,
     update_employee_position,
-    update_employee_status,
+    update_employee_role,
     update_operation_field,
 )
 from catalog import PREPARATION_OPERATION_OPTIONS, format_color_label
@@ -110,12 +112,14 @@ from webapp_auth import (
     authenticate_web_credentials,
     build_clear_cookie,
     build_session_cookie,
+    change_web_password,
     create_web_session,
     get_web_account_profiles_by_telegram_ids,
     get_web_session,
     init_web_auth,
     register_web_account,
     revoke_web_session,
+    revoke_web_sessions_for_telegram_id,
     session_token_from_cookie,
 )
 from webapp_pwa import app_shell_revision, inject_pwa_markup, send_pwa_resource
@@ -165,14 +169,19 @@ def get_admin_ids():
 
 
 def is_admin(telegram_id: int):
+    employee = get_employee_by_telegram_id(telegram_id)
+    if employee is not None:
+        return employee[4] == "admin" and employee[5] == "active"
     return telegram_id in get_admin_ids()
 
 
 def get_employee_for_access(telegram_id: int):
-    if is_admin(telegram_id):
+    employee = get_employee_by_telegram_id(telegram_id)
+    if employee is not None:
+        return employee
+    if telegram_id in get_admin_ids():
         return ensure_admin_employee(telegram_id)
-
-    return get_employee_by_telegram_id(telegram_id)
+    return None
 
 
 def format_minutes(total_minutes: int | None):
@@ -2514,6 +2523,24 @@ def employee_admin_to_dict(employee, web_profiles=None):
     }
 
 
+def user_account_admin_to_dict(employee, web_profiles=None):
+    employee_id, full_name, position, telegram_id_value, employee_status, role, registered_at = employee
+    profile = (web_profiles or {}).get(int(telegram_id_value), {})
+
+    return {
+        "id": employee_id,
+        "full_name": full_name,
+        "position": position or "-",
+        "telegram_id": telegram_id_value,
+        "status": employee_status,
+        "role": role or "employee",
+        "registered_at": registered_at or "",
+        "email": profile.get("email", ""),
+        "phone": profile.get("phone", ""),
+        "is_web_account": bool(profile),
+    }
+
+
 def pending_employee_to_dict(employee, web_profiles=None):
     employee_id, full_name, position, telegram_id_value, registered_at = employee
     profile = (web_profiles or {}).get(int(telegram_id_value), {})
@@ -3628,7 +3655,8 @@ def get_admin_dashboard(telegram_id: int):
         return {"ok": False, "message": "Нет прав администратора."}
 
     employees = get_all_employees()
-    web_profiles = get_web_account_profiles_by_telegram_ids(employee[3] for employee in employees)
+    user_accounts = get_all_user_accounts()
+    web_profiles = get_web_account_profiles_by_telegram_ids(employee[3] for employee in user_accounts)
     employee_rows = [employee_admin_to_dict(employee, web_profiles) for employee in employees]
     open_shift_rows = [open_shift_to_dict(shift) for shift in get_open_shifts()]
     month_start, today = month_bounds()
@@ -3639,6 +3667,9 @@ def get_admin_dashboard(telegram_id: int):
         "positions": POSITIONS,
         "period_defaults": {"start_date": month_start, "end_date": today},
         "employees": employee_rows,
+        "user_accounts": [
+            user_account_admin_to_dict(employee, web_profiles) for employee in user_accounts
+        ],
         "active_employees": [
             employee_admin_to_dict(employee, web_profiles) for employee in get_employees_by_status("active")
         ],
@@ -3897,13 +3928,21 @@ def set_employee_status_for_admin(telegram_id: int, payload: dict):
     current_employee = get_employee_by_id(employee_id)
     if current_employee is None:
         return {"ok": False, "message": "Сотрудник не найден."}
-    if status == "active" and current_employee[3] not in POSITIONS:
+    if current_employee[1] == telegram_id and status != "active":
+        return {"ok": False, "message": "Нельзя отключить собственный аккаунт администратора."}
+    if status == "active" and current_employee[4] != "admin" and current_employee[3] not in POSITIONS:
         return {"ok": False, "message": "Перед активацией выберите должность сотрудника."}
 
-    employee = update_employee_status(employee_id, status)
+    access_result = update_employee_access_status(employee_id, status)
+    if access_result.get("code") == "last_admin":
+        return {"ok": False, "message": "Нельзя отключить последнего активного администратора."}
+    employee = access_result.get("employee")
 
     if employee is None:
         return {"ok": False, "message": "Сотрудник не найден."}
+
+    if status != "active":
+        revoke_web_sessions_for_telegram_id(employee[1])
 
     add_edit_log(
         telegram_id,
@@ -3915,6 +3954,49 @@ def set_employee_status_for_admin(telegram_id: int, payload: dict):
     )
     dashboard = get_admin_dashboard(telegram_id)
     dashboard["message"] = "Статус сотрудника изменён."
+    return dashboard
+
+
+def set_employee_role_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    try:
+        employee_id = int(payload.get("employee_id") or 0)
+    except (TypeError, ValueError):
+        employee_id = 0
+
+    role = (payload.get("role") or "").strip()
+    position = (payload.get("position") or "").strip()
+    current_employee = get_employee_by_id(employee_id)
+
+    if current_employee is None:
+        return {"ok": False, "message": "Пользователь не найден."}
+    if role not in {"admin", "employee"}:
+        return {"ok": False, "message": "Некорректная роль."}
+    if current_employee[1] == telegram_id and role != "admin":
+        return {"ok": False, "message": "Нельзя снять права администратора у собственного аккаунта."}
+    if role == "employee" and position not in POSITIONS:
+        return {"ok": False, "message": "Для сотрудника выберите должность из списка."}
+
+    role_result = update_employee_role(employee_id, role, position)
+    if role_result.get("code") == "last_admin":
+        return {"ok": False, "message": "Нельзя снять права у последнего активного администратора."}
+    employee = role_result.get("employee")
+    if employee is None:
+        return {"ok": False, "message": "Не удалось изменить роль пользователя."}
+
+    role_label = "Администратор" if role == "admin" else "Сотрудник"
+    add_edit_log(
+        telegram_id,
+        "admin",
+        f"Изменил роль пользователя на {role_label} из веб-приложения",
+        "employee",
+        employee_id,
+        employee[2],
+    )
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["message"] = f"Роль изменена: {role_label}."
     return dashboard
 
 
@@ -3931,6 +4013,12 @@ def set_employee_position_for_admin(telegram_id: int, payload: dict):
 
     if position not in POSITIONS:
         return {"ok": False, "message": "Выберите должность из списка."}
+
+    current_employee = get_employee_by_id(employee_id)
+    if current_employee is None:
+        return {"ok": False, "message": "Сотрудник не найден."}
+    if current_employee[4] == "admin":
+        return {"ok": False, "message": "Для администратора измените роль, затем назначьте должность."}
 
     employee = update_employee_position(employee_id, position)
 
@@ -4233,11 +4321,29 @@ def make_handler(bot_token: str, debug: bool):
                 if session is None:
                     self.send_json({"ok": False, "code": "unauthorized", "message": "Войдите в приложение."}, status=401)
                     return
+                employee = get_employee_for_access(session["telegram_id"])
+                if employee is None or employee[5] != "active":
+                    revoke_web_sessions_for_telegram_id(session["telegram_id"])
+                    self.send_json(
+                        {
+                            "ok": False,
+                            "code": "account_disabled",
+                            "message": "Доступ к аккаунту отключён. Обратитесь к администратору.",
+                        },
+                        status=401,
+                        extra_headers={"Set-Cookie": build_clear_cookie(secure=self.secure_cookie())},
+                    )
+                    return
                 self.send_json(
                     {
                         "ok": True,
                         "username": session["username"],
                         "telegram_id": session["telegram_id"],
+                        "full_name": employee[2] or session.get("full_name") or "",
+                        "position": employee[3] or "",
+                        "role": employee[4] or "employee",
+                        "email": session.get("email") or "",
+                        "phone": session.get("phone") or "",
                         "csrf_token": session["csrf_token"],
                         "expires_at": session["expires_at"],
                     }
@@ -4254,7 +4360,7 @@ def make_handler(bot_token: str, debug: bool):
                 user = self.authenticate_request(payload, require_csrf=False)
 
                 if not user or not user.get("id"):
-                    self.send_json({"ok": False, "message": "Откройте приложение из Telegram."}, status=401)
+                    self.send_json({"ok": False, "message": "Войдите в веб-приложение или откройте его из Telegram."}, status=401)
                     return
 
                 try:
@@ -4302,7 +4408,7 @@ def make_handler(bot_token: str, debug: bool):
                 }
                 user = self.authenticate_request(payload, require_csrf=False)
                 if not user or not user.get("id"):
-                    self.send_json({"ok": False, "message": "Откройте приложение из Telegram."}, status=401)
+                    self.send_json({"ok": False, "message": "Войдите в веб-приложение или откройте его из Telegram."}, status=401)
                     return
                 telegram_id = int(user["id"])
 
@@ -4369,6 +4475,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/web/login",
                 "/api/web/register",
                 "/api/web/logout",
+                "/api/web/password",
                 "/api/app/state",
                 "/api/shift/status",
                 "/api/shift/open",
@@ -4394,6 +4501,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/admin/feedback",
                 "/api/admin/employee/status",
                 "/api/admin/employee/position",
+                "/api/admin/employee/role",
                 "/api/admin/shift/close",
                 "/api/admin/shift/delete",
                 "/api/admin/operation",
@@ -4548,6 +4656,30 @@ def make_handler(bot_token: str, debug: bool):
                 )
                 return
 
+            if path == "/api/web/password":
+                session_token = self.web_session_token()
+                session = get_web_session(
+                    session_token,
+                    self.headers.get("X-CSRF-Token", ""),
+                    require_csrf=True,
+                ) if session_token else None
+                if session is None:
+                    self.send_json({"ok": False, "code": "invalid_csrf", "message": "Сессия устарела."}, status=403)
+                    return
+                password_result = change_web_password(
+                    session["account_id"],
+                    payload.get("current_password", ""),
+                    payload.get("new_password", ""),
+                )
+                if not password_result.get("ok"):
+                    self.send_json(password_result, status=400)
+                    return
+                self.send_json(
+                    password_result,
+                    extra_headers={"Set-Cookie": build_clear_cookie(secure=self.secure_cookie())},
+                )
+                return
+
             user = self.authenticate_request(payload, require_csrf=True)
 
             if not user or not user.get("id"):
@@ -4649,6 +4781,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = set_employee_status_for_admin(telegram_id, payload)
             elif path == "/api/admin/employee/position":
                 result = set_employee_position_for_admin(telegram_id, payload)
+            elif path == "/api/admin/employee/role":
+                result = set_employee_role_for_admin(telegram_id, payload)
             elif path == "/api/admin/shift/close":
                 result = close_shift_for_admin(telegram_id, payload)
             elif path == "/api/admin/shift/delete":

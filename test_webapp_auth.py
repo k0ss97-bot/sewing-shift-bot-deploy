@@ -77,6 +77,58 @@ class WebAppAuthTest(unittest.TestCase):
         self.assertIsNone(self.auth.authenticate_web_credentials("admin.test", "first-demo-password"))
         self.assertIsNotNone(self.auth.authenticate_web_credentials("admin.test", "second-demo-password"))
 
+    def test_revoking_employee_sessions_closes_every_device(self):
+        account = self.auth.upsert_web_account("worker.devices", 99002, "worker-device-password")
+        authenticated = self.auth.authenticate_web_credentials("worker.devices", "worker-device-password")
+        first_session = self.auth.create_web_session(authenticated, "127.0.0.1", "first-device")
+        second_session = self.auth.create_web_session(authenticated, "127.0.0.2", "second-device")
+
+        self.assertEqual(self.auth.revoke_web_sessions_for_telegram_id(account["telegram_id"]), 2)
+        self.assertIsNone(self.auth.get_web_session(first_session["session_token"]))
+        self.assertIsNone(self.auth.get_web_session(second_session["session_token"]))
+
+    def test_employee_can_change_password_and_existing_sessions_are_revoked(self):
+        account = self.auth.upsert_web_account("worker.password", 99003, "first-worker-password")
+        authenticated = self.auth.authenticate_web_credentials("worker.password", "first-worker-password")
+        session = self.auth.create_web_session(authenticated)
+
+        rejected = self.auth.change_web_password(account["id"], "wrong-password", "second-worker-password")
+        self.assertFalse(rejected["ok"])
+        self.assertIsNotNone(self.auth.get_web_session(session["session_token"]))
+
+        changed = self.auth.change_web_password(account["id"], "first-worker-password", "second-worker-password")
+        self.assertTrue(changed["ok"])
+        self.assertIsNone(self.auth.get_web_session(session["session_token"]))
+        self.assertIsNone(self.auth.authenticate_web_credentials("worker.password", "first-worker-password"))
+        self.assertIsNotNone(self.auth.authenticate_web_credentials("worker.password", "second-worker-password"))
+
+    def test_database_roles_are_atomic_and_preserve_last_admin(self):
+        self.database.create_employee(99101, "Первый Администратор", "Швея")
+        first = self.database.get_employee_by_telegram_id(99101)
+        promoted = self.database.update_employee_role(first[0], "admin")
+        self.assertTrue(promoted["ok"])
+        self.assertEqual(promoted["employee"][3], "Администратор")
+        self.assertEqual(promoted["employee"][4], "admin")
+        self.assertEqual(promoted["employee"][5], "active")
+
+        blocked = self.database.update_employee_role(first[0], "employee", "Швея")
+        self.assertFalse(blocked["ok"])
+        self.assertEqual(blocked["code"], "last_admin")
+        blocked_status = self.database.update_employee_access_status(first[0], "inactive")
+        self.assertFalse(blocked_status["ok"])
+        self.assertEqual(blocked_status["code"], "last_admin")
+
+        self.database.create_employee(99102, "Второй Администратор", "Упаковщик")
+        second = self.database.get_employee_by_telegram_id(99102)
+        self.assertTrue(self.database.update_employee_role(second[0], "admin")["ok"])
+        demoted = self.database.update_employee_role(first[0], "employee", "Раскройщик")
+        self.assertTrue(demoted["ok"])
+        self.assertEqual(demoted["employee"][3], "Раскройщик")
+        self.assertEqual(demoted["employee"][4], "employee")
+
+        accounts = self.database.get_all_user_accounts()
+        self.assertEqual({row[5] for row in accounts}, {"admin", "employee"})
+
     def test_rejects_weak_account_credentials(self):
         with self.assertRaises(ValueError):
             self.auth.upsert_web_account("x", 1, "strong-demo-password")
@@ -134,7 +186,9 @@ class WebAppHttpTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_dir = os.environ.get("DB_DIR")
+        self.old_admin_ids = os.environ.get("ADMIN_IDS")
         os.environ["DB_DIR"] = self.temp_dir.name
+        os.environ.pop("ADMIN_IDS", None)
         sys.path.insert(0, str(PROJECT_DIR))
         for module_name in ["database", "webapp_auth", "miniapp_server"]:
             sys.modules.pop(module_name, None)
@@ -160,6 +214,10 @@ class WebAppHttpTest(unittest.TestCase):
             os.environ.pop("DB_DIR", None)
         else:
             os.environ["DB_DIR"] = self.old_db_dir
+        if self.old_admin_ids is None:
+            os.environ.pop("ADMIN_IDS", None)
+        else:
+            os.environ["ADMIN_IDS"] = self.old_admin_ids
         for module_name in ["database", "webapp_auth", "miniapp_server"]:
             sys.modules.pop(module_name, None)
         if str(PROJECT_DIR) in sys.path:
@@ -175,8 +233,11 @@ class WebAppHttpTest(unittest.TestCase):
         connection.request(method, path, body=body, headers=request_headers)
         response = connection.getresponse()
         response_body = response.read()
-        result = json.loads(response_body.decode("utf-8")) if response_body else {}
         response_headers = dict(response.getheaders())
+        if response_headers.get("Content-Type", "").startswith("application/json"):
+            result = json.loads(response_body.decode("utf-8")) if response_body else {}
+        else:
+            result = response_body
         connection.close()
         return response.status, result, response_headers
 
@@ -345,6 +406,141 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(result["ok"])
         self.assertIn("Set-Cookie", headers)
+
+    def test_database_admin_role_grants_web_admin_access(self):
+        self.database.create_employee(23003, "Веб Администратор", "Швея")
+        employee = self.database.get_employee_by_telegram_id(23003)
+        self.assertTrue(self.database.update_employee_role(employee[0], "admin")["ok"])
+        self.auth.upsert_web_account("web-admin", 23003, "web-admin-password")
+
+        status, login, headers = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "web-admin", "password": "web-admin-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        request_headers = {
+            "Cookie": cookie,
+            "X-CSRF-Token": login["csrf_token"],
+            "Origin": self.origin,
+        }
+
+        status, app_state, _ = self.request("POST", "/api/app/state", {}, request_headers)
+        self.assertEqual(status, 200)
+        self.assertTrue(app_state["is_admin"])
+        self.assertTrue(app_state["features"]["can_admin"])
+        self.assertEqual(app_state["employee"]["position"], "Администратор")
+
+        status, dashboard, _ = self.request("POST", "/api/admin/dashboard", {}, request_headers)
+        self.assertEqual(status, 200)
+        self.assertTrue(dashboard["ok"])
+        self.assertTrue(any(row["role"] == "admin" for row in dashboard["user_accounts"]))
+
+        task = self.database.create_production_task(
+            "Шорты",
+            ["80"],
+            ["Бежевый"],
+            employee[0],
+            attachment={
+                "file_name": "раскрой.pdf",
+                "mime_type": "application/pdf",
+                "content_base64": "ZmlsZQ==",
+            },
+        )
+        status, content, file_headers = self.request(
+            "GET",
+            f"/api/production/task-attachment?task_id={task['id']}&mode=open",
+            headers={"Cookie": cookie},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content, b"file")
+        self.assertTrue(file_headers["Content-Disposition"].startswith("inline;"))
+        status, content, file_headers = self.request(
+            "GET",
+            f"/api/production/task-attachment?task_id={task['id']}&mode=download",
+            headers={"Cookie": cookie},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(content, b"file")
+        self.assertTrue(file_headers["Content-Disposition"].startswith("attachment;"))
+
+        status, demotion, _ = self.request(
+            "POST",
+            "/api/admin/employee/role",
+            {"employee_id": employee[0], "role": "employee", "position": "Швея"},
+            request_headers,
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(demotion["ok"])
+        self.assertIn("собственного аккаунта", demotion["message"])
+
+    def test_disabled_employee_session_is_revoked_on_restore(self):
+        status, login, headers = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "web-worker", "password": "web-worker-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        session_token = cookie.split("=", 1)[1]
+
+        employee = self.database.get_employee_by_telegram_id(23001)
+        self.assertTrue(self.database.update_employee_access_status(employee[0], "inactive")["ok"])
+
+        status, result, restore_headers = self.request(
+            "GET", "/api/web/session", headers={"Cookie": cookie}
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(result["code"], "account_disabled")
+        self.assertIn("Max-Age=0", restore_headers["Set-Cookie"])
+        self.assertIsNone(self.auth.get_web_session(session_token))
+
+    def test_web_password_endpoint_requires_current_password_and_logs_out(self):
+        status, login, headers = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "web-worker", "password": "web-worker-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        request_headers = {
+            "Cookie": cookie,
+            "X-CSRF-Token": login["csrf_token"],
+            "Origin": self.origin,
+        }
+
+        status, rejected, _ = self.request(
+            "POST",
+            "/api/web/password",
+            {"current_password": "wrong-password", "new_password": "new-web-worker-password"},
+            request_headers,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(rejected["code"], "invalid_current_password")
+
+        status, changed, changed_headers = self.request(
+            "POST",
+            "/api/web/password",
+            {"current_password": "web-worker-password", "new_password": "new-web-worker-password"},
+            request_headers,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(changed["ok"])
+        self.assertIn("Max-Age=0", changed_headers["Set-Cookie"])
+
+        status, _, _ = self.request("GET", "/api/web/session", headers={"Cookie": cookie})
+        self.assertEqual(status, 401)
+        status, _, _ = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "web-worker", "password": "new-web-worker-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
 
     def test_rejected_origin_consumes_request_body_on_keep_alive_connection(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)

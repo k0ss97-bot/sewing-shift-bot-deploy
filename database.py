@@ -1268,8 +1268,12 @@ def backfill_traceability(cursor):
 
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_NAME, timeout=30)
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode = WAL")
+    cursor.execute("PRAGMA synchronous = NORMAL")
+    cursor.execute("PRAGMA busy_timeout = 30000")
+    cursor.execute("PRAGMA foreign_keys = ON")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS employees (
@@ -1862,6 +1866,7 @@ def init_db():
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_employee_date ON shifts (employee_id, shift_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_date_status ON shifts (shift_date, status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_employees_role_status ON employees (role, status)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_one_open ON shifts (employee_id) WHERE status = 'open'")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_shift ON shift_operations (shift_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_employee ON shift_operations (employee_id)")
@@ -2185,6 +2190,27 @@ def get_all_employees():
     return employees
 
 
+def get_all_user_accounts():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, full_name, position, telegram_id, status, role, registered_at
+        FROM employees
+        ORDER BY
+            CASE role WHEN 'admin' THEN 0 ELSE 1 END,
+            CASE status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END,
+            full_name COLLATE NOCASE,
+            id
+        """
+    )
+
+    accounts = cursor.fetchall()
+    conn.close()
+    return accounts
+
+
 def get_employees_by_status(status: str):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -2203,6 +2229,139 @@ def get_employees_by_status(status: str):
     employees = cursor.fetchall()
     conn.close()
     return employees
+
+
+def update_employee_access_status(employee_id: int, status: str):
+    if status not in {"active", "inactive", "pending", "rejected"}:
+        return {"ok": False, "code": "invalid_status", "employee": None}
+
+    conn = sqlite3.connect(DB_NAME, timeout=30)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            SELECT id, telegram_id, full_name, position, role, status
+            FROM employees
+            WHERE id = ?
+            """,
+            (employee_id,),
+        )
+        current = cursor.fetchone()
+        if current is None:
+            conn.rollback()
+            return {"ok": False, "code": "not_found", "employee": None}
+
+        if current[4] == "admin" and current[5] == "active" and status != "active":
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM employees
+                WHERE role = 'admin' AND status = 'active' AND id != ?
+                """,
+                (employee_id,),
+            )
+            if int(cursor.fetchone()[0] or 0) == 0:
+                conn.rollback()
+                return {"ok": False, "code": "last_admin", "employee": current}
+
+        cursor.execute(
+            "UPDATE employees SET status = ? WHERE id = ?",
+            (status, employee_id),
+        )
+        cursor.execute(
+            """
+            SELECT id, telegram_id, full_name, position, role, status
+            FROM employees
+            WHERE id = ?
+            """,
+            (employee_id,),
+        )
+        employee = cursor.fetchone()
+        conn.commit()
+        return {"ok": True, "code": "", "employee": employee}
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def update_employee_role(employee_id: int, role: str, position: str | None = None):
+    if role not in {"admin", "employee"}:
+        return {"ok": False, "code": "invalid_role", "employee": None}
+
+    normalized_position = str(position or "").strip()
+    if role == "employee" and not normalized_position:
+        return {"ok": False, "code": "position_required", "employee": None}
+
+    conn = sqlite3.connect(DB_NAME, timeout=30)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            SELECT id, telegram_id, full_name, position, role, status
+            FROM employees
+            WHERE id = ?
+            """,
+            (employee_id,),
+        )
+        current = cursor.fetchone()
+        if current is None:
+            conn.rollback()
+            return {"ok": False, "code": "not_found", "employee": None}
+
+        if current[4] == "admin" and current[5] == "active" and role != "admin":
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM employees
+                WHERE role = 'admin' AND status = 'active' AND id != ?
+                """,
+                (employee_id,),
+            )
+            if int(cursor.fetchone()[0] or 0) == 0:
+                conn.rollback()
+                return {"ok": False, "code": "last_admin", "employee": current}
+
+        if role == "admin":
+            cursor.execute(
+                """
+                UPDATE employees
+                SET role = 'admin', position = 'Администратор', status = 'active'
+                WHERE id = ?
+                """,
+                (employee_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE employees
+                SET role = 'employee', position = ?, status = 'active'
+                WHERE id = ?
+                """,
+                (normalized_position, employee_id),
+            )
+
+        cursor.execute(
+            """
+            SELECT id, telegram_id, full_name, position, role, status
+            FROM employees
+            WHERE id = ?
+            """,
+            (employee_id,),
+        )
+        employee = cursor.fetchone()
+        conn.commit()
+        return {"ok": True, "code": "", "employee": employee}
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def update_employee_status(employee_id: int, status: str):

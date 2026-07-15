@@ -861,6 +861,12 @@ MINIAPP_HTML = """<!doctype html>
       margin-top: 11px;
     }
 
+    .button-row > .status-chip:only-child {
+      grid-column: 1 / -1;
+      min-height: 34px;
+      justify-content: center;
+    }
+
     .small-button {
       display: flex;
       align-items: center;
@@ -907,6 +913,7 @@ MINIAPP_HTML = """<!doctype html>
     [data-order-color],
     [data-history-action],
     [data-feedback-action],
+    [data-profile-action],
     [data-select-operation],
     [data-select-order],
     [data-select-report-task],
@@ -1604,6 +1611,86 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 12px;
     }
 
+    .qr-scanner {
+      position: fixed;
+      z-index: 100;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+      background: #181513;
+      color: white;
+    }
+
+    .qr-scanner-shell {
+      position: relative;
+      width: min(560px, 100%);
+      height: min(760px, 100%);
+      overflow: hidden;
+      border-radius: 18px;
+      background: #090807;
+    }
+
+    .qr-scanner video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .qr-scanner-head,
+    .qr-scanner-actions {
+      position: absolute;
+      z-index: 2;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .qr-scanner-head {
+      top: 14px;
+      justify-content: space-between;
+      font-size: 15px;
+      font-weight: 950;
+    }
+
+    .qr-scanner-actions {
+      bottom: 14px;
+      justify-content: center;
+    }
+
+    .qr-scanner .small-button {
+      min-height: 44px;
+      background: rgba(255,255,255,.92);
+      color: #241b17;
+    }
+
+    .qr-scanner-close {
+      width: 44px;
+      height: 44px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(255,255,255,.92);
+      color: #241b17;
+      font-size: 26px;
+      line-height: 1;
+    }
+
+    .qr-scanner-frame {
+      position: absolute;
+      z-index: 1;
+      width: min(64vw, 280px);
+      aspect-ratio: 1;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      border: 3px solid rgba(255,255,255,.9);
+      border-radius: 16px;
+      box-shadow: 0 0 0 999px rgba(0,0,0,.28);
+      pointer-events: none;
+    }
+
     .main-button {
       position: fixed;
       z-index: 6;
@@ -1799,6 +1886,14 @@ MINIAPP_HTML = """<!doctype html>
   <button class="main-button" id="mainButton" hidden>Загрузка</button>
   <nav class="bottom-nav" id="bottomNav" aria-label="Навигация приложения" hidden></nav>
   <div class="toast" id="toast"><b></b><span></span></div>
+  <section class="qr-scanner" id="qrScanner" aria-label="Сканер QR-кода" hidden>
+    <div class="qr-scanner-shell">
+      <video id="qrScannerVideo" playsinline muted></video>
+      <div class="qr-scanner-frame"></div>
+      <div class="qr-scanner-head"><span>QR-код партии</span><button class="qr-scanner-close" id="qrScannerClose" type="button" aria-label="Закрыть">×</button></div>
+      <div class="qr-scanner-actions"><button class="small-button" id="qrScannerManual" type="button">Ввести код</button></div>
+    </div>
+  </section>
 
   <script>
     const tg = window.Telegram && window.Telegram.WebApp;
@@ -1820,6 +1915,7 @@ MINIAPP_HTML = """<!doctype html>
     const telegramUserId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? String(tg.initDataUnsafe.user.id || "") : "";
     const isStandaloneWeb = !debugTelegramId && !authToken && !(tg && tg.initData);
     let webCsrfToken = "";
+    let webSessionProfile = {};
     let storedWebIdentity = "";
     try {
       storedWebIdentity = window.sessionStorage.getItem("webapp_identity") || "";
@@ -1946,6 +2042,7 @@ MINIAPP_HTML = """<!doctype html>
       passportBatchId: "",
       passportData: null,
       passportReturnScreen: "orders",
+      profileReturnScreen: "shift",
       taskDefectPhotos: {},
       ...persistedUiState,
       data: null,
@@ -1970,7 +2067,11 @@ MINIAPP_HTML = """<!doctype html>
     const topTabs = document.getElementById("topTabs");
     const bottomNav = document.getElementById("bottomNav");
     const toast = document.getElementById("toast");
+    const qrScanner = document.getElementById("qrScanner");
+    const qrScannerVideo = document.getElementById("qrScannerVideo");
     const pendingActions = new Set();
+    let qrScannerStream = null;
+    let qrScannerFrame = 0;
 
     function beginAction(key) {
       if (pendingActions.has(key)) return false;
@@ -2951,6 +3052,34 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function adminEmployeeRole(employeeId, role) {
+      const select = document.getElementById(`employeePosition${employeeId}`);
+      const position = select ? select.value : "";
+      if (role === "employee" && !position) {
+        showToast("Должность", "Выберите должность, с которой пользователь продолжит работу.");
+        select?.focus();
+        return;
+      }
+      const confirmation = role === "admin"
+        ? "Назначить этому пользователю права администратора?"
+        : "Снять права администратора и перевести пользователя в сотрудники?";
+      if (!window.confirm(confirmation)) return;
+
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/admin/employee/role", {
+          employee_id: employeeId,
+          role,
+          position,
+        });
+        if (!data.ok) throw new Error(data.message || "Не удалось изменить роль.");
+        replaceAdminDashboard(data, data.message || "Роль пользователя изменена.");
+      } catch (error) {
+        showToast("Ошибка", error.message || "Не удалось изменить роль.");
+        mainButton.disabled = false;
+      }
+    }
+
     async function adminApproveEmployee(employeeId) {
       const actionKey = `approve-employee-${employeeId}`;
       if (!beginAction(actionKey)) return;
@@ -3209,7 +3338,7 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.disabled = Boolean(shift && shift.status === "closed");
 
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Сегодня</h2><p>${escapeHtml(employee ? employee.full_name : "Откройте приложение из Telegram")}</p></div><div class="date">${escapeHtml(shift ? shift.date : "сегодня")}</div></div>
+        <div class="screen-head"><div><h2>Сегодня</h2><p>${escapeHtml(employee ? employee.full_name : "Пользователь не определён")}</p></div><div class="date">${escapeHtml(shift ? shift.date : "сегодня")}</div></div>
         <div class="card shift-card"><div><b>${escapeHtml(shiftText())}</b><span>${escapeHtml(employee ? employee.position : "-")} · профиль ${escapeHtml(employee ? employee.status : "-")}<br>${escapeHtml(shift ? `${shift.start_time || "-"}-${shift.end_time || ""}` : "Начните смену, чтобы вести отчёт")}</span></div><span class="status-chip ${hasOpen ? "" : "gray"}">● ${hasOpen ? "в процессе" : "ожидает"}</span></div>
         <div class="kpi-grid">
           <button type="button" class="card kpi home-kpi" data-employee-home-detail="report"><div class="kpi-top"><span>Отчёт</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${operations.length}<small> строк</small></strong><span>Открыть операции ›</span><div class="progress"><i style="--w:${Math.min(100, operations.length * 12)}%"></i></div></button>
@@ -4114,6 +4243,66 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    function promptRouteCode() {
+      const value = window.prompt("Введите код партии", "RB-");
+      if (value) openTraceCode(value);
+    }
+
+    function stopWebQrScanner() {
+      if (qrScannerFrame) window.cancelAnimationFrame(qrScannerFrame);
+      qrScannerFrame = 0;
+      if (qrScannerStream) {
+        qrScannerStream.getTracks().forEach((track) => track.stop());
+      }
+      qrScannerStream = null;
+      qrScannerVideo.srcObject = null;
+      qrScanner.hidden = true;
+    }
+
+    async function openWebQrScanner() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof window.BarcodeDetector !== "function") {
+        promptRouteCode();
+        return;
+      }
+
+      try {
+        qrScannerStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {facingMode: {ideal: "environment"}},
+        });
+        qrScanner.hidden = false;
+        qrScannerVideo.srcObject = qrScannerStream;
+        await qrScannerVideo.play();
+        const detector = new window.BarcodeDetector({formats: ["qr_code"]});
+        let detecting = false;
+        const detectFrame = async () => {
+          if (!qrScannerStream || qrScanner.hidden) return;
+          if (!detecting && qrScannerVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            detecting = true;
+            try {
+              const codes = await detector.detect(qrScannerVideo);
+              const value = codes && codes[0] ? codes[0].rawValue : "";
+              if (value) {
+                stopWebQrScanner();
+                openTraceCode(value);
+                return;
+              }
+            } catch (error) {
+              // A transient unreadable frame is expected while the camera is moving.
+            } finally {
+              detecting = false;
+            }
+          }
+          qrScannerFrame = window.requestAnimationFrame(detectFrame);
+        };
+        qrScannerFrame = window.requestAnimationFrame(detectFrame);
+      } catch (error) {
+        stopWebQrScanner();
+        showToast("QR-код", "Камера недоступна. Введите код партии.");
+        promptRouteCode();
+      }
+    }
+
     function scanRouteQr() {
       if (tg && typeof tg.showScanQrPopup === "function") {
         tg.showScanQrPopup({text: "Наведите камеру на QR-код партии"}, (value) => {
@@ -4122,8 +4311,7 @@ MINIAPP_HTML = """<!doctype html>
         });
         return;
       }
-      const value = window.prompt("Введите код партии", "RB-");
-      if (value) openTraceCode(value);
+      openWebQrScanner();
     }
 
     function renderPassport() {
@@ -4712,10 +4900,11 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderAdminEmployees(admin) {
-      const employees = admin && admin.employees ? admin.employees : [];
+      const employees = admin && admin.user_accounts ? admin.user_accounts : (admin && admin.employees ? admin.employees : []);
       const pending = admin && admin.pending_employees ? admin.pending_employees : [];
       const positions = admin && admin.positions ? admin.positions : [];
       const listedEmployees = employees.filter((employee) => employee.status !== "pending");
+      const currentTelegramId = Number(state.data && state.data.employee ? state.data.employee.telegram_id : 0);
       mainButton.textContent = "Обновить сотрудников";
 
       const positionOptions = (employee) => {
@@ -4733,12 +4922,25 @@ MINIAPP_HTML = """<!doctype html>
         const telegramId = Number(employee.telegram_id || 0);
         return telegramId > 0 ? `Telegram ID ${escapeHtml(telegramId)}` : "Контакты не указаны";
       };
+      const employeeStatusLabel = (status) => ({
+        active: "активен",
+        inactive: "отключён",
+        pending: "ожидает",
+        rejected: "отклонён",
+      }[status] || status || "-");
       const employeeCards = listedEmployees.length ? listedEmployees.map((employee) => `
         <div class="card field-card">
-          <label>ID ${escapeHtml(employee.id)} · ${escapeHtml(employee.status)}</label>
-          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employee.status)}</span></div>
-          <div class="form-grid"><div class="field full"><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>
-          <div class="button-row"><button class="small-button secondary" data-admin-action="position" data-employee-id="${escapeHtml(employee.id)}">Должность</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button></div>
+          <label>ID ${escapeHtml(employee.id)} · ${employee.role === "admin" ? "администратор" : "сотрудник"}</label>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employeeStatusLabel(employee.status))}</span></div>
+          ${employee.role === "admin" && Number(employee.telegram_id) === currentTelegramId ? "" : `<div class="form-grid"><div class="field full"><label>${employee.role === "admin" ? "Должность после снятия прав" : "Должность"}</label><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>`}
+          ${employee.role === "admin" ? `
+            <div class="button-row">
+              ${Number(employee.telegram_id) === currentTelegramId ? `<span class="status-chip gray">Это ваш аккаунт</span>` : `<button class="small-button secondary" data-admin-action="role-employee" data-employee-id="${escapeHtml(employee.id)}">Снять права</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button>`}
+            </div>
+          ` : `
+            <div class="button-row"><button class="small-button secondary" data-admin-action="position" data-employee-id="${escapeHtml(employee.id)}">Сохранить должность</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button></div>
+            <div class="button-row"><button class="small-button" data-admin-action="role-admin" data-employee-id="${escapeHtml(employee.id)}">Назначить администратором</button></div>
+          `}
         </div>
       `).join("") : itemEmpty("Сотрудников пока нет.");
       const pendingCards = pending.length ? pending.map((employee) => `
@@ -4751,7 +4953,7 @@ MINIAPP_HTML = """<!doctype html>
       `).join("") : itemEmpty("Новых заявок нет.");
 
       return `
-        <div class="screen-head"><div><h2>Сотрудники</h2><p>Заявки, статусы и должности.</p></div><div class="date">${employees.length} всего</div></div>
+        <div class="screen-head"><div><h2>Пользователи</h2><p>Заявки, роли, статусы и должности.</p></div><div class="date">${employees.length} всего</div></div>
         ${renderAdminTabs()}
         <div class="kpi-grid">
           <div class="card kpi"><div class="kpi-top"><span>Заявки</span><div class="kpi-ico">◎</div></div><strong>${pending.length}<small> шт</small></strong><span>Ожидают решения</span></div>
@@ -4759,7 +4961,7 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="section-title"><b>Заявки</b><span>${pending.length}</span></div>
         <div class="op-list">${pendingCards}</div>
-        <div class="section-title"><b>Список сотрудников</b><button data-admin-action="refresh">обновить</button></div>
+        <div class="section-title"><b>Все пользователи</b><button data-admin-action="refresh">обновить</button></div>
         <div class="op-list">${employeeCards}</div>
       `;
     }
@@ -4844,11 +5046,40 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = renderAdminReports(admin);
     }
 
+    function renderProfile() {
+      const employee = state.data && state.data.employee ? state.data.employee : {};
+      const fullName = webSessionProfile.full_name || employee.full_name || "Пользователь";
+      const position = webSessionProfile.position || employee.position || "Сотрудник";
+      const role = webSessionProfile.role === "admin" || state.data.is_admin ? "Администратор" : "Сотрудник";
+      mainButton.textContent = "Вернуться";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Профиль</h2><p>Учётная запись и безопасность.</p></div><div class="date">${escapeHtml(role)}</div></div>
+        <div class="card field-card">
+          <label>Пользователь</label>
+          <div class="report-row"><div><b>${escapeHtml(fullName)}</b><span>${escapeHtml(position)}</span></div><span class="status-chip">активен</span></div>
+          <div class="op-list">
+            <div class="report-row"><div><b>Электронная почта</b><span>${escapeHtml(webSessionProfile.email || webSessionProfile.username || "Не указана")}</span></div></div>
+            <div class="report-row"><div><b>Телефон</b><span>${escapeHtml(webSessionProfile.phone || "Не указан")}</span></div></div>
+          </div>
+        </div>
+        <div class="card field-card">
+          <label>Сменить пароль</label>
+          <div class="form-grid">
+            <div class="field full"><label>Текущий пароль</label><input id="profileCurrentPassword" type="password" autocomplete="current-password" maxlength="128"></div>
+            <div class="field full"><label>Новый пароль</label><input id="profileNewPassword" type="password" autocomplete="new-password" minlength="10" maxlength="128"></div>
+            <div class="field full"><label>Повторите новый пароль</label><input id="profileNewPasswordConfirm" type="password" autocomplete="new-password" minlength="10" maxlength="128"></div>
+          </div>
+          <div class="button-row"><button class="small-button secondary" data-profile-action="logout">Выйти</button><button class="small-button" data-profile-action="password">Сменить пароль</button></div>
+        </div>
+      `;
+    }
+
     function render() {
       if (!state.data) return;
       const allowedScreens = state.data.is_admin
-        ? ["shift", "warehouse", "analytics", "orders", "admin", "passport"]
-        : ["shift", "report", "analytics", "orders", "admin", "passport"];
+        ? ["shift", "warehouse", "analytics", "orders", "admin", "passport", "profile"]
+        : ["shift", "report", "analytics", "orders", "admin", "passport", "profile"];
 
       if (!allowedScreens.includes(state.screen)) state.screen = "shift";
       document.getElementById("roleLabel").textContent = roleLabel();
@@ -4860,6 +5091,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "orders") renderOrders();
       if (state.screen === "admin") renderAdmin();
       if (state.screen === "passport") renderPassport();
+      if (state.screen === "profile") renderProfile();
       renderBottomNav();
       renderTopTabs();
       persistUiState();
@@ -5169,6 +5401,8 @@ MINIAPP_HTML = """<!doctype html>
         if (adminAction.dataset.adminAction === "inactive") adminEmployeeStatus(adminAction.dataset.employeeId, "inactive");
         if (adminAction.dataset.adminAction === "approve") adminApproveEmployee(adminAction.dataset.employeeId);
         if (adminAction.dataset.adminAction === "position") adminEmployeePosition(adminAction.dataset.employeeId);
+        if (adminAction.dataset.adminAction === "role-admin") adminEmployeeRole(adminAction.dataset.employeeId, "admin");
+        if (adminAction.dataset.adminAction === "role-employee") adminEmployeeRole(adminAction.dataset.employeeId, "employee");
         if (adminAction.dataset.adminAction === "close-shift") adminCloseShift(adminAction.dataset.shiftId);
         if (adminAction.dataset.adminAction === "delete-shift") adminDeleteShift(adminAction.dataset.shiftId);
         return;
@@ -5189,6 +5423,13 @@ MINIAPP_HTML = """<!doctype html>
       const attachmentAction = event.target.closest("[data-attachment-action]");
       if (attachmentAction) {
         openTaskAttachment(attachmentAction.dataset.attachmentTaskId, attachmentAction.dataset.attachmentAction);
+        return;
+      }
+
+      const profileAction = event.target.closest("[data-profile-action]");
+      if (profileAction) {
+        if (profileAction.dataset.profileAction === "logout") logoutWebApp();
+        if (profileAction.dataset.profileAction === "password") changeWebPassword();
         return;
       }
 
@@ -5248,6 +5489,11 @@ MINIAPP_HTML = """<!doctype html>
 
     mainButton.addEventListener("click", () => {
       if (!state.data) { refreshState(); return; }
+      if (state.screen === "profile") {
+        state.screen = state.profileReturnScreen || "shift";
+        render();
+        return;
+      }
       if (state.screen === "shift") {
         if (state.data.is_admin) {
           refreshAdminDashboard("Главная обновлена.");
@@ -5439,6 +5685,12 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
+      if (state.screen === "profile") {
+        state.screen = state.profileReturnScreen || "shift";
+        render();
+        return;
+      }
+
       if (state.screen === "passport") {
         state.screen = state.passportReturnScreen || "orders";
         state.passportData = null;
@@ -5493,7 +5745,8 @@ MINIAPP_HTML = """<!doctype html>
 
     document.getElementById("menuBtn").addEventListener("click", () => {
       if (isStandaloneWeb) {
-        logoutWebApp();
+        state.profileReturnScreen = state.screen === "profile" ? (state.profileReturnScreen || "shift") : state.screen;
+        setScreen("profile");
         return;
       }
       if (state.data && state.data.is_admin) {
@@ -5548,6 +5801,7 @@ MINIAPP_HTML = """<!doctype html>
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) return false;
         webCsrfToken = data.csrf_token || "";
+        webSessionProfile = data;
         const identity = String(data.telegram_id || data.username || "web");
         if (identity !== storedWebIdentity) {
           window.sessionStorage.setItem("webapp_identity", identity);
@@ -5648,6 +5902,48 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function changeWebPassword() {
+      const currentPassword = document.getElementById("profileCurrentPassword");
+      const newPassword = document.getElementById("profileNewPassword");
+      const confirmation = document.getElementById("profileNewPasswordConfirm");
+      if (!currentPassword || !newPassword || !confirmation) return;
+      if (!currentPassword.value || !newPassword.value) {
+        showToast("Пароль", "Заполните текущий и новый пароль.");
+        return;
+      }
+      if (newPassword.value !== confirmation.value) {
+        showToast("Пароль", "Новые пароли не совпадают.");
+        confirmation.focus();
+        return;
+      }
+
+      const actionKey = "change-web-password";
+      if (!beginAction(actionKey)) return;
+      try {
+        const response = await fetch("/api/web/password", {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "X-CSRF-Token": webCsrfToken},
+          credentials: "same-origin",
+          body: JSON.stringify({
+            current_password: currentPassword.value,
+            new_password: newPassword.value,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error(data.message || "Не удалось изменить пароль.");
+        try { window.sessionStorage.removeItem("webapp_identity"); } catch (error) {}
+        webCsrfToken = "";
+        webSessionProfile = {};
+        showWebLogin(data.message || "Пароль изменён. Войдите заново.");
+      } catch (error) {
+        currentPassword.value = "";
+        currentPassword.focus();
+        showToast("Пароль", error.message || "Не удалось изменить пароль.");
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
     async function bootstrapApplication() {
       if (isStandaloneWeb) {
         document.body.classList.add("web-mode");
@@ -5664,6 +5960,14 @@ MINIAPP_HTML = """<!doctype html>
 
     document.getElementById("webLoginTab").addEventListener("click", () => setWebAuthMode("login"));
     document.getElementById("webRegisterTab").addEventListener("click", () => setWebAuthMode("register"));
+    document.getElementById("qrScannerClose").addEventListener("click", stopWebQrScanner);
+    document.getElementById("qrScannerManual").addEventListener("click", () => {
+      stopWebQrScanner();
+      promptRouteCode();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden" && qrScannerStream) stopWebQrScanner();
+    });
     webLoginForm.addEventListener("submit", loginWebApp);
     webRegisterForm.addEventListener("submit", registerWebApp);
     bootstrapApplication();

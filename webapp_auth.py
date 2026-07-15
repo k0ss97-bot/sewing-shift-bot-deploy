@@ -149,8 +149,15 @@ def _password_hash(password: str, salt_hex: str, iterations: int = PASSWORD_ITER
     ).hex()
 
 
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_NAME, timeout=30)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    return conn
+
+
 def init_web_auth() -> None:
-    conn = sqlite3.connect(DB_NAME)
+    conn = _connect()
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON")
     cursor.execute(
@@ -193,6 +200,9 @@ def init_web_auth() -> None:
         ON web_accounts (phone)
         WHERE phone IS NOT NULL AND phone != ''
         """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_web_accounts_telegram_status ON web_accounts (telegram_id, status)"
     )
     cursor.execute(
         """
@@ -244,7 +254,7 @@ def upsert_web_account(username: str, telegram_id: int, password: str, active: b
     password_digest = _password_hash(password, salt_hex)
     now_text = _now_text()
     status = "active" if active else "disabled"
-    conn = sqlite3.connect(DB_NAME)
+    conn = _connect()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -303,7 +313,7 @@ def register_web_account(email: str, phone: str, full_name: str, password: str) 
     salt_hex = secrets.token_hex(16)
     password_digest = _password_hash(password, salt_hex)
     now_text = _now_text()
-    conn = sqlite3.connect(DB_NAME, timeout=30)
+    conn = _connect()
     cursor = conn.cursor()
     try:
         cursor.execute("PRAGMA foreign_keys = ON")
@@ -387,7 +397,7 @@ def get_web_account_profiles_by_telegram_ids(telegram_ids) -> dict[int, dict]:
         return {}
     init_web_auth()
     placeholders = ",".join("?" for _ in normalized_ids)
-    conn = sqlite3.connect(DB_NAME)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         f"""
@@ -417,7 +427,7 @@ def authenticate_web_credentials(username: str, password: str) -> dict | None:
     password = str(password or "")
     password_to_check = password if len(password) <= MAX_PASSWORD_LENGTH else password[:MAX_PASSWORD_LENGTH]
     init_web_auth()
-    conn = sqlite3.connect(DB_NAME)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     account = cursor.execute(
@@ -476,13 +486,71 @@ def authenticate_web_credentials(username: str, password: str) -> dict | None:
     return result
 
 
+def change_web_password(account_id: int, current_password: str, new_password: str) -> dict:
+    current_password = str(current_password or "")
+    try:
+        new_password = _validated_password(new_password)
+    except WebRegistrationError as error:
+        return {"ok": False, "code": error.code, "message": str(error)}
+
+    init_web_auth()
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        account = cursor.execute(
+            "SELECT * FROM web_accounts WHERE id = ? AND status = 'active'",
+            (int(account_id),),
+        ).fetchone()
+        if account is None:
+            conn.rollback()
+            return {"ok": False, "code": "account_not_found", "message": "Учётная запись не найдена."}
+
+        expected = _password_hash(
+            current_password[:MAX_PASSWORD_LENGTH],
+            account["password_salt"],
+            account["password_iterations"],
+        )
+        if not hmac.compare_digest(expected, account["password_hash"]):
+            conn.rollback()
+            return {"ok": False, "code": "invalid_current_password", "message": "Текущий пароль указан неверно."}
+        if hmac.compare_digest(current_password, new_password):
+            conn.rollback()
+            return {"ok": False, "code": "password_unchanged", "message": "Новый пароль должен отличаться от текущего."}
+
+        salt_hex = secrets.token_hex(16)
+        password_digest = _password_hash(new_password, salt_hex)
+        now_epoch = int(time.time())
+        cursor.execute(
+            """
+            UPDATE web_accounts
+            SET password_salt = ?, password_hash = ?, password_iterations = ?,
+                failed_attempts = 0, locked_until = NULL, updated_at = ?
+            WHERE id = ?
+            """,
+            (salt_hex, password_digest, PASSWORD_ITERATIONS, _now_text(), int(account_id)),
+        )
+        cursor.execute(
+            "UPDATE web_sessions SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL",
+            (now_epoch, int(account_id)),
+        )
+        conn.commit()
+        return {"ok": True, "code": "password_changed", "message": "Пароль изменён. Войдите заново."}
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def create_web_session(account: dict, ip_address: str = "", user_agent: str = "") -> dict:
     init_web_auth()
     session_token = secrets.token_urlsafe(32)
     csrf_token = secrets.token_urlsafe(24)
     now_epoch = int(time.time())
     expires_at = now_epoch + _session_ttl_seconds()
-    conn = sqlite3.connect(DB_NAME)
+    conn = _connect()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -526,14 +594,15 @@ def get_web_session(
         return None
     init_web_auth()
     now_epoch = int(time.time())
-    conn = sqlite3.connect(DB_NAME)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     row = cursor.execute(
         """
         SELECT
             s.id AS session_id, s.csrf_token, s.expires_at, s.last_seen_at,
-            a.id AS account_id, a.telegram_id, a.username, a.status
+            a.id AS account_id, a.telegram_id, a.username, a.email, a.phone,
+            a.full_name, a.status
         FROM web_sessions s
         JOIN web_accounts a ON a.id = s.account_id
         WHERE s.token_hash = ? AND s.revoked_at IS NULL
@@ -572,6 +641,9 @@ def get_web_session(
         "account_id": row["account_id"],
         "telegram_id": int(row["telegram_id"]),
         "username": row["username"],
+        "email": row["email"] or "",
+        "phone": row["phone"] or "",
+        "full_name": row["full_name"] or "",
         "expires_at": int(row["expires_at"]),
         "csrf_token": new_csrf_token or row["csrf_token"],
     }
@@ -581,13 +653,34 @@ def revoke_web_session(session_token: str) -> bool:
     if not session_token:
         return False
     init_web_auth()
-    conn = sqlite3.connect(DB_NAME)
+    conn = _connect()
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE web_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
         (int(time.time()), _hash_secret(session_token)),
     )
     changed = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def revoke_web_sessions_for_telegram_id(telegram_id: int) -> int:
+    init_web_auth()
+    conn = _connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE web_sessions
+        SET revoked_at = ?
+        WHERE revoked_at IS NULL
+          AND account_id IN (
+              SELECT id FROM web_accounts WHERE telegram_id = ?
+          )
+        """,
+        (int(time.time()), int(telegram_id)),
+    )
+    changed = max(0, cursor.rowcount)
     conn.commit()
     conn.close()
     return changed
