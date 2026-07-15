@@ -30,8 +30,8 @@ APP_DESCRIPTION = "Рабочее приложение швейного прои
 APP_START_URL = "/app"
 APP_SCOPE = "/"
 
-THEME_COLOR = "#c36f55"
-BACKGROUND_COLOR = "#fffaf3"
+THEME_COLOR = "#4458ff"
+BACKGROUND_COLOR = "#edf2fb"
 
 MANIFEST_PATH = "/manifest.webmanifest"
 SERVICE_WORKER_PATH = "/service-worker.js"
@@ -44,10 +44,10 @@ ICON_192_PATH = "/pwa/icon-192.png"
 ICON_512_PATH = "/pwa/icon-512.png"
 MS_TILE_ICON_PATH = "/pwa/mstile-150x150.png"
 
-_ICON_BACKGROUND = (195, 111, 85)
-_ICON_BACKGROUND_DARK = (169, 86, 64)
-_ICON_FOREGROUND = (255, 250, 243)
-_ICON_SAGE = (111, 128, 95)
+_ICON_BACKGROUND = (68, 88, 255)
+_ICON_BACKGROUND_DARK = (47, 63, 232)
+_ICON_FOREGROUND = (255, 255, 255)
+_ICON_SAGE = (49, 168, 107)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,15 +126,15 @@ def build_manifest() -> dict[str, object]:
 
 
 APP_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#c36f55"/>
-  <path d="M118 348h87v-72h87v-71h66" fill="none" stroke="#a95640" stroke-opacity=".34" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" transform="translate(4 7)"/>
-  <path d="M118 348h87v-72h87v-71h66" fill="none" stroke="#fffaf3" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="118" cy="348" r="14" fill="#6f805f"/>
-  <circle cx="205" cy="276" r="14" fill="#6f805f"/>
-  <circle cx="292" cy="205" r="14" fill="#6f805f"/>
-  <path d="m352 211 48-48" fill="none" stroke="#6f805f" stroke-width="18" stroke-linecap="round"/>
-  <circle cx="400" cy="163" r="18" fill="#fffaf3"/>
-  <circle cx="400" cy="163" r="7" fill="#c36f55"/>
+  <rect width="512" height="512" fill="#4458ff"/>
+  <path d="M118 348h87v-72h87v-71h66" fill="none" stroke="#2f3fe8" stroke-opacity=".34" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" transform="translate(4 7)"/>
+  <path d="M118 348h87v-72h87v-71h66" fill="none" stroke="#ffffff" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="118" cy="348" r="14" fill="#31a86b"/>
+  <circle cx="205" cy="276" r="14" fill="#31a86b"/>
+  <circle cx="292" cy="205" r="14" fill="#31a86b"/>
+  <path d="m352 211 48-48" fill="none" stroke="#31a86b" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="400" cy="163" r="18" fill="#ffffff"/>
+  <circle cx="400" cy="163" r="7" fill="#4458ff"/>
 </svg>
 """
 
