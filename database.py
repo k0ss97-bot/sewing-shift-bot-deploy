@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import sqlite3
+import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -363,6 +364,38 @@ def _allocate_fabric_lots(cursor, task_id: int, stock_id: int, rolls: int, now_t
             (task_id, lot_id, allocated, now_text),
         )
         remaining -= allocated
+
+    if remaining:
+        raise ValueError("fabric lots unavailable")
+
+
+def _consume_fabric_lots(cursor, stock_id: int, quantity: int, now_text: str):
+    remaining = int(quantity)
+    cursor.execute(
+        """
+        SELECT id, rolls_available
+        FROM fabric_stock_lots
+        WHERE stock_id = ? AND rolls_available > 0
+        ORDER BY created_at ASC, id ASC
+        """,
+        (stock_id,),
+    )
+
+    for lot_id, available in cursor.fetchall():
+        if remaining <= 0:
+            break
+        consumed = min(remaining, int(available or 0))
+        cursor.execute(
+            """
+            UPDATE fabric_stock_lots
+            SET rolls_available = rolls_available - ?, updated_at = ?
+            WHERE id = ? AND rolls_available >= ?
+            """,
+            (consumed, now_text, lot_id, consumed),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("fabric lot changed")
+        remaining -= consumed
 
     if remaining:
         raise ValueError("fabric lots unavailable")
@@ -1563,12 +1596,17 @@ def init_db():
             movement_type TEXT NOT NULL,
             source_type TEXT,
             source_id INTEGER,
+            comment TEXT,
             created_by_employee_id INTEGER,
             created_at TEXT NOT NULL,
             FOREIGN KEY (stock_id) REFERENCES warehouse_stock (id),
             FOREIGN KEY (created_by_employee_id) REFERENCES employees (id)
         )
     """)
+    cursor.execute("PRAGMA table_info(warehouse_stock_movements)")
+    warehouse_movement_columns = {row[1] for row in cursor.fetchall()}
+    if "comment" not in warehouse_movement_columns:
+        cursor.execute("ALTER TABLE warehouse_stock_movements ADD COLUMN comment TEXT")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS warehouse_stock_lots (
@@ -1668,6 +1706,24 @@ def init_db():
             UNIQUE(task_id, lot_id),
             FOREIGN KEY (task_id) REFERENCES production_tasks (id),
             FOREIGN KEY (lot_id) REFERENCES fabric_stock_lots (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fabric_roll_defects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_key TEXT NOT NULL,
+            task_id INTEGER NOT NULL,
+            lot_id INTEGER NOT NULL,
+            employee_id INTEGER,
+            material_name TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            comment TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES production_tasks (id),
+            FOREIGN KEY (lot_id) REFERENCES fabric_stock_lots (id),
+            FOREIGN KEY (employee_id) REFERENCES employees (id)
         )
     """)
 
@@ -1898,6 +1954,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_items_task ON production_task_items (task_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_fabric_rolls_task ON production_task_fabric_rolls (task_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_production_task_fabric_lots_task ON production_task_fabric_lots (task_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fabric_roll_defects_task ON fabric_roll_defects (task_id, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fabric_roll_defects_lot ON fabric_roll_defects (lot_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_fabric_stock_lots_stock ON fabric_stock_lots (stock_id, rolls_available)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_type_position ON warehouse_stock (item_type, ready_for_position)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_product ON warehouse_stock (product_name, product_size, product_color)")
@@ -6389,6 +6447,129 @@ def get_fabric_stock_rows():
     return rows
 
 
+def get_fabric_stock_rows_with_ids():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, material_name, product_color, quantity, unit, updated_at
+        FROM fabric_stock
+        WHERE quantity > 0
+        ORDER BY material_name ASC, product_color ASC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_fabric_stock_by_id(stock_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, material_name, product_color, quantity, unit, updated_at
+        FROM fabric_stock
+        WHERE id = ?
+        """,
+        (stock_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def adjust_fabric_stock(
+    stock_id: int,
+    new_quantity: int,
+    employee_id: int | None,
+    reason: str,
+):
+    reason = reason.strip()
+    if stock_id <= 0 or new_quantity < 0 or not reason:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            SELECT id, material_name, product_color, quantity, unit, updated_at
+            FROM fabric_stock
+            WHERE id = ?
+            """,
+            (stock_id,),
+        )
+        stock = cursor.fetchone()
+        if stock is None:
+            raise ValueError("stock unavailable")
+
+        old_quantity = int(stock[3] or 0)
+        delta = int(new_quantity) - old_quantity
+        if delta == 0:
+            raise ValueError("quantity unchanged")
+
+        now = local_now().isoformat()
+        if delta < 0:
+            _consume_fabric_lots(cursor, stock_id, -delta, now)
+
+        cursor.execute(
+            "UPDATE fabric_stock SET quantity = ?, updated_at = ? WHERE id = ? AND quantity = ?",
+            (new_quantity, now, stock_id, stock[3]),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("stock changed")
+
+        cursor.execute(
+            """
+            INSERT INTO fabric_stock_movements (
+                material_name, product_color, quantity, unit, movement_type, comment,
+                created_by_employee_id, created_at
+            )
+            VALUES (?, ?, ?, ?, 'adjustment', ?, ?, ?)
+            """,
+            (stock[1], stock[2], delta, stock[4], reason, employee_id, now),
+        )
+        movement_id = cursor.lastrowid
+
+        if delta > 0:
+            _create_fabric_lot(
+                cursor,
+                stock_id,
+                delta,
+                employee_id,
+                now,
+                source_type="manual_adjustment",
+                source_id=movement_id,
+            )
+
+        _record_production_event(
+            cursor,
+            "material_stock_adjusted",
+            actor_employee_id=employee_id,
+            quantity=delta,
+            reason=reason,
+            details={
+                "stock_id": stock_id,
+                "material_name": stock[1],
+                "product_color": stock[2],
+                "old_quantity": old_quantity,
+                "new_quantity": int(new_quantity),
+            },
+            request_key=f"fabric-adjustment:{movement_id}",
+            created_at=now,
+        )
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+
+    conn.close()
+    return get_fabric_stock_by_id(stock_id)
+
+
 def warehouse_stock_from_row(row):
     return row_to_dict(WAREHOUSE_STOCK_COLUMNS, row)
 
@@ -6593,6 +6774,105 @@ def consume_warehouse_stock(stock_id: int, quantity: int, employee_id: int | Non
 
     conn.close()
     return {**stock, "quantity": new_quantity}
+
+
+def adjust_warehouse_stock(
+    stock_id: int,
+    new_quantity: int,
+    employee_id: int | None,
+    reason: str,
+):
+    reason = reason.strip()
+    if stock_id <= 0 or new_quantity < 0 or not reason:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            f"SELECT {WAREHOUSE_STOCK_SELECT} FROM warehouse_stock WHERE id = ?",
+            (stock_id,),
+        )
+        stock = warehouse_stock_from_row(cursor.fetchone())
+        if stock is None:
+            raise ValueError("stock unavailable")
+
+        old_quantity = int(stock["quantity"] or 0)
+        delta = int(new_quantity) - old_quantity
+        if delta == 0:
+            raise ValueError("quantity unchanged")
+
+        now = local_now().isoformat()
+        if delta < 0:
+            _consume_warehouse_lots(cursor, stock_id, -delta, now)
+
+        cursor.execute(
+            "UPDATE warehouse_stock SET quantity = ?, updated_at = ? WHERE id = ? AND quantity = ?",
+            (new_quantity, now, stock_id, old_quantity),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("stock changed")
+
+        cursor.execute(
+            """
+            INSERT INTO warehouse_stock_movements (
+                stock_id, item_type, product_name, product_size, product_color, stage_name,
+                ready_for_position, quantity, unit, movement_type, source_type, source_id,
+                comment, created_by_employee_id, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'adjustment', 'manual_adjustment', NULL, ?, ?, ?)
+            """,
+            (
+                stock_id,
+                stock["item_type"],
+                stock["product_name"],
+                stock["product_size"],
+                stock["product_color"],
+                stock["stage_name"],
+                stock["ready_for_position"],
+                delta,
+                stock["unit"],
+                reason,
+                employee_id,
+                now,
+            ),
+        )
+        movement_id = cursor.lastrowid
+
+        if delta > 0:
+            _create_warehouse_lot(
+                cursor,
+                stock_id,
+                delta,
+                now,
+                source_type="manual_adjustment",
+                source_id=movement_id,
+            )
+
+        _record_production_event(
+            cursor,
+            "warehouse_stock_adjusted",
+            actor_employee_id=employee_id,
+            quantity=delta,
+            reason=reason,
+            details={
+                "stock_id": stock_id,
+                "old_quantity": old_quantity,
+                "new_quantity": int(new_quantity),
+                "stage_name": stock["stage_name"],
+            },
+            request_key=f"warehouse-adjustment:{movement_id}",
+            created_at=now,
+        )
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+
+    conn.close()
+    return get_warehouse_stock_by_id(stock_id)
 
 
 def get_warehouse_stock_by_id(stock_id: int):
@@ -6895,6 +7175,171 @@ def get_production_task_fabric_rolls(task_id: int):
     return rows
 
 
+def get_production_task_fabric_defects(task_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            event_key,
+            material_name,
+            product_color,
+            SUM(quantity) AS quantity,
+            comment,
+            MIN(created_at) AS created_at,
+            employee_id
+        FROM fabric_roll_defects
+        WHERE task_id = ?
+        GROUP BY event_key, material_name, product_color, comment, employee_id
+        ORDER BY created_at ASC, event_key ASC
+        """,
+        (task_id,),
+    )
+    rows = [
+        {
+            "event_key": row[0],
+            "material_name": row[1],
+            "product_color": row[2],
+            "quantity": int(row[3] or 0),
+            "comment": row[4] or "",
+            "created_at": row[5] or "",
+            "employee_id": row[6],
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return rows
+
+
+def reject_production_task_fabric_rolls(
+    task_id: int,
+    employee_id: int,
+    product_color: str,
+    quantity: int,
+    comment: str,
+):
+    product_color = product_color.strip()
+    comment = comment.strip()
+    if task_id <= 0 or employee_id <= 0 or quantity <= 0 or not product_color or not comment:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            SELECT product_name, status, assigned_employee_id
+            FROM production_tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        )
+        task = cursor.fetchone()
+        if task is None or task[1] not in {"active", "contours_done", "in_cutting"}:
+            raise ValueError("task unavailable")
+        if int(task[2] or 0) != employee_id:
+            raise ValueError("task belongs to another employee")
+
+        cursor.execute(
+            """
+            SELECT
+                production_task_fabric_lots.lot_id,
+                production_task_fabric_lots.rolls,
+                fabric_stock.material_name,
+                fabric_stock.product_color,
+                COALESCE((
+                    SELECT SUM(fabric_roll_defects.quantity)
+                    FROM fabric_roll_defects
+                    WHERE fabric_roll_defects.task_id = production_task_fabric_lots.task_id
+                      AND fabric_roll_defects.lot_id = production_task_fabric_lots.lot_id
+                ), 0) AS rejected_rolls
+            FROM production_task_fabric_lots
+            JOIN fabric_stock_lots ON fabric_stock_lots.id = production_task_fabric_lots.lot_id
+            JOIN fabric_stock ON fabric_stock.id = fabric_stock_lots.stock_id
+            WHERE production_task_fabric_lots.task_id = ?
+              AND fabric_stock.product_color = ?
+            ORDER BY fabric_stock_lots.created_at ASC, fabric_stock_lots.id ASC
+            """,
+            (task_id, product_color),
+        )
+        lot_rows = cursor.fetchall()
+        available = sum(max(0, int(row[1] or 0) - int(row[4] or 0)) for row in lot_rows)
+        if quantity > available:
+            raise ValueError("not enough assigned rolls")
+
+        remaining = int(quantity)
+        event_key = uuid.uuid4().hex
+        now = local_now().isoformat()
+        material_name = "Ткань"
+
+        for lot_id, assigned_rolls, row_material_name, row_color, rejected_rolls in lot_rows:
+            if remaining <= 0:
+                break
+            lot_available = max(0, int(assigned_rolls or 0) - int(rejected_rolls or 0))
+            rejected = min(remaining, lot_available)
+            if rejected <= 0:
+                continue
+            material_name = row_material_name
+            cursor.execute(
+                """
+                INSERT INTO fabric_roll_defects (
+                    event_key, task_id, lot_id, employee_id, material_name,
+                    product_color, quantity, comment, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_key,
+                    task_id,
+                    lot_id,
+                    employee_id,
+                    row_material_name,
+                    row_color,
+                    rejected,
+                    comment,
+                    now,
+                ),
+            )
+            remaining -= rejected
+
+        if remaining:
+            raise ValueError("assigned rolls changed")
+
+        _record_production_event(
+            cursor,
+            "fabric_rolls_rejected",
+            production_task_id=task_id,
+            actor_employee_id=employee_id,
+            quantity=quantity,
+            defect_quantity=quantity,
+            reason=comment,
+            details={
+                "material_name": material_name,
+                "product_color": product_color,
+                "event_key": event_key,
+            },
+            request_key=f"fabric-defect:{event_key}",
+            created_at=now,
+        )
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+
+    conn.close()
+    return {
+        "event_key": event_key,
+        "task_id": task_id,
+        "material_name": material_name,
+        "product_color": product_color,
+        "quantity": int(quantity),
+        "comment": comment,
+        "created_at": now,
+    }
+
+
 def get_production_task_attachment(task_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -6967,9 +7412,21 @@ def cancel_production_task(task_id: int, employee_id: int | None = None):
 
         cursor.execute(
             """
-            SELECT material_name, product_color, rolls
+            SELECT
+                production_task_fabric_rolls.material_name,
+                production_task_fabric_rolls.product_color,
+                MAX(production_task_fabric_rolls.rolls) - COALESCE(SUM(fabric_roll_defects.quantity), 0)
+                    AS restorable_rolls,
+                COALESCE(SUM(fabric_roll_defects.quantity), 0) AS rejected_rolls
             FROM production_task_fabric_rolls
-            WHERE task_id = ?
+            LEFT JOIN fabric_roll_defects
+                ON fabric_roll_defects.task_id = production_task_fabric_rolls.task_id
+               AND fabric_roll_defects.material_name = production_task_fabric_rolls.material_name
+               AND fabric_roll_defects.product_color = production_task_fabric_rolls.product_color
+            WHERE production_task_fabric_rolls.task_id = ?
+            GROUP BY
+                production_task_fabric_rolls.material_name,
+                production_task_fabric_rolls.product_color
             """,
             (task_id,),
         )
@@ -6979,17 +7436,27 @@ def cancel_production_task(task_id: int, employee_id: int | None = None):
             """
             SELECT
                 production_task_fabric_lots.lot_id,
-                production_task_fabric_lots.rolls,
+                production_task_fabric_lots.rolls - COALESCE(SUM(fabric_roll_defects.quantity), 0)
+                    AS restorable_rolls,
                 fabric_stock_lots.stock_id
             FROM production_task_fabric_lots
             JOIN fabric_stock_lots
                 ON fabric_stock_lots.id = production_task_fabric_lots.lot_id
+            LEFT JOIN fabric_roll_defects
+                ON fabric_roll_defects.task_id = production_task_fabric_lots.task_id
+               AND fabric_roll_defects.lot_id = production_task_fabric_lots.lot_id
             WHERE production_task_fabric_lots.task_id = ?
+            GROUP BY
+                production_task_fabric_lots.lot_id,
+                production_task_fabric_lots.rolls,
+                fabric_stock_lots.stock_id
             """,
             (task_id,),
         )
         restored_stock_ids = set()
         for lot_id, rolls, stock_id in cursor.fetchall():
+            if int(rolls or 0) <= 0:
+                continue
             cursor.execute(
                 """
                 UPDATE fabric_stock_lots
@@ -7000,7 +7467,10 @@ def cancel_production_task(task_id: int, employee_id: int | None = None):
             )
             restored_stock_ids.add(stock_id)
 
-        for material_name, product_color, rolls in roll_rows:
+        for material_name, product_color, rolls, _rejected_rolls in roll_rows:
+            rolls = int(rolls or 0)
+            if rolls <= 0:
+                continue
             cursor.execute(
                 """
                 INSERT INTO fabric_stock (material_name, product_color, quantity, unit, updated_at)
@@ -7053,7 +7523,10 @@ def cancel_production_task(task_id: int, employee_id: int | None = None):
             "task_cancelled",
             production_task_id=task_id,
             actor_employee_id=employee_id,
-            details={"returned_rolls": sum(int(row[2] or 0) for row in roll_rows)},
+            details={
+                "returned_rolls": sum(int(row[2] or 0) for row in roll_rows),
+                "rejected_rolls": sum(int(row[3] or 0) for row in roll_rows),
+            },
             request_key=f"production-task:{task_id}:cancelled",
             created_at=now,
         )
@@ -8247,7 +8720,8 @@ def get_period_warehouse_movement_rows(start_date: str, end_date: str, employee_
             warehouse_stock_movements.movement_type,
             warehouse_stock_movements.source_type,
             warehouse_stock_movements.source_id,
-            employees.full_name
+            employees.full_name,
+            warehouse_stock_movements.comment
         FROM warehouse_stock_movements
         LEFT JOIN employees ON employees.id = warehouse_stock_movements.created_by_employee_id
         WHERE date(warehouse_stock_movements.created_at) BETWEEN ? AND ?

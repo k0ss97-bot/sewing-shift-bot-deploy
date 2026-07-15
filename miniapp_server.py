@@ -18,6 +18,8 @@ from database import (
     add_operation,
     add_cutting_layout,
     add_warehouse_stock,
+    adjust_fabric_stock,
+    adjust_warehouse_stock,
     admin_close_shift,
     assign_production_task,
     assign_route_batch,
@@ -56,6 +58,7 @@ from database import (
     get_feedback_entries,
     get_feedback_entries_by_shift,
     get_fabric_stock_rows,
+    get_fabric_stock_rows_with_ids,
     get_open_shifts,
     get_open_shift_for_today,
     get_pending_employees,
@@ -84,6 +87,7 @@ from database import (
     get_route_batch_passport,
     get_production_task_by_id,
     get_production_task_fabric_rolls,
+    get_production_task_fabric_defects,
     get_shift_for_today,
     get_shift_report,
     get_warehouse_stock_by_id,
@@ -94,6 +98,7 @@ from database import (
     local_now,
     local_today,
     mark_cutting_batch_formed,
+    reject_production_task_fabric_rolls,
     route_steps_from_snapshot,
     restore_operation,
     set_route_batch_work_state,
@@ -1343,12 +1348,28 @@ def task_fabric_rolls_to_dict(task_id: int | None):
     if not task_id:
         return []
 
+    defects = get_production_task_fabric_defects(task_id)
+    rejected_by_item = {}
+    for defect in defects:
+        key = (defect["material_name"], defect["product_color"])
+        rejected_by_item[key] = rejected_by_item.get(key, 0) + int(defect["quantity"] or 0)
+
     return [
         {
             "material_name": material_name,
             "product_color": product_color,
             "product_color_label": format_color_label(product_color),
             "rolls": rolls,
+            "rejected_rolls": rejected_by_item.get((material_name, product_color), 0),
+            "available_rolls": max(0, int(rolls or 0) - rejected_by_item.get((material_name, product_color), 0)),
+            "defects": [
+                {
+                    **defect,
+                    "product_color_label": format_color_label(defect["product_color"]),
+                }
+                for defect in defects
+                if defect["material_name"] == material_name and defect["product_color"] == product_color
+            ],
         }
         for material_name, product_color, rolls in get_production_task_fabric_rolls(task_id)
     ]
@@ -1440,9 +1461,10 @@ def production_task_to_dict(row, viewer_employee=None):
 
 
 def fabric_stock_to_dict(row):
-    material_name, product_color, quantity, unit, updated_at = row
+    stock_id, material_name, product_color, quantity, unit, updated_at = row
 
     return {
+        "id": stock_id,
         "material_name": material_name,
         "product_color": product_color,
         "product_color_label": format_color_label(product_color),
@@ -1701,7 +1723,7 @@ def get_production_state_for_telegram(telegram_id: int):
         "catalog": production_catalog_to_dict(),
         "order_colors": order_colors,
         "order_color_labels": [format_color_label(color) for color in order_colors],
-        "fabric_stock": [fabric_stock_to_dict(row) for row in get_fabric_stock_rows()] if is_admin_user else [],
+        "fabric_stock": [fabric_stock_to_dict(row) for row in get_fabric_stock_rows_with_ids()] if is_admin_user else [],
         "warehouse_stock": warehouse_rows if is_admin_user else [],
         "tasks": [production_task_to_dict(row, employee) for row in get_active_production_tasks()] if is_admin_user else [],
         "cutting_tasks": get_cutting_stage_tasks(employee),
@@ -1756,6 +1778,108 @@ def add_fabric_receipt_for_telegram(telegram_id: int, payload: dict):
     return {
         "ok": True,
         "message": "Приход ткани сохранён.",
+        "production": get_production_state_for_telegram(telegram_id),
+    }
+
+
+def adjust_stock_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    stock_kind = (payload.get("stock_kind") or "").strip()
+    reason = (payload.get("reason") or "").strip()
+    try:
+        stock_id = int(payload.get("stock_id") or 0)
+        new_quantity = int(payload.get("quantity"))
+    except (TypeError, ValueError):
+        return {"ok": False, "message": "Остаток должен быть целым числом от 0."}
+
+    if stock_id <= 0 or new_quantity < 0:
+        return {"ok": False, "message": "Остаток должен быть целым числом от 0."}
+    if not reason:
+        return {"ok": False, "message": "Укажите причину корректировки."}
+
+    employee = get_employee_for_access(telegram_id)
+    employee_id = employee[0] if employee else None
+
+    if stock_kind == "fabric":
+        row = adjust_fabric_stock(stock_id, new_quantity, employee_id, reason)
+        entity_type = "fabric_stock"
+    elif stock_kind == "warehouse":
+        row = adjust_warehouse_stock(stock_id, new_quantity, employee_id, reason)
+        entity_type = "warehouse_stock"
+    else:
+        return {"ok": False, "message": "Неизвестный вид складского остатка."}
+
+    if row is None:
+        return {
+            "ok": False,
+            "message": "Не удалось скорректировать остаток. Обновите склад и проверьте новое количество.",
+        }
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        "Скорректировал складской остаток",
+        entity_type,
+        stock_id,
+        f"Новый остаток: {new_quantity}; причина: {reason}",
+    )
+    return {
+        "ok": True,
+        "message": "Остаток скорректирован, причина записана в журнал движений.",
+        "production": get_production_state_for_telegram(telegram_id),
+    }
+
+
+def reject_fabric_rolls_for_telegram(telegram_id: int, payload: dict):
+    employee = get_employee_for_access(telegram_id)
+    if employee is None or employee[5] != "active":
+        return {"ok": False, "message": "Нет активного профиля."}
+    if employee[3] != "Раскройщик":
+        return {"ok": False, "message": "Списывать рулоны в брак может только раскройщик."}
+    if get_open_shift_for_today(employee[0]) is None:
+        return {"ok": False, "message": "Откройте смену перед списанием рулонов в брак."}
+
+    product_color = (payload.get("product_color") or "").strip()
+    comment = (payload.get("comment") or "").strip()
+    quantity = parse_positive_int(payload.get("quantity"))
+    try:
+        task_id = int(payload.get("task_id") or 0)
+    except (TypeError, ValueError):
+        task_id = 0
+
+    if task_id <= 0 or not product_color:
+        return {"ok": False, "message": "Выберите рулоны из текущего задания."}
+    if quantity is None:
+        return {"ok": False, "message": "Количество брака должно быть больше 0."}
+    if not comment:
+        return {"ok": False, "message": "Добавьте комментарий к браку рулонов."}
+
+    result = reject_production_task_fabric_rolls(
+        task_id,
+        employee[0],
+        product_color,
+        quantity,
+        comment,
+    )
+    if result is None:
+        return {
+            "ok": False,
+            "message": "Не удалось списать рулоны. Проверьте доступное количество и что задание находится у вас в работе.",
+        }
+
+    add_edit_log(
+        telegram_id,
+        "employee",
+        "Списал рулоны ткани в брак",
+        "production_task",
+        task_id,
+        f"{format_color_label(product_color)}: {quantity} рул.; {comment}",
+    )
+    return {
+        "ok": True,
+        "message": f"В брак списано: {quantity} рул.",
         "production": get_production_state_for_telegram(telegram_id),
     }
 
@@ -2938,14 +3062,14 @@ def append_excel_warehouse_movement_rows(sheet, rows):
     sheet.append([
         "ID движения", "Дата и время", "ID остатка", "Тип", "Номенклатура", "Размер",
         "Цвет", "Этап", "Для должности", "Изменение", "Ед.", "Вид движения",
-        "Источник", "ID источника", "Сотрудник",
+        "Источник", "ID источника", "Сотрудник", "Причина корректировки",
     ])
 
     for row in rows:
         sheet.append([
             row[0], row[2], row[1], types.get(row[3], row[3]), row[4], row[5],
             format_color_label(row[6]), row[7], row[8], row[9], row[10], row[11],
-            row[12], row[13] or "", row[14] or "Система",
+            row[12], row[13] or "", row[14] or "Система", row[15] or "",
         ])
 
     set_excel_filter_range(sheet)
@@ -3268,6 +3392,7 @@ def production_control_route_row_to_dict(row):
 
     return {
         "id": row[0],
+        "task_kind": "route",
         "product": row[1],
         "size": row[2],
         "color": format_color_label(row[3]),
@@ -3306,6 +3431,7 @@ def production_control_active_batch_to_dict(batch, step, employee_names):
 
     return {
         "id": batch["id"],
+        "task_kind": "route",
         "product": batch["product_name"],
         "size": batch["product_size"],
         "color": format_color_label(batch["product_color"]),
@@ -4483,6 +4609,8 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/report/history",
                 "/api/feedback/send",
                 "/api/production/fabric-receipt",
+                "/api/production/adjust-stock",
+                "/api/production/reject-fabric-rolls",
                 "/api/production/create-task",
                 "/api/production/create-order-task",
                 "/api/production/delete-order-task",
@@ -4725,6 +4853,10 @@ def make_handler(bot_token: str, debug: bool):
                 )
             elif path == "/api/production/fabric-receipt":
                 result = add_fabric_receipt_for_telegram(telegram_id, payload)
+            elif path == "/api/production/adjust-stock":
+                result = adjust_stock_for_telegram(telegram_id, payload)
+            elif path == "/api/production/reject-fabric-rolls":
+                result = reject_fabric_rolls_for_telegram(telegram_id, payload)
             elif path == "/api/production/create-task":
                 result = create_production_task_for_telegram(telegram_id, payload)
             elif path == "/api/production/create-order-task":

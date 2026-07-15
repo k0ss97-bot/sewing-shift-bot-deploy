@@ -2308,13 +2308,17 @@ MINIAPP_HTML = """<!doctype html>
     function renderTaskFabricRolls(task) {
       const rows = task && task.fabric_rolls ? task.fabric_rolls : [];
       if (!rows.length) return "";
+      const productionTaskId = task.production_task_id || task.source_id || task.id;
+      const canReject = Boolean(task.is_assigned_to_me && !(state.data && state.data.is_admin));
 
       return `
         <div class="card field-card">
-          <label>Списанные рулоны</label>
+          <label>Выданные рулоны</label>
           <div class="op-list">
             ${rows.map((row) => `
-              <div class="report-row"><div><b>${escapeHtml(row.product_color_label || row.product_color)}</b><span>${escapeHtml(row.material_name || "Ткань")}</span></div><span class="status-chip">${escapeHtml(row.rolls)} рул.</span></div>
+              <div class="report-row"><div><b>${escapeHtml(row.product_color_label || row.product_color)}</b><span>${escapeHtml(row.material_name || "Ткань")}${Number(row.rejected_rolls || 0) ? `<br>Брак: ${escapeHtml(row.rejected_rolls)} рул. · доступно ${escapeHtml(row.available_rolls)} рул.` : ""}</span></div><span class="status-chip ${Number(row.rejected_rolls || 0) ? "warn" : ""}">${escapeHtml(row.rolls)} рул.</span></div>
+              ${(row.defects || []).map((defect) => `<div class="task-note"><b>Брак ${escapeHtml(defect.quantity)} рул.</b> · ${escapeHtml(defect.comment)}<br><span>${escapeHtml((defect.created_at || "").replace("T", " ").slice(0, 16))}</span></div>`).join("")}
+              ${canReject && Number(row.available_rolls || 0) > 0 ? `<div class="button-row"><button type="button" class="small-button danger" data-fabric-defect-task-id="${escapeHtml(productionTaskId)}" data-fabric-defect-color="${escapeHtml(row.product_color)}" data-fabric-defect-available="${escapeHtml(row.available_rolls)}">Отправить рулоны в брак</button></div>` : ""}
             `).join("")}
           </div>
         </div>
@@ -3843,7 +3847,7 @@ MINIAPP_HTML = """<!doctype html>
 
     async function deleteOrderTask(taskKind = "", taskId = 0) {
       if (!state.data || !state.data.is_admin) return;
-      const rows = visibleOrderRows();
+      const rows = taskKind && taskId ? currentOrderRows() : visibleOrderRows();
       const current = taskKind && taskId
         ? rows.find((task) => task.task_kind === taskKind && String(task.id) === String(taskId))
         : (rows[state.selectedOrder] || rows[0]);
@@ -3877,10 +3881,97 @@ MINIAPP_HTML = """<!doctype html>
         if (data.routes) state.data.routes = data.routes;
         state.selectedOrder = 0;
         state.selectedOrderKey = "";
+        if (state.screen === "analytics") {
+          state.analyticsView = state.analyticsReturnView && state.analyticsReturnView !== "task" ? state.analyticsReturnView : "overview";
+          state.analyticsTaskId = "";
+          await refreshAdminDashboard(data.message || "Задание удалено.");
+          return;
+        }
         render();
         showToast("Задание", data.message || "Задание удалено.");
       } catch (error) {
         showToast("Ошибка", "Не удалось удалить задание.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function adjustWarehouseStock(stockKind, stockId, currentQuantity, label) {
+      if (!state.data || !state.data.is_admin) return;
+      const rawQuantity = window.prompt(`Новый остаток: ${label}`, String(currentQuantity));
+      if (rawQuantity === null) return;
+      const normalized = String(rawQuantity).trim();
+      if (!/^[0-9]+$/.test(normalized)) {
+        showToast("Склад", "Введите целое количество от 0.");
+        return;
+      }
+      const reason = window.prompt("Причина корректировки", "Инвентаризация") || "";
+      if (!reason.trim()) {
+        showToast("Склад", "Причина корректировки обязательна.");
+        return;
+      }
+
+      const actionKey = `adjust-stock:${stockKind}:${stockId}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/production/adjust-stock", {
+          stock_kind: stockKind,
+          stock_id: stockId,
+          quantity: normalized,
+          reason: reason.trim(),
+        });
+        if (!data.ok) {
+          showToast("Склад", data.message || "Не удалось скорректировать остаток.");
+          mainButton.disabled = false;
+          return;
+        }
+        state.data.production = data.production || state.data.production;
+        render();
+        showToast("Склад", data.message || "Остаток скорректирован.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось скорректировать остаток.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function rejectFabricRolls(taskId, productColor, availableRolls) {
+      const rawQuantity = window.prompt(`Сколько рулонов отправить в брак? Доступно: ${availableRolls}`, "1");
+      if (rawQuantity === null) return;
+      const normalized = String(rawQuantity).trim();
+      if (!/^[0-9]+$/.test(normalized) || Number(normalized) <= 0 || Number(normalized) > Number(availableRolls)) {
+        showToast("Брак рулонов", `Введите количество от 1 до ${availableRolls}.`);
+        return;
+      }
+      const comment = window.prompt("Комментарий к браку рулонов", "") || "";
+      if (!comment.trim()) {
+        showToast("Брак рулонов", "Комментарий обязателен.");
+        return;
+      }
+
+      const actionKey = `reject-fabric-rolls:${taskId}:${productColor}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/production/reject-fabric-rolls", {
+          task_id: taskId,
+          product_color: productColor,
+          quantity: normalized,
+          comment: comment.trim(),
+        });
+        if (!data.ok) {
+          showToast("Брак рулонов", data.message || "Не удалось списать рулоны.");
+          mainButton.disabled = false;
+          return;
+        }
+        state.data.production = data.production || state.data.production;
+        render();
+        showToast("Брак рулонов", data.message || "Рулоны списаны в брак.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось списать рулоны в брак.");
         mainButton.disabled = false;
       } finally {
         endAction(actionKey);
@@ -4600,7 +4691,7 @@ MINIAPP_HTML = """<!doctype html>
               <div class="detail-box"><span>Версия маршрута</span><strong>${escapeHtml(task.route_version || "-")}</strong></div>
             </div>
             ${task.blocked_reason ? `<div class="task-note">${escapeHtml(task.blocked_reason)}</div>` : ""}
-            <div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button></div>
+            <div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button>${task.status === "active" ? `<button type="button" class="small-button danger" data-analytics-delete-task-kind="${escapeHtml(task.task_kind || "route")}" data-analytics-delete-task-id="${escapeHtml(task.id)}">Удалить задание</button>` : ""}</div>
           </div>
           <div class="section-title"><b>Брак задания</b><span>${taskDefects.length}</span></div>
           <div class="op-list">${analyticsDefectRows(taskDefects)}</div>
@@ -4805,9 +4896,9 @@ MINIAPP_HTML = """<!doctype html>
         return row ? row.product_color_label || row.product_color : value;
       };
       const rowsHtml = filteredRows.length ? filteredRows.map((row) => isMaterials ? `
-        <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit === "рул" ? "рул." : row.unit)}</span></div>
+        <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit === "рул" ? "рул." : row.unit)}</span><button type="button" class="small-button secondary" data-stock-adjust-kind="fabric" data-stock-adjust-id="${escapeHtml(row.id)}" data-stock-adjust-quantity="${escapeHtml(row.quantity)}" data-stock-adjust-label="${escapeHtml(`${row.material_name} · ${row.product_color_label || row.product_color}`)}">Изменить</button></div></div>
       ` : `
-        <div class="card report-row"><div><b>${escapeHtml(row.product_name)}</b><span>${escapeHtml(row.stage_name)}<br>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}${state.warehouseView === "semifinished" ? `<br>Для: ${escapeHtml(row.ready_for_position)}` : ""}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span></div>
+        <div class="card report-row"><div><b>${escapeHtml(row.product_name)}</b><span>${escapeHtml(row.stage_name)}<br>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}${state.warehouseView === "semifinished" ? `<br>Для: ${escapeHtml(row.ready_for_position)}` : ""}</span></div><div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span><button type="button" class="small-button secondary" data-stock-adjust-kind="warehouse" data-stock-adjust-id="${escapeHtml(row.id)}" data-stock-adjust-quantity="${escapeHtml(row.quantity)}" data-stock-adjust-label="${escapeHtml(`${row.product_name} · ${row.product_size} · ${row.product_color_label || row.product_color}`)}">Изменить</button></div></div>
       `).join("") : itemEmpty("По выбранным фильтрам остатков нет.");
 
       return `
@@ -5244,6 +5335,27 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const stockAdjustment = event.target.closest("[data-stock-adjust-id]");
+      if (stockAdjustment) {
+        adjustWarehouseStock(
+          stockAdjustment.dataset.stockAdjustKind,
+          Number(stockAdjustment.dataset.stockAdjustId || 0),
+          Number(stockAdjustment.dataset.stockAdjustQuantity || 0),
+          stockAdjustment.dataset.stockAdjustLabel || "остаток",
+        );
+        return;
+      }
+
+      const fabricDefect = event.target.closest("[data-fabric-defect-task-id]");
+      if (fabricDefect) {
+        rejectFabricRolls(
+          Number(fabricDefect.dataset.fabricDefectTaskId || 0),
+          fabricDefect.dataset.fabricDefectColor || "",
+          Number(fabricDefect.dataset.fabricDefectAvailable || 0),
+        );
+        return;
+      }
+
       const warehouseAction = event.target.closest("[data-warehouse-action]");
       if (warehouseAction) {
         syncWarehouseReceiptForm();
@@ -5325,6 +5437,15 @@ MINIAPP_HTML = """<!doctype html>
         state.analyticsTaskId = "";
         state.analyticsReturnView = "overview";
         render();
+        return;
+      }
+
+      const analyticsDelete = event.target.closest("[data-analytics-delete-task-id]");
+      if (analyticsDelete) {
+        deleteOrderTask(
+          analyticsDelete.dataset.analyticsDeleteTaskKind || "route",
+          Number(analyticsDelete.dataset.analyticsDeleteTaskId || 0),
+        );
         return;
       }
 

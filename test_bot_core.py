@@ -1973,6 +1973,91 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(photo["file_name"], "defect.png")
         self.assertEqual(base64.b64decode(photo["content_base64"]), b"test-image")
 
+    def test_admin_adjusts_fabric_and_warehouse_balances_with_reason(self):
+        os.environ["ADMIN_IDS"] = "9401"
+        miniapp_server = importlib.import_module("miniapp_server")
+        fabric = self.database.add_fabric_receipt("Ткань", "Бежевый", 5, None)
+        warehouse = self.database.add_warehouse_stock(
+            "semifinished", "Легинсы", "86", "Бежевый", "Раскроенные", "Швея", 10, None,
+        )
+
+        fabric_result = miniapp_server.adjust_stock_for_telegram(
+            9401,
+            {"stock_kind": "fabric", "stock_id": fabric[0], "quantity": 3, "reason": "Инвентаризация ткани"},
+        )
+        warehouse_result = miniapp_server.adjust_stock_for_telegram(
+            9401,
+            {"stock_kind": "warehouse", "stock_id": warehouse["id"], "quantity": 6, "reason": "Пересчёт кроя"},
+        )
+        self.assertTrue(fabric_result["ok"], fabric_result)
+        self.assertTrue(warehouse_result["ok"], warehouse_result)
+        self.assertEqual(self.database.get_fabric_stock_by_id(fabric[0])[3], 3)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(warehouse["id"])["quantity"], 6)
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        fabric_lots = conn.execute(
+            "SELECT SUM(rolls_available) FROM fabric_stock_lots WHERE stock_id = ?", (fabric[0],),
+        ).fetchone()[0]
+        warehouse_lots = conn.execute(
+            "SELECT SUM(quantity_available) FROM warehouse_stock_lots WHERE stock_id = ?", (warehouse["id"],),
+        ).fetchone()[0]
+        fabric_movement = conn.execute(
+            "SELECT quantity, movement_type, comment FROM fabric_stock_movements ORDER BY id DESC LIMIT 1",
+        ).fetchone()
+        warehouse_movement = conn.execute(
+            "SELECT quantity, movement_type, comment FROM warehouse_stock_movements ORDER BY id DESC LIMIT 1",
+        ).fetchone()
+        conn.close()
+        self.assertEqual(fabric_lots, 3)
+        self.assertEqual(warehouse_lots, 6)
+        self.assertEqual(fabric_movement, (-2, "adjustment", "Инвентаризация ткани"))
+        self.assertEqual(warehouse_movement, (-4, "adjustment", "Пересчёт кроя"))
+
+    def test_cutter_rejects_assigned_fabric_rolls_and_cancel_restores_only_good_rolls(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9402, "Тест Раскройщик Брак", "Раскройщик")
+        employee = self.database.get_employee_by_telegram_id(9402)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        self.database.add_fabric_receipt("Ткань", "Бежевый", 3, None)
+        task = self.database.create_production_task(
+            "Легинсы", ["86"], ["Бежевый"], None,
+            fabric_rolls={"Бежевый": 3},
+        )
+        self.assertIsNotNone(self.database.assign_production_task(task["id"], employee[0]))
+
+        rejected = miniapp_server.reject_fabric_rolls_for_telegram(
+            9402,
+            {
+                "task_id": task["id"],
+                "product_color": "Бежевый",
+                "quantity": 1,
+                "comment": "Повреждение полотна",
+            },
+        )
+        repeated_too_large = miniapp_server.reject_fabric_rolls_for_telegram(
+            9402,
+            {
+                "task_id": task["id"],
+                "product_color": "Бежевый",
+                "quantity": 3,
+                "comment": "Повторное списание",
+            },
+        )
+        self.assertTrue(rejected["ok"], rejected)
+        self.assertFalse(repeated_too_large["ok"])
+        roll = rejected["production"]["cutting_tasks"][0]["fabric_rolls"][0]
+        self.assertEqual((roll["rolls"], roll["rejected_rolls"], roll["available_rolls"]), (3, 1, 2))
+        self.assertEqual(roll["defects"][0]["comment"], "Повреждение полотна")
+
+        cancelled = self.database.cancel_production_task(task["id"], employee[0])
+        self.assertIsNotNone(cancelled)
+        self.assertEqual(self.database.get_fabric_stock_rows()[0][2], 2)
+        conn = sqlite3.connect(self.database.DB_NAME)
+        available_lots = conn.execute("SELECT SUM(rolls_available) FROM fabric_stock_lots").fetchone()[0]
+        conn.close()
+        self.assertEqual(available_lots, 2)
+
     def _create_layout_done_batch(self):
         self.database.create_employee(1001, "Тест Раскройщик", "Раскройщик")
         employee = self.database.get_employee_by_telegram_id(1001)
