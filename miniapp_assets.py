@@ -559,29 +559,72 @@ MINIAPP_HTML = """<!doctype html>
       transform: translateY(0);
     }
 
-    .kpi-top {
+    .kpi > .kpi-top {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
+      gap: 12px;
+      margin: 0;
       color: var(--muted);
       font-size: 11px;
       font-weight: 900;
     }
 
-    .kpi-ico {
-      width: 34px;
-      height: 34px;
+    .kpi > .kpi-top > span:first-child {
+      display: block;
+      min-width: 0;
+      margin: 0;
+      color: inherit;
+      font: inherit;
+      line-height: 1.2;
+    }
+
+    .kpi .kpi-ico {
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      margin: 0;
       border-radius: 13px;
-      background: rgba(68,88,255,.13);
+      border: 1px solid rgba(68,88,255,.16);
+      background: linear-gradient(145deg, rgba(99,120,255,.22), rgba(68,88,255,.08));
       color: var(--accent-dark);
       display: grid;
       place-items: center;
-      font-size: 16px;
+      box-shadow: var(--inset-shadow);
+    }
+
+    .kpi .kpi-ico svg {
+      display: block;
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .ui-icon {
+      display: block;
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
     .kpi.good .kpi-ico {
-      background: rgba(49,168,107,.15);
+      border-color: rgba(49,168,107,.18);
+      background: linear-gradient(145deg, rgba(49,168,107,.20), rgba(49,168,107,.07));
       color: var(--sage-dark);
+    }
+
+    .kpi.danger .kpi-ico {
+      border-color: rgba(221,79,93,.18);
+      background: linear-gradient(145deg, rgba(221,79,93,.18), rgba(221,79,93,.06));
+      color: var(--danger);
     }
 
     .kpi strong {
@@ -597,7 +640,7 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--muted);
     }
 
-    .kpi span {
+    .kpi > span:not(.kpi-top) {
       display: block;
       margin-top: 4px;
       color: var(--muted);
@@ -2437,6 +2480,26 @@ MINIAPP_HTML = """<!doctype html>
       return `<svg viewBox="0 0 32 32" aria-hidden="true" width="25" height="25"><path d="M7 22h18v4H7z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 22V8h9a5 5 0 0 1 5 5v2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 14h5M19 15h8v7M13 8V5M22 15v-3M15 22v-5M13 17h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
     }
 
+    function uiIcon(name) {
+      const icons = {
+        target: `<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>`,
+        quality: `<path d="M12 3 19 6v5c0 4.6-2.8 8-7 10-4.2-2-7-5.4-7-10V6l7-3Z"/><path d="m8.8 12 2.1 2.1 4.6-5"/>`,
+        work: `<rect x="4" y="7" width="16" height="12" rx="2"/><path d="M9 7V5h6v2M4 12h16M10 12v2h4v-2"/>`,
+        layers: `<path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>`,
+        cycle: `<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2M7 3.8 4.5 4.4l.6 2.5"/>`,
+        lead: `<circle cx="5" cy="17" r="2"/><circle cx="19" cy="7" r="2"/><path d="M7 17h3c5 0 3-10 7-10M14 4l3 3-3 3"/>`,
+        schedule: `<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 9h16m-11 5 2 2 4-4"/>`,
+        defect: `<path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17.5h.01"/>`,
+        clipboard: `<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M8.5 12l2 2 4.5-5"/>`,
+        contour: `<path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/><path d="m8 16 8-8M9 8h7v7"/>`,
+        fabric: `<path d="M6 5h10a3 3 0 0 1 3 3v9H9a4 4 0 0 1-4-4V6a1 1 0 0 1 1-1Z"/><circle cx="9" cy="13" r="2.5"/><path d="M19 8h2v9h-2"/>`,
+        clock: `<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>`,
+        users: `<path d="M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M17 11a3 3 0 0 0 0-6M21 20v-2.2a3.6 3.6 0 0 0-2.5-3.4"/>`,
+        inbox: `<path d="M4 5h16v14H4zM4 14h4l2 2h4l2-2h4"/>`,
+      };
+      return `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.target}</svg>`;
+    }
+
     function itemEmpty(text) {
       return `<p class="empty">${escapeHtml(text)}</p>`;
     }
@@ -3050,8 +3113,8 @@ MINIAPP_HTML = """<!doctype html>
       const factPercent = plan > 0 ? Math.min(100, Math.round(fact * 100 / plan)) : 0;
       return `
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>План</span><div class="kpi-ico">◎</div></div><strong>${escapeHtml(entity.plan_text || "0")}</strong><span>Плановое количество</span><div class="progress"><i style="--w:0%"></i></div></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Факт</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(entity.fact_text || "0")}</strong><span>Сделано по заданиям</span><div class="progress sage"><i style="--w:${factPercent}%"></i></div></div>
+          <div class="card kpi"><div class="kpi-top"><span>План</span><div class="kpi-ico">${uiIcon("target")}</div></div><strong>${escapeHtml(entity.plan_text || "0")}</strong><span>Плановое количество</span><div class="progress"><i style="--w:0%"></i></div></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Факт</span><div class="kpi-ico">${uiIcon("quality")}</div></div><strong>${escapeHtml(entity.fact_text || "0")}</strong><span>Сделано по заданиям</span><div class="progress sage"><i style="--w:${factPercent}%"></i></div></div>
         </div>
       `;
     }
@@ -3555,9 +3618,9 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card shift-card"><div><b>${escapeHtml(shiftText())}</b><span>${escapeHtml(employee ? employee.position : "-")} · профиль ${escapeHtml(employee ? employee.status : "-")}<br>${escapeHtml(shift ? `${shift.start_time || "-"}-${shift.end_time || ""}` : "Начните смену, чтобы вести отчёт")}</span></div><span class="status-chip ${hasOpen ? "" : "gray"}">● ${hasOpen ? "в процессе" : "ожидает"}</span></div>
         <div class="kpi-grid">
           <button type="button" class="card kpi home-kpi" data-employee-home-detail="report"><div class="kpi-top"><span>Отчёт</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${operations.length}<small> строк</small></strong><span>Открыть операции ›</span><div class="progress"><i style="--w:${Math.min(100, operations.length * 12)}%"></i></div></button>
-          <button type="button" class="card kpi good home-kpi" data-employee-home-detail="tasks"><div class="kpi-top"><span>Задания</span><div class="kpi-ico">✓</div></div><strong>${activeTasks}<small> акт.</small></strong><span>Открыть задания ›</span><div class="progress sage"><i style="--w:${Math.min(100, activeTasks * 18)}%"></i></div></button>
-          <button type="button" class="card kpi home-kpi" data-employee-home-detail="contours"><div class="kpi-top"><span>Контуры</span><div class="kpi-ico">▣</div></div><strong>${contourTasks.length}<small> шт</small></strong><span>Посмотреть список ›</span></button>
-          <button type="button" class="card kpi home-kpi" data-employee-home-detail="fabric"><div class="kpi-top"><span>Ткань</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз.</small></strong><span>Ткань в заданиях ›</span></button>
+          <button type="button" class="card kpi good home-kpi" data-employee-home-detail="tasks"><div class="kpi-top"><span>Задания</span><div class="kpi-ico">${uiIcon("clipboard")}</div></div><strong>${activeTasks}<small> акт.</small></strong><span>Открыть задания ›</span><div class="progress sage"><i style="--w:${Math.min(100, activeTasks * 18)}%"></i></div></button>
+          <button type="button" class="card kpi home-kpi" data-employee-home-detail="contours"><div class="kpi-top"><span>Контуры</span><div class="kpi-ico">${uiIcon("contour")}</div></div><strong>${contourTasks.length}<small> шт</small></strong><span>Посмотреть список ›</span></button>
+          <button type="button" class="card kpi home-kpi" data-employee-home-detail="fabric"><div class="kpi-top"><span>Ткань</span><div class="kpi-ico">${uiIcon("fabric")}</div></div><strong>${fabricRows.length}<small> поз.</small></strong><span>Ткань в заданиях ›</span></button>
         </div>
         <div class="section-title"><b>Активная операция</b><button data-go="report">отчёт</button></div>
         ${operations.length ? `
@@ -3658,7 +3721,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="op-list">
               ${cuttingWorkTasks.map((task, index) => `
                 <div class="card order-card ${index === state.selectedCuttingReportTask ? "selected" : ""}" data-select-cutting-report-task="${index}">
-                  <div class="order-head"><div class="op-icon">▣</div><div><b>${escapeHtml(task.stage_title)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">${escapeHtml(task.status_text || task.status)}</span></div>
+                  <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${escapeHtml(task.stage_title)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">${escapeHtml(task.status_text || task.status)}</span></div>
                   <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
                   <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${escapeHtml(task.next_action || "этап")}</span></div>
                 </div>
@@ -3693,7 +3756,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="op-list">
             ${doneTasks.length ? doneTasks.map((task, index) => `
               <div class="card order-card">
-                <div class="order-head route-order-head"><div class="op-icon">✓</div><div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">Завершено</span></div>
+                <div class="order-head route-order-head"><div class="op-icon">${uiIcon("quality")}</div><div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">Завершено</span></div>
                 <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.good_quantity || 0)} годн. · ${escapeHtml(task.defect_quantity || 0)} брак</strong></div>
                 ${(task.defects || []).length ? `<div class="route-inputs">${task.defects.map((defect) => `<div class="route-input-row"><span>${escapeHtml(defect.reason)} · ${escapeHtml(defect.disposition)}${defect.has_photo ? `<br><a href="${escapeHtml(defectPhotoUrl(defect.id))}" target="_blank" rel="noopener">Открыть фото</a>` : ""}</span><span>${defect.rework_batch_id ? `переделка #${escapeHtml(defect.rework_batch_id)}` : `${escapeHtml(defect.quantity)} шт`}</span></div>`).join("")}</div>` : ""}
                 <div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button></div>
@@ -3730,8 +3793,8 @@ MINIAPP_HTML = """<!doctype html>
           <div class="button-row"><button class="small-button secondary" data-history-action="load">Показать</button></div>
         </div>
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">◷</div></div><strong>${historySummary ? historySummary.shift_count : 0}<small> шт</small></strong><span>За выбранный период</span></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(historySummary ? historySummary.total_time : "0:00")}</strong><span>Отработано суммарно</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">${uiIcon("clock")}</div></div><strong>${historySummary ? historySummary.shift_count : 0}<small> шт</small></strong><span>За выбранный период</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">${uiIcon("schedule")}</div></div><strong>${escapeHtml(historySummary ? historySummary.total_time : "0:00")}</strong><span>Отработано суммарно</span></div>
         </div>
         <div class="section-title"><b>Смены за период</b><span>${historyShifts.length}</span></div>
         <div class="op-list">
@@ -4727,7 +4790,7 @@ MINIAPP_HTML = """<!doctype html>
       return `
         <div class="card order-card ${isSelected ? "selected" : ""}" ${selectAttr}="${index}">
           <div class="order-head route-order-head">
-            <div class="op-icon">▣</div>
+            <div class="op-icon">${uiIcon("work")}</div>
             <div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span>${assignee}<span class="trace-code">${escapeHtml(task.trace_code || `RB-${task.id}`)}</span></div>
             <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
           </div>
@@ -4785,7 +4848,7 @@ MINIAPP_HTML = """<!doctype html>
           ${allTasks.length ? `
           ${tasks.map((task, index) => `
             <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
-              <div class="order-head"><div class="op-icon">▣</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${task.work_status === "free" ? "gray" : "warn"}">${escapeHtml(task.status_text || task.status)}</span></div>
+              <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${task.work_status === "free" ? "gray" : "warn"}">${escapeHtml(task.status_text || task.status)}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
               <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
               ${state.data && state.data.is_admin ? `<div class="order-card-actions"><button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button></div>` : ""}
@@ -4884,7 +4947,7 @@ MINIAPP_HTML = """<!doctype html>
         const taskDefects = (details.defects || control.defects || []).filter((row) => String(row.batch_id) === String(task.id));
         return `${head}
           <div class="card order-detail">
-            <div class="order-head"><div class="op-icon">▣</div><div><b>${escapeHtml(task.operation)}</b><span>#${escapeHtml(task.id)} · ${escapeHtml(task.product)}</span></div><span class="status-chip ${task.on_time === false ? "warn" : "gray"}">${escapeHtml(task.status_text)}</span></div>
+            <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${escapeHtml(task.operation)}</b><span>#${escapeHtml(task.id)} · ${escapeHtml(task.product)}</span></div><span class="status-chip ${task.on_time === false ? "warn" : "gray"}">${escapeHtml(task.status_text)}</span></div>
             <div class="detail-grid">
               <div class="detail-box"><span>Размер</span><strong>${escapeHtml(task.size || "-")}</strong></div>
               <div class="detail-box"><span>Цвет</span><strong>${escapeHtml(task.color || "-")}</strong></div>
@@ -4991,16 +5054,16 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Контроль производства</h2><p>План, качество, незавершёнка и отклонения.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
         <div class="kpi-grid">
-          <button type="button" class="card kpi analytics-card" data-analytics-view="planfact"><span class="kpi-top"><span>План / факт</span><span class="kpi-ico">◎</span></span><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi good analytics-card" data-analytics-view="fpy"><span class="kpi-top"><span>FPY</span><span class="kpi-ico">✓</span></span><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi analytics-card" data-analytics-view="active"><span class="kpi-top"><span>В работе</span><span class="kpi-ico">▣</span></span><strong>${escapeHtml(control.active_quantity || 0)}<small> шт</small></strong><span>${escapeHtml(control.active_tasks || 0)} заданий · подробнее ›</span></button>
-          <button type="button" class="card kpi analytics-card" data-analytics-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">▦</span></span><strong>${escapeHtml(control.semifinished_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="planfact"><span class="kpi-top"><span>План / факт</span><span class="kpi-ico">${uiIcon("target")}</span></span><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi good analytics-card" data-analytics-view="fpy"><span class="kpi-top"><span>FPY</span><span class="kpi-ico">${uiIcon("quality")}</span></span><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="active"><span class="kpi-top"><span>В работе</span><span class="kpi-ico">${uiIcon("work")}</span></span><strong>${escapeHtml(control.active_quantity || 0)}<small> шт</small></strong><span>${escapeHtml(control.active_tasks || 0)} заданий · подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">${uiIcon("layers")}</span></span><strong>${escapeHtml(control.semifinished_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
         </div>
         <div class="kpi-grid">
-          <button type="button" class="card kpi analytics-card" data-analytics-view="cycle"><span class="kpi-top"><span>Cycle time</span><span class="kpi-ico">◷</span></span><strong>${escapeHtml(analyticsDuration(control.average_cycle_minutes))}</strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi analytics-card" data-analytics-view="lead"><span class="kpi-top"><span>Lead time</span><span class="kpi-ico">◎</span></span><strong>${escapeHtml(analyticsDuration(control.average_lead_minutes))}</strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi good analytics-card" data-analytics-view="schedule"><span class="kpi-top"><span>В срок</span><span class="kpi-ico">✓</span></span><strong>${escapeHtml(control.schedule_adherence || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi analytics-card" data-analytics-view="defects"><span class="kpi-top"><span>Брак</span><span class="kpi-ico">!</span></span><strong>${escapeHtml(control.defect_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="cycle"><span class="kpi-top"><span>Cycle time</span><span class="kpi-ico">${uiIcon("cycle")}</span></span><strong>${escapeHtml(analyticsDuration(control.average_cycle_minutes))}</strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="lead"><span class="kpi-top"><span>Lead time</span><span class="kpi-ico">${uiIcon("lead")}</span></span><strong>${escapeHtml(analyticsDuration(control.average_lead_minutes))}</strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi good analytics-card" data-analytics-view="schedule"><span class="kpi-top"><span>В срок</span><span class="kpi-ico">${uiIcon("schedule")}</span></span><strong>${escapeHtml(control.schedule_adherence || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi danger analytics-card" data-analytics-view="defects"><span class="kpi-top"><span>Брак</span><span class="kpi-ico">${uiIcon("defect")}</span></span><strong>${escapeHtml(control.defect_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
         </div>
         <div class="section-title"><b>WIP по этапам</b><button type="button" data-analytics-view="wip">все этапы</button></div>
         <div class="op-list">
@@ -5054,9 +5117,9 @@ MINIAPP_HTML = """<!doctype html>
           <div class="screen-head"><div><h2>Склад</h2><p>Материалы, полуфабрикаты и готовая продукция.</p></div><div class="date">${warehouseRows.length + fabricRows.length} поз.</div></div>
           ${includeTabs ? renderAdminTabs() : ""}
           <div class="kpi-grid">
-            <button type="button" class="card kpi warehouse-category" data-warehouse-view="materials"><span class="kpi-top"><span>Материалы</span><span class="kpi-ico">▦</span></span><strong>${fabricRows.length}<small> поз</small></strong><span>Открыть остатки</span></button>
-            <button type="button" class="card kpi warehouse-category" data-warehouse-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">▣</span></span><strong>${semifinished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
-            <button type="button" class="card kpi good warehouse-category" data-warehouse-view="finished"><span class="kpi-top"><span>Готовое</span><span class="kpi-ico">✓</span></span><strong>${finished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+            <button type="button" class="card kpi warehouse-category" data-warehouse-view="materials"><span class="kpi-top"><span>Материалы</span><span class="kpi-ico">${uiIcon("fabric")}</span></span><strong>${fabricRows.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+            <button type="button" class="card kpi warehouse-category" data-warehouse-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">${uiIcon("layers")}</span></span><strong>${semifinished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+            <button type="button" class="card kpi good warehouse-category" data-warehouse-view="finished"><span class="kpi-top"><span>Готовое</span><span class="kpi-ico">${uiIcon("quality")}</span></span><strong>${finished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
           </div>
           <div class="section-title"><b>Приход материалов</b><span>рулоны</span></div>
           <div class="card field-card">
@@ -5181,10 +5244,10 @@ MINIAPP_HTML = """<!doctype html>
           <div class="button-row"><button class="small-button secondary" data-admin-action="load-report">Показать</button><button class="small-button" data-admin-action="export-report">Выгрузить</button></div>
         </div>
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">◷</div></div><strong>${totals.shifts}<small> шт</small></strong><span>Закрытые смены</span></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(minutesLabel(totals.minutes))}</strong><span>Суммарно отработано</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">${uiIcon("clock")}</div></div><strong>${totals.shifts}<small> шт</small></strong><span>Закрытые смены</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">${uiIcon("schedule")}</div></div><strong>${escapeHtml(minutesLabel(totals.minutes))}</strong><span>Суммарно отработано</span></div>
           <div class="card kpi"><div class="kpi-top"><span>Операции</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${totals.operations}<small> строк</small></strong><span>Строки отчёта</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Сотрудники</span><div class="kpi-ico">◎</div></div><strong>${totals.employees}<small> чел</small></strong><span>В выборке</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Сотрудники</span><div class="kpi-ico">${uiIcon("users")}</div></div><strong>${totals.employees}<small> чел</small></strong><span>В выборке</span></div>
         </div>
         <div class="section-title"><b>${escapeHtml(report ? report.title : "Отчёт")}</b><button data-admin-action="export-report">выгрузить</button></div>
         <div class="op-list">${summaryHtml}</div>
@@ -5256,8 +5319,8 @@ MINIAPP_HTML = """<!doctype html>
         <div class="screen-head"><div><h2>Пользователи</h2><p>Заявки, роли, статусы и должности.</p></div><div class="date">${employees.length} всего</div></div>
         ${renderAdminTabs()}
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Заявки</span><div class="kpi-ico">◎</div></div><strong>${pending.length}<small> шт</small></strong><span>Ожидают решения</span></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Активные</span><div class="kpi-ico">✓</div></div><strong>${(admin.active_employees || []).length}<small> чел</small></strong><span>Могут работать</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Заявки</span><div class="kpi-ico">${uiIcon("inbox")}</div></div><strong>${pending.length}<small> шт</small></strong><span>Ожидают решения</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Активные</span><div class="kpi-ico">${uiIcon("quality")}</div></div><strong>${(admin.active_employees || []).length}<small> чел</small></strong><span>Могут работать</span></div>
         </div>
         <div class="section-title"><b>Заявки</b><span>${pending.length}</span></div>
         <div class="op-list">${pendingCards}</div>
