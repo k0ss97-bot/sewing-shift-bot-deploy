@@ -13,6 +13,29 @@ from pathlib import Path
 
 
 REQUIRED_TABLES = {"employees", "operations", "shifts", "shift_operations"}
+FULL_IMPORT_TABLES = {
+    "cutting_batch_colors",
+    "cutting_batch_matrix",
+    "cutting_batch_sizes",
+    "cutting_batches",
+    "data_repairs",
+    "edit_logs",
+    "fabric_stock",
+    "fabric_stock_movements",
+    "feedback_entries",
+    "production_task_attachments",
+    "production_task_colors",
+    "production_task_fabric_rolls",
+    "production_task_items",
+    "production_task_sizes",
+    "production_tasks",
+    "route_batch_defects",
+    "route_batch_history",
+    "route_batch_inputs",
+    "route_batches",
+    "warehouse_stock",
+    "warehouse_stock_movements",
+}
 
 
 @dataclass
@@ -28,6 +51,25 @@ class ImportSummary:
     operation_rows_added: int = 0
     operation_rows_updated: int = 0
     operation_rows_skipped: int = 0
+    feedback_entries_added: int = 0
+    fabric_stocks_added: int = 0
+    fabric_stocks_matched: int = 0
+    fabric_movements_added: int = 0
+    production_tasks_added: int = 0
+    production_tasks_matched: int = 0
+    production_task_rows_added: int = 0
+    cutting_batches_added: int = 0
+    cutting_batches_matched: int = 0
+    cutting_batch_rows_added: int = 0
+    warehouse_stocks_added: int = 0
+    warehouse_stocks_matched: int = 0
+    warehouse_movements_added: int = 0
+    route_batches_added: int = 0
+    route_batches_matched: int = 0
+    route_batch_rows_added: int = 0
+    edit_logs_added: int = 0
+    business_snapshot_imported: int = 0
+    business_snapshot_skipped: int = 0
 
 
 def database_fingerprint(path: Path) -> str:
@@ -49,6 +91,45 @@ def ensure_compatible(connection: sqlite3.Connection, label: str) -> None:
     missing = REQUIRED_TABLES - table_names(connection)
     if missing:
         raise ValueError(f"{label}: отсутствуют таблицы {', '.join(sorted(missing))}")
+
+
+def ensure_full_import_compatible(connection: sqlite3.Connection, label: str) -> None:
+    missing = FULL_IMPORT_TABLES - table_names(connection)
+    if missing:
+        raise ValueError(
+            f"{label}: для полного импорта отсутствуют таблицы {', '.join(sorted(missing))}"
+        )
+
+
+def target_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')}
+
+
+def insert_compatible_row(
+    connection: sqlite3.Connection,
+    table: str,
+    source_row: sqlite3.Row,
+    *,
+    overrides: dict[str, object] | None = None,
+) -> int:
+    values = dict(source_row)
+    values.pop("id", None)
+    values.update(overrides or {})
+    allowed = target_columns(connection, table)
+    columns = [column for column in values if column in allowed]
+    placeholders = ", ".join("?" for _ in columns)
+    quoted_columns = ", ".join(f'"{column}"' for column in columns)
+    cursor = connection.execute(
+        f'INSERT INTO "{table}" ({quoted_columns}) VALUES ({placeholders})',
+        tuple(values[column] for column in columns),
+    )
+    return int(cursor.lastrowid)
+
+
+def mapped_id(mapping: dict[int, int], source_id):
+    if source_id is None:
+        return None
+    return mapping.get(int(source_id))
 
 
 def close_stale_shift(row: sqlite3.Row, today: date, latest_operation_at: str | None):
@@ -85,11 +166,521 @@ def close_stale_shift(row: sqlite3.Row, today: date, latest_operation_at: str | 
     return values, True
 
 
+def import_business_snapshot(
+    source: sqlite3.Connection,
+    target: sqlite3.Connection,
+    summary: ImportSummary,
+    *,
+    employee_ids: dict[int, int],
+    operation_ids: dict[int, int],
+    shift_ids: dict[int, int],
+) -> None:
+    ensure_full_import_compatible(source, "Исходная база")
+    ensure_full_import_compatible(target, "Рабочая база")
+
+    repair_key = f"full-bot-snapshot:{summary.source_fingerprint}"
+    already_imported = target.execute(
+        "SELECT 1 FROM data_repairs WHERE repair_key = ?",
+        (repair_key,),
+    ).fetchone()
+    if already_imported:
+        summary.business_snapshot_skipped = 1
+        return
+
+    feedback_ids: dict[int, int] = {}
+    for row in source.execute("SELECT * FROM feedback_entries ORDER BY id"):
+        target_employee_id = mapped_id(employee_ids, row["employee_id"])
+        target_shift_id = mapped_id(shift_ids, row["shift_id"])
+        if target_employee_id is None:
+            continue
+        existing = target.execute(
+            """
+            SELECT id
+            FROM feedback_entries
+            WHERE employee_id = ? AND shift_id IS ? AND category = ?
+              AND message = ? AND created_at = ?
+            """,
+            (
+                target_employee_id,
+                target_shift_id,
+                row["category"],
+                row["message"],
+                row["created_at"],
+            ),
+        ).fetchone()
+        if existing is None:
+            target_feedback_id = insert_compatible_row(
+                target,
+                "feedback_entries",
+                row,
+                overrides={
+                    "employee_id": target_employee_id,
+                    "shift_id": target_shift_id,
+                },
+            )
+            summary.feedback_entries_added += 1
+        else:
+            target_feedback_id = int(existing["id"])
+        feedback_ids[int(row["id"])] = target_feedback_id
+
+    fabric_stock_ids: dict[int, int] = {}
+    for row in source.execute("SELECT * FROM fabric_stock ORDER BY id"):
+        existing = target.execute(
+            """
+            SELECT id
+            FROM fabric_stock
+            WHERE material_name = ? AND product_color = ? AND unit = ?
+            """,
+            (row["material_name"], row["product_color"], row["unit"]),
+        ).fetchone()
+        if existing is None:
+            target_stock_id = insert_compatible_row(target, "fabric_stock", row)
+            summary.fabric_stocks_added += 1
+        else:
+            target_stock_id = int(existing["id"])
+            target.execute(
+                """
+                UPDATE fabric_stock
+                SET quantity = quantity + ?,
+                    updated_at = CASE WHEN updated_at < ? THEN ? ELSE updated_at END
+                WHERE id = ?
+                """,
+                (row["quantity"], row["updated_at"], row["updated_at"], target_stock_id),
+            )
+            summary.fabric_stocks_matched += 1
+        fabric_stock_ids[int(row["id"])] = target_stock_id
+
+    for row in source.execute("SELECT * FROM fabric_stock_movements ORDER BY id"):
+        target_employee_id = mapped_id(employee_ids, row["created_by_employee_id"])
+        existing = target.execute(
+            """
+            SELECT id
+            FROM fabric_stock_movements
+            WHERE material_name = ? AND product_color = ? AND quantity = ?
+              AND unit = ? AND movement_type = ? AND comment IS ?
+              AND created_by_employee_id IS ? AND created_at = ?
+            """,
+            (
+                row["material_name"],
+                row["product_color"],
+                row["quantity"],
+                row["unit"],
+                row["movement_type"],
+                row["comment"],
+                target_employee_id,
+                row["created_at"],
+            ),
+        ).fetchone()
+        if existing is None:
+            insert_compatible_row(
+                target,
+                "fabric_stock_movements",
+                row,
+                overrides={"created_by_employee_id": target_employee_id},
+            )
+            summary.fabric_movements_added += 1
+
+    production_task_ids: dict[int, int] = {}
+    for row in source.execute("SELECT * FROM production_tasks ORDER BY id"):
+        existing = target.execute(
+            """
+            SELECT id
+            FROM production_tasks
+            WHERE product_name = ? AND created_at = ?
+            """,
+            (row["product_name"], row["created_at"]),
+        ).fetchone()
+        overrides = {
+            "created_by_employee_id": mapped_id(employee_ids, row["created_by_employee_id"]),
+            "assigned_employee_id": mapped_id(employee_ids, row["assigned_employee_id"]),
+        }
+        if existing is None:
+            target_task_id = insert_compatible_row(
+                target,
+                "production_tasks",
+                row,
+                overrides=overrides,
+            )
+            summary.production_tasks_added += 1
+        else:
+            target_task_id = int(existing["id"])
+            summary.production_tasks_matched += 1
+        production_task_ids[int(row["id"])] = target_task_id
+
+    production_children = (
+        ("production_task_sizes", ("product_size",)),
+        ("production_task_colors", ("product_color",)),
+        ("production_task_items", ("product_size", "product_color")),
+        ("production_task_fabric_rolls", ("material_name", "product_color")),
+    )
+    for table, key_columns in production_children:
+        for row in source.execute(f'SELECT * FROM "{table}" ORDER BY id'):
+            target_task_id = mapped_id(production_task_ids, row["task_id"])
+            if target_task_id is None:
+                continue
+            clauses = " AND ".join(f'"{column}" = ?' for column in key_columns)
+            values = [target_task_id, *(row[column] for column in key_columns)]
+            existing = target.execute(
+                f'SELECT id FROM "{table}" WHERE task_id = ? AND {clauses}',
+                values,
+            ).fetchone()
+            if existing is None:
+                insert_compatible_row(
+                    target,
+                    table,
+                    row,
+                    overrides={"task_id": target_task_id},
+                )
+                summary.production_task_rows_added += 1
+
+    for row in source.execute("SELECT * FROM production_task_attachments ORDER BY id"):
+        target_task_id = mapped_id(production_task_ids, row["task_id"])
+        if target_task_id is None:
+            continue
+        existing = target.execute(
+            "SELECT id FROM production_task_attachments WHERE task_id = ?",
+            (target_task_id,),
+        ).fetchone()
+        if existing is None:
+            insert_compatible_row(
+                target,
+                "production_task_attachments",
+                row,
+                overrides={"task_id": target_task_id},
+            )
+            summary.production_task_rows_added += 1
+
+    cutting_batch_ids: dict[int, int] = {}
+    cutting_reference_columns = {
+        "production_task_id": production_task_ids,
+        "contour_shift_id": shift_ids,
+        "contour_operation_id": operation_ids,
+        "contour_employee_id": employee_ids,
+        "layout_shift_id": shift_ids,
+        "layout_operation_id": operation_ids,
+        "layout_employee_id": employee_ids,
+        "cutting_shift_id": shift_ids,
+        "cutting_operation_id": operation_ids,
+        "cutting_employee_id": employee_ids,
+        "formed_shift_id": shift_ids,
+        "formed_operation_id": operation_ids,
+        "formed_employee_id": employee_ids,
+    }
+    for row in source.execute("SELECT * FROM cutting_batches ORDER BY id"):
+        target_task_id = mapped_id(production_task_ids, row["production_task_id"])
+        existing = target.execute(
+            """
+            SELECT id
+            FROM cutting_batches
+            WHERE product_name = ? AND production_task_id IS ? AND created_at = ?
+            """,
+            (row["product_name"], target_task_id, row["created_at"]),
+        ).fetchone()
+        overrides = {
+            column: mapped_id(mapping, row[column])
+            for column, mapping in cutting_reference_columns.items()
+        }
+        if existing is None:
+            target_batch_id = insert_compatible_row(
+                target,
+                "cutting_batches",
+                row,
+                overrides=overrides,
+            )
+            summary.cutting_batches_added += 1
+        else:
+            target_batch_id = int(existing["id"])
+            summary.cutting_batches_matched += 1
+        cutting_batch_ids[int(row["id"])] = target_batch_id
+
+    cutting_children = (
+        ("cutting_batch_sizes", ("product_size",)),
+        ("cutting_batch_colors", ("product_color",)),
+        ("cutting_batch_matrix", ("product_size", "product_color")),
+    )
+    for table, key_columns in cutting_children:
+        for row in source.execute(f'SELECT * FROM "{table}" ORDER BY id'):
+            target_batch_id = mapped_id(cutting_batch_ids, row["batch_id"])
+            if target_batch_id is None:
+                continue
+            clauses = " AND ".join(f'"{column}" = ?' for column in key_columns)
+            values = [target_batch_id, *(row[column] for column in key_columns)]
+            existing = target.execute(
+                f'SELECT id FROM "{table}" WHERE batch_id = ? AND {clauses}',
+                values,
+            ).fetchone()
+            if existing is None:
+                insert_compatible_row(
+                    target,
+                    table,
+                    row,
+                    overrides={"batch_id": target_batch_id},
+                )
+                summary.cutting_batch_rows_added += 1
+
+    warehouse_stock_ids: dict[int, int] = {}
+    warehouse_key_columns = (
+        "item_type",
+        "product_name",
+        "product_size",
+        "product_color",
+        "stage_name",
+        "ready_for_position",
+        "unit",
+    )
+    for row in source.execute("SELECT * FROM warehouse_stock ORDER BY id"):
+        clauses = " AND ".join(f'"{column}" = ?' for column in warehouse_key_columns)
+        existing = target.execute(
+            f'SELECT id FROM warehouse_stock WHERE {clauses}',
+            tuple(row[column] for column in warehouse_key_columns),
+        ).fetchone()
+        if existing is None:
+            target_stock_id = insert_compatible_row(target, "warehouse_stock", row)
+            summary.warehouse_stocks_added += 1
+        else:
+            target_stock_id = int(existing["id"])
+            target.execute(
+                """
+                UPDATE warehouse_stock
+                SET quantity = quantity + ?,
+                    updated_at = CASE WHEN updated_at < ? THEN ? ELSE updated_at END
+                WHERE id = ?
+                """,
+                (row["quantity"], row["updated_at"], row["updated_at"], target_stock_id),
+            )
+            summary.warehouse_stocks_matched += 1
+        warehouse_stock_ids[int(row["id"])] = target_stock_id
+
+    route_batch_ids: dict[int, int] = {}
+    route_batch_new_ids: set[int] = set()
+    route_rows = list(source.execute("SELECT * FROM route_batches ORDER BY id"))
+    for row in route_rows:
+        existing = target.execute(
+            """
+            SELECT id
+            FROM route_batches
+            WHERE product_name = ? AND product_size = ? AND product_color = ?
+              AND quantity = ? AND created_at = ?
+            """,
+            (
+                row["product_name"],
+                row["product_size"],
+                row["product_color"],
+                row["quantity"],
+                row["created_at"],
+            ),
+        ).fetchone()
+        overrides = {
+            "created_by_employee_id": mapped_id(employee_ids, row["created_by_employee_id"]),
+            "assigned_employee_id": mapped_id(employee_ids, row["assigned_employee_id"]),
+            "source_stock_id": mapped_id(warehouse_stock_ids, row["source_stock_id"]),
+            "source_cutting_batch_id": mapped_id(
+                cutting_batch_ids,
+                row["source_cutting_batch_id"],
+            ),
+            "parent_batch_id": None,
+        }
+        if existing is None:
+            target_batch_id = insert_compatible_row(
+                target,
+                "route_batches",
+                row,
+                overrides=overrides,
+            )
+            route_batch_new_ids.add(target_batch_id)
+            summary.route_batches_added += 1
+        else:
+            target_batch_id = int(existing["id"])
+            summary.route_batches_matched += 1
+        route_batch_ids[int(row["id"])] = target_batch_id
+
+    for row in route_rows:
+        target_batch_id = mapped_id(route_batch_ids, row["id"])
+        target_parent_id = mapped_id(route_batch_ids, row["parent_batch_id"])
+        if target_batch_id in route_batch_new_ids and target_parent_id is not None:
+            target.execute(
+                "UPDATE route_batches SET parent_batch_id = ? WHERE id = ?",
+                (target_parent_id, target_batch_id),
+            )
+
+    for row in source.execute("SELECT * FROM route_batch_inputs ORDER BY id"):
+        target_batch_id = mapped_id(route_batch_ids, row["batch_id"])
+        target_stock_id = mapped_id(warehouse_stock_ids, row["stock_id"])
+        if target_batch_id is None or target_stock_id is None:
+            continue
+        existing = target.execute(
+            """
+            SELECT id
+            FROM route_batch_inputs
+            WHERE batch_id = ? AND stock_id = ? AND input_role = ?
+            """,
+            (target_batch_id, target_stock_id, row["input_role"]),
+        ).fetchone()
+        if existing is None:
+            insert_compatible_row(
+                target,
+                "route_batch_inputs",
+                row,
+                overrides={"batch_id": target_batch_id, "stock_id": target_stock_id},
+            )
+            summary.route_batch_rows_added += 1
+
+    for row in source.execute("SELECT * FROM route_batch_history ORDER BY id"):
+        target_batch_id = mapped_id(route_batch_ids, row["batch_id"])
+        if target_batch_id is None:
+            continue
+        existing = target.execute(
+            "SELECT id FROM route_batch_history WHERE batch_id = ? AND step_index = ?",
+            (target_batch_id, row["step_index"]),
+        ).fetchone()
+        if existing is None:
+            insert_compatible_row(
+                target,
+                "route_batch_history",
+                row,
+                overrides={
+                    "batch_id": target_batch_id,
+                    "employee_id": mapped_id(employee_ids, row["employee_id"]),
+                },
+            )
+            summary.route_batch_rows_added += 1
+
+    for row in source.execute("SELECT * FROM route_batch_defects ORDER BY id"):
+        target_batch_id = mapped_id(route_batch_ids, row["batch_id"])
+        if target_batch_id is None:
+            continue
+        target_rework_id = mapped_id(route_batch_ids, row["rework_batch_id"])
+        existing = target.execute(
+            """
+            SELECT id
+            FROM route_batch_defects
+            WHERE batch_id = ? AND operation_name = ? AND quantity = ?
+              AND reason = ? AND disposition = ? AND created_at = ?
+            """,
+            (
+                target_batch_id,
+                row["operation_name"],
+                row["quantity"],
+                row["reason"],
+                row["disposition"],
+                row["created_at"],
+            ),
+        ).fetchone()
+        if existing is None:
+            insert_compatible_row(
+                target,
+                "route_batch_defects",
+                row,
+                overrides={
+                    "batch_id": target_batch_id,
+                    "employee_id": mapped_id(employee_ids, row["employee_id"]),
+                    "rework_batch_id": target_rework_id,
+                },
+            )
+            summary.route_batch_rows_added += 1
+
+    for row in source.execute("SELECT * FROM warehouse_stock_movements ORDER BY id"):
+        target_stock_id = mapped_id(warehouse_stock_ids, row["stock_id"])
+        target_source_id = row["source_id"]
+        if row["source_type"] == "cutting_batch":
+            target_source_id = mapped_id(cutting_batch_ids, row["source_id"])
+        elif row["source_type"] == "route_batch":
+            target_source_id = mapped_id(route_batch_ids, row["source_id"])
+        target_employee_id = mapped_id(employee_ids, row["created_by_employee_id"])
+        existing = target.execute(
+            """
+            SELECT id
+            FROM warehouse_stock_movements
+            WHERE stock_id IS ? AND item_type = ? AND product_name = ?
+              AND product_size = ? AND product_color = ? AND stage_name = ?
+              AND ready_for_position = ? AND quantity = ? AND unit = ?
+              AND movement_type = ? AND source_type IS ? AND source_id IS ?
+              AND created_by_employee_id IS ? AND created_at = ?
+            """,
+            (
+                target_stock_id,
+                row["item_type"],
+                row["product_name"],
+                row["product_size"],
+                row["product_color"],
+                row["stage_name"],
+                row["ready_for_position"],
+                row["quantity"],
+                row["unit"],
+                row["movement_type"],
+                row["source_type"],
+                target_source_id,
+                target_employee_id,
+                row["created_at"],
+            ),
+        ).fetchone()
+        if existing is None:
+            insert_compatible_row(
+                target,
+                "warehouse_stock_movements",
+                row,
+                overrides={
+                    "stock_id": target_stock_id,
+                    "source_id": target_source_id,
+                    "created_by_employee_id": target_employee_id,
+                },
+            )
+            summary.warehouse_movements_added += 1
+
+    entity_maps = {
+        "cutting_batch": cutting_batch_ids,
+        "employee": employee_ids,
+        "fabric_stock": fabric_stock_ids,
+        "feedback": feedback_ids,
+        "operation": operation_ids,
+        "production_task": production_task_ids,
+        "route_batch": route_batch_ids,
+        "shift": shift_ids,
+    }
+    for row in source.execute("SELECT * FROM edit_logs ORDER BY id"):
+        entity_id = row["entity_id"]
+        mapping = entity_maps.get(row["entity_type"])
+        if mapping is not None:
+            entity_id = mapped_id(mapping, entity_id)
+        existing = target.execute(
+            """
+            SELECT id
+            FROM edit_logs
+            WHERE changed_by = ? AND role = ? AND action = ?
+              AND entity_type = ? AND entity_id IS ? AND details IS ? AND changed_at = ?
+            """,
+            (
+                row["changed_by"],
+                row["role"],
+                row["action"],
+                row["entity_type"],
+                entity_id,
+                row["details"],
+                row["changed_at"],
+            ),
+        ).fetchone()
+        if existing is None:
+            insert_compatible_row(
+                target,
+                "edit_logs",
+                row,
+                overrides={"entity_id": entity_id},
+            )
+            summary.edit_logs_added += 1
+
+    target.execute(
+        "INSERT INTO data_repairs (repair_key, applied_at) VALUES (?, ?)",
+        (repair_key, datetime.now().isoformat(timespec="seconds")),
+    )
+    summary.business_snapshot_imported = 1
+
+
 def import_legacy_data(
     source_path: str | Path,
     target_path: str | Path,
     *,
     apply: bool = False,
+    include_business: bool = False,
     today: date | None = None,
 ) -> ImportSummary:
     source_path = Path(source_path).expanduser().resolve()
@@ -168,9 +759,14 @@ def import_legacy_data(
             employee_ids[employee["id"]] = target_employee_id
 
         operation_ids: dict[int, int] = {}
-        used_operation_ids = {
-            row[0] for row in source.execute("SELECT DISTINCT operation_id FROM shift_operations")
-        }
+        used_operation_ids = (
+            {row[0] for row in source.execute("SELECT id FROM operations")}
+            if include_business
+            else {
+                row[0]
+                for row in source.execute("SELECT DISTINCT operation_id FROM shift_operations")
+            }
+        )
         for operation in source.execute("SELECT * FROM operations ORDER BY id"):
             if operation["id"] not in used_operation_ids:
                 continue
@@ -337,6 +933,16 @@ def import_legacy_data(
             else:
                 summary.operation_rows_skipped += 1
 
+        if include_business:
+            import_business_snapshot(
+                source,
+                target,
+                summary,
+                employee_ids=employee_ids,
+                operation_ids=operation_ids,
+                shift_ids=shift_ids,
+            )
+
         violations = target.execute("PRAGMA foreign_key_check").fetchall()
         if violations:
             raise ValueError(f"Проверка связей не пройдена: {len(violations)} нарушений")
@@ -364,12 +970,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Применить импорт. Без флага выполняется проверка с откатом.",
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Дополнительно перенести производство, раскрой, склад и журнал изменений.",
+    )
     return parser
 
 
 def main() -> int:
     arguments = build_parser().parse_args()
-    summary = import_legacy_data(arguments.source, arguments.target, apply=arguments.apply)
+    summary = import_legacy_data(
+        arguments.source,
+        arguments.target,
+        apply=arguments.apply,
+        include_business=arguments.full,
+    )
     result = asdict(summary)
     result["mode"] = "applied" if arguments.apply else "dry-run"
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))

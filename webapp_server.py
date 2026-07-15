@@ -6,8 +6,11 @@ import logging
 import os
 import secrets
 import signal
+import subprocess
+import sys
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -17,6 +20,51 @@ class RuntimeSettings:
     secret: str
     debug: bool
     production: bool
+
+
+BOT_ENABLE_MARKER = "bot.enabled"
+
+
+def start_shared_bot_process(
+    environ: dict[str, str] | None = None,
+    *,
+    popen_factory=subprocess.Popen,
+    working_directory: str | Path | None = None,
+):
+    values = dict(os.environ if environ is None else environ)
+    db_dir = str(values.get("DB_DIR") or "").strip()
+    if not db_dir:
+        return None
+
+    marker = Path(db_dir) / BOT_ENABLE_MARKER
+    if not marker.is_file():
+        return None
+
+    if not str(values.get("BOT_TOKEN") or "").strip():
+        raise RuntimeError("BOT_TOKEN is required when shared bot polling is enabled.")
+
+    project_dir = Path(working_directory or Path(__file__).resolve().parent)
+    child_environment = dict(values)
+    child_environment["MINIAPP_ENABLED"] = "0"
+    child_environment["LOGS_DIR"] = str(Path(db_dir) / "logs")
+    process = popen_factory(
+        [sys.executable, str(project_dir / "main.py")],
+        cwd=str(project_dir),
+        env=child_environment,
+    )
+    logging.info("Telegram bot started as shared database process (pid=%s)", process.pid)
+    return process
+
+
+def stop_shared_bot_process(process) -> None:
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def load_runtime_settings(environ: dict[str, str] | None = None) -> RuntimeSettings:
@@ -68,6 +116,7 @@ def main() -> None:
     if server is None:
         raise RuntimeError("Standalone web server failed to start.")
 
+    bot_process = start_shared_bot_process()
     stop_event = threading.Event()
 
     def request_stop(signum, frame):
@@ -78,8 +127,13 @@ def main() -> None:
     signal.signal(signal.SIGINT, request_stop)
     logging.info("Standalone web application is ready on %s:%s", settings.host, settings.port)
     try:
-        stop_event.wait()
+        while not stop_event.wait(5):
+            if bot_process is not None and bot_process.poll() is not None:
+                raise RuntimeError(
+                    f"Telegram bot process stopped unexpectedly with code {bot_process.returncode}."
+                )
     finally:
+        stop_shared_bot_process(bot_process)
         server.shutdown()
         server.server_close()
 

@@ -136,7 +136,7 @@ load_dotenv(".env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = os.getenv("ADMIN_IDS", "")
-LOGS_DIR = "logs"
+LOGS_DIR = os.getenv("LOGS_DIR", "logs")
 ERROR_LOG_FILE = os.path.join(LOGS_DIR, "errors.log")
 MINIAPP_HOST = os.getenv("MINIAPP_HOST", "0.0.0.0")
 MINIAPP_PORT = int(os.getenv("PORT") or os.getenv("MINIAPP_PORT") or "3000")
