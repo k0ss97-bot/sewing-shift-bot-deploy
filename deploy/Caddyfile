@@ -1,8 +1,8 @@
-www.shagaem-vmeste.ru {
-    redir https://shagaem-vmeste.ru{uri} permanent
+www.shagaemfabrika.ru {
+    redir https://shagaemfabrika.ru{uri} permanent
 }
 
-shagaem-vmeste.ru {
+shagaemfabrika.ru {
     encode zstd gzip
 
     header {
@@ -13,4 +13,16 @@ shagaem-vmeste.ru {
     }
 
     reverse_proxy 127.0.0.1:3000
+}
+
+www.shagaem-vmeste.ru {
+    redir https://shagaemfabrika.ru{uri} permanent
+}
+
+shagaem-vmeste.ru {
+    redir https://shagaemfabrika.ru{uri} permanent
+}
+
+sewing.161-104-33-59.sslip.io {
+    redir https://shagaemfabrika.ru{uri} permanent
 }
