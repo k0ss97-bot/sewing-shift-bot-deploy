@@ -257,14 +257,39 @@ def run_smoke() -> None:
             health_payload = parse_json_response(status, headers, health_body)
             require(status == 200 and health_payload == {"ok": True}, "Health endpoint failed.")
 
-            status, _, favicon_body = http_request(f"{base_url}/favicon.ico")
-            require(status == 204 and not favicon_body, "Favicon endpoint should return an empty HTTP 204.")
+            status, favicon_headers, favicon_body = http_request(f"{base_url}/favicon.ico")
+            require(status == 200, f"Favicon endpoint returned HTTP {status}.")
+            require(favicon_headers.get_content_type() == "image/png", "Favicon is not a PNG image.")
+            require(favicon_body.startswith(b"\x89PNG\r\n\x1a\n"), "Favicon PNG signature is invalid.")
 
             status, headers, manifest_body = http_request(f"{base_url}/manifest.webmanifest")
             require(status == 200, f"PWA manifest returned HTTP {status}.")
             manifest = json.loads(manifest_body.decode("utf-8"))
             require(manifest.get("display") == "standalone", "PWA manifest is not standalone.")
-            require(len(manifest.get("icons") or []) >= 2, "PWA manifest has no installable icons.")
+            manifest_icons = {
+                icon.get("src"): icon
+                for icon in manifest.get("icons") or []
+                if isinstance(icon, dict)
+            }
+            for icon_size in (192, 512):
+                icon_path = f"/pwa/icon-{icon_size}.png"
+                icon = manifest_icons.get(icon_path) or {}
+                require(icon.get("sizes") == f"{icon_size}x{icon_size}", f"Manifest {icon_path} size is invalid.")
+                require(icon.get("type") == "image/png", f"Manifest {icon_path} type is invalid.")
+                status, icon_headers, icon_body = http_request(f"{base_url}{icon_path}")
+                require(status == 200, f"PWA icon {icon_path} returned HTTP {status}.")
+                require(icon_headers.get_content_type() == "image/png", f"PWA icon {icon_path} is not PNG.")
+                require(icon_body.startswith(b"\x89PNG\r\n\x1a\n"), f"PWA icon {icon_path} signature is invalid.")
+
+            status, icon_headers, icon_body = http_request(f"{base_url}/pwa/apple-touch-icon-180.png")
+            require(status == 200, f"Apple Touch Icon returned HTTP {status}.")
+            require(icon_headers.get_content_type() == "image/png", "Apple Touch Icon is not a PNG image.")
+            require(icon_body.startswith(b"\x89PNG\r\n\x1a\n"), "Apple Touch Icon PNG signature is invalid.")
+
+            status, mark_headers, mark_body = http_request(f"{base_url}/brand/mark.svg")
+            require(status == 200, f"Brand mark returned HTTP {status}.")
+            require(mark_headers.get_content_type() == "image/svg+xml", "Brand mark is not SVG.")
+            require(b"brand-main" in mark_body, "Brand mark SVG is incomplete.")
 
             status, headers, worker_body = http_request(f"{base_url}/service-worker.js")
             require(status == 200, f"Service worker returned HTTP {status}.")

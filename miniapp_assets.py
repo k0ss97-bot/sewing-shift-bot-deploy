@@ -10,25 +10,25 @@ MINIAPP_HTML = """<!doctype html>
   <style>
     :root {
       color-scheme: light;
-      --bg: #edf2fb;
-      --text: #12182b;
-      --muted: #687287;
-      --soft: rgba(255, 255, 255, .56);
-      --line: rgba(109, 124, 158, .13);
-      --accent: #4458ff;
-      --accent-dark: #2f3fe8;
+      --bg: #f3f5f8;
+      --text: #101722;
+      --muted: #5f6978;
+      --soft: rgba(255, 255, 255, .72);
+      --line: rgba(16, 23, 34, .10);
+      --accent: #1959f3;
+      --accent-dark: #0a3ab8;
       --sage: #31a86b;
       --sage-dark: #237e52;
-      --cream: #f7f9ff;
+      --cream: #f7f8fa;
       --danger: #dd4f5d;
       --good: #31a86b;
       --warning: #f2a23a;
-      --border: rgba(109, 124, 158, .22);
-      --shadow: 0 24px 58px rgba(35, 48, 88, .20);
-      --shadow-soft: 0 12px 28px rgba(35, 48, 88, .12);
-      --blue-shadow: 0 16px 32px rgba(68, 88, 255, .24);
+      --border: rgba(16, 23, 34, .16);
+      --shadow: 0 24px 58px rgba(16, 23, 34, .18);
+      --shadow-soft: 0 12px 28px rgba(16, 23, 34, .10);
+      --blue-shadow: 0 16px 32px rgba(25, 89, 243, .24);
       --inset-shadow: inset 0 1px 0 rgba(255,255,255,.82);
-      --font: "Anthropic Serif", ui-serif, Georgia, "Times New Roman", serif;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
     }
 
     * { box-sizing: border-box; }
@@ -41,9 +41,9 @@ MINIAPP_HTML = """<!doctype html>
       font-family: var(--font);
       color: var(--text);
       background:
-        linear-gradient(120deg, rgba(255,255,255,.98) 0%, rgba(247,249,255,.92) 32%, rgba(218,225,245,.72) 70%, rgba(128,140,169,.62) 100%),
-        repeating-linear-gradient(90deg, rgba(68,88,255,.045) 0 1px, transparent 1px 86px),
-        repeating-linear-gradient(0deg, rgba(68,88,255,.035) 0 1px, transparent 1px 86px);
+        linear-gradient(135deg, #ffffff 0%, #f7f8fa 46%, #e8ecf3 100%),
+        repeating-linear-gradient(90deg, rgba(25,89,243,.035) 0 1px, transparent 1px 86px),
+        repeating-linear-gradient(0deg, rgba(25,89,243,.025) 0 1px, transparent 1px 86px);
       overflow-x: hidden;
       -webkit-text-size-adjust: 100%;
     }
@@ -69,9 +69,9 @@ MINIAPP_HTML = """<!doctype html>
       display: grid;
       place-items: center;
       background:
-        linear-gradient(120deg, rgba(255,255,255,.98) 0%, rgba(247,249,255,.92) 32%, rgba(218,225,245,.72) 70%, rgba(128,140,169,.62) 100%),
-        repeating-linear-gradient(90deg, rgba(68,88,255,.045) 0 1px, transparent 1px 86px),
-        repeating-linear-gradient(0deg, rgba(68,88,255,.035) 0 1px, transparent 1px 86px);
+        linear-gradient(135deg, #ffffff 0%, #f7f8fa 46%, #e8ecf3 100%),
+        repeating-linear-gradient(90deg, rgba(25,89,243,.035) 0 1px, transparent 1px 86px),
+        repeating-linear-gradient(0deg, rgba(25,89,243,.025) 0 1px, transparent 1px 86px);
     }
 
     .login-shell {
@@ -91,7 +91,7 @@ MINIAPP_HTML = """<!doctype html>
       height: 78px;
       margin-bottom: 14px;
       border-radius: 20px;
-      box-shadow: 0 16px 32px rgba(35,48,88,.16);
+      box-shadow: 0 16px 32px rgba(16,23,34,.16);
     }
 
     .login-brand h1 {
@@ -131,7 +131,7 @@ MINIAPP_HTML = """<!doctype html>
     .auth-tab.active {
       background: var(--accent);
       color: #fff;
-      box-shadow: 0 8px 18px rgba(47,63,232,.18);
+      box-shadow: 0 8px 18px rgba(10,58,184,.18);
     }
 
     .login-card {
@@ -165,7 +165,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .login-card input:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(68,88,255,.13);
+      box-shadow: 0 0 0 3px rgba(25,89,243,.13);
     }
 
     .login-submit {
@@ -237,8 +237,8 @@ MINIAPP_HTML = """<!doctype html>
       position: fixed;
       inset: 0;
       background-image:
-        repeating-linear-gradient(90deg, rgba(68,88,255,.035) 0 1px, transparent 1px 86px),
-        repeating-linear-gradient(0deg, rgba(68,88,255,.028) 0 1px, transparent 1px 86px);
+        repeating-linear-gradient(90deg, rgba(25,89,243,.035) 0 1px, transparent 1px 86px),
+        repeating-linear-gradient(0deg, rgba(25,89,243,.028) 0 1px, transparent 1px 86px);
       opacity: .42;
       pointer-events: none;
     }
@@ -325,12 +325,12 @@ MINIAPP_HTML = """<!doctype html>
     .tab.active {
       color: white;
       background: var(--accent);
-      box-shadow: 0 9px 18px rgba(68,88,255,.20);
+      box-shadow: 0 9px 18px rgba(25,89,243,.20);
     }
 
     .tab:hover:not(.active) {
       color: var(--accent-dark);
-      background: rgba(68,88,255,.10);
+      background: rgba(25,89,243,.10);
     }
 
     .screen-head {
@@ -369,7 +369,7 @@ MINIAPP_HTML = """<!doctype html>
       border: 1px solid rgba(109,124,158,.11);
       background: rgba(255,255,255,.76);
       border-radius: 22px;
-      box-shadow: 0 10px 24px rgba(35,48,88,.055), var(--inset-shadow);
+      box-shadow: 0 10px 24px rgba(16,23,34,.055), var(--inset-shadow);
     }
 
     .shift-card {
@@ -408,8 +408,8 @@ MINIAPP_HTML = """<!doctype html>
 
     .status-chip.warn {
       color: var(--accent-dark);
-      background: rgba(68,88,255,.12);
-      border-color: rgba(68,88,255,.18);
+      background: rgba(25,89,243,.12);
+      border-color: rgba(25,89,243,.18);
     }
 
     .status-chip.gray {
@@ -435,16 +435,16 @@ MINIAPP_HTML = """<!doctype html>
       min-width: 0;
       text-align: left;
       color: inherit;
-      border-color: rgba(68,88,255,.24);
+      border-color: rgba(25,89,243,.24);
       cursor: pointer;
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
 
     .home-kpi:hover {
       transform: translateY(-1px);
-      border-color: rgba(68,88,255,.52);
+      border-color: rgba(25,89,243,.52);
       background: rgba(255,255,255,.74);
-      box-shadow: 0 14px 28px rgba(68,88,255,.16);
+      box-shadow: 0 14px 28px rgba(25,89,243,.16);
     }
 
     .home-kpi:active {
@@ -518,7 +518,7 @@ MINIAPP_HTML = """<!doctype html>
       width: 40px;
       height: 40px;
       flex: 0 0 40px;
-      border: 1px solid rgba(68,88,255,.22);
+      border: 1px solid rgba(25,89,243,.22);
       border-radius: 15px;
       color: var(--accent-dark);
       background: rgba(255,255,255,.64);
@@ -528,7 +528,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .employee-detail-back:hover {
-      border-color: rgba(68,88,255,.5);
+      border-color: rgba(25,89,243,.5);
       background: rgba(255,255,255,.84);
     }
 
@@ -544,15 +544,15 @@ MINIAPP_HTML = """<!doctype html>
       color: inherit;
       font: inherit;
       cursor: pointer;
-      border-color: rgba(68,88,255,.24);
+      border-color: rgba(25,89,243,.24);
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
 
     .warehouse-category:hover {
       transform: translateY(-1px);
-      border-color: rgba(68,88,255,.52);
+      border-color: rgba(25,89,243,.52);
       background: rgba(255,255,255,.72);
-      box-shadow: 0 14px 28px rgba(68,88,255,.16);
+      box-shadow: 0 14px 28px rgba(25,89,243,.16);
     }
 
     .warehouse-category:active {
@@ -585,8 +585,8 @@ MINIAPP_HTML = """<!doctype html>
       flex: 0 0 40px;
       margin: 0;
       border-radius: 13px;
-      border: 1px solid rgba(68,88,255,.16);
-      background: linear-gradient(145deg, rgba(99,120,255,.22), rgba(68,88,255,.08));
+      border: 1px solid rgba(25,89,243,.16);
+      background: linear-gradient(145deg, rgba(25,89,243,.22), rgba(25,89,243,.08));
       color: var(--accent-dark);
       display: grid;
       place-items: center;
@@ -669,16 +669,16 @@ MINIAPP_HTML = """<!doctype html>
       color: inherit;
       font: inherit;
       cursor: pointer;
-      border-color: rgba(68,88,255,.28);
+      border-color: rgba(25,89,243,.28);
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
 
     .analytics-card:hover,
     .analytics-row:hover {
       transform: translateY(-1px);
-      border-color: rgba(68,88,255,.54);
+      border-color: rgba(25,89,243,.54);
       background: rgba(255,255,255,.74);
-      box-shadow: 0 14px 28px rgba(68,88,255,.15);
+      box-shadow: 0 14px 28px rgba(25,89,243,.15);
     }
 
     .analytics-card:active,
@@ -757,7 +757,7 @@ MINIAPP_HTML = """<!doctype html>
       width: 44px;
       height: 44px;
       border-radius: 16px;
-      background: rgba(68,88,255,.13);
+      background: rgba(25,89,243,.13);
       display: grid;
       place-items: center;
       color: var(--accent-dark);
@@ -799,8 +799,8 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .op-row.selected {
-      border-color: rgba(68,88,255,.44);
-      box-shadow: 0 12px 28px rgba(68,88,255,.12), var(--inset-shadow);
+      border-color: rgba(25,89,243,.44);
+      box-shadow: 0 12px 28px rgba(25,89,243,.12), var(--inset-shadow);
     }
 
     .op-num {
@@ -897,7 +897,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .segment-button:hover:not(.active) {
       color: var(--accent-dark);
-      background: rgba(68,88,255,.10);
+      background: rgba(25,89,243,.10);
     }
 
     .button-row {
@@ -931,7 +931,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .small-button.secondary {
       color: var(--accent-dark);
-      background: rgba(68,88,255,.12);
+      background: rgba(25,89,243,.12);
     }
 
     .small-button.danger {
@@ -940,7 +940,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .small-button:hover {
       filter: brightness(1.03);
-      box-shadow: 0 10px 18px rgba(68,88,255,.15);
+      box-shadow: 0 10px 18px rgba(25,89,243,.15);
     }
 
     button,
@@ -978,8 +978,8 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-select-order],
     .card[data-select-report-task],
     .card[data-select-cutting-report-task] {
-      border-color: rgba(68,88,255,.24);
-      box-shadow: 0 9px 22px rgba(35,48,88,.07);
+      border-color: rgba(25,89,243,.24);
+      box-shadow: 0 9px 22px rgba(16,23,34,.07);
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
 
@@ -992,9 +992,9 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-select-report-task]:hover,
     .card[data-select-cutting-report-task]:hover {
       transform: translateY(-1px);
-      border-color: rgba(68,88,255,.52);
+      border-color: rgba(25,89,243,.52);
       background: rgba(255,255,255,.72);
-      box-shadow: 0 14px 28px rgba(68,88,255,.16);
+      box-shadow: 0 14px 28px rgba(25,89,243,.16);
     }
 
     .card[data-go]:active,
@@ -1006,7 +1006,7 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-select-report-task]:active,
     .card[data-select-cutting-report-task]:active {
       transform: translateY(0);
-      box-shadow: 0 7px 16px rgba(68,88,255,.12);
+      box-shadow: 0 7px 16px rgba(25,89,243,.12);
     }
 
     .card[data-go] .status-chip.gray,
@@ -1018,8 +1018,8 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-select-report-task] .status-chip.gray,
     .card[data-select-cutting-report-task] .status-chip.gray {
       color: var(--accent-dark);
-      background: rgba(68,88,255,.13);
-      border-color: rgba(68,88,255,.18);
+      background: rgba(25,89,243,.13);
+      border-color: rgba(25,89,243,.18);
     }
 
     .choice-grid {
@@ -1046,9 +1046,9 @@ MINIAPP_HTML = """<!doctype html>
     .choice-chip.active,
     .choice-chip:hover {
       color: var(--accent-dark);
-      border-color: rgba(68,88,255,.44);
-      background: rgba(68,88,255,.12);
-      box-shadow: 0 8px 18px rgba(68,88,255,.10);
+      border-color: rgba(25,89,243,.44);
+      background: rgba(25,89,243,.12);
+      box-shadow: 0 8px 18px rgba(25,89,243,.10);
     }
 
     .stock-picker {
@@ -1116,9 +1116,9 @@ MINIAPP_HTML = """<!doctype html>
 
     .stock-pick-row.active,
     .stock-pick-row:hover {
-      border-color: rgba(68,88,255,.42);
-      background: rgba(68,88,255,.10);
-      box-shadow: 0 8px 18px rgba(68,88,255,.10);
+      border-color: rgba(25,89,243,.42);
+      background: rgba(25,89,243,.10);
+      box-shadow: 0 8px 18px rgba(25,89,243,.10);
     }
 
     .stock-pick-row input[type="checkbox"] {
@@ -1236,13 +1236,13 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .cutting-input-row input:focus {
-      border-color: rgba(68,88,255,.48);
-      box-shadow: 0 0 0 3px rgba(68,88,255,.12);
+      border-color: rgba(25,89,243,.48);
+      box-shadow: 0 0 0 3px rgba(25,89,243,.12);
     }
 
     .stock-pick-qty input:focus {
-      border-color: rgba(68,88,255,.48);
-      box-shadow: 0 0 0 3px rgba(68,88,255,.12);
+      border-color: rgba(25,89,243,.48);
+      box-shadow: 0 0 0 3px rgba(25,89,243,.12);
     }
 
     .report-row {
@@ -1319,8 +1319,8 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .order-card.selected {
-      border-color: rgba(68,88,255,.44);
-      box-shadow: 0 12px 28px rgba(68,88,255,.12), var(--inset-shadow);
+      border-color: rgba(25,89,243,.44);
+      box-shadow: 0 12px 28px rgba(25,89,243,.12), var(--inset-shadow);
     }
 
     .order-card .order-head {
@@ -1387,7 +1387,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .order-detail {
       padding: 14px;
-      background: linear-gradient(135deg, rgba(68,88,255,.12), rgba(49,168,107,.10));
+      background: linear-gradient(135deg, rgba(25,89,243,.12), rgba(49,168,107,.10));
     }
 
     .task-completion-card {
@@ -1425,7 +1425,7 @@ MINIAPP_HTML = """<!doctype html>
       margin-top: 9px;
       padding: 9px 10px;
       border-left: 3px solid var(--accent);
-      background: rgba(68,88,255,.08);
+      background: rgba(25,89,243,.08);
       color: var(--muted);
       font-size: 11px;
       font-weight: 800;
@@ -1460,7 +1460,7 @@ MINIAPP_HTML = """<!doctype html>
       top: 14px;
       bottom: 0;
       width: 2px;
-      background: rgba(68,88,255,.18);
+      background: rgba(25,89,243,.18);
     }
 
     .passport-event:last-child::before {
@@ -1472,7 +1472,7 @@ MINIAPP_HTML = """<!doctype html>
       z-index: 1;
       width: 16px;
       height: 16px;
-      border: 4px solid rgba(68,88,255,.18);
+      border: 4px solid rgba(25,89,243,.18);
       border-radius: 50%;
       background: var(--accent);
     }
@@ -1548,7 +1548,7 @@ MINIAPP_HTML = """<!doctype html>
       width: 68px;
       height: 68px;
       border-radius: 50%;
-      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(68,88,255,.13) 0);
+      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(25,89,243,.13) 0);
       display: grid;
       place-items: center;
       position: relative;
@@ -1561,7 +1561,7 @@ MINIAPP_HTML = """<!doctype html>
       inset: 8px;
       border-radius: 50%;
       background: var(--cream);
-      box-shadow: inset 0 1px 2px rgba(35,48,88,.08);
+      box-shadow: inset 0 1px 2px rgba(16,23,34,.08);
     }
 
     .ring strong {
@@ -1709,7 +1709,7 @@ MINIAPP_HTML = """<!doctype html>
     .qr-scanner .small-button {
       min-height: 44px;
       background: rgba(255,255,255,.92);
-      color: #12182b;
+      color: #101722;
     }
 
     .qr-scanner-close {
@@ -1718,7 +1718,7 @@ MINIAPP_HTML = """<!doctype html>
       border: none;
       border-radius: 50%;
       background: rgba(255,255,255,.92);
-      color: #12182b;
+      color: #101722;
       font-size: 26px;
       line-height: 1;
     }
@@ -1747,10 +1747,10 @@ MINIAPP_HTML = """<!doctype html>
       border-radius: 18px;
       padding: 15px 16px;
       color: white;
-      background: linear-gradient(135deg, var(--accent), #6378ff);
+      background: linear-gradient(135deg, var(--accent), #1959f3);
       font-size: 15px;
       font-weight: 950;
-      box-shadow: 0 18px 36px rgba(68,88,255,.30);
+      box-shadow: 0 18px 36px rgba(25,89,243,.30);
     }
 
     .main-button:disabled {
@@ -1818,7 +1818,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .nav-btn.active .nav-ico {
-      background: rgba(68,88,255,.12);
+      background: rgba(25,89,243,.12);
     }
 
     .nav-btn:hover {
@@ -1826,7 +1826,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .nav-btn:hover .nav-ico {
-      background: rgba(68,88,255,.10);
+      background: rgba(25,89,243,.10);
     }
 
     @media (min-width: 680px) {
@@ -1894,7 +1894,7 @@ MINIAPP_HTML = """<!doctype html>
     .app-title,
     .screen-head h2,
     .section-title b {
-      color: #151b31;
+      color: #101722;
     }
 
     .auth-tabs,
@@ -1915,7 +1915,7 @@ MINIAPP_HTML = """<!doctype html>
     .auth-tab.active,
     .tab.active,
     .segment-button.active {
-      background: linear-gradient(135deg, #5d72ff, var(--accent-dark));
+      background: linear-gradient(135deg, #1959f3, var(--accent-dark));
       box-shadow: var(--blue-shadow);
     }
 
@@ -1949,12 +1949,12 @@ MINIAPP_HTML = """<!doctype html>
     .small-button,
     .main-button {
       border-radius: 8px;
-      background: linear-gradient(135deg, #5d72ff, var(--accent-dark));
+      background: linear-gradient(135deg, #1959f3, var(--accent-dark));
       box-shadow: var(--blue-shadow);
     }
 
     .small-button.secondary {
-      color: #27304a;
+      color: #101722;
       border: 1px solid rgba(255,255,255,.76);
       background: rgba(255,255,255,.64);
       box-shadow: var(--inset-shadow);
@@ -1981,7 +1981,7 @@ MINIAPP_HTML = """<!doctype html>
     .employee-detail-back {
       border: 1px solid rgba(255,255,255,.78);
       border-radius: 8px;
-      color: #28315b;
+      color: #101722;
       background: rgba(255,255,255,.66);
       box-shadow: var(--shadow-soft), var(--inset-shadow);
       backdrop-filter: blur(18px);
@@ -2017,7 +2017,7 @@ MINIAPP_HTML = """<!doctype html>
     .kpi-ico,
     .op-icon {
       color: var(--accent-dark);
-      background: rgba(68,88,255,.13);
+      background: rgba(25,89,243,.13);
     }
 
     .kpi.good .kpi-ico {
@@ -2030,7 +2030,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .progress i {
-      background: linear-gradient(90deg, #6378ff, var(--accent-dark));
+      background: linear-gradient(90deg, #1959f3, var(--accent-dark));
     }
 
     .detail-box,
@@ -2042,25 +2042,25 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .order-detail {
-      background: linear-gradient(135deg, rgba(68,88,255,.12), rgba(49,168,107,.10));
+      background: linear-gradient(135deg, rgba(25,89,243,.12), rgba(49,168,107,.10));
     }
 
     .ring {
-      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(68,88,255,.13) 0);
+      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(25,89,243,.13) 0);
     }
 
     .ring::before {
-      background: rgba(247,249,255,.96);
+      background: rgba(247,248,250,.96);
     }
 
     .main-button {
-      box-shadow: 0 18px 36px rgba(68,88,255,.30);
+      box-shadow: 0 18px 36px rgba(25,89,243,.30);
     }
 
     .bottom-nav {
       border-color: rgba(109,124,158,.18);
       background: rgba(255,255,255,.82);
-      box-shadow: 0 -10px 28px rgba(35,48,88,.10);
+      box-shadow: 0 -10px 28px rgba(16,23,34,.10);
       backdrop-filter: blur(24px);
     }
 
@@ -2075,17 +2075,146 @@ MINIAPP_HTML = """<!doctype html>
     .nav-btn.active .nav-ico {
       color: #fff;
       border-radius: 8px;
-      background: linear-gradient(135deg, #6378ff, var(--accent-dark));
-      box-shadow: 0 8px 18px rgba(68,88,255,.22);
+      background: linear-gradient(135deg, #1959f3, var(--accent-dark));
+      box-shadow: 0 8px 18px rgba(25,89,243,.22);
     }
 
     @media (min-width: 680px) {
       .app {
         border: 1px solid rgba(255,255,255,.78);
         border-radius: 8px;
-        background: rgba(247,249,255,.58);
+        background: rgba(247,248,250,.58);
         box-shadow: var(--shadow);
         backdrop-filter: blur(24px);
+      }
+    }
+
+    /* Final brand overrides: the lockup stays visible above every app screen. */
+    .brand-lockup {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-lockup .brand-mark {
+      display: block;
+      flex: 0 0 auto;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+      object-fit: contain;
+      box-shadow: none;
+    }
+
+    .brand-wordmark {
+      display: grid;
+      min-width: 0;
+      margin: 0;
+      color: var(--text);
+      font-weight: 950;
+      line-height: .84;
+      letter-spacing: -.035em;
+      text-align: left;
+    }
+
+    .brand-wordmark-primary {
+      color: var(--accent);
+    }
+
+    .brand-wordmark-secondary {
+      color: var(--text);
+    }
+
+    .login-brand-lockup .brand-mark {
+      width: 88px;
+      height: 88px;
+    }
+
+    .login-brand-lockup .brand-wordmark {
+      font-size: 35px;
+    }
+
+    .login-brand p {
+      margin-top: 15px;
+      color: var(--muted);
+    }
+
+    .app-title {
+      display: grid;
+      justify-items: center;
+      min-width: 0;
+    }
+
+    .app-brand-lockup {
+      gap: 7px;
+      max-width: 100%;
+    }
+
+    .app-brand-lockup .brand-mark {
+      width: 34px;
+      height: 34px;
+    }
+
+    .app-brand-lockup .brand-wordmark {
+      font-size: 15px;
+      line-height: .82;
+      letter-spacing: -.025em;
+    }
+
+    .app-title small {
+      margin-top: 5px;
+      color: var(--muted);
+    }
+
+    .login-brand h1,
+    .app-title,
+    .screen-head h2,
+    .section-title b {
+      color: var(--text);
+    }
+
+    .auth-tab.active,
+    .tab.active,
+    .segment-button.active,
+    .login-submit,
+    .small-button,
+    .main-button,
+    .nav-btn.active .nav-ico {
+      background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+    }
+
+    .kpi-ico,
+    .op-icon {
+      color: var(--accent-dark);
+      background: rgba(25,89,243,.12);
+    }
+
+    .progress i {
+      background: linear-gradient(90deg, var(--accent), var(--accent-dark));
+    }
+
+    .ring {
+      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(25,89,243,.12) 0);
+    }
+
+    .ring::before {
+      background: rgba(247,248,250,.96);
+    }
+
+    @media (max-height: 760px) {
+      .login-brand-lockup .brand-mark {
+        width: 68px;
+        height: 68px;
+      }
+
+      .login-brand-lockup .brand-wordmark {
+        font-size: 29px;
+      }
+
+      .login-brand p {
+        margin-top: 10px;
       }
     }
   </style>
@@ -2094,8 +2223,10 @@ MINIAPP_HTML = """<!doctype html>
   <section class="login-view" id="loginView" hidden>
     <div class="login-shell">
       <div class="login-brand">
-        <img src="/pwa/icon.svg" alt="Шагаем вместе">
-        <h1>Шагаем вместе</h1>
+        <div class="brand-lockup login-brand-lockup">
+          <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
+          <h1 class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></h1>
+        </div>
         <p>Управление производством</p>
       </div>
       <div class="auth-tabs" role="tablist" aria-label="Доступ к приложению">
@@ -2124,7 +2255,13 @@ MINIAPP_HTML = """<!doctype html>
   <main class="app" id="appRoot" hidden>
     <div class="appbar">
       <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
-      <div class="app-title">Шагаем вместе<small id="roleLabel">Загрузка</small></div>
+      <div class="app-title">
+        <div class="brand-lockup app-brand-lockup">
+          <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
+          <span class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></span>
+        </div>
+        <small id="roleLabel">Загрузка</small>
+      </div>
       <button class="icon-btn" id="menuBtn" aria-label="Меню">⋯</button>
     </div>
 

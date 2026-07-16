@@ -30,24 +30,26 @@ APP_DESCRIPTION = "Рабочее приложение швейного прои
 APP_START_URL = "/app"
 APP_SCOPE = "/"
 
-THEME_COLOR = "#4458ff"
-BACKGROUND_COLOR = "#edf2fb"
+THEME_COLOR = "#1959f3"
+BACKGROUND_COLOR = "#f5f7fb"
 
 MANIFEST_PATH = "/manifest.webmanifest"
 SERVICE_WORKER_PATH = "/service-worker.js"
 BROWSERCONFIG_PATH = "/browserconfig.xml"
 ICON_SVG_PATH = "/pwa/icon.svg"
+BRAND_MARK_SVG_PATH = "/brand/mark.svg"
 MASK_ICON_SVG_PATH = "/pwa/safari-pinned-tab.svg"
+FAVICON_PATH = "/favicon.ico"
 ICON_32_PATH = "/pwa/icon-32.png"
 APPLE_TOUCH_ICON_PATH = "/pwa/apple-touch-icon-180.png"
 ICON_192_PATH = "/pwa/icon-192.png"
 ICON_512_PATH = "/pwa/icon-512.png"
 MS_TILE_ICON_PATH = "/pwa/mstile-150x150.png"
 
-_ICON_BACKGROUND = (68, 88, 255)
-_ICON_BACKGROUND_DARK = (47, 63, 232)
-_ICON_FOREGROUND = (255, 255, 255)
-_ICON_SAGE = (49, 168, 107)
+_ICON_BACKGROUND = (255, 255, 255)
+_ICON_BLUE = (25, 89, 243)
+_ICON_BLUE_DARK = (10, 58, 184)
+_ICON_BLUE_LIGHT = (47, 108, 255)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +109,7 @@ def build_manifest() -> dict[str, object]:
                 "src": ICON_SVG_PATH,
                 "sizes": "any",
                 "type": "image/svg+xml",
-                "purpose": "any maskable",
+                "purpose": "any",
             },
             {
                 "src": ICON_192_PATH,
@@ -125,21 +127,43 @@ def build_manifest() -> dict[str, object]:
     }
 
 
-APP_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#4458ff"/>
-  <path d="M118 348h87v-72h87v-71h66" fill="none" stroke="#2f3fe8" stroke-opacity=".34" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" transform="translate(4 7)"/>
-  <path d="M118 348h87v-72h87v-71h66" fill="none" stroke="#ffffff" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="118" cy="348" r="14" fill="#31a86b"/>
-  <circle cx="205" cy="276" r="14" fill="#31a86b"/>
-  <circle cx="292" cy="205" r="14" fill="#31a86b"/>
-  <path d="m352 211 48-48" fill="none" stroke="#31a86b" stroke-width="18" stroke-linecap="round"/>
-  <circle cx="400" cy="163" r="18" fill="#ffffff"/>
-  <circle cx="400" cy="163" r="7" fill="#4458ff"/>
+_BRAND_GRADIENTS = """
+  <defs>
+    <linearGradient id="brand-top" x1="94" y1="120" x2="388" y2="194" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2f6cff"/><stop offset="1" stop-color="#0b47d8"/>
+    </linearGradient>
+    <linearGradient id="brand-mid" x1="84" y1="224" x2="274" y2="316" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2463fa"/><stop offset="1" stop-color="#0a3ab8"/>
+    </linearGradient>
+    <linearGradient id="brand-main" x1="82" y1="154" x2="414" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0a3ab8"/><stop offset=".48" stop-color="#1959f3"/><stop offset="1" stop-color="#0a3ab8"/>
+    </linearGradient>
+  </defs>
+"""
+
+_BRAND_MARK_PATHS = """
+  <path d="M94 120h223c13 0 22 5 30 16l41 58h-81l-30-40H116Z" fill="url(#brand-top)"/>
+  <path d="M133 224h130c12 0 18 11 11 21l-49 71H103l-19-30 35-52c4-7 8-10 14-10Z" fill="url(#brand-mid)"/>
+  <path d="m315 154 73 40c13 8 16 20 7 32l-61 75 79 91c9 11 8 22-1 32l-27 29c-7 8-16 11-27 11H139c-13 0-21-5-28-15l-29-42c-7-11-7-21 0-32l26-39h82l-25 38h164l-50-62c-9-11-9-21 0-32l66-78-30-38Z" fill="url(#brand-main)"/>
+"""
+
+BRAND_MARK_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="70 105 360 375" role="img" aria-label="Шагаем вместе">
+{_BRAND_GRADIENTS}
+{_BRAND_MARK_PATHS}
+</svg>
+"""
+
+APP_ICON_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="104" fill="#fff"/>
+{_BRAND_GRADIENTS}
+  <g transform="translate(78 46) scale(.72)">
+{_BRAND_MARK_PATHS}
+  </g>
 </svg>
 """
 
 SAFARI_MASK_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <path d="M118 328h67v-72h87v-71h66l43-43a27 27 0 1 1 19 19l-48 48a27 27 0 0 1-19 8h-29v66a25 25 0 0 1-25 25h-62v47a25 25 0 0 1-25 25h-74a26 26 0 1 1 0-52Z"/>
+  <path transform="translate(78 46) scale(.72)" d="M94 120h223c13 0 22 5 30 16l41 58h-81l-30-40H116ZM133 224h130c12 0 18 11 11 21l-49 71H103l-19-30 35-52c4-7 8-10 14-10ZM315 154l73 40c13 8 16 20 7 32l-61 75 79 91c9 11 8 22-1 32l-27 29c-7 8-16 11-27 11H139c-13 0-21-5-28-15l-29-42c-7-11-7-21 0-32l26-39h82l-25 38h164l-50-62c-9-11-9-21 0-32l66-78-30-38Z"/>
 </svg>
 """
 
@@ -150,51 +174,41 @@ def _png_chunk(kind: bytes, payload: bytes) -> bytes:
     return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
 
 
-def _segment_distance(
-    x: float,
-    y: float,
-    start: tuple[float, float],
-    end: tuple[float, float],
-) -> float:
-    dx = end[0] - start[0]
-    dy = end[1] - start[1]
-    denominator = dx * dx + dy * dy
-    if denominator == 0:
-        return math.hypot(x - start[0], y - start[1])
-    position = ((x - start[0]) * dx + (y - start[1]) * dy) / denominator
-    position = max(0.0, min(1.0, position))
-    return math.hypot(x - (start[0] + position * dx), y - (start[1] + position * dy))
+def _point_in_polygon(x: float, y: float, polygon: tuple[tuple[float, float], ...]) -> bool:
+    inside = False
+    previous_x, previous_y = polygon[-1]
+    for current_x, current_y in polygon:
+        crosses = (current_y > y) != (previous_y > y)
+        if crosses:
+            boundary_x = (previous_x - current_x) * (y - current_y) / (previous_y - current_y) + current_x
+            if x < boundary_x:
+                inside = not inside
+        previous_x, previous_y = current_x, current_y
+    return inside
 
 
-def _coverage(distance: float, radius: float, antialias: float) -> float:
-    return max(0.0, min(1.0, (radius + antialias - distance) / (2.0 * antialias)))
-
-
-def _paint_segment(
+def _paint_polygon(
     pixels: bytearray,
     size: int,
-    start: tuple[float, float],
-    end: tuple[float, float],
-    radius: float,
+    polygon: tuple[tuple[float, float], ...],
     color: tuple[int, int, int],
-    opacity: float = 1.0,
 ) -> None:
-    antialias = 0.85 / size
-    padding = radius + antialias
-    first_column = max(0, math.floor((min(start[0], end[0]) - padding) * size))
-    final_column = min(size, math.ceil((max(start[0], end[0]) + padding) * size))
-    first_row = max(0, math.floor((min(start[1], end[1]) - padding) * size))
-    final_row = min(size, math.ceil((max(start[1], end[1]) + padding) * size))
+    first_column = max(0, math.floor(min(point[0] for point in polygon) * size) - 1)
+    final_column = min(size, math.ceil(max(point[0] for point in polygon) * size) + 1)
+    first_row = max(0, math.floor(min(point[1] for point in polygon) * size) - 1)
+    final_row = min(size, math.ceil(max(point[1] for point in polygon) * size) + 1)
+    samples = ((0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75))
 
     for row_index in range(first_row, final_row):
-        y = (row_index + 0.5) / size
         for column_index in range(first_column, final_column):
-            x = (column_index + 0.5) / size
-            coverage = opacity * _coverage(
-                _segment_distance(x, y, start, end),
-                radius,
-                antialias,
-            )
+            coverage = sum(
+                _point_in_polygon(
+                    (column_index + sample_x) / size,
+                    (row_index + sample_y) / size,
+                    polygon,
+                )
+                for sample_x, sample_y in samples
+            ) / len(samples)
             if coverage <= 0:
                 continue
             pixel_index = (row_index * size + column_index) * 4
@@ -207,67 +221,45 @@ def _paint_segment(
 
 @lru_cache(maxsize=8)
 def render_icon_png(size: int) -> bytes:
-    """Render the vector mark as a deterministic, dependency-free RGBA PNG."""
+    """Render the brand mark as a deterministic, dependency-free RGBA PNG."""
 
     if size < 16 or size > 1024:
         raise ValueError("icon size must be between 16 and 1024 pixels")
 
-    points = (
-        (118 / 512, 348 / 512),
-        (205 / 512, 348 / 512),
-        (205 / 512, 276 / 512),
-        (292 / 512, 276 / 512),
-        (292 / 512, 205 / 512),
-        (358 / 512, 205 / 512),
-    )
-    step_segments = tuple(zip(points, points[1:]))
-    needle_start = (352 / 512, 211 / 512)
-    needle_end = (400 / 512, 163 / 512)
+    def icon_point(point: tuple[int, int]) -> tuple[float, float]:
+        x, y = point
+        return ((x * 0.72 + 78) / 512, (y * 0.72 + 46) / 512)
+
     pixel = bytes((*_ICON_BACKGROUND, 255))
     pixels = bytearray(pixel * size * size)
-
-    shadow_offset = (4 / 512, 7 / 512)
-    for start, end in step_segments:
-        _paint_segment(
-            pixels,
-            size,
-            (start[0] + shadow_offset[0], start[1] + shadow_offset[1]),
-            (end[0] + shadow_offset[0], end[1] + shadow_offset[1]),
-            24 / 512,
-            _ICON_BACKGROUND_DARK,
-            0.34,
-        )
-
-    for start, end in step_segments:
-        _paint_segment(pixels, size, start, end, 20 / 512, _ICON_FOREGROUND)
-
-    for center in (points[0], points[2], points[4]):
-        _paint_segment(pixels, size, center, center, 14 / 512, _ICON_SAGE)
-
-    _paint_segment(
-        pixels,
-        size,
-        needle_start,
-        needle_end,
-        9 / 512,
-        _ICON_SAGE,
+    polygons = (
+        (
+            tuple(icon_point(point) for point in (
+                (94, 120), (317, 120), (347, 136), (388, 194),
+                (307, 194), (277, 154), (116, 154),
+            )),
+            _ICON_BLUE_LIGHT,
+        ),
+        (
+            tuple(icon_point(point) for point in (
+                (133, 224), (263, 224), (274, 245), (225, 316),
+                (103, 316), (84, 286), (119, 234),
+            )),
+            _ICON_BLUE,
+        ),
+        (
+            tuple(icon_point(point) for point in (
+                (315, 154), (388, 194), (395, 226), (334, 301),
+                (413, 392), (412, 424), (385, 453), (358, 464),
+                (139, 464), (111, 449), (82, 407), (82, 375),
+                (108, 336), (190, 336), (165, 374), (329, 374),
+                (279, 312), (279, 280), (345, 202),
+            )),
+            _ICON_BLUE_DARK,
+        ),
     )
-    _paint_segment(
-        pixels,
-        size,
-        needle_end,
-        needle_end,
-        18 / 512,
-        _ICON_FOREGROUND,
-    )
-    _paint_segment(
-        pixels,
-        size,
-        needle_end,
-        needle_end,
-        7 / 512,
-        _ICON_BACKGROUND,
-    )
+    for polygon, color in polygons:
+        _paint_polygon(pixels, size, polygon, color)
 
     raw_rows = bytearray()
     stride = size * 4
@@ -304,6 +296,7 @@ _ICON_PNGS = MappingProxyType(
 def _asset_revision() -> str:
     digest = hashlib.sha256(MANIFEST_WEBMANIFEST)
     digest.update(APP_ICON_SVG.encode("utf-8"))
+    digest.update(BRAND_MARK_SVG.encode("utf-8"))
     digest.update(SAFARI_MASK_ICON_SVG.encode("utf-8"))
     for size, body in _ICON_PNGS.items():
         digest.update(str(size).encode("ascii"))
@@ -445,6 +438,7 @@ def build_service_worker(app_shell_revision_token: str | None = None) -> str:
         APP_START_URL,
         MANIFEST_PATH,
         ICON_SVG_PATH,
+        BRAND_MARK_SVG_PATH,
         ICON_192_PATH,
         ICON_512_PATH,
     ]
@@ -452,7 +446,9 @@ def build_service_worker(app_shell_revision_token: str | None = None) -> str:
         MANIFEST_PATH,
         BROWSERCONFIG_PATH,
         ICON_SVG_PATH,
+        BRAND_MARK_SVG_PATH,
         MASK_ICON_SVG_PATH,
+        FAVICON_PATH,
         ICON_32_PATH,
         APPLE_TOUCH_ICON_PATH,
         ICON_192_PATH,
@@ -490,7 +486,7 @@ BROWSERCONFIG_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 
 PWA_HEAD_TAGS = f"""<link rel="manifest" href="{MANIFEST_PATH}">
 <link rel="icon" href="{ICON_SVG_PATH}" type="image/svg+xml">
-<link rel="icon" href="{ICON_32_PATH}" sizes="32x32" type="image/png">
+<link rel="icon" href="{FAVICON_PATH}" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="{APPLE_TOUCH_ICON_PATH}" sizes="180x180">
 <link rel="mask-icon" href="{MASK_ICON_SVG_PATH}" color="{THEME_COLOR}">
 <meta name="application-name" content="{APP_NAME}">
@@ -585,6 +581,12 @@ PWA_RESOURCES: Mapping[str, PWAResource] = MappingProxyType(
             "image/svg+xml; charset=utf-8",
             _ICON_CACHE,
         ),
+        BRAND_MARK_SVG_PATH: _resource(
+            BRAND_MARK_SVG_PATH,
+            BRAND_MARK_SVG,
+            "image/svg+xml; charset=utf-8",
+            _ICON_CACHE,
+        ),
         MASK_ICON_SVG_PATH: _resource(
             MASK_ICON_SVG_PATH,
             SAFARI_MASK_ICON_SVG,
@@ -593,6 +595,12 @@ PWA_RESOURCES: Mapping[str, PWAResource] = MappingProxyType(
         ),
         ICON_32_PATH: _resource(
             ICON_32_PATH,
+            _ICON_PNGS[32],
+            "image/png",
+            _ICON_CACHE,
+        ),
+        FAVICON_PATH: _resource(
+            FAVICON_PATH,
             _ICON_PNGS[32],
             "image/png",
             _ICON_CACHE,
@@ -736,8 +744,11 @@ __all__ = [
     "APPLE_TOUCH_ICON_PATH",
     "APP_ICON_SVG",
     "BACKGROUND_COLOR",
+    "BRAND_MARK_SVG",
+    "BRAND_MARK_SVG_PATH",
     "BROWSERCONFIG_PATH",
     "BROWSERCONFIG_XML",
+    "FAVICON_PATH",
     "ICON_192_PATH",
     "ICON_512_PATH",
     "ICON_SVG_PATH",
