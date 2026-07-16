@@ -203,6 +203,67 @@ MINIAPP_HTML = """<!doctype html>
       text-align: center;
     }
 
+    .connection-card {
+      justify-items: center;
+      text-align: center;
+    }
+
+    .connection-orbit {
+      position: relative;
+      width: 58px;
+      height: 58px;
+      border: 1px solid rgba(25,89,243,.18);
+      border-radius: 50%;
+      background: rgba(25,89,243,.08);
+      box-shadow: 0 14px 30px rgba(25,89,243,.12), var(--inset-shadow);
+    }
+
+    .connection-orbit::before {
+      content: "";
+      position: absolute;
+      inset: 9px;
+      border: 3px solid rgba(25,89,243,.16);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: connection-spin 1s linear infinite;
+    }
+
+    .connection-card h2 {
+      margin: 0;
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.15;
+    }
+
+    .connection-message,
+    .connection-retry-status {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .connection-message {
+      font-size: 14px;
+    }
+
+    .connection-retry-status {
+      min-height: 18px;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .connection-card .login-submit {
+      width: 100%;
+    }
+
+    @keyframes connection-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .connection-orbit::before { animation: none; }
+    }
+
     @media (max-height: 760px) {
       .login-view {
         place-items: start center;
@@ -2220,6 +2281,27 @@ MINIAPP_HTML = """<!doctype html>
   </style>
 </head>
 <body>
+  <section class="login-view" id="connectionView" hidden aria-labelledby="connectionTitle">
+    <div class="login-shell">
+      <div class="login-brand">
+        <div class="brand-lockup login-brand-lockup">
+          <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
+          <h1 class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></h1>
+        </div>
+        <p>Управление производством</p>
+      </div>
+      <div class="login-card connection-card">
+        <div class="connection-orbit" aria-hidden="true"></div>
+        <div role="status" aria-live="polite" aria-atomic="true">
+          <h2 id="connectionTitle">Подключаемся</h2>
+          <p class="connection-message" id="connectionMessage">Проверяем защищённую сессию.</p>
+        </div>
+        <p class="connection-retry-status" id="connectionRetryStatus"></p>
+        <button class="login-submit" id="webConnectionRetry" type="button">Попробовать снова</button>
+      </div>
+    </div>
+  </section>
+
   <section class="login-view" id="loginView" hidden>
     <div class="login-shell">
       <div class="login-brand">
@@ -2305,9 +2387,10 @@ MINIAPP_HTML = """<!doctype html>
     const isStandaloneWeb = !debugTelegramId && !authToken && !(tg && tg.initData);
     let webCsrfToken = "";
     let webSessionProfile = {};
+    const webIdentityStorageKey = "webapp_identity";
     let storedWebIdentity = "";
     try {
-      storedWebIdentity = window.sessionStorage.getItem("webapp_identity") || "";
+      storedWebIdentity = window.localStorage.getItem(webIdentityStorageKey) || "";
     } catch (error) {
       storedWebIdentity = "";
     }
@@ -2449,6 +2532,11 @@ MINIAPP_HTML = """<!doctype html>
     const mount = document.getElementById("mount");
     const appRoot = document.getElementById("appRoot");
     const loginView = document.getElementById("loginView");
+    const connectionView = document.getElementById("connectionView");
+    const connectionTitle = document.getElementById("connectionTitle");
+    const connectionMessage = document.getElementById("connectionMessage");
+    const connectionRetryStatus = document.getElementById("connectionRetryStatus");
+    const webConnectionRetry = document.getElementById("webConnectionRetry");
     const webLoginForm = document.getElementById("webLoginForm");
     const webRegisterForm = document.getElementById("webRegisterForm");
     const webActionSlot = document.getElementById("webActionSlot");
@@ -2459,6 +2547,11 @@ MINIAPP_HTML = """<!doctype html>
     const qrScanner = document.getElementById("qrScanner");
     const qrScannerVideo = document.getElementById("qrScannerVideo");
     const pendingActions = new Set();
+    const webSessionRetryDelaysMs = [2_000, 5_000, 10_000, 20_000, 30_000];
+    const webSessionRequestTimeoutMs = 8_000;
+    let webSessionRetryAttempt = 0;
+    let webSessionRetryTimer = null;
+    let webSessionRestorePromise = null;
     let qrScannerStream = null;
     let qrScannerFrame = 0;
 
@@ -6310,37 +6403,150 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function showWebLogin(message = "") {
+      clearWebSessionRetryTimer();
+      webSessionRetryAttempt = 0;
       state.data = null;
       appRoot.hidden = true;
       mainButton.hidden = true;
       bottomNav.hidden = true;
+      connectionView.hidden = true;
       loginView.hidden = false;
       setWebAuthMode("login", message);
     }
 
     function showWebApp() {
+      clearWebSessionRetryTimer();
+      webSessionRetryAttempt = 0;
+      connectionView.hidden = true;
       loginView.hidden = true;
       appRoot.hidden = false;
       mainButton.hidden = false;
       bottomNav.hidden = false;
     }
 
-    async function restoreWebSession() {
+    function clearWebSessionRetryTimer() {
+      if (webSessionRetryTimer !== null) {
+        window.clearTimeout(webSessionRetryTimer);
+        webSessionRetryTimer = null;
+      }
+    }
+
+    function storeWebIdentity(identity) {
+      storedWebIdentity = String(identity || "");
       try {
-        const response = await fetch("/api/web/session", {credentials: "same-origin", cache: "no-store"});
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.ok) return false;
+        window.localStorage.setItem(webIdentityStorageKey, storedWebIdentity);
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function clearWebIdentity() {
+      storedWebIdentity = "";
+      try { window.localStorage.removeItem(webIdentityStorageKey); } catch (error) {}
+    }
+
+    function showWebConnection(message, {checking = false, retryDelayMs = 0} = {}) {
+      state.data = null;
+      appRoot.hidden = true;
+      mainButton.hidden = true;
+      bottomNav.hidden = true;
+      loginView.hidden = true;
+      connectionView.hidden = false;
+      connectionTitle.textContent = checking ? "Подключаемся" : "Нет связи с сервером";
+      connectionMessage.textContent = message || (checking
+        ? "Проверяем защищённую сессию."
+        : "Не удалось проверить сессию. Ваш вход не сброшен.");
+      connectionRetryStatus.textContent = retryDelayMs > 0
+        ? `Повторим автоматически через ${Math.ceil(retryDelayMs / 1000)} сек.`
+        : "";
+      webConnectionRetry.disabled = checking;
+      webConnectionRetry.textContent = checking ? "Проверяем…" : "Попробовать снова";
+    }
+
+    async function restoreWebSession() {
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      const requestOptions = {credentials: "same-origin", cache: "no-store"};
+      if (controller) requestOptions.signal = controller.signal;
+      const timeoutId = controller
+        ? window.setTimeout(() => controller.abort(), webSessionRequestTimeoutMs)
+        : null;
+      try {
+        const response = await fetch("/api/web/session", requestOptions);
+        const data = await response.json().catch(() => null);
+        if (response.status === 401) {
+          return {
+            status: "unauthorized",
+            message: data && data.message ? data.message : "Войдите в приложение.",
+          };
+        }
+        if (!response.ok || !data || !data.ok) {
+          return {
+            status: "network_error",
+            message: data && data.message
+              ? data.message
+              : "Сервер временно недоступен. Ваш вход сохранён, повторяем подключение.",
+          };
+        }
         webCsrfToken = data.csrf_token || "";
         webSessionProfile = data;
         const identity = String(data.telegram_id || data.username || "web");
         if (identity !== storedWebIdentity) {
-          window.sessionStorage.setItem("webapp_identity", identity);
-          window.location.reload();
-          return false;
+          const identityPersisted = storeWebIdentity(identity);
+          if (identityPersisted) {
+            window.location.reload();
+            return {status: "reloading"};
+          }
         }
-        return true;
+        return {status: "authenticated"};
       } catch (error) {
-        return false;
+        return {
+          status: "network_error",
+          message: error && error.name === "AbortError"
+            ? "Сервер отвечает слишком долго. Ваш вход сохранён, пробуем снова."
+            : "Не удалось связаться с сервером. Ваш вход сохранён, пробуем снова.",
+        };
+      } finally {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+      }
+    }
+
+    async function runWebSessionRestore({manual = false} = {}) {
+      if (webSessionRestorePromise) return webSessionRestorePromise;
+      clearWebSessionRetryTimer();
+      showWebConnection(
+        manual ? "Повторно проверяем соединение с сервером." : "Проверяем защищённую сессию.",
+        {checking: true},
+      );
+
+      webSessionRestorePromise = (async () => {
+        const result = await restoreWebSession();
+        if (result.status === "reloading") return;
+        if (result.status === "authenticated") {
+          showWebApp();
+          await refreshState();
+          return;
+        }
+        if (result.status === "unauthorized") {
+          showWebLogin(result.message);
+          return;
+        }
+
+        const retryDelayMs = webSessionRetryDelaysMs[
+          Math.min(webSessionRetryAttempt, webSessionRetryDelaysMs.length - 1)
+        ];
+        webSessionRetryAttempt += 1;
+        showWebConnection(result.message, {retryDelayMs});
+        webSessionRetryTimer = window.setTimeout(() => {
+          webSessionRetryTimer = null;
+          runWebSessionRestore();
+        }, retryDelayMs);
+      })();
+
+      try {
+        await webSessionRestorePromise;
+      } finally {
+        webSessionRestorePromise = null;
       }
     }
 
@@ -6362,7 +6568,7 @@ MINIAPP_HTML = """<!doctype html>
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) throw new Error(data.message || "Не удалось войти.");
-        window.sessionStorage.setItem("webapp_identity", String(data.telegram_id || data.username || "web"));
+        storeWebIdentity(String(data.telegram_id || data.username || "web"));
         window.location.reload();
       } catch (error) {
         errorNode.textContent = error.message || "Не удалось войти.";
@@ -6418,17 +6624,38 @@ MINIAPP_HTML = """<!doctype html>
 
     async function logoutWebApp() {
       if (!window.confirm("Выйти из приложения?")) return;
+      const actionKey = "web-logout";
+      if (!beginAction(actionKey)) return;
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      const timeoutId = controller
+        ? window.setTimeout(() => controller.abort(), webSessionRequestTimeoutMs)
+        : null;
       try {
-        await fetch("/api/web/logout", {
+        const requestOptions = {
           method: "POST",
           headers: {"Content-Type": "application/json", "X-CSRF-Token": webCsrfToken},
           credentials: "same-origin",
           body: "{}",
-        });
-      } finally {
-        try { window.sessionStorage.removeItem("webapp_identity"); } catch (error) {}
+        };
+        if (controller) requestOptions.signal = controller.signal;
+        const response = await fetch("/api/web/logout", requestOptions);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          throw new Error(data.message || "Не удалось завершить сессию.");
+        }
+        clearWebIdentity();
         webCsrfToken = "";
         window.location.reload();
+      } catch (error) {
+        showToast(
+          "Выход не выполнен",
+          error && error.name === "AbortError"
+            ? "Сервер отвечает слишком долго. Проверьте подключение и повторите."
+            : error.message || "Нет связи с сервером. Проверьте подключение и повторите.",
+        );
+      } finally {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        endAction(actionKey);
       }
     }
 
@@ -6461,7 +6688,7 @@ MINIAPP_HTML = """<!doctype html>
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) throw new Error(data.message || "Не удалось изменить пароль.");
-        try { window.sessionStorage.removeItem("webapp_identity"); } catch (error) {}
+        clearWebIdentity();
         webCsrfToken = "";
         webSessionProfile = {};
         showWebLogin(data.message || "Пароль изменён. Войдите заново.");
@@ -6478,11 +6705,8 @@ MINIAPP_HTML = """<!doctype html>
       if (isStandaloneWeb) {
         document.body.classList.add("web-mode");
         webActionSlot.appendChild(mainButton);
-        const restored = await restoreWebSession();
-        if (!restored) {
-          if (document.visibilityState !== "hidden") showWebLogin();
-          return;
-        }
+        await runWebSessionRestore();
+        return;
       }
       showWebApp();
       await refreshState();
@@ -6490,6 +6714,13 @@ MINIAPP_HTML = """<!doctype html>
 
     document.getElementById("webLoginTab").addEventListener("click", () => setWebAuthMode("login"));
     document.getElementById("webRegisterTab").addEventListener("click", () => setWebAuthMode("register"));
+    webConnectionRetry.addEventListener("click", () => {
+      webSessionRetryAttempt = 0;
+      runWebSessionRestore({manual: true});
+    });
+    window.addEventListener("online", () => {
+      if (isStandaloneWeb && !connectionView.hidden) runWebSessionRestore({manual: true});
+    });
     document.getElementById("qrScannerClose").addEventListener("click", stopWebQrScanner);
     document.getElementById("qrScannerManual").addEventListener("click", () => {
       stopWebQrScanner();
@@ -6497,6 +6728,9 @@ MINIAPP_HTML = """<!doctype html>
     });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden" && qrScannerStream) stopWebQrScanner();
+      if (document.visibilityState === "visible" && isStandaloneWeb && !connectionView.hidden) {
+        runWebSessionRestore({manual: true});
+      }
     });
     webLoginForm.addEventListener("submit", loginWebApp);
     webRegisterForm.addEventListener("submit", registerWebApp);

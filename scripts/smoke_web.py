@@ -11,6 +11,7 @@ import re
 import sys
 import tempfile
 from html.parser import HTMLParser
+from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlparse
@@ -182,7 +183,14 @@ def run_smoke() -> None:
     previous_cwd = Path.cwd()
     previous_environment = {
         name: os.environ.get(name)
-        for name in ("ADMIN_IDS", "DB_DIR", "MINIAPP_ENABLED", "SHARED_DIR")
+        for name in (
+            "ADMIN_IDS",
+            "DB_DIR",
+            "MINIAPP_ENABLED",
+            "SHARED_DIR",
+            "WEBAPP_SESSION_IDLE_SECONDS",
+            "WEBAPP_SESSION_TTL_SECONDS",
+        )
     }
     server = None
 
@@ -194,6 +202,8 @@ def run_smoke() -> None:
             os.environ["DB_DIR"] = str(isolated_root)
             os.environ["MINIAPP_ENABLED"] = "1"
             os.environ.pop("SHARED_DIR", None)
+            os.environ.pop("WEBAPP_SESSION_IDLE_SECONDS", None)
+            os.environ.pop("WEBAPP_SESSION_TTL_SECONDS", None)
             os.chdir(isolated_root)
             sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -246,6 +256,26 @@ def run_smoke() -> None:
                     registration_marker in html_text,
                     f"Registration interface marker is missing: {registration_marker}",
                 )
+            for session_restore_marker in (
+                'id="connectionView"',
+                'id="webConnectionRetry"',
+                'window.localStorage.getItem(webIdentityStorageKey)',
+                'status: "authenticated"',
+                'status: "unauthorized"',
+                'status: "network_error"',
+                'response.status === 401',
+                'const webSessionRetryDelaysMs = [2_000, 5_000, 10_000, 20_000, 30_000]',
+                'const actionKey = "web-logout"',
+                '"Выход не выполнен"',
+            ):
+                require(
+                    session_restore_marker in html_text,
+                    f"Web session recovery marker is missing: {session_restore_marker}",
+                )
+            require(
+                "sessionStorage" not in html_text,
+                "Web session identity must not depend on ephemeral sessionStorage.",
+            )
             local_resources, remote_resources = audit_html_resources(base_url, html_text)
 
             status, headers, app_body = http_request(f"{base_url}/app")
@@ -295,7 +325,19 @@ def run_smoke() -> None:
             require(status == 200, f"Service worker returned HTTP {status}.")
             worker_text = worker_body.decode("utf-8")
             require("isPersonalPath" in worker_text, "Service worker lacks API cache protection.")
+            require(
+                "url.origin !== self.location.origin || isPersonalPath(url.pathname)" in worker_text,
+                "Service worker may intercept personal API responses.",
+            )
             require('request.method !== "GET"' in worker_text, "Service worker may cache write requests.")
+
+            status, headers, web_session_body = http_request(f"{base_url}/api/web/session")
+            web_session_payload = parse_json_response(status, headers, web_session_body)
+            require(status == 401, f"Missing web session returned HTTP {status} instead of 401.")
+            require(
+                web_session_payload.get("code") == "unauthorized",
+                "Missing web session response is not explicitly unauthorized.",
+            )
 
             status, headers, unauthorized_body = http_request(
                 f"{base_url}/api/app/state",
@@ -324,9 +366,23 @@ def run_smoke() -> None:
             )
             login_payload = parse_json_response(status, headers, login_body)
             require(status == 200 and login_payload.get("ok") is True, "Standalone web login failed.")
-            session_cookie = str(headers.get("Set-Cookie") or "").split(";", 1)[0]
+            set_cookie = str(headers.get("Set-Cookie") or "")
+            parsed_cookie = SimpleCookie()
+            parsed_cookie.load(set_cookie)
+            session_morsel = parsed_cookie.get(webapp_auth.COOKIE_NAME) or parsed_cookie.get(
+                webapp_auth.SECURE_COOKIE_NAME
+            )
+            require(session_morsel is not None, "Standalone web login did not set a session cookie.")
+            cookie_max_age = int(session_morsel["max-age"] or "0")
+            require(
+                webapp_auth.DEFAULT_SESSION_TTL_SECONDS - 1
+                <= cookie_max_age
+                <= webapp_auth.DEFAULT_SESSION_TTL_SECONDS,
+                "Standalone web session cookie is not valid for the configured 30-day lifetime.",
+            )
+            session_cookie = set_cookie.split(";", 1)[0]
             require(session_cookie, "Standalone web login did not set a session cookie.")
-            require("HttpOnly" in str(headers.get("Set-Cookie") or ""), "Session cookie is not HttpOnly.")
+            require("HttpOnly" in set_cookie, "Session cookie is not HttpOnly.")
             csrf_token = str(login_payload.get("csrf_token") or "")
             require(csrf_token, "Standalone web login did not return CSRF token.")
 

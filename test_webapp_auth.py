@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -19,6 +20,8 @@ class WebAppAuthTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_dir = os.environ.get("DB_DIR")
+        self.old_session_ttl = os.environ.pop("WEBAPP_SESSION_TTL_SECONDS", None)
+        self.old_session_idle = os.environ.pop("WEBAPP_SESSION_IDLE_SECONDS", None)
         os.environ["DB_DIR"] = self.temp_dir.name
         sys.path.insert(0, str(PROJECT_DIR))
         for module_name in ["database", "webapp_auth"]:
@@ -33,6 +36,14 @@ class WebAppAuthTest(unittest.TestCase):
             os.environ.pop("DB_DIR", None)
         else:
             os.environ["DB_DIR"] = self.old_db_dir
+        if self.old_session_ttl is not None:
+            os.environ["WEBAPP_SESSION_TTL_SECONDS"] = self.old_session_ttl
+        else:
+            os.environ.pop("WEBAPP_SESSION_TTL_SECONDS", None)
+        if self.old_session_idle is not None:
+            os.environ["WEBAPP_SESSION_IDLE_SECONDS"] = self.old_session_idle
+        else:
+            os.environ.pop("WEBAPP_SESSION_IDLE_SECONDS", None)
         for module_name in ["database", "webapp_auth"]:
             sys.modules.pop(module_name, None)
         if str(PROJECT_DIR) in sys.path:
@@ -59,12 +70,50 @@ class WebAppAuthTest(unittest.TestCase):
 
         cookie = self.auth.build_session_cookie(session["session_token"], secure=True, max_age=60)
         self.assertIn("HttpOnly", cookie)
+        self.assertIn("Max-Age=60", cookie)
         self.assertIn("SameSite=Strict", cookie)
         self.assertIn("Secure", cookie)
         self.assertEqual(self.auth.session_token_from_cookie(cookie), session["session_token"])
 
         self.assertTrue(self.auth.revoke_web_session(session["session_token"]))
         self.assertIsNone(self.auth.get_web_session(session["session_token"]))
+
+    def test_session_defaults_are_30_days_and_upper_bounds_are_enforced(self):
+        expected = 30 * 24 * 60 * 60
+        self.assertEqual(self.auth.DEFAULT_SESSION_TTL_SECONDS, expected)
+        self.assertEqual(self.auth.DEFAULT_SESSION_IDLE_SECONDS, expected)
+        self.assertEqual(self.auth.MAX_SESSION_LIFETIME_SECONDS, expected)
+        self.assertEqual(self.auth._session_ttl_seconds(), expected)
+        self.assertEqual(self.auth._session_idle_seconds(), expected)
+
+        os.environ["WEBAPP_SESSION_TTL_SECONDS"] = str(90 * 24 * 60 * 60)
+        os.environ["WEBAPP_SESSION_IDLE_SECONDS"] = str(90 * 24 * 60 * 60)
+        self.assertEqual(self.auth._session_ttl_seconds(), expected)
+        self.assertEqual(self.auth._session_idle_seconds(), expected)
+
+        os.environ.pop("WEBAPP_SESSION_TTL_SECONDS")
+        os.environ.pop("WEBAPP_SESSION_IDLE_SECONDS")
+        account = self.auth.upsert_web_account("month.session", 22002, "month-session-password")
+        authenticated = self.auth.authenticate_web_credentials(
+            account["username"], "month-session-password"
+        )
+        before = int(time.time())
+        session = self.auth.create_web_session(authenticated)
+        after = int(time.time())
+        self.assertGreaterEqual(session["expires_at"], before + expected)
+        self.assertLessEqual(session["expires_at"], after + expected)
+
+        cookie = self.auth.build_session_cookie(
+            session["session_token"], secure=True, max_age=self.auth._session_ttl_seconds()
+        )
+        parsed_cookie = SimpleCookie()
+        parsed_cookie.load(cookie)
+        morsel = parsed_cookie[self.auth.SECURE_COOKIE_NAME]
+        self.assertEqual(morsel["max-age"], str(expected))
+        self.assertEqual(morsel["path"], "/")
+        self.assertTrue(morsel["httponly"])
+        self.assertTrue(morsel["secure"])
+        self.assertEqual(morsel["samesite"], "Strict")
 
     def test_updating_password_revokes_existing_sessions(self):
         first = self.auth.upsert_web_account("admin.test", 99001, "first-demo-password")
@@ -187,6 +236,8 @@ class WebAppHttpTest(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_dir = os.environ.get("DB_DIR")
         self.old_admin_ids = os.environ.get("ADMIN_IDS")
+        self.old_session_ttl = os.environ.pop("WEBAPP_SESSION_TTL_SECONDS", None)
+        self.old_session_idle = os.environ.pop("WEBAPP_SESSION_IDLE_SECONDS", None)
         os.environ["DB_DIR"] = self.temp_dir.name
         os.environ.pop("ADMIN_IDS", None)
         sys.path.insert(0, str(PROJECT_DIR))
@@ -218,6 +269,14 @@ class WebAppHttpTest(unittest.TestCase):
             os.environ.pop("ADMIN_IDS", None)
         else:
             os.environ["ADMIN_IDS"] = self.old_admin_ids
+        if self.old_session_ttl is not None:
+            os.environ["WEBAPP_SESSION_TTL_SECONDS"] = self.old_session_ttl
+        else:
+            os.environ.pop("WEBAPP_SESSION_TTL_SECONDS", None)
+        if self.old_session_idle is not None:
+            os.environ["WEBAPP_SESSION_IDLE_SECONDS"] = self.old_session_idle
+        else:
+            os.environ.pop("WEBAPP_SESSION_IDLE_SECONDS", None)
         for module_name in ["database", "webapp_auth", "miniapp_server"]:
             sys.modules.pop(module_name, None)
         if str(PROJECT_DIR) in sys.path:
@@ -306,7 +365,17 @@ class WebAppHttpTest(unittest.TestCase):
             {"Origin": self.origin},
         )
         self.assertEqual(status, 200)
-        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        set_cookie = headers["Set-Cookie"]
+        parsed_cookie = SimpleCookie()
+        parsed_cookie.load(set_cookie)
+        session_morsel = parsed_cookie.get(self.auth.COOKIE_NAME) or parsed_cookie.get(
+            self.auth.SECURE_COOKIE_NAME
+        )
+        self.assertIsNotNone(session_morsel)
+        cookie_max_age = int(session_morsel["max-age"])
+        self.assertGreaterEqual(cookie_max_age, self.auth.DEFAULT_SESSION_TTL_SECONDS - 1)
+        self.assertLessEqual(cookie_max_age, self.auth.DEFAULT_SESSION_TTL_SECONDS)
+        cookie = set_cookie.split(";", 1)[0]
         csrf = login["csrf_token"]
 
         status, _, _ = self.request(
@@ -362,6 +431,16 @@ class WebAppHttpTest(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertIn("Max-Age=0", clear_headers["Set-Cookie"])
+
+        status, repeated_logout, repeated_clear_headers = self.request(
+            "POST",
+            "/api/web/logout",
+            {},
+            {"Cookie": cookie, "X-CSRF-Token": csrf, "Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(repeated_logout["ok"])
+        self.assertIn("Max-Age=0", repeated_clear_headers["Set-Cookie"])
 
     def test_registration_waits_for_admin_approval_then_allows_phone_login(self):
         payload = {

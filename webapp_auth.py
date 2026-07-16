@@ -23,8 +23,10 @@ MIN_PASSWORD_LENGTH = 10
 MAX_PASSWORD_LENGTH = 128
 MAX_FAILED_ATTEMPTS = 5
 LOCK_SECONDS = 5 * 60
-DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60
-DEFAULT_SESSION_IDLE_SECONDS = 2 * 60 * 60
+MIN_SESSION_LIFETIME_SECONDS = 15 * 60
+MAX_SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
+DEFAULT_SESSION_TTL_SECONDS = MAX_SESSION_LIFETIME_SECONDS
+DEFAULT_SESSION_IDLE_SECONDS = MAX_SESSION_LIFETIME_SECONDS
 
 
 class WebRegistrationError(ValueError):
@@ -42,7 +44,7 @@ def _session_ttl_seconds() -> int:
         configured = int(os.getenv("WEBAPP_SESSION_TTL_SECONDS", DEFAULT_SESSION_TTL_SECONDS))
     except (TypeError, ValueError):
         configured = DEFAULT_SESSION_TTL_SECONDS
-    return max(15 * 60, min(configured, 30 * 24 * 60 * 60))
+    return max(MIN_SESSION_LIFETIME_SECONDS, min(configured, MAX_SESSION_LIFETIME_SECONDS))
 
 
 def _session_idle_seconds() -> int:
@@ -50,7 +52,7 @@ def _session_idle_seconds() -> int:
         configured = int(os.getenv("WEBAPP_SESSION_IDLE_SECONDS", DEFAULT_SESSION_IDLE_SECONDS))
     except (TypeError, ValueError):
         configured = DEFAULT_SESSION_IDLE_SECONDS
-    return max(15 * 60, min(configured, _session_ttl_seconds()))
+    return max(MIN_SESSION_LIFETIME_SECONDS, min(configured, _session_ttl_seconds()))
 
 
 def _normalize_username(username: str) -> str:

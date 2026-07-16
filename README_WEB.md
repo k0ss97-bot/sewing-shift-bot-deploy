@@ -52,8 +52,8 @@ python3 -m venv .venv
 | `MINIAPP_DEBUG` | упрощённый локальный вход; на сервере всегда `0` |
 | `WEBAPP_ENV` | для сервера значение `production` |
 | `WEBAPP_PUBLIC_ORIGIN` | точный внешний origin, например `https://app.example.ru` |
-| `WEBAPP_SESSION_TTL_SECONDS` | полный срок сессии, по умолчанию 12 часов |
-| `WEBAPP_SESSION_IDLE_SECONDS` | выход при бездействии, по умолчанию 2 часа |
+| `WEBAPP_SESSION_TTL_SECONDS` | полный срок сессии, по умолчанию 30 дней |
+| `WEBAPP_SESSION_IDLE_SECONDS` | выход при бездействии, по умолчанию 30 дней |
 | `WEBAPP_COOKIE_SECURE` | на HTTPS-сервере обязательно `1` |
 | `TRUST_PROXY_HEADERS` | `1` только за контролируемым reverse proxy |
 | `DB_DIR` | абсолютный путь к приватному постоянному каталогу SQLite |
@@ -61,6 +61,11 @@ python3 -m venv .venv
 При `WEBAPP_ENV=production` сервер не запустится с HTTP-origin, небезопасной
 cookie или включённым debug-входом. `TRUST_PROXY_HEADERS=1` допустим только если
 proxy удаляет входящие пользовательские `X-Forwarded-*` и выставляет свои.
+
+По умолчанию вход и cookie сохраняются на 30 дней. Явный выход немедленно
+отзывает серверную сессию и удаляет cookie. Настраиваемые TTL и idle-timeout
+ограничены сверху 30 днями, а idle-timeout дополнительно не может превышать
+полный TTL сессии.
 
 ## Веб-аккаунты
 

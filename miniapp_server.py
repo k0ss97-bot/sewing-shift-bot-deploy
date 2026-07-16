@@ -4769,11 +4769,18 @@ def make_handler(bot_token: str, debug: bool):
 
             if path == "/api/web/logout":
                 session_token = self.web_session_token()
+                existing_session = get_web_session(session_token) if session_token else None
+                if existing_session is None:
+                    self.send_json(
+                        {"ok": True, "message": "Вы вышли из приложения."},
+                        extra_headers={"Set-Cookie": build_clear_cookie(secure=self.secure_cookie())},
+                    )
+                    return
                 session = get_web_session(
                     session_token,
                     self.headers.get("X-CSRF-Token", ""),
                     require_csrf=True,
-                ) if session_token else None
+                )
                 if session is None:
                     self.send_json({"ok": False, "code": "invalid_csrf", "message": "Сессия устарела."}, status=403)
                     return
