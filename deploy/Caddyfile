@@ -1,12 +1,15 @@
-www.shagaemfabrika.ru {
-    redir https://shagaemfabrika.ru{uri} permanent
+{
+    servers {
+        protocols h1 h2
+    }
 }
 
-shagaemfabrika.ru {
+www.shagaemfabrika.ru {
     encode zstd gzip
 
     header {
         -Server
+        Alt-Svc "clear"
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "same-origin"
@@ -15,14 +18,10 @@ shagaemfabrika.ru {
     reverse_proxy 127.0.0.1:3000
 }
 
-www.shagaem-vmeste.ru {
-    redir https://shagaemfabrika.ru{uri} permanent
-}
-
-shagaem-vmeste.ru {
-    redir https://shagaemfabrika.ru{uri} permanent
+shagaemfabrika.ru {
+    redir https://www.shagaemfabrika.ru{uri} permanent
 }
 
 sewing.161-104-33-59.sslip.io {
-    redir https://shagaemfabrika.ru{uri} permanent
+    redir https://www.shagaemfabrika.ru{uri} permanent
 }

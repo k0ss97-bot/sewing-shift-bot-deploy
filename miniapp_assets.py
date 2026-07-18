@@ -6,7 +6,15 @@ MINIAPP_HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Шагаем вместе</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    (() => {
+      const launchUrl = `${window.location.search}&${window.location.hash}`;
+      const isTelegramLaunch = /(?:^|[?&#])tgWebApp(?:Data|Version|Platform)=/.test(launchUrl);
+      if (isTelegramLaunch) {
+        document.write('<script src="https://telegram.org/js/telegram-web-app.js"><\\/script>');
+      }
+    })();
+  </script>
   <style>
     :root {
       color-scheme: light;
