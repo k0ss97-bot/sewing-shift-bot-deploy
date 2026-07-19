@@ -2740,6 +2740,93 @@ MINIAPP_HTML = """<!doctype html>
         margin: 26px auto 0;
       }
     }
+    /* Desktop header: compact, legible, and visually connected to the
+       workspace rather than a large empty banner. */
+    @media (min-width: 900px) {
+      body.web-mode .appbar {
+        min-height: 74px;
+        padding: 0 34px 0 292px !important;
+        display: grid !important;
+        grid-template-columns: minmax(280px, 1fr) auto;
+        align-items: center;
+        gap: 22px;
+        background: rgba(255,255,255,.94);
+        box-shadow: 0 1px 0 rgba(111,128,159,.15);
+      }
+
+      body.web-mode .app-title {
+        min-width: 0;
+        display: flex !important;
+        align-items: center;
+        justify-content: flex-start !important;
+        gap: 18px;
+      }
+
+      body.web-mode .app-brand-lockup {
+        min-height: 44px;
+        display: flex !important;
+        align-items: center;
+        justify-content: flex-start !important;
+        gap: 10px;
+      }
+
+      body.web-mode .app-brand-lockup img,
+      body.web-mode .app-title img {
+        max-height: 34px;
+        width: auto;
+      }
+
+      body.web-mode .app-title::after {
+        content: "ОПЕРАЦИОННЫЙ ЦЕНТР";
+        padding-left: 18px;
+        border-left: 1px solid rgba(111,128,159,.2);
+        color: #74829a;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .1em;
+        white-space: nowrap;
+      }
+
+      body.web-mode .appbar > button {
+        width: 38px;
+        height: 38px;
+        min-height: 38px;
+        padding: 0;
+        border: 1px solid rgba(111,128,159,.15);
+        border-radius: 10px;
+        box-shadow: 0 5px 14px rgba(27,47,78,.08);
+      }
+
+      body.web-mode .appbar > button + button {
+        margin-left: 10px;
+      }
+
+      body.web-mode .bottom-nav {
+        inset: 94px auto 32px 24px;
+        width: 238px;
+        padding: 14px 12px;
+        border-radius: 14px;
+        box-shadow: 0 12px 30px rgba(34,53,85,.1);
+      }
+
+      body.web-mode .bottom-nav::before {
+        padding: 8px 12px 12px;
+        color: #687995;
+        font-size: 10px;
+        letter-spacing: .12em;
+      }
+
+      body.web-mode .nav-item,
+      body.web-mode .bottom-nav button {
+        min-height: 44px;
+        padding: 0 12px;
+        border-radius: 10px;
+      }
+
+      body.web-mode .body {
+        padding-top: 32px !important;
+      }
+    }
 </style>
 </head>
 <body>
@@ -2885,6 +2972,9 @@ MINIAPP_HTML = """<!doctype html>
       "warehouseSizeFilter",
       "warehouseColorFilter",
       "adminSection",
+      "employeePositionFilter",
+      "employeeStatusFilter",
+      "employeeShiftFilter",
       "adminReportType",
       "adminStartDate",
       "adminEndDate",
@@ -2949,6 +3039,9 @@ MINIAPP_HTML = """<!doctype html>
       warehouseSizeFilter: "",
       warehouseColorFilter: "",
       adminSection: "reports",
+      employeePositionFilter: "",
+      employeeStatusFilter: "",
+      employeeShiftFilter: "",
       adminReportType: "period",
       adminStartDate: "",
       adminEndDate: "",
@@ -4754,6 +4847,22 @@ MINIAPP_HTML = """<!doctype html>
       if (color) state.warehouseColorFilter = color.value;
     }
 
+    function syncEmployeeFilters() {
+      const position = document.getElementById("employeePositionFilter");
+      const status = document.getElementById("employeeStatusFilter");
+      const shift = document.getElementById("employeeShiftFilter");
+
+      if (position) state.employeePositionFilter = position.value;
+      if (status) state.employeeStatusFilter = status.value;
+      if (shift) state.employeeShiftFilter = shift.value;
+    }
+
+    function resetEmployeeFilters() {
+      state.employeePositionFilter = "";
+      state.employeeStatusFilter = "";
+      state.employeeShiftFilter = "";
+    }
+
     function resetWarehouseFilters() {
       state.warehouseProductFilter = "";
       state.warehouseSizeFilter = "";
@@ -5950,8 +6059,25 @@ MINIAPP_HTML = """<!doctype html>
       const pending = admin && admin.pending_employees ? admin.pending_employees : [];
       const positions = admin && admin.positions ? admin.positions : [];
       const listedEmployees = employees.filter((employee) => employee.status !== "pending");
+      const openShiftNames = new Set((admin && admin.open_shifts ? admin.open_shifts : []).map((shift) => String(shift.employee || "").trim().toLocaleLowerCase("ru")));
+      const positionFilters = [...new Set(listedEmployees.map((employee) => employee.position).filter((position) => position && position !== "-"))].sort((a, b) => a.localeCompare(b, "ru"));
       const currentTelegramId = Number(state.data && state.data.employee ? state.data.employee.telegram_id : 0);
       mainButton.textContent = "Обновить сотрудников";
+
+      if (state.employeePositionFilter && !positionFilters.includes(state.employeePositionFilter)) state.employeePositionFilter = "";
+      if (!["", "active", "inactive"].includes(state.employeeStatusFilter)) state.employeeStatusFilter = "";
+      if (!["", "on_shift", "off_shift"].includes(state.employeeShiftFilter)) state.employeeShiftFilter = "";
+
+      const employeeIsOnShift = (employee) => openShiftNames.has(String(employee.full_name || "").trim().toLocaleLowerCase("ru"));
+      const filteredEmployees = listedEmployees.filter((employee) => {
+        const onShift = employeeIsOnShift(employee);
+        if (state.employeePositionFilter && employee.position !== state.employeePositionFilter) return false;
+        if (state.employeeStatusFilter === "active" && employee.status !== "active") return false;
+        if (state.employeeStatusFilter === "inactive" && employee.status === "active") return false;
+        if (state.employeeShiftFilter === "on_shift" && !onShift) return false;
+        if (state.employeeShiftFilter === "off_shift" && onShift) return false;
+        return true;
+      });
 
       const positionOptions = (employee) => {
         const hasPosition = positions.includes(employee.position);
@@ -5974,10 +6100,10 @@ MINIAPP_HTML = """<!doctype html>
         pending: "ожидает",
         rejected: "отклонён",
       }[status] || status || "-");
-      const employeeCards = listedEmployees.length ? listedEmployees.map((employee) => `
+      const employeeCards = filteredEmployees.length ? filteredEmployees.map((employee) => `
         <div class="card field-card">
           <label>ID ${escapeHtml(employee.id)} · ${employee.role === "admin" ? "администратор" : "сотрудник"}</label>
-          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employeeStatusLabel(employee.status))}</span></div>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><div class="employee-statuses"><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employeeStatusLabel(employee.status))}</span><span class="status-chip ${employeeIsOnShift(employee) ? "on-shift" : "gray"}">${employeeIsOnShift(employee) ? "на смене" : "не на смене"}</span></div></div>
           ${employee.role === "admin" && Number(employee.telegram_id) === currentTelegramId ? "" : `<div class="form-grid"><div class="field full"><label>${employee.role === "admin" ? "Должность после снятия прав" : "Должность"}</label><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>`}
           ${employee.role === "admin" ? `
             <div class="button-row">
@@ -5988,7 +6114,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="button-row"><button class="small-button" data-admin-action="role-admin" data-employee-id="${escapeHtml(employee.id)}">Назначить администратором</button></div>
           `}
         </div>
-      `).join("") : itemEmpty("Сотрудников пока нет.");
+      `).join("") : itemEmpty("По выбранным фильтрам сотрудников нет.");
       const pendingCards = pending.length ? pending.map((employee) => `
         <div class="card field-card">
           <label>Заявка · ${escapeHtml(employee.registered_at || "")}</label>
@@ -6007,6 +6133,14 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="section-title"><b>Заявки</b><span>${pending.length}</span></div>
         <div class="op-list">${pendingCards}</div>
+        <div class="card field-card employee-filter-panel">
+          <div class="form-grid employee-filter-grid">
+            <div class="field"><label>Должность</label><select id="employeePositionFilter"><option value="">Все должности</option>${positionFilters.map((position) => `<option value="${escapeHtml(position)}" ${state.employeePositionFilter === position ? "selected" : ""}>${escapeHtml(position)}</option>`).join("")}</select></div>
+            <div class="field"><label>Статус</label><select id="employeeStatusFilter"><option value="">Все статусы</option><option value="active" ${state.employeeStatusFilter === "active" ? "selected" : ""}>Активные</option><option value="inactive" ${state.employeeStatusFilter === "inactive" ? "selected" : ""}>Неактивные</option></select></div>
+            <div class="field"><label>Текущая смена</label><select id="employeeShiftFilter"><option value="">Все сотрудники</option><option value="on_shift" ${state.employeeShiftFilter === "on_shift" ? "selected" : ""}>Сейчас на смене</option><option value="off_shift" ${state.employeeShiftFilter === "off_shift" ? "selected" : ""}>Сейчас не на смене</option></select></div>
+          </div>
+          <div class="button-row employee-filter-actions"><span class="status-chip gray">Найдено: ${filteredEmployees.length} из ${listedEmployees.length}</span><button class="small-button secondary" data-admin-action="clear-employee-filters">Сбросить фильтры</button></div>
+        </div>
         <div class="section-title"><b>Все пользователи</b><button data-admin-action="refresh">обновить</button></div>
         <div class="op-list">${employeeCards}</div>
       `;
@@ -6469,6 +6603,11 @@ MINIAPP_HTML = """<!doctype html>
       const adminAction = event.target.closest("[data-admin-action]");
       if (adminAction) {
         syncAdminForm();
+        if (adminAction.dataset.adminAction === "clear-employee-filters") {
+          resetEmployeeFilters();
+          render();
+          return;
+        }
         if (adminAction.dataset.adminAction === "refresh") refreshAdminDashboard();
         if (adminAction.dataset.adminAction === "load-report") loadAdminReport();
         if (adminAction.dataset.adminAction === "export-report") exportAdminReport();
@@ -6712,6 +6851,12 @@ MINIAPP_HTML = """<!doctype html>
 
       if (event.target.closest("#warehouseProductFilter") || event.target.closest("#warehouseSizeFilter") || event.target.closest("#warehouseColorFilter")) {
         syncWarehouseFilters();
+        render();
+        return;
+      }
+
+      if (event.target.closest("#employeePositionFilter") || event.target.closest("#employeeStatusFilter") || event.target.closest("#employeeShiftFilter")) {
+        syncEmployeeFilters();
         render();
         return;
       }
