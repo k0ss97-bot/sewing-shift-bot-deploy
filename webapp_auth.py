@@ -688,11 +688,16 @@ def revoke_web_sessions_for_telegram_id(telegram_id: int) -> int:
     return changed
 
 
-def session_token_from_cookie(cookie_header: str) -> str:
+def session_token_from_cookie(cookie_header: str, *, secure: bool | None = None) -> str:
     try:
         cookie = SimpleCookie()
         cookie.load(str(cookie_header or ""))
-        morsel = cookie.get(SECURE_COOKIE_NAME) or cookie.get(COOKIE_NAME)
+        if secure is True:
+            morsel = cookie.get(SECURE_COOKIE_NAME)
+        elif secure is False:
+            morsel = cookie.get(COOKIE_NAME)
+        else:
+            morsel = cookie.get(SECURE_COOKIE_NAME) or cookie.get(COOKIE_NAME)
         return morsel.value if morsel else ""
     except (KeyError, ValueError):
         return ""
@@ -714,6 +719,13 @@ def build_session_cookie(session_token: str, *, secure: bool, max_age: int | Non
 
 def build_clear_cookie(*, secure: bool) -> str:
     return build_session_cookie("", secure=secure, max_age=0)
+
+
+def build_clear_cookies() -> tuple[str, str]:
+    return (
+        build_session_cookie("", secure=True, max_age=0),
+        build_session_cookie("", secure=False, max_age=0),
+    )
 
 
 def _cli() -> None:

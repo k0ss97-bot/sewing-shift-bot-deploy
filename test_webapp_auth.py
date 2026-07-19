@@ -399,7 +399,7 @@ class WebAppHttpTest(unittest.TestCase):
             {"Cookie": cookie, "X-CSRF-Token": csrf, "Origin": self.origin},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(telegram_state["employee"]["telegram_id"], 23002)
+        self.assertEqual(telegram_state["employee"]["telegram_id"], 23001)
 
         status, _, _ = self.request(
             "POST",

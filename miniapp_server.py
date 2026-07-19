@@ -115,7 +115,7 @@ from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 from webapp_auth import (
     WebRegistrationError,
     authenticate_web_credentials,
-    build_clear_cookie,
+    build_clear_cookies,
     build_session_cookie,
     change_web_password,
     create_web_session,
@@ -134,6 +134,22 @@ AUTH_MAX_AGE_SECONDS = 24 * 60 * 60
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_DEFECT_PHOTO_BYTES = 2 * 1024 * 1024
 MAX_REQUEST_BODY_BYTES = 15 * 1024 * 1024
+MAX_CONCURRENT_REQUESTS = 32
+REQUEST_SOCKET_TIMEOUT_SECONDS = 30
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "base-uri 'self'; "
+    "connect-src 'self'; "
+    "font-src 'self' data:; "
+    "form-action 'self'; "
+    "frame-ancestors 'self'; "
+    "img-src 'self' data: blob:; "
+    "media-src 'self' blob:; "
+    "object-src 'none'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "worker-src 'self' blob:"
+)
 ROUTES_MINIAPP_ENABLED = False
 CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
 CUTTING_LAYOUT_OPERATION = "Формирование настила"
@@ -1385,8 +1401,9 @@ def task_attachment_to_dict(task_id: int | None):
         return None
 
     return {
-        **attachment,
         "task_id": task_id,
+        "file_name": attachment["file_name"],
+        "mime_type": attachment["mime_type"],
     }
 
 
@@ -4361,14 +4378,17 @@ def make_handler(bot_token: str, debug: bool):
             return bool(origin and hmac.compare_digest(origin, self.expected_origin()))
 
         def web_session_token(self):
-            return session_token_from_cookie(self.headers.get("Cookie", ""))
+            return session_token_from_cookie(
+                self.headers.get("Cookie", ""),
+                secure=self.secure_cookie(),
+            )
 
         def authenticate_request(self, payload: dict, *, require_csrf: bool):
-            has_telegram_credentials = bool(
-                payload.get("initData") or payload.get("authToken") or (debug and payload.get("telegram_id"))
-            )
-            if has_telegram_credentials:
-                return authenticate_payload(payload, bot_token, debug)
+            if debug and payload.get("telegram_id"):
+                try:
+                    return {"id": int(payload["telegram_id"])}
+                except (TypeError, ValueError):
+                    return None
             session_token = self.web_session_token()
             if session_token:
                 session = get_web_session(
@@ -4457,7 +4477,7 @@ def make_handler(bot_token: str, debug: bool):
                             "message": "Доступ к аккаунту отключён. Обратитесь к администратору.",
                         },
                         status=401,
-                        extra_headers={"Set-Cookie": build_clear_cookie(secure=self.secure_cookie())},
+                        extra_headers={"Set-Cookie": build_clear_cookies()},
                     )
                     return
                 self.send_json(
@@ -4479,8 +4499,6 @@ def make_handler(bot_token: str, debug: bool):
             if path == "/api/production/task-attachment":
                 query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
                 payload = {
-                    "initData": query.get("initData", ""),
-                    "authToken": query.get("authToken", "") or query.get("auth", ""),
                     "telegram_id": query.get("telegram_id", "") or query.get("debug_tg_id", ""),
                 }
                 user = self.authenticate_request(payload, require_csrf=False)
@@ -4528,8 +4546,6 @@ def make_handler(bot_token: str, debug: bool):
             if path in {"/api/routes/qr", "/api/routes/defect-photo"}:
                 query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
                 payload = {
-                    "initData": query.get("initData", ""),
-                    "authToken": query.get("authToken", "") or query.get("auth", ""),
                     "telegram_id": query.get("telegram_id", "") or query.get("debug_tg_id", ""),
                 }
                 user = self.authenticate_request(payload, require_csrf=False)
@@ -4648,10 +4664,7 @@ def make_handler(bot_token: str, debug: bool):
                 self.send_json({"ok": False, "message": "Запрос или файл слишком большой."}, status=413)
                 return
 
-            has_telegram_credentials = bool(
-                self.headers.get("X-Telegram-Init-Data")
-            )
-            uses_web_cookie = bool(self.web_session_token()) and not has_telegram_credentials
+            uses_web_cookie = bool(self.web_session_token())
             if (path in {"/api/web/login", "/api/web/register", "/api/web/logout"} or uses_web_cookie) and not self.origin_is_valid():
                 self.send_json({"ok": False, "code": "invalid_origin", "message": "Запрос отклонён."}, status=403)
                 return
@@ -4773,7 +4786,7 @@ def make_handler(bot_token: str, debug: bool):
                 if existing_session is None:
                     self.send_json(
                         {"ok": True, "message": "Вы вышли из приложения."},
-                        extra_headers={"Set-Cookie": build_clear_cookie(secure=self.secure_cookie())},
+                        extra_headers={"Set-Cookie": build_clear_cookies()},
                     )
                     return
                 session = get_web_session(
@@ -4787,7 +4800,7 @@ def make_handler(bot_token: str, debug: bool):
                 revoke_web_session(session_token)
                 self.send_json(
                     {"ok": True, "message": "Вы вышли из приложения."},
-                    extra_headers={"Set-Cookie": build_clear_cookie(secure=self.secure_cookie())},
+                    extra_headers={"Set-Cookie": build_clear_cookies()},
                 )
                 return
 
@@ -4811,7 +4824,7 @@ def make_handler(bot_token: str, debug: bool):
                     return
                 self.send_json(
                     password_result,
-                    extra_headers={"Set-Cookie": build_clear_cookie(secure=self.secure_cookie())},
+                    extra_headers={"Set-Cookie": build_clear_cookies()},
                 )
                 return
 
@@ -4954,6 +4967,7 @@ def make_handler(bot_token: str, debug: bool):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "same-origin")
             self.send_header("Permissions-Policy", "geolocation=(), microphone=(), camera=(self)")
+            self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
 
         def send_html(self, html_text: str, status: int = 200):
             body = html_text.encode("utf-8")
@@ -4973,7 +4987,9 @@ def make_handler(bot_token: str, debug: bool):
             self.send_header("Cache-Control", "no-store")
             self.send_security_headers()
             for header_name, header_value in (extra_headers or {}).items():
-                self.send_header(header_name, header_value)
+                values = header_value if isinstance(header_value, (list, tuple)) else (header_value,)
+                for value in values:
+                    self.send_header(header_name, value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -5007,6 +5023,30 @@ def make_handler(bot_token: str, debug: bool):
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
+    daemon_threads = True
+    block_on_close = False
+    request_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+
+    def get_request(self):
+        request, client_address = super().get_request()
+        request.settimeout(REQUEST_SOCKET_TIMEOUT_SECONDS)
+        return request, client_address
+
+    def process_request(self, request, client_address):
+        if not self.request_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.request_slots.release()
 
 
 def start_miniapp_server(bot_token: str, host: str, port: int, debug: bool = False):

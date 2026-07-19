@@ -1,5 +1,4 @@
 import os
-from urllib.parse import urlencode
 
 from aiogram.types import (
     InlineKeyboardButton,
@@ -10,23 +9,16 @@ from aiogram.types import (
 )
 
 from catalog import format_color_label
-from miniapp_auth import create_auth_token
 
 
 def get_miniapp_url(telegram_id: int | None = None):
+    del telegram_id
     base_url = os.getenv("MINIAPP_URL") or os.getenv("WEBAPP_URL")
 
     if not base_url:
         return ""
 
-    app_url = f"{base_url.rstrip('/')}/app"
-    bot_token = os.getenv("BOT_TOKEN", "")
-
-    if telegram_id is None or not bot_token:
-        return app_url
-
-    query = urlencode({"auth": create_auth_token(telegram_id, bot_token)})
-    return f"{app_url}?{query}"
+    return f"{base_url.rstrip('/')}/app"
 
 
 def miniapp_inline_keyboard(telegram_id: int | None = None):

@@ -6,15 +6,6 @@ MINIAPP_HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Шагаем вместе</title>
-  <script>
-    (() => {
-      const launchUrl = `${window.location.search}&${window.location.hash}`;
-      const isTelegramLaunch = /(?:^|[?&#])tgWebApp(?:Data|Version|Platform)=/.test(launchUrl);
-      if (isTelegramLaunch) {
-        document.write('<script src="https://telegram.org/js/telegram-web-app.js"><\\/script>');
-      }
-    })();
-  </script>
   <style>
     :root {
       color-scheme: light;
@@ -2375,24 +2366,20 @@ MINIAPP_HTML = """<!doctype html>
   </section>
 
   <script>
-    const tg = window.Telegram && window.Telegram.WebApp;
+    const tg = null;
     const urlParams = new URLSearchParams(window.location.search);
     const debugTelegramId = urlParams.get("debug_tg_id");
-    const queryAuthToken = urlParams.get("auth");
-    let storedAuthToken = "";
-
-    try {
-      if (queryAuthToken) {
-        window.localStorage.setItem("miniapp_auth", queryAuthToken);
-      }
-      storedAuthToken = window.localStorage.getItem("miniapp_auth") || "";
-    } catch (error) {
-      storedAuthToken = "";
+    if (urlParams.has("auth")) {
+      urlParams.delete("auth");
+      const cleanQuery = urlParams.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}${window.location.hash}`);
     }
-
-    const authToken = queryAuthToken || storedAuthToken;
-    const telegramUserId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? String(tg.initDataUnsafe.user.id || "") : "";
-    const isStandaloneWeb = !debugTelegramId && !authToken && !(tg && tg.initData);
+    try {
+      window.localStorage.removeItem("miniapp_auth");
+    } catch (error) {
+      // Storage may be unavailable in private browsing mode.
+    }
+    const isStandaloneWeb = !debugTelegramId;
     let webCsrfToken = "";
     let webSessionProfile = {};
     const webIdentityStorageKey = "webapp_identity";
@@ -2402,7 +2389,7 @@ MINIAPP_HTML = """<!doctype html>
     } catch (error) {
       storedWebIdentity = "";
     }
-    const authIdentity = debugTelegramId || telegramUserId || storedWebIdentity || (isStandaloneWeb ? "web_anonymous" : "telegram_anonymous");
+    const authIdentity = debugTelegramId || storedWebIdentity || "web_anonymous";
     const uiStateStorageKey = `miniapp_ui_state_${authIdentity}`;
     const completionQueueKey = `miniapp_completion_queue_${authIdentity}`;
     const persistedUiStateKeys = [
@@ -2468,7 +2455,6 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     const state = {
-      initData: tg ? tg.initData : "",
       screen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
@@ -2621,8 +2607,6 @@ MINIAPP_HTML = """<!doctype html>
         credentials: "same-origin",
         body: JSON.stringify({
           ...payload,
-          initData: state.initData,
-          authToken,
           telegram_id: debugTelegramId,
         }),
       });
@@ -2749,8 +2733,6 @@ MINIAPP_HTML = """<!doctype html>
       url.searchParams.set("task_id", taskId);
       url.searchParams.set("mode", action === "download" ? "download" : "open");
 
-      if (state.initData) url.searchParams.set("initData", state.initData);
-      if (authToken) url.searchParams.set("authToken", authToken);
       if (debugTelegramId) url.searchParams.set("telegram_id", debugTelegramId);
 
       return url.toString();
@@ -3724,8 +3706,6 @@ MINIAPP_HTML = """<!doctype html>
           credentials: "same-origin",
           body: JSON.stringify({
             ...(state.adminAppliedReportPayload || getAdminReportPayload()),
-            initData: state.initData,
-            authToken,
             telegram_id: debugTelegramId,
           }),
         });
@@ -4746,8 +4726,6 @@ MINIAPP_HTML = """<!doctype html>
     function authenticatedFileUrl(path, params = {}) {
       const url = new URL(path, window.location.href);
       Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-      if (state.initData) url.searchParams.set("initData", state.initData);
-      if (authToken) url.searchParams.set("authToken", authToken);
       if (debugTelegramId) url.searchParams.set("telegram_id", debugTelegramId);
       return url.toString();
     }

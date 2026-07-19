@@ -386,6 +386,9 @@ def get_admin_ids():
 
 
 def is_admin(telegram_id: int):
+    employee = get_employee_by_telegram_id(telegram_id)
+    if employee is not None:
+        return employee[4] == "admin" and employee[5] == "active"
     return telegram_id in get_admin_ids()
 
 

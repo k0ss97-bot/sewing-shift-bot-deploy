@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-import shutil
 import sqlite3
 import uuid
 from datetime import date, datetime, timedelta
@@ -19,47 +18,14 @@ DB_DIR_CANDIDATES = [
 
 
 def resolve_database_path():
-    def has_business_data(db_path: str):
-        if not os.path.exists(db_path):
-            return False
-
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM employees")
-            employee_count = cursor.fetchone()[0]
-            conn.close()
-            return employee_count > 0
-        except sqlite3.Error:
-            return False
-
-    db_paths = [
-        os.path.join(db_dir, DB_FILE_NAME)
-        for db_dir in DB_DIR_CANDIDATES
-        if db_dir and os.path.isdir(db_dir)
-    ]
-
     configured_dir = os.getenv("DB_DIR", "").strip()
     if configured_dir:
-        configured_path = os.path.join(configured_dir, DB_FILE_NAME)
-        if has_business_data(configured_path):
-            return configured_path
-        if has_business_data(DB_FILE_NAME):
-            os.makedirs(configured_dir, exist_ok=True)
-            shutil.copy2(DB_FILE_NAME, configured_path)
-        return configured_path
+        os.makedirs(configured_dir, exist_ok=True)
+        return os.path.join(configured_dir, DB_FILE_NAME)
 
-    for db_path in db_paths:
-        if has_business_data(db_path):
-            return db_path
-
-    if has_business_data(DB_FILE_NAME):
-        return DB_FILE_NAME
-
-    if db_paths:
-        target_path = db_paths[0]
-
-        return target_path
+    for db_dir in DB_DIR_CANDIDATES[1:]:
+        if db_dir and os.path.isdir(db_dir):
+            return os.path.join(db_dir, DB_FILE_NAME)
 
     return DB_FILE_NAME
 

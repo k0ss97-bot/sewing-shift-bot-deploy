@@ -80,7 +80,7 @@ def load_runtime_settings(environ: dict[str, str] | None = None) -> RuntimeSetti
 
     production = str(values.get("WEBAPP_ENV") or "").strip().lower() == "production"
     debug = str(values.get("MINIAPP_DEBUG") or "0").strip() == "1"
-    secret = str(values.get("WEBAPP_SERVER_SECRET") or values.get("BOT_TOKEN") or "").strip()
+    secret = str(values.get("WEBAPP_SERVER_SECRET") or "").strip()
     if production and len(secret) < 32:
         raise RuntimeError("WEBAPP_SERVER_SECRET must contain at least 32 characters in production.")
     if production and debug:
@@ -116,7 +116,8 @@ def main() -> None:
     if server is None:
         raise RuntimeError("Standalone web server failed to start.")
 
-    bot_process = start_shared_bot_process()
+    bot_process = None
+    logging.info("Telegram bot integration is disabled; running standalone web application only")
     stop_event = threading.Event()
 
     def request_stop(signum, frame):
