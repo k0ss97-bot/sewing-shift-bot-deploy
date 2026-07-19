@@ -2479,7 +2479,149 @@ MINIAPP_HTML = """<!doctype html>
         margin-top: 10px;
       }
     }
-  </style>
+    /* Full desktop application workspace.  The mobile-first shell remains
+       untouched below 900px; desktop uses the entire browser canvas. */
+    @media (min-width: 900px) {
+      html, body { min-height: 100%; }
+
+      body.web-mode {
+        min-width: 0;
+        background:
+          radial-gradient(circle at 88% 6%, rgba(23,81,226,.14), transparent 28%),
+          radial-gradient(circle at 8% 96%, rgba(62,165,128,.12), transparent 30%),
+          #edf2f8;
+      }
+
+      body.web-mode .app {
+        width: calc(100vw - 32px) !important;
+        max-width: none !important;
+        min-height: calc(100vh - 32px);
+        margin: 16px !important;
+        border-radius: 18px;
+        overflow: visible;
+        box-shadow: 0 18px 56px rgba(26,40,68,.14);
+      }
+
+      body.web-mode .appbar {
+        min-height: 88px;
+        padding: 16px 38px 16px 286px !important;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        background: rgba(255,255,255,.82);
+        border-bottom: 1px solid rgba(110,126,158,.16);
+        backdrop-filter: blur(20px);
+      }
+
+      body.web-mode .body {
+        box-sizing: border-box;
+        width: 100% !important;
+        max-width: none !important;
+        min-height: calc(100vh - 120px);
+        padding: 34px 40px 64px 286px !important;
+      }
+
+      body.web-mode .body > * {
+        width: 100%;
+        max-width: none !important;
+      }
+
+      body.web-mode .bottom-nav {
+        position: fixed;
+        inset: 116px auto 40px 32px;
+        width: 220px;
+        height: auto;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        gap: 8px;
+        border: 1px solid rgba(120,137,169,.16);
+        border-radius: 16px;
+        background: rgba(255,255,255,.88);
+        box-shadow: 0 14px 36px rgba(38,56,85,.12);
+        backdrop-filter: blur(18px);
+      }
+
+      body.web-mode .nav-item,
+      body.web-mode .bottom-nav button {
+        width: 100%;
+        min-height: 48px;
+        padding: 0 14px;
+        display: flex;
+        justify-content: flex-start;
+        gap: 12px;
+        border-radius: 11px;
+        text-align: left;
+      }
+
+      body.web-mode .screen-head {
+        min-height: 74px;
+        margin-bottom: 22px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
+        column-gap: 28px;
+      }
+
+      body.web-mode .screen-head h1,
+      body.web-mode .screen-head h2 {
+        font-size: clamp(28px, 2vw, 38px);
+        letter-spacing: -.035em;
+      }
+
+      body.web-mode .tabs {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(160px, 1fr));
+        width: min(760px, 100%);
+        margin: 0 0 24px;
+        padding: 5px;
+        gap: 6px;
+        border-radius: 14px;
+      }
+
+      body.web-mode .kpi-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 18px;
+        margin-bottom: 22px;
+      }
+
+      body.web-mode .form-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px 22px;
+      }
+
+      body.web-mode .card,
+      body.web-mode .report-row,
+      body.web-mode .op-list > *,
+      body.web-mode .list-item {
+        max-width: none !important;
+        border-radius: 14px;
+      }
+
+      body.web-mode .op-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      body.web-mode .main-button,
+      body.web-mode #webActionSlot .main-button {
+        width: auto;
+        min-width: 280px;
+        min-height: 52px;
+      }
+
+      body.web-mode #webActionSlot {
+        position: sticky;
+        bottom: 20px;
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 28px;
+        z-index: 5;
+      }
+    }
+</style>
 </head>
 <body>
   <section class="login-view" id="connectionView" hidden aria-labelledby="connectionTitle">
