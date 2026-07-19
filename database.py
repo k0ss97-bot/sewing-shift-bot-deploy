@@ -61,6 +61,9 @@ ROUTE_BATCH_COLUMNS = [
     "paused_at",
     "last_activity_at",
     "handover_count",
+    "packaging_option",
+    "packaging_output_name",
+    "packaging_ratio",
 ]
 ROUTE_BATCH_SELECT = ", ".join(ROUTE_BATCH_COLUMNS)
 PRODUCTION_TASK_COLUMNS = [
@@ -1760,6 +1763,12 @@ def init_db():
         cursor.execute("ALTER TABLE route_batches ADD COLUMN last_activity_at TEXT")
     if "handover_count" not in route_batch_columns:
         cursor.execute("ALTER TABLE route_batches ADD COLUMN handover_count INTEGER NOT NULL DEFAULT 0")
+    if "packaging_option" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN packaging_option TEXT")
+    if "packaging_output_name" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN packaging_output_name TEXT")
+    if "packaging_ratio" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN packaging_ratio INTEGER NOT NULL DEFAULT 1")
 
     cursor.execute("PRAGMA table_info(production_tasks)")
     production_task_columns = [column[1] for column in cursor.fetchall()]
@@ -4347,6 +4356,396 @@ def complete_route_batch_step(
     return get_route_batch_by_id(batch_id)
 
 
+def _insert_automatic_route_batch(
+    cursor,
+    batch: dict,
+    route_step_index: int,
+    quantity: int,
+    employee_id: int | None,
+    now: str,
+    parent_batch_id: int,
+    inputs: list[dict] | None = None,
+    source: str = "automatic_next",
+    packaging_option: str = "",
+    packaging_output_name: str = "",
+    packaging_ratio: int = 1,
+):
+    inputs = inputs or []
+    source_stock_id = inputs[0]["stock_id"] if inputs else None
+    cursor.execute(
+        """
+        INSERT INTO route_batches (
+            product_name, product_size, product_color, quantity,
+            route_step_index, status, created_by_employee_id,
+            created_at, updated_at, completed_at, source_stock_id,
+            priority, due_date, parent_batch_id,
+            packaging_option, packaging_output_name, packaging_ratio
+        )
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            batch["product_name"],
+            batch["product_size"],
+            batch["product_color"],
+            quantity,
+            route_step_index,
+            employee_id,
+            now,
+            now,
+            source_stock_id,
+            batch.get("priority") or "normal",
+            batch.get("due_date"),
+            parent_batch_id,
+            packaging_option or None,
+            packaging_output_name or None,
+            max(1, int(packaging_ratio or 1)),
+        ),
+    )
+    new_batch_id = cursor.lastrowid
+    _initialize_route_batch_trace(
+        cursor,
+        new_batch_id,
+        batch["product_name"],
+        employee_id,
+        now,
+        source=source,
+        route_snapshot=batch.get("route_snapshot") or "",
+        route_version=batch.get("route_version") or "",
+    )
+
+    for input_index, item in enumerate(inputs):
+        stock_id = int(item["stock_id"])
+        lot_id = int(item["lot_id"])
+        input_quantity = int(item["quantity"])
+        input_role = item.get("input_role") or ("main" if input_index == 0 else "component")
+        cursor.execute(
+            f"SELECT {WAREHOUSE_STOCK_SELECT} FROM warehouse_stock WHERE id = ?",
+            (stock_id,),
+        )
+        stock = warehouse_stock_from_row(cursor.fetchone())
+        if stock is None:
+            raise ValueError("parallel stock unavailable")
+        cursor.execute(
+            "UPDATE warehouse_stock SET quantity = quantity - ?, updated_at = ? WHERE id = ? AND quantity >= ?",
+            (input_quantity, now, stock_id, input_quantity),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("parallel stock changed")
+        cursor.execute(
+            """
+            UPDATE warehouse_stock_lots
+            SET quantity_available = quantity_available - ?, updated_at = ?
+            WHERE id = ? AND quantity_available >= ?
+            """,
+            (input_quantity, now, lot_id, input_quantity),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("parallel lot changed")
+        cursor.execute(
+            """
+            INSERT INTO warehouse_stock_movements (
+                stock_id, item_type, product_name, product_size, product_color, stage_name,
+                ready_for_position, quantity, unit, movement_type, source_type, source_id,
+                created_by_employee_id, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issue', 'route_batch', ?, ?, ?)
+            """,
+            (
+                stock_id,
+                stock["item_type"],
+                stock["product_name"],
+                stock["product_size"],
+                stock["product_color"],
+                stock["stage_name"],
+                stock["ready_for_position"],
+                -input_quantity,
+                stock["unit"],
+                new_batch_id,
+                employee_id,
+                now,
+            ),
+        )
+        cursor.execute(
+            "INSERT INTO route_batch_inputs (batch_id, stock_id, input_role, quantity, created_at) VALUES (?, ?, ?, ?, ?)",
+            (new_batch_id, stock_id, input_role, input_quantity, now),
+        )
+        cursor.execute(
+            "INSERT INTO route_batch_input_lots (batch_id, lot_id, input_role, quantity, created_at) VALUES (?, ?, ?, ?, ?)",
+            (new_batch_id, lot_id, input_role, input_quantity, now),
+        )
+
+    _record_production_event(
+        cursor,
+        "inputs_reserved",
+        batch_id=new_batch_id,
+        actor_employee_id=employee_id,
+        quantity=quantity,
+        details={"automatic": True, "parent_batch_id": parent_batch_id, "inputs": len(inputs)},
+        request_key=f"route-batch:{new_batch_id}:inputs-reserved",
+        created_at=now,
+    )
+    return new_batch_id
+
+
+def ensure_parallel_sibling_batches(batch_id: int, employee_id: int | None = None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+    created_ids = []
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE id = ? AND status = 'active'", (batch_id,))
+        batch = route_batch_from_row(cursor.fetchone())
+        if batch is None:
+            raise ValueError("route batch unavailable")
+        steps = route_steps_from_snapshot(batch.get("route_snapshot") or "", batch["product_name"])
+        step_index = int(batch.get("route_step_index") or 0)
+        current_step = steps[step_index] if 0 <= step_index < len(steps) else {}
+        group_name = current_step.get("parallel_group")
+        if not group_name:
+            conn.commit()
+            conn.close()
+            return []
+        group_rows = [(index, item) for index, item in enumerate(steps) if item.get("parallel_group") == group_name]
+        first_rows = []
+        for branch_name in dict.fromkeys(item.get("parallel_branch") for _index, item in group_rows):
+            branch_rows = [(index, item) for index, item in group_rows if item.get("parallel_branch") == branch_name]
+            first_rows.append(min(branch_rows, key=lambda row: (row[1].get("parallel_order", 1), row[0])))
+        if step_index not in {index for index, _item in first_rows}:
+            conn.commit()
+            conn.close()
+            return []
+        parallel_root_id = batch.get("parent_batch_id") or batch["id"]
+        if not batch.get("parent_batch_id"):
+            cursor.execute("UPDATE route_batches SET parent_batch_id = ? WHERE id = ?", (parallel_root_id, batch["id"]))
+            batch["parent_batch_id"] = parallel_root_id
+        cursor.execute(
+            f"SELECT route_step_index FROM route_batches WHERE parent_batch_id = ? AND status = 'active'",
+            (parallel_root_id,),
+        )
+        existing_indices = {int(row[0]) for row in cursor.fetchall()}
+        for target_index, _target_step in first_rows:
+            if target_index == step_index or target_index in existing_indices:
+                continue
+            created_ids.append(
+                _insert_automatic_route_batch(
+                    cursor,
+                    batch,
+                    target_index,
+                    batch["quantity"],
+                    employee_id,
+                    now,
+                    parallel_root_id,
+                    [],
+                    source="parallel_manual_fork",
+                )
+            )
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return []
+    conn.close()
+    return [get_route_batch_by_id(item_id) for item_id in created_ids]
+
+
+def _parallel_route_transition(
+    cursor,
+    batch: dict,
+    completed_step_index: int,
+    good_quantity: int,
+    employee_id: int | None,
+    now: str,
+    output_stock_id: int | None,
+    output_lot_id: int | None,
+):
+    steps = route_steps_from_snapshot(batch.get("route_snapshot") or "", batch["product_name"])
+    current_step = steps[completed_step_index] if 0 <= completed_step_index < len(steps) else {}
+    current_group = current_step.get("parallel_group")
+    next_index = completed_step_index + 1
+    next_step = steps[next_index] if next_index < len(steps) else None
+
+    if not current_group:
+        if not next_step or not next_step.get("parallel_group"):
+            return {"handled": False, "batch_ids": [], "waiting": False}
+        group_name = next_step["parallel_group"]
+        group_rows = [(index, item) for index, item in enumerate(steps) if item.get("parallel_group") == group_name]
+        first_rows = []
+        for branch_name in dict.fromkeys(item.get("parallel_branch") for _index, item in group_rows):
+            branch_rows = [(index, item) for index, item in group_rows if item.get("parallel_branch") == branch_name]
+            first_rows.append(min(branch_rows, key=lambda row: (row[1].get("parallel_order", 1), row[0])))
+        main_row = next((row for row in first_rows if row[1].get("parallel_input") == "main"), first_rows[0])
+        created_ids = []
+        for target_index, target_step in first_rows:
+            inputs = []
+            if target_index == main_row[0] and good_quantity > 0:
+                inputs = [{"stock_id": output_stock_id, "lot_id": output_lot_id, "quantity": good_quantity, "input_role": "main"}]
+            created_ids.append(
+                _insert_automatic_route_batch(
+                    cursor,
+                    batch,
+                    target_index,
+                    good_quantity,
+                    employee_id,
+                    now,
+                    batch["id"],
+                    inputs,
+                    source="parallel_fork",
+                )
+            )
+        return {"handled": True, "batch_ids": created_ids, "waiting": False}
+
+    branch_name = current_step.get("parallel_branch")
+    branch_rows = sorted(
+        [(index, item) for index, item in enumerate(steps) if item.get("parallel_group") == current_group and item.get("parallel_branch") == branch_name],
+        key=lambda row: (row[1].get("parallel_order", 1), row[0]),
+    )
+    current_position = next((position for position, row in enumerate(branch_rows) if row[0] == completed_step_index), -1)
+    parallel_root_id = batch.get("parent_batch_id") or batch["id"]
+    if current_position >= 0 and current_position + 1 < len(branch_rows):
+        target_index = branch_rows[current_position + 1][0]
+        inputs = []
+        if good_quantity > 0:
+            inputs = [{"stock_id": output_stock_id, "lot_id": output_lot_id, "quantity": good_quantity, "input_role": "main"}]
+        child_id = _insert_automatic_route_batch(
+            cursor,
+            batch,
+            target_index,
+            good_quantity,
+            employee_id,
+            now,
+            parallel_root_id,
+            inputs,
+            source="parallel_branch",
+        )
+        return {"handled": True, "batch_ids": [child_id], "waiting": False}
+
+    group_rows = [(index, item) for index, item in enumerate(steps) if item.get("parallel_group") == current_group]
+    terminal_indices = []
+    for sibling_branch in dict.fromkeys(item.get("parallel_branch") for _index, item in group_rows):
+        sibling_rows = [(index, item) for index, item in group_rows if item.get("parallel_branch") == sibling_branch]
+        terminal_indices.append(max(sibling_rows, key=lambda row: (row[1].get("parallel_order", 1), row[0]))[0])
+
+    terminal_batches = []
+    for terminal_index in terminal_indices:
+        cursor.execute(
+            f"""
+            SELECT {', '.join('route_batches.' + column for column in ROUTE_BATCH_COLUMNS)}
+            FROM route_batches
+            JOIN route_batch_history ON route_batch_history.batch_id = route_batches.id
+            WHERE route_batches.parent_batch_id = ?
+              AND route_batches.status = 'done'
+              AND route_batch_history.step_index = ?
+            ORDER BY route_batches.completed_at DESC, route_batches.id DESC
+            LIMIT 1
+            """,
+            (parallel_root_id, terminal_index),
+        )
+        sibling_batch = route_batch_from_row(cursor.fetchone())
+        if sibling_batch is None:
+            return {"handled": True, "batch_ids": [], "waiting": True}
+        terminal_batches.append(sibling_batch)
+
+    join_index = max(index for index, _item in group_rows) + 1
+    if join_index >= len(steps):
+        return {"handled": True, "batch_ids": [], "waiting": False}
+    join_quantity = min(int(item.get("good_quantity") or 0) for item in terminal_batches)
+    if join_quantity <= 0:
+        return {"handled": True, "batch_ids": [], "waiting": True}
+    join_inputs = []
+    for input_index, terminal_batch in enumerate(terminal_batches):
+        cursor.execute(
+            """
+            SELECT id, stock_id, quantity_available
+            FROM warehouse_stock_lots
+            WHERE source_type = 'route_batch' AND source_id = ? AND quantity_available > 0
+            ORDER BY id DESC LIMIT 1
+            """,
+            (terminal_batch["id"],),
+        )
+        lot_row = cursor.fetchone()
+        if lot_row is None or int(lot_row[2] or 0) < join_quantity:
+            return {"handled": True, "batch_ids": [], "waiting": True}
+        join_inputs.append(
+            {
+                "lot_id": lot_row[0],
+                "stock_id": lot_row[1],
+                "quantity": join_quantity,
+                "input_role": "main" if input_index == 0 else "component",
+            }
+        )
+    join_batch_id = _insert_automatic_route_batch(
+        cursor,
+        batch,
+        join_index,
+        join_quantity,
+        employee_id,
+        now,
+        parallel_root_id,
+        join_inputs,
+        source="parallel_join",
+    )
+    return {"handled": True, "batch_ids": [join_batch_id], "waiting": False}
+
+
+def get_finished_component_quantity(product_size: str, product_color: str, product_names=None, product_prefix: str = ""):
+    product_names = [str(name).strip() for name in (product_names or []) if str(name).strip()]
+    clauses = ["item_type = 'finished'", "product_size = ?", "product_color = ?", "quantity > 0"]
+    params = [str(product_size), str(product_color)]
+    if product_names:
+        clauses.append(f"product_name IN ({','.join('?' for _name in product_names)})")
+        params.extend(product_names)
+    elif product_prefix:
+        clauses.append("product_name LIKE ?")
+        params.append(f"{product_prefix}%")
+    else:
+        return 0
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT COALESCE(SUM(quantity), 0) FROM warehouse_stock WHERE {' AND '.join(clauses)}", params)
+    quantity = int(cursor.fetchone()[0] or 0)
+    conn.close()
+    return quantity
+
+
+def _consume_finished_packaging_components(cursor, batch: dict, quantity: int, employee_id: int | None, now: str, product_names=None, product_prefix: str = ""):
+    product_names = [str(name).strip() for name in (product_names or []) if str(name).strip()]
+    clauses = ["item_type = 'finished'", "product_size = ?", "product_color = ?", "quantity > 0"]
+    params = [batch["product_size"], batch["product_color"]]
+    if product_names:
+        clauses.append(f"product_name IN ({','.join('?' for _name in product_names)})")
+        params.extend(product_names)
+    elif product_prefix:
+        clauses.append("product_name LIKE ?")
+        params.append(f"{product_prefix}%")
+    else:
+        return
+    cursor.execute(f"SELECT {WAREHOUSE_STOCK_SELECT} FROM warehouse_stock WHERE {' AND '.join(clauses)} ORDER BY updated_at, id", params)
+    remaining = int(quantity)
+    for stock_row in cursor.fetchall():
+        if remaining <= 0:
+            break
+        stock = warehouse_stock_from_row(stock_row)
+        consumed = min(remaining, int(stock["quantity"] or 0))
+        cursor.execute("UPDATE warehouse_stock SET quantity = quantity - ?, updated_at = ? WHERE id = ? AND quantity >= ?", (consumed, now, stock["id"], consumed))
+        if cursor.rowcount != 1:
+            raise ValueError("packaging component changed")
+        _consume_warehouse_lots(cursor, stock["id"], consumed, now)
+        cursor.execute(
+            """
+            INSERT INTO warehouse_stock_movements (
+                stock_id, item_type, product_name, product_size, product_color, stage_name,
+                ready_for_position, quantity, unit, movement_type, source_type, source_id,
+                created_by_employee_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issue', 'packaging_set', ?, ?, ?)
+            """,
+            (stock["id"], stock["item_type"], stock["product_name"], stock["product_size"], stock["product_color"], stock["stage_name"], stock["ready_for_position"], -consumed, stock["unit"], batch["id"], employee_id, now),
+        )
+        remaining -= consumed
+    if remaining:
+        raise ValueError("packaging components unavailable")
+
+
 def complete_route_batch_step_atomic(
     batch_id: int,
     employee_id: int | None,
@@ -4369,6 +4768,11 @@ def complete_route_batch_step_atomic(
     shift_id: int | None = None,
     operation_id: int | None = None,
     request_id: str = "",
+    packaging_option: str = "",
+    packaging_output_name: str = "",
+    packaging_ratio: int = 1,
+    packaging_component_products: list[str] | None = None,
+    packaging_component_prefix: str = "",
 ):
     if item_type not in {"semifinished", "finished"}:
         return None
@@ -4379,6 +4783,7 @@ def complete_route_batch_step_atomic(
     stock_id = None
     auto_batch_id = None
     rework_batch_id = None
+    parallel_waiting = False
 
     try:
         cursor.execute("BEGIN IMMEDIATE")
@@ -4413,6 +4818,17 @@ def complete_route_batch_step_atomic(
             raise ValueError("batch is paused or blocked")
         if good_quantity < 0 or defect_quantity < 0 or good_quantity + defect_quantity != batch["quantity"]:
             raise ValueError("invalid quantities")
+
+        if packaging_component_products or packaging_component_prefix:
+            _consume_finished_packaging_components(
+                cursor,
+                batch,
+                good_quantity,
+                employee_id,
+                now,
+                product_names=packaging_component_products,
+                product_prefix=packaging_component_prefix,
+            )
 
         cursor.execute(
             """
@@ -4449,7 +4865,16 @@ def complete_route_batch_step_atomic(
         if cursor.rowcount != 1:
             raise ValueError("batch changed")
 
-        if good_quantity > 0:
+        output_product_name = batch["product_name"]
+        output_quantity = good_quantity
+        if item_type == "finished" and batch.get("packaging_output_name"):
+            output_product_name = batch["packaging_output_name"]
+            saved_ratio = max(1, int(batch.get("packaging_ratio") or 1))
+            if good_quantity % saved_ratio:
+                raise ValueError("finished packaging quantity is not divisible")
+            output_quantity = good_quantity // saved_ratio
+
+        if output_quantity > 0:
             cursor.execute(
                 """
                 INSERT INTO warehouse_stock (
@@ -4462,12 +4887,12 @@ def complete_route_batch_step_atomic(
                 """,
                 (
                     item_type,
-                    batch["product_name"],
+                    output_product_name,
                     batch["product_size"],
                     batch["product_color"],
                     stage_name,
                     ready_for_position,
-                    good_quantity,
+                    output_quantity,
                     now,
                 ),
             )
@@ -4480,7 +4905,7 @@ def complete_route_batch_step_atomic(
                 """,
                 (
                     item_type,
-                    batch["product_name"],
+                    output_product_name,
                     batch["product_size"],
                     batch["product_color"],
                     stage_name,
@@ -4500,12 +4925,12 @@ def complete_route_batch_step_atomic(
                 (
                     stock_id,
                     item_type,
-                    batch["product_name"],
+                    output_product_name,
                     batch["product_size"],
                     batch["product_color"],
                     stage_name,
                     ready_for_position,
-                    good_quantity,
+                    output_quantity,
                     batch_id,
                     employee_id,
                     now,
@@ -4514,22 +4939,36 @@ def complete_route_batch_step_atomic(
             output_lot_id = _create_warehouse_lot(
                 cursor,
                 stock_id,
-                good_quantity,
+                output_quantity,
                 now,
                 source_type="route_batch",
                 source_id=batch_id,
             )
 
-            if auto_create_next:
+            parallel_flow = _parallel_route_transition(
+                cursor,
+                batch,
+                expected_step_index,
+                good_quantity,
+                employee_id,
+                now,
+                stock_id,
+                output_lot_id,
+            )
+            if parallel_flow["handled"]:
+                auto_batch_id = parallel_flow["batch_ids"][0] if parallel_flow["batch_ids"] else None
+                parallel_waiting = parallel_flow["waiting"]
+            elif auto_create_next:
                 cursor.execute(
                     """
                     INSERT INTO route_batches (
                         product_name, product_size, product_color, quantity,
                         route_step_index, status, created_by_employee_id,
                         created_at, updated_at, completed_at, source_stock_id,
-                        priority, due_date, parent_batch_id
+                        priority, due_date, parent_batch_id,
+                        packaging_option, packaging_output_name, packaging_ratio
                     )
-                    VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         batch["product_name"],
@@ -4544,6 +4983,9 @@ def complete_route_batch_step_atomic(
                         batch.get("priority") or "normal",
                         batch.get("due_date"),
                         batch_id,
+                        packaging_option or batch.get("packaging_option") or None,
+                        packaging_output_name or batch.get("packaging_output_name") or None,
+                        max(1, int(packaging_ratio or batch.get("packaging_ratio") or 1)),
                     ),
                 )
                 auto_batch_id = cursor.lastrowid
@@ -4752,6 +5194,7 @@ def complete_route_batch_step_atomic(
         "stock": get_warehouse_stock_by_id(stock_id) if stock_id else None,
         "auto_batch": get_route_batch_by_id(auto_batch_id) if auto_batch_id else None,
         "rework_batch": get_route_batch_by_id(rework_batch_id) if rework_batch_id else None,
+        "parallel_waiting": parallel_waiting,
         "replayed": False,
     }
 

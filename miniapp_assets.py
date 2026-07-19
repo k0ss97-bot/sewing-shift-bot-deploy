@@ -3877,6 +3877,8 @@ MINIAPP_HTML = """<!doctype html>
       const photo = state.taskDefectPhotos[task.id];
       const paused = task.work_state === "paused";
       const blocked = task.work_state === "blocked";
+      const packingOptions = task.packing_options || [];
+      if (packingOptions.length && !draft.packaging_option) draft.packaging_option = "individual";
 
       return `
         <div class="card task-completion-card">
@@ -3884,6 +3886,7 @@ MINIAPP_HTML = """<!doctype html>
           ${renderRouteTaskInputs(task)}
           ${(paused || blocked) ? `<div class="task-note">${escapeHtml(task.blocked_reason || (paused ? "Работа приостановлена" : "Задание заблокировано"))}</div>` : ""}
           <div class="form-grid" style="margin-top:11px">
+            ${packingOptions.length ? `<div class="field full"><label>Вариант упаковки</label><select id="taskPackagingOption">${packingOptions.map((option) => `<option value="${escapeHtml(option.id)}" ${draft.packaging_option === option.id ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select><div class="task-note">Для наборов приложение пересчитает готовые комплекты и спишет второй товар со склада, если он входит в комплект.</div></div>` : ""}
             <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.good ?? task.quantity)}"></div>
             <div class="field"><label>Брак</label><input id="taskDefectQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.defect ?? 0)}"></div>
             <div class="field full"><button type="button" class="small-button secondary" data-task-action="all-good" data-task-id="${escapeHtml(task.id)}">Всё годное: ${escapeHtml(task.quantity)} шт</button></div>
@@ -4642,6 +4645,7 @@ MINIAPP_HTML = """<!doctype html>
         defect_disposition: document.getElementById("taskDefectDisposition") ? document.getElementById("taskDefectDisposition").value : (draft.defect_disposition || ""),
         defect_comment: document.getElementById("taskDefectComment") ? document.getElementById("taskDefectComment").value : (draft.defect_comment || ""),
         defect_photo: state.taskDefectPhotos[current.id] || null,
+        packaging_option: document.getElementById("taskPackagingOption") ? document.getElementById("taskPackagingOption").value : (draft.packaging_option || ""),
       };
       mainButton.disabled = true;
 
@@ -5012,7 +5016,7 @@ MINIAPP_HTML = """<!doctype html>
           </div>
           <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.quantity)} шт</strong></div>
           ${task.blocked_reason ? `<div class="task-note">${escapeHtml(task.blocked_reason)}</div>` : ""}
-          ${(task.due_date || task.priority === "urgent" || task.parent_batch_id) ? `<div class="route-inputs"><div class="route-input-row"><span>${task.parent_batch_id ? `Переделка задания #${escapeHtml(task.parent_batch_id)}` : `Приоритет: ${escapeHtml(priorityLabel(task.priority))}`}</span><span>${task.due_date ? `до ${escapeHtml(task.due_date)}` : ""}</span></div></div>` : ""}
+          ${(task.due_date || task.priority === "urgent" || task.parent_batch_id) ? `<div class="route-inputs"><div class="route-input-row"><span>${task.parent_batch_id ? (task.parallel_group ? `Параллельная ветка · ${escapeHtml(task.parallel_branch || "операция")}` : `Связано с заданием #${escapeHtml(task.parent_batch_id)}`) : `Приоритет: ${escapeHtml(priorityLabel(task.priority))}`}</span><span>${task.due_date ? `до ${escapeHtml(task.due_date)}` : ""}</span></div></div>` : ""}
           ${renderRouteTaskInputs(task)}
           ${deleteButton}
         </div>
@@ -6178,7 +6182,7 @@ MINIAPP_HTML = """<!doctype html>
 
       const routeTask = getDisplayedRouteTask();
 
-      if (routeTask && event.target.closest("#taskGoodQuantity, #taskDefectQuantity, #taskDefectReason, #taskDefectDisposition, #taskDefectComment")) {
+      if (routeTask && event.target.closest("#taskGoodQuantity, #taskDefectQuantity, #taskDefectReason, #taskDefectDisposition, #taskDefectComment, #taskPackagingOption")) {
         const draft = state.taskCompletionDrafts[routeTask.id] || {};
         if (event.target.id === "taskGoodQuantity") draft.good = event.target.value;
         if (event.target.id === "taskDefectQuantity") {
@@ -6189,6 +6193,7 @@ MINIAPP_HTML = """<!doctype html>
         if (event.target.id === "taskDefectReason") draft.defect_reason = event.target.value;
         if (event.target.id === "taskDefectDisposition") draft.defect_disposition = event.target.value;
         if (event.target.id === "taskDefectComment") draft.defect_comment = event.target.value;
+        if (event.target.id === "taskPackagingOption") draft.packaging_option = event.target.value;
         state.taskCompletionDrafts[routeTask.id] = draft;
       }
 

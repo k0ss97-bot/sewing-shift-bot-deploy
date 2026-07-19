@@ -637,6 +637,13 @@ def accepted_stock_stages_for_route_step(product_name: str, step_index: int):
     if step_index < len(CUTTING_ROUTE) or step_index >= len(steps):
         return []
 
+    explicit_stages = steps[step_index].get("input_stages")
+    if explicit_stages is not None:
+        return list(dict.fromkeys(str(stage) for stage in explicit_stages if str(stage)))
+
+    if steps[step_index].get("parallel_input") == "free":
+        return []
+
     accepted_stages = []
 
     if step_index > len(CUTTING_ROUTE):
@@ -655,6 +662,45 @@ def accepted_stock_stages_for_route_step(product_name: str, step_index: int):
         accepted_stages.append("Раскроенные")
 
     return list(dict.fromkeys(accepted_stages))
+
+
+def get_route_flow_next_step(batch: dict):
+    steps = get_route_steps_for_batch(batch)
+    current_index = int(batch.get("route_step_index") or 0)
+    if current_index < 0 or current_index >= len(steps):
+        return current_index + 1, None
+    current_step = steps[current_index]
+    current_group = current_step.get("parallel_group")
+    if current_group:
+        branch_name = current_step.get("parallel_branch")
+        branch_rows = sorted(
+            [
+                (index, item)
+                for index, item in enumerate(steps)
+                if item.get("parallel_group") == current_group and item.get("parallel_branch") == branch_name
+            ],
+            key=lambda row: (row[1].get("parallel_order", 1), row[0]),
+        )
+        current_position = next((position for position, row in enumerate(branch_rows) if row[0] == current_index), -1)
+        if current_position >= 0 and current_position + 1 < len(branch_rows):
+            return branch_rows[current_position + 1]
+        group_indices = [index for index, item in enumerate(steps) if item.get("parallel_group") == current_group]
+        join_index = max(group_indices) + 1
+        return join_index, steps[join_index] if join_index < len(steps) else None
+
+    sequential_index = current_index + 1
+    if sequential_index >= len(steps):
+        return sequential_index, None
+    sequential_step = steps[sequential_index]
+    next_group = sequential_step.get("parallel_group")
+    if not next_group:
+        return sequential_index, sequential_step
+    group_rows = [(index, item) for index, item in enumerate(steps) if item.get("parallel_group") == next_group]
+    first_rows = []
+    for branch_name in dict.fromkeys(item.get("parallel_branch") for _index, item in group_rows):
+        branch_rows = [(index, item) for index, item in group_rows if item.get("parallel_branch") == branch_name]
+        first_rows.append(min(branch_rows, key=lambda row: (row[1].get("parallel_order", 1), row[0])))
+    return next((row for row in first_rows if row[1].get("parallel_input") == "main"), first_rows[0])
 
 
 def stock_size_tokens(value: str):
@@ -716,6 +762,12 @@ def route_task_to_dict(batch: dict, current_step: dict, viewer_employee=None):
         "position": current_step["position"],
         "operation": current_step["operation"],
         "status_after": current_step["status_after"],
+        "parallel_group": current_step.get("parallel_group") or "",
+        "parallel_branch": current_step.get("parallel_branch") or "",
+        "packing_options": current_step.get("packing_options") or [],
+        "packaging_option": batch.get("packaging_option") or "",
+        "packaging_output_name": batch.get("packaging_output_name") or "",
+        "packaging_ratio": max(1, int(batch.get("packaging_ratio") or 1)),
         "category": route_step_category(current_step),
         "assigned_employee_id": batch.get("assigned_employee_id"),
         "assigned_employee": assignee,
@@ -1007,10 +1059,43 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         return {"ok": False, "message": photo_error}
 
     next_step_index = batch["route_step_index"] + 1
-    next_step = get_route_step_for_batch(batch, next_step_index)
+    _flow_next_index, next_step = get_route_flow_next_step(batch)
     item_type = "semifinished" if next_step else "finished"
     ready_for_position = next_step["position"] if next_step else "Склад"
     stage_name = current_step["status_after"]
+
+    packing_options = current_step.get("packing_options") or []
+    packaging_option = ""
+    packaging_output_name = ""
+    packaging_ratio = 1
+    packaging_component_products = []
+    packaging_component_prefix = ""
+    if packing_options:
+        packaging_option = str(payload.get("packaging_option") or "individual").strip()
+        selected_packing = next((option for option in packing_options if option.get("id") == packaging_option), None)
+        if selected_packing is None:
+            return {"ok": False, "message": "Выберите вариант упаковки."}
+        packaging_ratio = max(1, int(selected_packing.get("ratio") or 1))
+        if good_quantity % packaging_ratio:
+            return {"ok": False, "message": f"Для этого набора количество годной продукции должно делиться на {packaging_ratio}."}
+        packaging_output_name = str(selected_packing.get("output_name") or batch["product_name"])
+        packaging_component_products = selected_packing.get("component_products") or []
+        packaging_component_prefix = str(selected_packing.get("component_prefix") or "")
+        if packaging_component_products or packaging_component_prefix:
+            from database import get_finished_component_quantity
+
+            component_quantity = get_finished_component_quantity(
+                batch["product_size"],
+                batch["product_color"],
+                packaging_component_products,
+                packaging_component_prefix,
+            )
+            if component_quantity < good_quantity:
+                return {"ok": False, "message": "На складе недостаточно второго изделия нужного размера и цвета для комплекта."}
+    elif item_type == "finished" and int(batch.get("packaging_ratio") or 1) > 1:
+        packaging_ratio = max(1, int(batch.get("packaging_ratio") or 1))
+        if good_quantity % packaging_ratio:
+            return {"ok": False, "message": f"Количество для размещения набора должно делиться на {packaging_ratio}."}
 
     operation_row = next(
         (
@@ -1031,7 +1116,10 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         item_type,
         stage_name,
         ready_for_position,
-        auto_create_next=should_auto_create_next_preparation_task(current_step, next_step),
+        auto_create_next=(
+            should_auto_create_next_preparation_task(current_step, next_step)
+            or bool(packing_options and next_step and packaging_option != "individual")
+        ),
         defect_reason=defect_reason,
         defect_disposition=defect_disposition,
         defect_comment=defect_comment,
@@ -1041,6 +1129,11 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         shift_id=open_shift[0] if open_shift else None,
         operation_id=operation_row[0] if operation_row else None,
         request_id=request_id,
+        packaging_option=packaging_option,
+        packaging_output_name=packaging_output_name,
+        packaging_ratio=packaging_ratio,
+        packaging_component_products=packaging_component_products,
+        packaging_component_prefix=packaging_component_prefix,
     )
 
     if completion is None:
@@ -1064,7 +1157,12 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     elif rework_batch:
         message = f"Этап завершён. Брак: {defect_quantity} шт. Создано задание на переделку #{rework_batch['id']}."
     elif auto_batch:
-        message = f"Этап завершён. Следующее задание создано для должности {next_step['position']}."
+        if packing_options:
+            message = f"Упаковка учтена. Задание на размещение создано для номенклатуры «{packaging_output_name}»."
+        else:
+            message = f"Этап завершён. Следующее задание создано для должности {next_step['position']}."
+    elif completion.get("parallel_waiting"):
+        message = "Параллельная операция завершена. Следующий этап откроется после завершения смежной ветки."
     elif next_step:
         message = f"Этап завершён. Результат на складе для должности {next_step['position']}."
     else:
@@ -2206,6 +2304,12 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     if not created_batches:
         return {"ok": False, "message": "Не удалось одновременно списать все компоненты задания."}
 
+    from database import ensure_parallel_sibling_batches
+
+    parallel_batches = []
+    for created_batch in created_batches:
+        parallel_batches.extend(ensure_parallel_sibling_batches(created_batch["id"], employee_id))
+
     add_edit_log(
         telegram_id,
         "admin",
@@ -2220,7 +2324,7 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
 
     return {
         "ok": True,
-        "message": f"Создано заданий: {len(created_batches)}.",
+        "message": f"Создано заданий: {len(created_batches) + len(parallel_batches)}.",
         "production": get_production_state_for_telegram(telegram_id),
         "routes": get_routes_payload(telegram_id),
     }

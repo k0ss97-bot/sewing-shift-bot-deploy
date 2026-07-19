@@ -1057,7 +1057,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         cutting_task = miniapp_server.create_order_task_for_telegram(
             9001,
             {
-                "product_name": "Легинсы",
+                "product_name": "Футболки",
                 "task_type": "cutting",
                 "material_name": "Ткань",
                 "sizes": ["86"],
@@ -1082,7 +1082,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             {"stage": "contours", "task_id": task_id, "quantities": {"86|Бежевый": "5"}},
         )
         self.assertTrue(contours["ok"], contours)
-        batch_id = self.database.get_cutting_batches_for_layout("Легинсы")[0][0]
+        batch_id = self.database.get_cutting_batches_for_layout("Футболки")[0][0]
 
         blocked_cutting = miniapp_server.submit_cutting_stage_for_telegram(
             9002,
@@ -1124,12 +1124,12 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ("semifinished", "Раскроенные", "Швея", 10),
         )
 
-        route_steps = route_maps.PRODUCT_ROUTE_MAPS["Легинсы"]
+        route_steps = route_maps.PRODUCT_ROUTE_MAPS["Футболки"]
         first_step_index = len(route_maps.CUTTING_ROUTE)
         skipped = miniapp_server.create_order_task_for_telegram(
             9001,
             {
-                "product_name": "Легинсы",
+                "product_name": "Футболки",
                 "task_type": "route",
                 "route_step_index": first_step_index + 1,
                 "stock_items": [{"stock_id": stock["id"], "quantity": "10"}],
@@ -1149,7 +1149,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 skipped = miniapp_server.create_order_task_for_telegram(
                     9001,
                     {
-                        "product_name": "Легинсы",
+                        "product_name": "Футболки",
                         "task_type": "route",
                         "route_step_index": step_index + 1,
                         "stock_items": [{"stock_id": source_stock["id"], "quantity": "10"}],
@@ -1160,7 +1160,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             created = miniapp_server.create_order_task_for_telegram(
                 9001,
                 {
-                    "product_name": "Легинсы",
+                    "product_name": "Футболки",
                     "task_type": "route",
                     "route_step_index": step_index,
                     "stock_items": [{"stock_id": source_stock["id"], "quantity": "10"}],
@@ -1866,17 +1866,13 @@ class IsolatedDatabaseTest(unittest.TestCase):
             1301, parent["id"], {"good_quantity": 10, "defect_quantity": 0},
         )["ok"])
 
-        output_stock = next(
-            row for row in self.database.get_warehouse_stock_rows()
-            if row["quantity"] == 10 and row["stage_name"] != "Раскроенные"
-        )
-        child = self.database.create_route_batch_with_inputs(
-            "Легинсы", "86", "Бежевый", 10, None, step_index + 1,
-            [{"stock_id": output_stock["id"], "quantity": 10, "input_role": "main"}],
+        child = next(
+            row for row in self.database.get_active_route_batches()
+            if row["route_step_index"] == step_index + 1
         )
         passport = self.database.get_route_batch_passport(child["id"])
 
-        self.assertEqual({parent["id"], child["id"]}, {row["id"] for row in passport["batches"]})
+        self.assertTrue({parent["id"], child["id"]}.issubset({row["id"] for row in passport["batches"]}))
         child_lots = passport["inputs"][str(child["id"])]
         self.assertEqual(child_lots[0]["source_type"], "route_batch")
         self.assertEqual(child_lots[0]["source_id"], parent["id"])
