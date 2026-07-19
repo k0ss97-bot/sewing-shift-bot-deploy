@@ -3007,6 +3007,16 @@ MINIAPP_HTML = """<!doctype html>
         text-align: left;
       }
     }
+
+    @media (min-width: 900px) {
+      body.web-mode.warehouse-workspace .bottom-nav::before {
+        content: "УПРАВЛЕНИЕ СКЛАДОМ";
+      }
+
+      body.web-mode.warehouse-workspace .bottom-nav {
+        border-color: rgba(25,89,243,.16);
+      }
+    }
   </style>
 </head>
 <body>
@@ -3072,8 +3082,8 @@ MINIAPP_HTML = """<!doctype html>
         </div>
       </div>
       <nav class="workspace-nav" aria-label="Разделы системы">
-        <button class="active" type="button" aria-current="page">Управление производством</button>
-        <button type="button" disabled title="Раздел готовится">Управление складом</button>
+        <button class="active" type="button" data-workspace="production" data-go="shift" aria-current="page">Управление производством</button>
+        <button type="button" data-workspace="warehouse" data-go="warehouse">Управление складом</button>
         <button type="button" disabled title="Раздел готовится">Управление маркетплейсами</button>
         <button type="button" disabled title="Раздел готовится">Отчёт</button>
       </nav>
@@ -3850,6 +3860,22 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderBottomNav() {
+      if (state.screen === "warehouse") {
+        const warehouseItems = [
+          {id: "overview", label: "Обзор склада", icon: "⌂"},
+          {id: "finished", label: "Готовая продукция", icon: "✓"},
+          {id: "semifinished", label: "Полуфабрикаты", icon: "▣"},
+          {id: "materials", label: "Материалы", icon: "▦"},
+        ];
+        bottomNav.style.setProperty("--nav-count", warehouseItems.length);
+        bottomNav.innerHTML = warehouseItems.map((item) => `
+          <button class="nav-btn ${state.warehouseView === item.id ? "active" : ""}" data-warehouse-view="${item.id}">
+            <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
+          </button>
+        `).join("");
+        return;
+      }
+
       const items = navItems();
       bottomNav.style.setProperty("--nav-count", items.length);
       bottomNav.innerHTML = items.map((item) => `
@@ -6075,6 +6101,10 @@ MINIAPP_HTML = """<!doctype html>
       const receiptColors = getOrderColors();
       const semifinished = warehouseRows.filter((row) => row.item_type === "semifinished");
       const finished = warehouseRows.filter((row) => row.item_type === "finished");
+      const totalQuantity = (rows) => rows.reduce((total, row) => total + Number(row.quantity || 0), 0);
+      const finishedQuantity = totalQuantity(finished);
+      const semifinishedQuantity = totalQuantity(semifinished);
+      const materialsQuantity = totalQuantity(fabricRows);
       mainButton.textContent = "Обновить склад";
       mainButton.disabled = false;
 
@@ -6086,20 +6116,20 @@ MINIAPP_HTML = """<!doctype html>
         <option value="${escapeHtml(color)}" ${color === state.fabricReceiptColor ? "selected" : ""}>${escapeHtml(color)}</option>
       `).join("");
       const viewDefinitions = {
-        materials: {label: "Материалы", rows: fabricRows, icon: "▦"},
-        semifinished: {label: "Полуфабрикаты", rows: semifinished, icon: "▣"},
-        finished: {label: "Готовая продукция", rows: finished, icon: "✓"},
+        finished: {label: "Склад готовой продукции", rows: finished, icon: "✓"},
+        semifinished: {label: "Склад полуфабрикатов", rows: semifinished, icon: "▣"},
+        materials: {label: "Склад материалов", rows: fabricRows, icon: "▦"},
       };
 
       if (state.warehouseView === "overview" || !viewDefinitions[state.warehouseView]) {
         state.warehouseView = "overview";
         return `
-          <div class="screen-head"><div><h2>Склад</h2><p>Материалы, полуфабрикаты и готовая продукция.</p></div><div class="date">${warehouseRows.length + fabricRows.length} поз.</div></div>
+          <div class="screen-head"><div><h2>Управление складом</h2><p>Три самостоятельных склада: готовая продукция, полуфабрикаты и материалы.</p></div><div class="date">${warehouseRows.length + fabricRows.length} поз.</div></div>
           ${includeTabs ? renderAdminTabs() : ""}
           <div class="kpi-grid">
-            <button type="button" class="card kpi warehouse-category" data-warehouse-view="materials"><span class="kpi-top"><span>Материалы</span><span class="kpi-ico">${uiIcon("fabric")}</span></span><strong>${fabricRows.length}<small> поз</small></strong><span>Открыть остатки</span></button>
-            <button type="button" class="card kpi warehouse-category" data-warehouse-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">${uiIcon("layers")}</span></span><strong>${semifinished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
-            <button type="button" class="card kpi good warehouse-category" data-warehouse-view="finished"><span class="kpi-top"><span>Готовое</span><span class="kpi-ico">${uiIcon("quality")}</span></span><strong>${finished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+            <button type="button" class="card kpi good warehouse-category" data-warehouse-view="finished"><span class="kpi-top"><span>Склад готовой продукции</span><span class="kpi-ico">${uiIcon("quality")}</span></span><strong>${finished.length}<small> поз.</small></strong><span>${escapeHtml(String(finishedQuantity))} шт. в наличии</span></button>
+            <button type="button" class="card kpi warehouse-category" data-warehouse-view="semifinished"><span class="kpi-top"><span>Склад полуфабрикатов</span><span class="kpi-ico">${uiIcon("layers")}</span></span><strong>${semifinished.length}<small> поз.</small></strong><span>${escapeHtml(String(semifinishedQuantity))} шт. в наличии</span></button>
+            <button type="button" class="card kpi warehouse-category" data-warehouse-view="materials"><span class="kpi-top"><span>Склад материалов</span><span class="kpi-ico">${uiIcon("fabric")}</span></span><strong>${fabricRows.length}<small> поз.</small></strong><span>${escapeHtml(String(materialsQuantity))} рул. в наличии</span></button>
           </div>
           <div class="section-title"><b>Приход материалов</b><span>рулоны</span></div>
           <div class="card field-card">
@@ -6451,6 +6481,14 @@ MINIAPP_HTML = """<!doctype html>
 
       if (!allowedScreens.includes(state.screen)) state.screen = "shift";
       document.getElementById("roleLabel").textContent = roleLabel();
+      const isWarehouseWorkspace = state.screen === "warehouse";
+      document.body.classList.toggle("warehouse-workspace", isWarehouseWorkspace);
+      document.querySelectorAll("[data-workspace]").forEach((button) => {
+        const isActive = button.dataset.workspace === "warehouse" ? isWarehouseWorkspace : !isWarehouseWorkspace;
+        button.classList.toggle("active", isActive);
+        if (isActive) button.setAttribute("aria-current", "page");
+        else button.removeAttribute("aria-current");
+      });
       if (state.screen === "shift") renderShift();
       if (state.screen === "operations") renderOperations();
       if (state.screen === "report") renderReport();
