@@ -100,10 +100,13 @@ def build_manifest() -> dict[str, object]:
         "start_url": APP_START_URL,
         "scope": APP_SCOPE,
         "display": "standalone",
+        "display_override": ["standalone", "minimal-ui"],
+        "orientation": "any",
         "background_color": BACKGROUND_COLOR,
         "theme_color": THEME_COLOR,
         "categories": ["business", "productivity"],
         "prefer_related_applications": False,
+        "launch_handler": {"client_mode": "navigate-existing"},
         "icons": [
             {
                 "src": ICON_SVG_PATH,
@@ -498,6 +501,207 @@ PWA_HEAD_TAGS = f"""<link rel="manifest" href="{MANIFEST_PATH}">
 <meta name="msapplication-TileColor" content="{THEME_COLOR}">
 <meta name="msapplication-config" content="{BROWSERCONFIG_PATH}">"""
 
+PWA_INSTALL_STYLE = """<style id="pwa-install-ui-style">
+  .pwa-install-dock[hidden],
+  .pwa-install-steps[hidden] { display: none !important; }
+  .pwa-install-dock {
+    position: fixed;
+    z-index: 80;
+    left: 12px;
+    right: 12px;
+    bottom: calc(96px + env(safe-area-inset-bottom));
+    width: min(430px, calc(100% - 24px));
+    margin: 0 auto;
+    padding: 14px;
+    border: 1px solid rgba(25,89,243,.20);
+    border-radius: 18px;
+    background: rgba(255,255,255,.96);
+    color: #17253a;
+    box-shadow: 0 22px 60px rgba(15,35,70,.22);
+    backdrop-filter: blur(20px);
+    font-family: Arial, sans-serif;
+  }
+  .pwa-install-head {
+    display: grid;
+    grid-template-columns: 44px minmax(0,1fr) 34px;
+    gap: 10px;
+    align-items: center;
+  }
+  .pwa-install-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: #fff url('/pwa/icon.svg') center/38px 38px no-repeat;
+    box-shadow: inset 0 0 0 1px rgba(25,89,243,.12);
+  }
+  .pwa-install-copy { min-width: 0; }
+  .pwa-install-copy b {
+    display: block;
+    margin-bottom: 3px;
+    font-size: 15px;
+    line-height: 1.15;
+  }
+  .pwa-install-copy span {
+    display: block;
+    color: #607087;
+    font-size: 12px;
+    line-height: 1.3;
+  }
+  .pwa-install-close {
+    width: 34px;
+    height: 34px;
+    border: 0;
+    border-radius: 10px;
+    background: #eef3fb;
+    color: #52627a;
+    font-size: 20px;
+  }
+  .pwa-install-actions {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .pwa-install-primary,
+  .pwa-install-later {
+    min-height: 42px;
+    border-radius: 12px;
+    padding: 0 16px;
+    font-weight: 800;
+  }
+  .pwa-install-primary {
+    border: 0;
+    background: linear-gradient(135deg,#1959f3,#0a3ab8);
+    color: #fff;
+  }
+  .pwa-install-later {
+    border: 1px solid #dbe4f0;
+    background: #fff;
+    color: #52627a;
+  }
+  .pwa-install-steps {
+    margin: 12px 0 0;
+    padding: 12px 12px 12px 31px;
+    border-radius: 12px;
+    background: #f2f6fc;
+    color: #42536b;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  @media (min-width: 901px), (display-mode: standalone) {
+    .pwa-install-dock { display: none !important; }
+  }
+</style>"""
+
+PWA_INSTALL_MARKUP = """<aside class="pwa-install-dock" id="pwaInstallDock" aria-live="polite" hidden>
+  <div class="pwa-install-head">
+    <span class="pwa-install-icon" aria-hidden="true"></span>
+    <span class="pwa-install-copy"><b id="pwaInstallTitle">Сохранить приложение</b><span id="pwaInstallText">Добавьте «Шагаем вместе» на экран телефона.</span></span>
+    <button class="pwa-install-close" id="pwaInstallClose" type="button" aria-label="Закрыть">×</button>
+  </div>
+  <ol class="pwa-install-steps" id="pwaInstallSteps" hidden>
+    <li>Откройте этот сайт в Safari.</li>
+    <li>Нажмите кнопку «Поделиться».</li>
+    <li>Выберите «На экран Домой», затем «Добавить».</li>
+  </ol>
+  <div class="pwa-install-actions">
+    <button class="pwa-install-primary" id="pwaInstallButton" type="button">Установить</button>
+    <button class="pwa-install-later" id="pwaInstallLater" type="button">Позже</button>
+  </div>
+</aside>"""
+
+PWA_INSTALL_JS = """(() => {
+  const dock = document.getElementById("pwaInstallDock");
+  const button = document.getElementById("pwaInstallButton");
+  const closeButton = document.getElementById("pwaInstallClose");
+  const laterButton = document.getElementById("pwaInstallLater");
+  const title = document.getElementById("pwaInstallTitle");
+  const text = document.getElementById("pwaInstallText");
+  const steps = document.getElementById("pwaInstallSteps");
+  if (!dock || !button || !closeButton || !laterButton || !title || !text || !steps) return;
+
+  const mobileViewport = window.matchMedia("(max-width: 900px)");
+  const standalone = window.matchMedia("(display-mode: standalone)").matches
+    || window.navigator.standalone === true;
+  const appleMobile = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const insideTelegram = Boolean(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData);
+  let installPrompt = null;
+
+  function dismissedRecently() {
+    try {
+      const dismissedAt = Number(localStorage.getItem("pwa_install_dismissed_at") || 0);
+      return dismissedAt > 0 && Date.now() - dismissedAt < 7 * 24 * 60 * 60 * 1000;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function rememberDismissal() {
+    try {
+      localStorage.setItem("pwa_install_dismissed_at", String(Date.now()));
+    } catch (_error) {
+      // Installation still works when local storage is unavailable.
+    }
+  }
+
+  function hideDock(remember = false) {
+    dock.hidden = true;
+    if (remember) rememberDismissal();
+  }
+
+  function showDock(mode) {
+    if (standalone || insideTelegram || !mobileViewport.matches || dismissedRecently()) return;
+    const iosMode = mode === "ios";
+    title.textContent = iosMode ? "Добавить на экран iPhone" : "Установить веб-приложение";
+    text.textContent = iosMode
+      ? "Приложение откроется отдельно от браузера."
+      : "Быстрый запуск с главного экрана и отдельное окно.";
+    button.textContent = iosMode ? "Показать инструкцию" : "Установить";
+    button.dataset.installMode = mode;
+    dock.hidden = false;
+  }
+
+  if (!standalone && !insideTelegram && appleMobile) {
+    window.setTimeout(() => showDock("ios"), 900);
+  }
+
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    installPrompt = event;
+    showDock("prompt");
+  });
+
+  window.addEventListener("appinstalled", () => {
+    installPrompt = null;
+    hideDock(false);
+  });
+
+  button.addEventListener("click", async () => {
+    if (button.dataset.installMode === "ios") {
+      steps.hidden = !steps.hidden;
+      button.textContent = steps.hidden ? "Показать инструкцию" : "Инструкция открыта";
+      return;
+    }
+    if (!installPrompt) return;
+    const prompt = installPrompt;
+    installPrompt = null;
+    await prompt.prompt();
+    const choice = await prompt.userChoice;
+    if (choice && choice.outcome === "accepted") hideDock(false);
+    else hideDock(true);
+  });
+
+  closeButton.addEventListener("click", () => hideDock(true));
+  laterButton.addEventListener("click", () => hideDock(true));
+})();"""
+
+PWA_INSTALL_TAG = (
+    PWA_INSTALL_MARKUP
+    + '\n<script id="pwa-install-ui-script">\n'
+    + PWA_INSTALL_JS
+    + "\n</script>"
+)
+
 PWA_REGISTRATION_JS = f"""(() => {{
   if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
   window.addEventListener("load", () => {{
@@ -516,7 +720,7 @@ PWA_REGISTRATION_TAG = (
 
 
 def inject_pwa_markup(html: str) -> str:
-    """Add metadata and registration without changing visible application UI."""
+    """Add metadata, install controls, and service-worker registration."""
 
     result = html
     if f'href="{MANIFEST_PATH}"' not in result:
@@ -525,6 +729,20 @@ def inject_pwa_markup(html: str) -> str:
             result = result[:head_index] + PWA_HEAD_TAGS + "\n" + result[head_index:]
         else:
             result = PWA_HEAD_TAGS + "\n" + result
+
+    if 'id="pwa-install-ui-style"' not in result:
+        head_index = result.lower().rfind("</head>")
+        if head_index >= 0:
+            result = result[:head_index] + PWA_INSTALL_STYLE + "\n" + result[head_index:]
+        else:
+            result = PWA_INSTALL_STYLE + "\n" + result
+
+    if 'id="pwaInstallDock"' not in result:
+        body_index = result.lower().rfind("</body>")
+        if body_index >= 0:
+            result = result[:body_index] + PWA_INSTALL_TAG + "\n" + result[body_index:]
+        else:
+            result = result + "\n" + PWA_INSTALL_TAG
 
     if 'id="pwa-service-worker-registration"' not in result:
         body_index = result.lower().rfind("</body>")
@@ -757,6 +975,10 @@ __all__ = [
     "MS_TILE_ICON_PATH",
     "PWA_ASSET_REVISION",
     "PWA_HEAD_TAGS",
+    "PWA_INSTALL_JS",
+    "PWA_INSTALL_MARKUP",
+    "PWA_INSTALL_STYLE",
+    "PWA_INSTALL_TAG",
     "PWA_MANIFEST",
     "PWA_REGISTRATION_JS",
     "PWA_REGISTRATION_TAG",

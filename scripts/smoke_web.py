@@ -272,6 +272,18 @@ def run_smoke() -> None:
                     session_restore_marker in html_text,
                     f"Web session recovery marker is missing: {session_restore_marker}",
                 )
+            for install_marker in (
+                'id="pwaInstallDock"',
+                'id="pwaInstallButton"',
+                'id="pwaInstallSteps"',
+                '"beforeinstallprompt"',
+                'navigator.standalone === true',
+                'Добавить на экран iPhone',
+            ):
+                require(
+                    install_marker in html_text,
+                    f"PWA installation interface marker is missing: {install_marker}",
+                )
             require(
                 "sessionStorage" not in html_text,
                 "Web session identity must not depend on ephemeral sessionStorage.",
@@ -296,6 +308,11 @@ def run_smoke() -> None:
             require(status == 200, f"PWA manifest returned HTTP {status}.")
             manifest = json.loads(manifest_body.decode("utf-8"))
             require(manifest.get("display") == "standalone", "PWA manifest is not standalone.")
+            require(manifest.get("start_url") == "/app", "PWA manifest start URL is invalid.")
+            require(
+                manifest.get("display_override") == ["standalone", "minimal-ui"],
+                "PWA manifest display fallback order is invalid.",
+            )
             manifest_icons = {
                 icon.get("src"): icon
                 for icon in manifest.get("icons") or []

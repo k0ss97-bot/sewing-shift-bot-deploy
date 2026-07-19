@@ -2149,6 +2149,63 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    @media (min-width: 1024px) {
+      body.web-mode .app {
+        width: min(1280px, calc(100% - 40px));
+        min-height: calc(100vh - 44px);
+        margin: 22px auto;
+        padding-bottom: 28px;
+      }
+
+      body.web-mode .body {
+        min-height: calc(100vh - 150px);
+        padding-right: 30px;
+        padding-left: 252px;
+      }
+
+      body.web-mode .bottom-nav {
+        top: 112px;
+        bottom: auto;
+        left: max(34px, calc(50% - 616px));
+        right: auto;
+        width: 210px;
+        padding: 10px;
+        transform: none;
+        grid-template-columns: 1fr;
+        gap: 5px;
+        border: 1px solid rgba(109,124,158,.16);
+        border-radius: 14px;
+        box-shadow: 0 18px 44px rgba(16,23,34,.12);
+      }
+
+      body.web-mode .nav-btn {
+        grid-template-columns: 38px minmax(0,1fr);
+        grid-template-rows: 1fr;
+        justify-items: start;
+        gap: 8px;
+        padding: 9px 10px;
+        font-size: 13px;
+        line-height: 1.2;
+      }
+
+      body.web-mode .nav-btn span:last-child {
+        text-align: left;
+      }
+
+      body.web-mode .nav-ico {
+        width: 34px;
+        height: 34px;
+      }
+
+      body.web-mode .toast {
+        right: 28px;
+        bottom: 28px;
+        left: auto;
+        width: min(430px, calc(100% - 56px));
+        transform: none;
+      }
+    }
+
     /* Final brand overrides: the lockup stays visible above every app screen. */
     .brand-lockup {
       display: inline-flex;
