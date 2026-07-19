@@ -50,6 +50,32 @@ class IsolatedDatabaseTest(unittest.TestCase):
 
         self.temp_dir.cleanup()
 
+    def test_product_packing_options_are_isolated(self):
+        route_maps = importlib.import_module("route_maps")
+
+        def option_ids(product_name: str):
+            packing_step = next(
+                route_step
+                for route_step in route_maps.PRODUCT_ROUTE_MAPS[product_name]
+                if route_step["operation"] == "Упаковка"
+            )
+            return packing_step, {option["id"] for option in packing_step["packing_options"]}
+
+        tshirt_step, tshirt_options = option_ids("Футболки")
+        leggings_step, leggings_options = option_ids("Легинсы")
+        joggers_step, joggers_options = option_ids("Брюки-джоггеры")
+        pants_step, pants_options = option_ids("Брюки со стрелками детские")
+        cardigan_step, cardigan_options = option_ids("Кардиган")
+        shorts_step, shorts_options = option_ids("Шорты")
+
+        self.assertEqual(tshirt_options, {"individual", "tshirt_3"})
+        self.assertEqual(leggings_options, {"individual", "leggings_3"})
+        self.assertEqual(joggers_options, {"individual", "joggers_2", "joggers_sweatshirt", "suit"})
+        self.assertEqual(pants_options, {"individual", "suit"})
+        self.assertEqual(cardigan_options, {"individual", "suit"})
+        self.assertEqual(shorts_options, {"individual"})
+        self.assertEqual(len({id(step) for step in (tshirt_step, leggings_step, joggers_step, pants_step, cardigan_step, shorts_step)}), 6)
+
     def route_step_index(self, product_name: str, operation_name: str, position: str | None = None):
         route_maps = importlib.import_module("route_maps")
 

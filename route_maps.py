@@ -57,7 +57,11 @@ def step(position: str, operation: str, status_after: str | None = None, **metad
 
 
 def route(*production_steps):
-    return [*CUTTING_ROUTE, *production_steps, *PACKING_ROUTE]
+    return [
+        *(dict(route_step) for route_step in CUTTING_ROUTE),
+        *production_steps,
+        *(dict(route_step) for route_step in PACKING_ROUTE),
+    ]
 
 
 INDIVIDUAL_PACKING = {
