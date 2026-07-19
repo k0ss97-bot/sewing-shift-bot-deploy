@@ -2827,7 +2827,187 @@ MINIAPP_HTML = """<!doctype html>
         padding-top: 32px !important;
       }
     }
-</style>
+
+    /* Desktop product shell: global directions live in the header, while the
+       side navigation stays focused on the production workspace. */
+    .workspace-nav,
+    .appbar-profile,
+    .appbar-actions {
+      display: none;
+    }
+
+    @media (min-width: 900px) {
+      body.web-mode .appbar {
+        min-height: 96px;
+        padding: 0 34px !important;
+        display: grid !important;
+        grid-template-columns: 250px minmax(420px, 1fr) 164px auto;
+        gap: 22px;
+        background: rgba(255,255,255,.96);
+        box-shadow: 0 1px 0 rgba(111,128,159,.16);
+      }
+
+      body.web-mode .app-title {
+        display: block !important;
+        min-width: 0;
+      }
+
+      body.web-mode .app-title::after {
+        display: none;
+      }
+
+      body.web-mode .app-brand-lockup {
+        min-height: 58px;
+        gap: 13px;
+      }
+
+      body.web-mode .app-brand-lockup img,
+      body.web-mode .app-title img {
+        width: 46px;
+        height: 46px;
+        max-height: none;
+      }
+
+      body.web-mode .app-brand-lockup .brand-wordmark {
+        font-size: 22px;
+        line-height: .78;
+        letter-spacing: -.04em;
+      }
+
+      body.web-mode .workspace-nav {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        align-items: center;
+        gap: 4px;
+        padding: 5px;
+        border: 1px solid rgba(111,128,159,.13);
+        border-radius: 12px;
+        background: #f5f7fb;
+      }
+
+      body.web-mode .workspace-nav button {
+        min-height: 46px;
+        padding: 7px 10px;
+        border: 0;
+        border-radius: 8px;
+        color: #65748d;
+        background: transparent;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 850;
+        line-height: 1.15;
+        text-align: center;
+        white-space: normal;
+      }
+
+      body.web-mode .workspace-nav button.active {
+        color: #fff;
+        background: linear-gradient(135deg, #2160f3, #1647c9);
+        box-shadow: 0 8px 18px rgba(25,89,243,.22);
+      }
+
+      body.web-mode .workspace-nav button:disabled {
+        cursor: not-allowed;
+        opacity: .46;
+      }
+
+      body.web-mode .appbar-profile {
+        display: grid;
+        justify-items: end;
+        gap: 3px;
+        min-width: 0;
+        padding-right: 4px;
+        text-align: right;
+      }
+
+      body.web-mode .appbar-profile span {
+        color: #7a899f;
+        font-size: 10px;
+        font-weight: 850;
+        letter-spacing: .07em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      body.web-mode .appbar-profile small {
+        margin: 0 !important;
+        color: #17243a;
+        font-size: 14px;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+
+      body.web-mode .appbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      body.web-mode .appbar-actions .icon-btn {
+        width: 40px;
+        height: 40px;
+        min-height: 40px;
+        padding: 0;
+        border: 1px solid rgba(111,128,159,.15);
+        border-radius: 10px;
+        box-shadow: 0 5px 14px rgba(27,47,78,.08);
+      }
+
+      body.web-mode .bottom-nav {
+        inset: 136px auto 32px 24px !important;
+        width: 244px;
+        padding: 16px 12px;
+      }
+
+      body.web-mode .bottom-nav::before {
+        content: "УПРАВЛЕНИЕ ПРОИЗВОДСТВОМ";
+        padding: 9px 12px 14px;
+      }
+
+      body.web-mode .body {
+        min-height: calc(100vh - 170px);
+        padding: 38px 52px 70px 312px !important;
+      }
+    }
+
+    @media (min-width: 900px) and (max-width: 1260px) {
+      body.web-mode .appbar {
+        grid-template-columns: 205px minmax(340px, 1fr) 126px auto;
+        gap: 14px;
+        padding: 0 22px !important;
+      }
+
+      body.web-mode .app-brand-lockup .brand-wordmark {
+        font-size: 18px;
+      }
+
+      body.web-mode .workspace-nav button {
+        padding: 6px 5px;
+        font-size: 9px;
+      }
+    }
+
+    @media (max-width: 899px) {
+      .appbar {
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+      }
+
+      .workspace-nav,
+      .appbar-profile {
+        display: none !important;
+      }
+
+      .appbar-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .app-title {
+        text-align: left;
+      }
+    }
+  </style>
 </head>
 <body>
   <section class="login-view" id="connectionView" hidden aria-labelledby="connectionTitle">
@@ -2885,15 +3065,23 @@ MINIAPP_HTML = """<!doctype html>
 
   <main class="app" id="appRoot" hidden>
     <div class="appbar">
-      <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
       <div class="app-title">
         <div class="brand-lockup app-brand-lockup">
           <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
           <span class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></span>
         </div>
-        <small id="roleLabel">Загрузка</small>
       </div>
-      <button class="icon-btn" id="menuBtn" aria-label="Меню">⋯</button>
+      <nav class="workspace-nav" aria-label="Разделы системы">
+        <button class="active" type="button" aria-current="page">Управление производством</button>
+        <button type="button" disabled title="Раздел готовится">Управление складом</button>
+        <button type="button" disabled title="Раздел готовится">Управление маркетплейсами</button>
+        <button type="button" disabled title="Раздел готовится">Отчёт</button>
+      </nav>
+      <div class="appbar-profile"><span>Должность на проекте</span><small id="roleLabel">Загрузка</small></div>
+      <div class="appbar-actions">
+        <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
+        <button class="icon-btn" id="menuBtn" aria-label="Меню">⋯</button>
+      </div>
     </div>
 
     <div class="body">
