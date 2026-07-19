@@ -47,16 +47,48 @@ PACKING_ROUTE = [
 ]
 
 
-def step(position: str, operation: str, status_after: str | None = None):
+def step(position: str, operation: str, status_after: str | None = None, **metadata):
     return {
         "position": position,
         "operation": operation,
         "status_after": status_after or f"После операции: {operation}",
+        **metadata,
     }
 
 
 def route(*production_steps):
-    return [*CUTTING_ROUTE, *production_steps, *PACKING_ROUTE]
+    return [
+        *(dict(route_step) for route_step in CUTTING_ROUTE),
+        *production_steps,
+        *(dict(route_step) for route_step in PACKING_ROUTE),
+    ]
+
+
+INDIVIDUAL_PACKING = {
+    "id": "individual",
+    "label": "Отдельная номенклатура",
+    "ratio": 1,
+}
+
+
+PACKING_OPTIONS_BY_PRODUCT = {
+    "Футболки": [INDIVIDUAL_PACKING, {"id": "tshirt_3", "label": "Футболки, набор 3 в 1", "ratio": 3, "output_name": "Футболки, набор 3 в 1"}],
+    "Легинсы": [INDIVIDUAL_PACKING, {"id": "leggings_3", "label": "Легинсы, набор 3 в 1", "ratio": 3, "output_name": "Легинсы, набор 3 в 1"}],
+    "Брюки-ползунки": [INDIVIDUAL_PACKING, {"id": "rompers_3", "label": "Ползунки, набор 3 в 1", "ratio": 3, "output_name": "Ползунки, набор 3 в 1"}],
+    "Брюки-джоггеры": [
+        INDIVIDUAL_PACKING,
+        {"id": "joggers_2", "label": "Джоггеры, набор 2 в 1", "ratio": 2, "output_name": "Джоггеры, набор 2 в 1"},
+        {"id": "joggers_sweatshirt", "label": "Набор: джоггеры + свитшот", "ratio": 1, "output_name": "Набор: джоггеры + свитшот", "component_products": ["Свитшоты"]},
+    ],
+}
+
+
+SUIT_PACKING = {
+    "id": "suit",
+    "label": "Упаковка в виде костюма",
+    "ratio": 1,
+    "output_name": "Костюм: брюки + кардиган",
+}
 
 
 PRODUCT_ROUTE_MAPS = {
@@ -67,21 +99,21 @@ PRODUCT_ROUTE_MAPS = {
         step("Швея", "Отстрочка стрелок", "Стрелки отстрочены"),
         step("Упаковщик", "ВТО пошитых стрелок", "Стрелки после ВТО"),
         step("Швея", "Сборка брюк на оверлоке", "После оверлока"),
-        step("Швея", "Притачивание резинки к поясу", "Резинка притачана"),
+        step("Швея", "Формирование низа брюк", "Низ сформирован", parallel_group="children-pants-finish", parallel_branch="hem", parallel_order=1, parallel_input="main"),
+        step("Швея", "Притачивание резинки к поясу", "Резинка притачана", parallel_group="children-pants-finish", parallel_branch="elastic", parallel_order=1, parallel_input="free"),
         step("Швея", "Отстрачивание пояса", "Пояс отстрочен"),
-        step("Швея", "Формирование низа брюк", "Низ сформирован"),
     ),
     "Брюки со стрелками подростковые": route(
         step("Упаковщик", "Большие стрелки / подростковые с карманами — резинка 35 мм", "Резинка нарезана"),
         step("Швея", "Сшивание резинок в кольцо", "Резинка сшита в кольцо"),
         step("Упаковщик", "Карманы прорезные — дублерин 15 мм", "Дублерин нарезан"),
-        step("Упаковщик", "Заутюживание стрелок и проклейка входа в карман", "Стрелки заутюжены, вход в карман проклеен"),
-        step("Швея", "Подготовка кармана на оверлоке", "Карман подготовлен"),
-        step("Швея", "Отстрочка стрелок", "Стрелки отстрочены"),
+        step("Швея", "Подгонка и отстрачивание пояса", "Пояс подогнан и отстрочен", parallel_group="teen-pants-preparation", parallel_branch="waist", parallel_order=1, parallel_input="main", input_stages=["Раскроенные"]),
+        step("Швея", "Подгонка кармана", "Карман подогнан", parallel_group="teen-pants-preparation", parallel_branch="pocket", parallel_order=1, parallel_input="free"),
+        step("Упаковщик", "Заутюживание стрелок и проклейка входа в карман", "Стрелки заутюжены, вход в карман проклеен", parallel_group="teen-pants-preparation", parallel_branch="arrows", parallel_order=1, parallel_input="free"),
+        step("Швея", "Отстрочка стрелок", "Стрелки отстрочены", parallel_group="teen-pants-preparation", parallel_branch="arrows", parallel_order=2),
         step("Швея", "Формирование кармана", "Карман сформирован"),
         step("Упаковщик", "ВТО пошитых стрелок", "Стрелки после ВТО"),
         step("Швея", "Сборка брюк на оверлоке", "После оверлока"),
-        step("Швея", "Стачивание пояса в кольцо", "Пояс стачан в кольцо"),
         step("Швея", "Пришивание пояса к брюкам", "Пояс пришит"),
         step("Швея", "Формирование низа брюк и закрепки на поясе", "Низ сформирован, закрепки выполнены"),
     ),
@@ -92,9 +124,9 @@ PRODUCT_ROUTE_MAPS = {
         step("Швея", "Отстрочка стрелок", "Стрелки отстрочены"),
         step("Упаковщик", "ВТО пошитых стрелок", "Стрелки после ВТО"),
         step("Швея", "Сборка брюк на оверлоке", "После оверлока"),
-        step("Швея", "Притачивание резинки к поясу", "Резинка притачана"),
+        step("Швея", "Подшивание низа брюк", "Низ подшит", parallel_group="girls-pants-finish", parallel_branch="hem", parallel_order=1, parallel_input="main"),
+        step("Швея", "Притачивание резинки к поясу", "Резинка притачана", parallel_group="girls-pants-finish", parallel_branch="elastic", parallel_order=1, parallel_input="free"),
         step("Швея", "Отстрачивание пояса", "Пояс отстрочен"),
-        step("Швея", "Подшивание низа брюк", "Низ подшит"),
     ),
     "Брюки-джоггеры": route(
         step("Упаковщик", "Джоггеры — резинка 35 мм", "Резинка по поясу нарезана"),
@@ -103,7 +135,8 @@ PRODUCT_ROUTE_MAPS = {
         step("Швея", "Сшивание резинок в кольцо", "Резинка сшита в кольцо"),
         step("Швея", "Сборка брюк на оверлоке с притачиванием резинок на манжеты", "После оверлока, резинки на манжетах"),
         step("Швея", "Притачивание резинки к поясу", "Резинка притачана"),
-        step("Швея", "Отстрачивание пояса и манжет", "Пояс и манжеты отстрочены"),
+        step("Швея", "Отстрачивание манжет", "Манжеты отстрочены", parallel_group="joggers-topstitch", parallel_branch="cuffs", parallel_order=1, parallel_input="main"),
+        step("Швея", "Отстрачивание пояса", "Пояс отстрочен", parallel_group="joggers-topstitch", parallel_branch="waist", parallel_order=1, parallel_input="free"),
     ),
     "Брюки-ползунки": route(
         step("Упаковщик", "Ползунки — резинка 25 мм", "Резинка нарезана"),
@@ -114,9 +147,9 @@ PRODUCT_ROUTE_MAPS = {
     ),
     "Легинсы": route(
         step("Швея", "Сборка на оверлоке", "После оверлока"),
-        step("Швея", "Притачивание резинки к поясу", "Резинка притачана"),
+        step("Швея", "Формирование низа", "Низ сформирован", parallel_group="leggings-finish", parallel_branch="hem", parallel_order=1, parallel_input="main"),
+        step("Швея", "Притачивание резинки к поясу", "Резинка притачана", parallel_group="leggings-finish", parallel_branch="elastic", parallel_order=1, parallel_input="free"),
         step("Швея", "Отстрачивание пояса", "Пояс отстрочен"),
-        step("Швея", "Подшивание низа", "Низ подшит"),
     ),
     "Шорты": route(
         step("Упаковщик", "Шорты — резинка 25 мм", "Резинка нарезана"),
@@ -163,10 +196,10 @@ PRODUCT_ROUTE_MAPS = {
     "Жакет для девочек": route(
         step("Упаковщик", "Жакеты — дублерин 80 мм", "Дублерин нарезан"),
         step("Упаковщик", "Жакет для девочек — Дублирование", "Планки продублированы"),
-        step("Швея", "Сборка жакета с обтачками", "Жакет собран с обтачками"),
-        step("Швея", "Подшивание рукавов", "Рукава подшиты"),
-        step("Швея", "Формирование клапана", "Клапан сформирован"),
-        step("Упаковщик", "Выворачивание и ВТО клапана", "Клапан вывернут и после ВТО"),
+        step("Швея", "Сборка жакета с обтачками", "Жакет собран с обтачками", parallel_group="jacket-flaps", parallel_branch="garment", parallel_order=1, parallel_input="main"),
+        step("Швея", "Подшивание рукавов", "Рукава подшиты", parallel_group="jacket-flaps", parallel_branch="garment", parallel_order=2),
+        step("Швея", "Формирование клапана", "Клапан сформирован", parallel_group="jacket-flaps", parallel_branch="flap", parallel_order=1, parallel_input="free"),
+        step("Упаковщик", "Выворачивание и ВТО клапана", "Клапан вывернут и после ВТО", parallel_group="jacket-flaps", parallel_branch="flap", parallel_order=2),
         step("Упаковщик", "ВТО и разметка под клапан, петли, пуговицы", "После ВТО и разметки"),
         step("Швея", "Подшивание жакета и настрачивание клапанов, закрепки обтачки", "Жакет подшит, клапаны настрочены"),
         step("Швея", "Выметывание петель", "Петли выметаны"),
@@ -183,6 +216,21 @@ PRODUCT_ROUTE_MAPS = {
         step("Швея", "Отстрачивание пояса", "Пояс отстрочен"),
     ),
 }
+
+
+for product_name, route_steps in PRODUCT_ROUTE_MAPS.items():
+    options = list(PACKING_OPTIONS_BY_PRODUCT.get(product_name, [INDIVIDUAL_PACKING]))
+    if product_name.startswith("Брюки"):
+        suit_option = {**SUIT_PACKING, "component_products": ["Кардиган", "Кардиган детский и подростковый"]}
+        options.append(suit_option)
+    elif product_name.startswith("Кардиган"):
+        suit_option = {**SUIT_PACKING, "component_prefix": "Брюки"}
+        options.append(suit_option)
+
+    for route_step in route_steps:
+        if route_step["operation"] == "Упаковка":
+            route_step["packing_options"] = options
+            break
 
 
 ROUTE_NOTES = [

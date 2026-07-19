@@ -1,4 +1,5 @@
 import importlib
+import base64
 import io
 import os
 import sqlite3
@@ -49,6 +50,32 @@ class IsolatedDatabaseTest(unittest.TestCase):
 
         self.temp_dir.cleanup()
 
+    def test_product_packing_options_are_isolated(self):
+        route_maps = importlib.import_module("route_maps")
+
+        def option_ids(product_name: str):
+            packing_step = next(
+                route_step
+                for route_step in route_maps.PRODUCT_ROUTE_MAPS[product_name]
+                if route_step["operation"] == "Упаковка"
+            )
+            return packing_step, {option["id"] for option in packing_step["packing_options"]}
+
+        tshirt_step, tshirt_options = option_ids("Футболки")
+        leggings_step, leggings_options = option_ids("Легинсы")
+        joggers_step, joggers_options = option_ids("Брюки-джоггеры")
+        pants_step, pants_options = option_ids("Брюки со стрелками детские")
+        cardigan_step, cardigan_options = option_ids("Кардиган")
+        shorts_step, shorts_options = option_ids("Шорты")
+
+        self.assertEqual(tshirt_options, {"individual", "tshirt_3"})
+        self.assertEqual(leggings_options, {"individual", "leggings_3"})
+        self.assertEqual(joggers_options, {"individual", "joggers_2", "joggers_sweatshirt", "suit"})
+        self.assertEqual(pants_options, {"individual", "suit"})
+        self.assertEqual(cardigan_options, {"individual", "suit"})
+        self.assertEqual(shorts_options, {"individual"})
+        self.assertEqual(len({id(step) for step in (tshirt_step, leggings_step, joggers_step, pants_step, cardigan_step, shorts_step)}), 6)
+
     def route_step_index(self, product_name: str, operation_name: str, position: str | None = None):
         route_maps = importlib.import_module("route_maps")
 
@@ -90,6 +117,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("idx_production_task_fabric_rolls_task", indexes)
         self.assertIn("idx_warehouse_stock_type_position", indexes)
         self.assertIn("idx_warehouse_stock_product", indexes)
+        self.assertIn("idx_route_batches_trace_code", indexes)
+        self.assertIn("idx_production_tasks_trace_code", indexes)
+        self.assertIn("idx_route_batch_input_lots_batch", indexes)
+        self.assertIn("idx_production_task_fabric_lots_task", indexes)
+        self.assertIn("idx_trace_events_batch", indexes)
 
     def test_init_db_repairs_legacy_duplicates_before_unique_indexes(self):
         self.database.create_employee(1099, "Тест Старые Дубли", "Раскройщик")
@@ -1002,6 +1034,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         expected_sheets = {
             "Сводка", "Смены по дням", "Операции", "Раскрой", "Пошив", "Упаковка",
             "Задания раскроя", "Маршрутные задания", "Входы заданий", "Брак",
+            "Партии компонентов", "Хронология партий",
             "Движения склада", "Движения материалов", "Остатки склада", "Остатки материалов",
             "WIP по этапам", "Отклонения",
         }
@@ -1011,12 +1044,16 @@ class IsolatedDatabaseTest(unittest.TestCase):
         route_values = list(route_sheet.values)
         self.assertEqual(route_values[1][9:14], (10, 9, 1, 90, 10))
         self.assertEqual(route_values[1][15], "Тест Выгрузка")
+        self.assertTrue(route_values[1][19].startswith("RB-"))
+        self.assertTrue(route_values[1][20])
         defect_values = list(workbook["Брак"].values)
         self.assertEqual(defect_values[1][8], 1)
         self.assertEqual(defect_values[1][9], "Повреждение ткани")
         self.assertEqual(defect_values[1][10], "Списать")
         self.assertGreaterEqual(workbook["Движения склада"].max_row, 3)
         self.assertGreaterEqual(workbook["Движения материалов"].max_row, 2)
+        self.assertGreaterEqual(workbook["Партии компонентов"].max_row, 2)
+        self.assertGreaterEqual(workbook["Хронология партий"].max_row, 4)
 
     def test_miniapp_full_production_cycle_is_strictly_sequential(self):
         os.environ["ADMIN_IDS"] = "9001"
@@ -1046,7 +1083,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         cutting_task = miniapp_server.create_order_task_for_telegram(
             9001,
             {
-                "product_name": "Легинсы",
+                "product_name": "Футболки",
                 "task_type": "cutting",
                 "material_name": "Ткань",
                 "sizes": ["86"],
@@ -1071,7 +1108,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             {"stage": "contours", "task_id": task_id, "quantities": {"86|Бежевый": "5"}},
         )
         self.assertTrue(contours["ok"], contours)
-        batch_id = self.database.get_cutting_batches_for_layout("Легинсы")[0][0]
+        batch_id = self.database.get_cutting_batches_for_layout("Футболки")[0][0]
 
         blocked_cutting = miniapp_server.submit_cutting_stage_for_telegram(
             9002,
@@ -1113,12 +1150,12 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ("semifinished", "Раскроенные", "Швея", 10),
         )
 
-        route_steps = route_maps.PRODUCT_ROUTE_MAPS["Легинсы"]
+        route_steps = route_maps.PRODUCT_ROUTE_MAPS["Футболки"]
         first_step_index = len(route_maps.CUTTING_ROUTE)
         skipped = miniapp_server.create_order_task_for_telegram(
             9001,
             {
-                "product_name": "Легинсы",
+                "product_name": "Футболки",
                 "task_type": "route",
                 "route_step_index": first_step_index + 1,
                 "stock_items": [{"stock_id": stock["id"], "quantity": "10"}],
@@ -1138,7 +1175,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 skipped = miniapp_server.create_order_task_for_telegram(
                     9001,
                     {
-                        "product_name": "Легинсы",
+                        "product_name": "Футболки",
                         "task_type": "route",
                         "route_step_index": step_index + 1,
                         "stock_items": [{"stock_id": source_stock["id"], "quantity": "10"}],
@@ -1149,7 +1186,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             created = miniapp_server.create_order_task_for_telegram(
                 9001,
                 {
-                    "product_name": "Легинсы",
+                    "product_name": "Футболки",
                     "task_type": "route",
                     "route_step_index": step_index,
                     "stock_items": [{"stock_id": source_stock["id"], "quantity": "10"}],
@@ -1793,6 +1830,255 @@ class IsolatedDatabaseTest(unittest.TestCase):
         not_assigned = miniapp_server.complete_route_task_for_telegram(1204, batch["id"])
         self.assertFalse(not_assigned["ok"])
         self.assertIn("выберите задание", not_assigned["message"].lower())
+
+    def test_fabric_lots_are_reserved_fifo_and_restored_exactly(self):
+        self.database.add_fabric_receipt("Ткань", "Бежевый", 2, None, comment="Первая партия")
+        self.database.add_fabric_receipt("Ткань", "Бежевый", 2, None, comment="Вторая партия")
+        task = self.database.create_production_task(
+            "Легинсы",
+            ["86"],
+            ["Бежевый"],
+            None,
+            fabric_rolls={"Бежевый": 3},
+        )
+
+        self.assertTrue(task["trace_code"].startswith("CUT-"))
+        self.assertTrue(task["route_version"])
+        conn = sqlite3.connect(self.database.DB_NAME)
+        allocations = conn.execute(
+            """
+            SELECT fabric_stock_lots.lot_code, production_task_fabric_lots.rolls
+            FROM production_task_fabric_lots
+            JOIN fabric_stock_lots ON fabric_stock_lots.id = production_task_fabric_lots.lot_id
+            WHERE production_task_fabric_lots.task_id = ?
+            ORDER BY fabric_stock_lots.id
+            """,
+            (task["id"],),
+        ).fetchall()
+        available_before_cancel = conn.execute(
+            "SELECT SUM(rolls_available) FROM fabric_stock_lots",
+        ).fetchone()[0]
+        conn.close()
+
+        self.assertEqual([row[1] for row in allocations], [2, 1])
+        self.assertEqual(available_before_cancel, 1)
+        self.assertIsNotNone(self.database.cancel_production_task(task["id"]))
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        available_after_cancel = conn.execute(
+            "SELECT SUM(rolls_available) FROM fabric_stock_lots",
+        ).fetchone()[0]
+        stock_quantity = conn.execute("SELECT quantity FROM fabric_stock").fetchone()[0]
+        conn.close()
+        self.assertEqual(available_after_cancel, 4)
+        self.assertEqual(stock_quantity, 4)
+
+    def test_route_passport_connects_output_lot_to_previous_operation(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
+        stock = self.database.add_warehouse_stock(
+            "semifinished", "Легинсы", "86", "Бежевый", "Раскроенные", "Швея", 10, None,
+        )
+        parent = self.database.create_route_batch_with_inputs(
+            "Легинсы", "86", "Бежевый", 10, None, step_index,
+            [{"stock_id": stock["id"], "quantity": 10, "input_role": "main"}],
+        )
+        self.database.create_employee(1301, "Тест Швея Партия", "Швея")
+        employee = self.database.get_employee_by_telegram_id(1301)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(1301, parent["id"])["ok"])
+        self.assertTrue(miniapp_server.complete_route_task_for_telegram(
+            1301, parent["id"], {"good_quantity": 10, "defect_quantity": 0},
+        )["ok"])
+
+        child = next(
+            row for row in self.database.get_active_route_batches()
+            if row["route_step_index"] == step_index + 1
+        )
+        passport = self.database.get_route_batch_passport(child["id"])
+
+        self.assertTrue({parent["id"], child["id"]}.issubset({row["id"] for row in passport["batches"]}))
+        child_lots = passport["inputs"][str(child["id"])]
+        self.assertEqual(child_lots[0]["source_type"], "route_batch")
+        self.assertEqual(child_lots[0]["source_id"], parent["id"])
+        self.assertTrue(any(event["event_type"] == "operation_completed" for event in passport["events"]))
+
+    def test_route_snapshot_is_frozen_when_catalog_changes(self):
+        route_maps = importlib.import_module("route_maps")
+        miniapp_server = importlib.import_module("miniapp_server")
+        step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
+        batch = self.database.create_route_batch("Легинсы", "86", "Бежевый", 5, None, step_index)
+        original_operation = miniapp_server.get_route_step_for_batch(batch)["operation"]
+        saved_operation = route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][step_index]["operation"]
+        try:
+            route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][step_index]["operation"] = "Новая версия операции"
+            self.assertEqual(miniapp_server.get_route_step_for_batch(batch)["operation"], original_operation)
+            self.assertNotEqual(original_operation, "Новая версия операции")
+        finally:
+            route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][step_index]["operation"] = saved_operation
+
+    def test_route_task_pause_block_and_handover_persist(self):
+        self.database.create_employee(1302, "Тест Передача", "Швея")
+        employee = self.database.get_employee_by_telegram_id(1302)
+        self.database.update_employee_status(employee[0], "active")
+        step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
+        batch = self.database.create_route_batch("Легинсы", "86", "Бежевый", 5, None, step_index)
+        self.assertIsNotNone(self.database.assign_route_batch(batch["id"], employee[0]))
+
+        paused = self.database.set_route_batch_work_state(batch["id"], employee[0], "pause", "Перерыв")
+        self.assertEqual(paused["work_state"], "paused")
+        blocked = self.database.set_route_batch_work_state(batch["id"], employee[0], "block", "Нет комплектующей")
+        self.assertEqual(blocked["work_state"], "blocked")
+        resumed = self.database.set_route_batch_work_state(batch["id"], employee[0], "resume")
+        self.assertEqual(resumed["work_state"], "in_work")
+        released = self.database.set_route_batch_work_state(
+            batch["id"], employee[0], "release", "Передача следующей смене",
+        )
+        self.assertIsNone(released["assigned_employee_id"])
+        self.assertEqual(released["work_state"], "free")
+        self.assertEqual(released["handover_count"], 1)
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        handoff = conn.execute(
+            "SELECT from_employee_id, reason FROM route_batch_handoffs WHERE batch_id = ?",
+            (batch["id"],),
+        ).fetchone()
+        event_types = {
+            row[0] for row in conn.execute(
+                "SELECT event_type FROM production_trace_events WHERE batch_id = ?",
+                (batch["id"],),
+            )
+        }
+        conn.close()
+        self.assertEqual(handoff, (employee[0], "Передача следующей смене"))
+        self.assertTrue({"task_paused", "task_blocked", "task_resumed", "task_released"}.issubset(event_types))
+
+    def test_completion_request_is_idempotent_and_saves_defect_photo(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+        step_index = len(route_maps.PRODUCT_ROUTE_MAPS["Легинсы"]) - 1
+        position = route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][step_index]["position"]
+        self.database.create_employee(1303, "Тест Офлайн", position)
+        employee = self.database.get_employee_by_telegram_id(1303)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        batch = self.database.create_route_batch("Легинсы", "86", "Бежевый", 5, None, step_index)
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(1303, batch["id"])["ok"])
+        payload = {
+            "request_id": "offline-request-1",
+            "good_quantity": 4,
+            "defect_quantity": 1,
+            "defect_reason": "Дефект строчки",
+            "defect_disposition": "Списать",
+            "defect_comment": "Тест",
+            "defect_photo": {
+                "file_name": "defect.png",
+                "mime_type": "image/png",
+                "content_base64": base64.b64encode(b"test-image").decode("ascii"),
+            },
+        }
+
+        first = miniapp_server.complete_route_task_for_telegram(1303, batch["id"], payload)
+        second = miniapp_server.complete_route_task_for_telegram(1303, batch["id"], payload)
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertIn("синхронизировано", second["message"].lower())
+        finished_quantity = sum(
+            row["quantity"] for row in self.database.get_warehouse_stock_rows()
+            if row["item_type"] == "finished"
+        )
+        self.assertEqual(finished_quantity, 4)
+        defect = self.database.get_route_batch_defects(batch["id"])[0]
+        self.assertTrue(defect["has_photo"])
+        photo = self.database.get_route_batch_defect_photo(defect["id"])
+        self.assertEqual(photo["file_name"], "defect.png")
+        self.assertEqual(base64.b64decode(photo["content_base64"]), b"test-image")
+
+    def test_admin_adjusts_fabric_and_warehouse_balances_with_reason(self):
+        os.environ["ADMIN_IDS"] = "9401"
+        miniapp_server = importlib.import_module("miniapp_server")
+        fabric = self.database.add_fabric_receipt("Ткань", "Бежевый", 5, None)
+        warehouse = self.database.add_warehouse_stock(
+            "semifinished", "Легинсы", "86", "Бежевый", "Раскроенные", "Швея", 10, None,
+        )
+
+        fabric_result = miniapp_server.adjust_stock_for_telegram(
+            9401,
+            {"stock_kind": "fabric", "stock_id": fabric[0], "quantity": 3, "reason": "Инвентаризация ткани"},
+        )
+        warehouse_result = miniapp_server.adjust_stock_for_telegram(
+            9401,
+            {"stock_kind": "warehouse", "stock_id": warehouse["id"], "quantity": 6, "reason": "Пересчёт кроя"},
+        )
+        self.assertTrue(fabric_result["ok"], fabric_result)
+        self.assertTrue(warehouse_result["ok"], warehouse_result)
+        self.assertEqual(self.database.get_fabric_stock_by_id(fabric[0])[3], 3)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(warehouse["id"])["quantity"], 6)
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        fabric_lots = conn.execute(
+            "SELECT SUM(rolls_available) FROM fabric_stock_lots WHERE stock_id = ?", (fabric[0],),
+        ).fetchone()[0]
+        warehouse_lots = conn.execute(
+            "SELECT SUM(quantity_available) FROM warehouse_stock_lots WHERE stock_id = ?", (warehouse["id"],),
+        ).fetchone()[0]
+        fabric_movement = conn.execute(
+            "SELECT quantity, movement_type, comment FROM fabric_stock_movements ORDER BY id DESC LIMIT 1",
+        ).fetchone()
+        warehouse_movement = conn.execute(
+            "SELECT quantity, movement_type, comment FROM warehouse_stock_movements ORDER BY id DESC LIMIT 1",
+        ).fetchone()
+        conn.close()
+        self.assertEqual(fabric_lots, 3)
+        self.assertEqual(warehouse_lots, 6)
+        self.assertEqual(fabric_movement, (-2, "adjustment", "Инвентаризация ткани"))
+        self.assertEqual(warehouse_movement, (-4, "adjustment", "Пересчёт кроя"))
+
+    def test_cutter_rejects_assigned_fabric_rolls_and_cancel_restores_only_good_rolls(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9402, "Тест Раскройщик Брак", "Раскройщик")
+        employee = self.database.get_employee_by_telegram_id(9402)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        self.database.add_fabric_receipt("Ткань", "Бежевый", 3, None)
+        task = self.database.create_production_task(
+            "Легинсы", ["86"], ["Бежевый"], None,
+            fabric_rolls={"Бежевый": 3},
+        )
+        self.assertIsNotNone(self.database.assign_production_task(task["id"], employee[0]))
+
+        rejected = miniapp_server.reject_fabric_rolls_for_telegram(
+            9402,
+            {
+                "task_id": task["id"],
+                "product_color": "Бежевый",
+                "quantity": 1,
+                "comment": "Повреждение полотна",
+            },
+        )
+        repeated_too_large = miniapp_server.reject_fabric_rolls_for_telegram(
+            9402,
+            {
+                "task_id": task["id"],
+                "product_color": "Бежевый",
+                "quantity": 3,
+                "comment": "Повторное списание",
+            },
+        )
+        self.assertTrue(rejected["ok"], rejected)
+        self.assertFalse(repeated_too_large["ok"])
+        roll = rejected["production"]["cutting_tasks"][0]["fabric_rolls"][0]
+        self.assertEqual((roll["rolls"], roll["rejected_rolls"], roll["available_rolls"]), (3, 1, 2))
+        self.assertEqual(roll["defects"][0]["comment"], "Повреждение полотна")
+
+        cancelled = self.database.cancel_production_task(task["id"], employee[0])
+        self.assertIsNotNone(cancelled)
+        self.assertEqual(self.database.get_fabric_stock_rows()[0][2], 2)
+        conn = sqlite3.connect(self.database.DB_NAME)
+        available_lots = conn.execute("SELECT SUM(rolls_available) FROM fabric_stock_lots").fetchone()[0]
+        conn.close()
+        self.assertEqual(available_lots, 2)
 
     def _create_layout_done_batch(self):
         self.database.create_employee(1001, "Тест Раскройщик", "Раскройщик")

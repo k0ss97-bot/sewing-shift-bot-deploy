@@ -1,4 +1,4 @@
-"""Static HTML assets for the Telegram miniapp."""
+"""Shared HTML assets for Telegram Mini App and the standalone web app."""
 
 MINIAPP_HTML = """<!doctype html>
 <html lang="ru">
@@ -6,28 +6,33 @@ MINIAPP_HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Шагаем вместе</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f4eee6;
-      --text: #241b16;
-      --muted: #7b6d62;
-      --soft: rgba(255, 250, 243, .78);
-      --line: rgba(78, 56, 42, .13);
-      --accent: #c36f55;
-      --accent-dark: #a95640;
-      --sage: #8f9f7f;
-      --sage-dark: #6f805f;
-      --cream: #fffaf3;
-      --danger: #bd6758;
-      --good: #789265;
-      --shadow: 0 26px 80px rgba(55, 39, 29, .18);
-      --inset-shadow: inset 0 1px 0 rgba(255,255,255,.72);
-      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Arial, sans-serif;
+      --bg: #f3f5f8;
+      --text: #101722;
+      --muted: #5f6978;
+      --soft: rgba(255, 255, 255, .72);
+      --line: rgba(16, 23, 34, .10);
+      --accent: #1959f3;
+      --accent-dark: #0a3ab8;
+      --sage: #31a86b;
+      --sage-dark: #237e52;
+      --cream: #f7f8fa;
+      --danger: #dd4f5d;
+      --good: #31a86b;
+      --warning: #f2a23a;
+      --border: rgba(16, 23, 34, .16);
+      --shadow: 0 24px 58px rgba(16, 23, 34, .18);
+      --shadow-soft: 0 12px 28px rgba(16, 23, 34, .10);
+      --blue-shadow: 0 16px 32px rgba(25, 89, 243, .24);
+      --inset-shadow: inset 0 1px 0 rgba(255,255,255,.82);
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
     }
 
     * { box-sizing: border-box; }
+
+    [hidden] { display: none !important; }
 
     html, body {
       margin: 0;
@@ -35,9 +40,9 @@ MINIAPP_HTML = """<!doctype html>
       font-family: var(--font);
       color: var(--text);
       background:
-        radial-gradient(circle at 8% 8%, rgba(195,111,85,.18), transparent 28%),
-        radial-gradient(circle at 92% 4%, rgba(143,159,127,.22), transparent 30%),
-        linear-gradient(135deg, #fff8ee 0%, #f4eee6 48%, #eadfd2 100%);
+        linear-gradient(135deg, #ffffff 0%, #f7f8fa 46%, #e8ecf3 100%),
+        repeating-linear-gradient(90deg, rgba(25,89,243,.035) 0 1px, transparent 1px 86px),
+        repeating-linear-gradient(0deg, rgba(25,89,243,.025) 0 1px, transparent 1px 86px);
       overflow-x: hidden;
       -webkit-text-size-adjust: 100%;
     }
@@ -57,13 +62,232 @@ MINIAPP_HTML = """<!doctype html>
       -webkit-tap-highlight-color: transparent;
     }
 
+    .login-view {
+      min-height: 100dvh;
+      padding: calc(28px + env(safe-area-inset-top)) 18px calc(28px + env(safe-area-inset-bottom));
+      display: grid;
+      place-items: center;
+      background:
+        linear-gradient(135deg, #ffffff 0%, #f7f8fa 46%, #e8ecf3 100%),
+        repeating-linear-gradient(90deg, rgba(25,89,243,.035) 0 1px, transparent 1px 86px),
+        repeating-linear-gradient(0deg, rgba(25,89,243,.025) 0 1px, transparent 1px 86px);
+    }
+
+    .login-shell {
+      width: min(100%, 430px);
+      display: grid;
+      gap: 22px;
+    }
+
+    .login-brand {
+      display: grid;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .login-brand img {
+      width: 78px;
+      height: 78px;
+      margin-bottom: 14px;
+      border-radius: 20px;
+      box-shadow: 0 16px 32px rgba(16,23,34,.16);
+    }
+
+    .login-brand h1 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .login-brand p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    .auth-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255,255,255,.72);
+      box-shadow: var(--inset-shadow);
+    }
+
+    .auth-tab {
+      min-height: 44px;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 900;
+    }
+
+    .auth-tab.active {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 8px 18px rgba(10,58,184,.18);
+    }
+
+    .login-card {
+      display: grid;
+      gap: 14px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(255,255,255,.92);
+      box-shadow: var(--shadow), var(--inset-shadow);
+    }
+
+    .login-card label {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .login-card input {
+      width: 100%;
+      min-height: 50px;
+      border: 1px solid rgba(109,124,158,.16);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: #fff;
+      color: var(--text);
+      outline: none;
+    }
+
+    .login-card input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(25,89,243,.13);
+    }
+
+    .login-submit {
+      min-height: 52px;
+      border: none;
+      border-radius: 14px;
+      background: var(--accent);
+      color: white;
+      font-weight: 950;
+    }
+
+    .login-submit:disabled {
+      opacity: .58;
+      cursor: wait;
+    }
+
+    .login-error {
+      min-height: 18px;
+      margin: 0;
+      color: var(--danger);
+      font-size: 12px;
+      line-height: 1.35;
+      text-align: center;
+    }
+
+    .login-error.success {
+      color: var(--good);
+    }
+
+    .login-help {
+      margin: -2px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      text-align: center;
+    }
+
+    .connection-card {
+      justify-items: center;
+      text-align: center;
+    }
+
+    .connection-orbit {
+      position: relative;
+      width: 58px;
+      height: 58px;
+      border: 1px solid rgba(25,89,243,.18);
+      border-radius: 50%;
+      background: rgba(25,89,243,.08);
+      box-shadow: 0 14px 30px rgba(25,89,243,.12), var(--inset-shadow);
+    }
+
+    .connection-orbit::before {
+      content: "";
+      position: absolute;
+      inset: 9px;
+      border: 3px solid rgba(25,89,243,.16);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: connection-spin 1s linear infinite;
+    }
+
+    .connection-card h2 {
+      margin: 0;
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.15;
+    }
+
+    .connection-message,
+    .connection-retry-status {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .connection-message {
+      font-size: 14px;
+    }
+
+    .connection-retry-status {
+      min-height: 18px;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .connection-card .login-submit {
+      width: 100%;
+    }
+
+    @keyframes connection-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .connection-orbit::before { animation: none; }
+    }
+
+    @media (max-height: 760px) {
+      .login-view {
+        place-items: start center;
+        padding-top: calc(18px + env(safe-area-inset-top));
+      }
+
+      .login-shell {
+        gap: 14px;
+      }
+
+      .login-brand img {
+        width: 58px;
+        height: 58px;
+        margin-bottom: 9px;
+      }
+
+      .login-brand h1 {
+        font-size: 27px;
+      }
+    }
+
     .app {
       min-height: 100vh;
       padding: calc(12px + env(safe-area-inset-top)) 12px calc(150px + env(safe-area-inset-bottom));
-      background:
-        radial-gradient(circle at 20% 0%, rgba(195,111,85,.12), transparent 33%),
-        radial-gradient(circle at 90% 0%, rgba(143,159,127,.15), transparent 31%),
-        var(--cream);
+      background: transparent;
       position: relative;
       overflow: hidden;
     }
@@ -72,9 +296,10 @@ MINIAPP_HTML = """<!doctype html>
       content: "";
       position: fixed;
       inset: 0;
-      background-image: radial-gradient(circle, rgba(195,111,85,.10) 1px, transparent 1.7px);
-      background-size: 22px 22px;
-      opacity: .22;
+      background-image:
+        repeating-linear-gradient(90deg, rgba(25,89,243,.035) 0 1px, transparent 1px 86px),
+        repeating-linear-gradient(0deg, rgba(25,89,243,.028) 0 1px, transparent 1px 86px);
+      opacity: .42;
       pointer-events: none;
     }
 
@@ -134,7 +359,7 @@ MINIAPP_HTML = """<!doctype html>
       padding: 5px;
       margin: 3px 0 16px;
       background: rgba(255,255,255,.52);
-      border: 1px solid rgba(78,56,42,.11);
+      border: 1px solid rgba(109,124,158,.11);
       border-radius: 17px;
     }
 
@@ -160,12 +385,12 @@ MINIAPP_HTML = """<!doctype html>
     .tab.active {
       color: white;
       background: var(--accent);
-      box-shadow: 0 9px 18px rgba(195,111,85,.20);
+      box-shadow: 0 9px 18px rgba(25,89,243,.20);
     }
 
     .tab:hover:not(.active) {
       color: var(--accent-dark);
-      background: rgba(195,111,85,.10);
+      background: rgba(25,89,243,.10);
     }
 
     .screen-head {
@@ -201,10 +426,10 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .card {
-      border: 1px solid rgba(78,56,42,.11);
-      background: rgba(255,250,244,.76);
+      border: 1px solid rgba(109,124,158,.11);
+      background: rgba(255,255,255,.76);
       border-radius: 22px;
-      box-shadow: 0 10px 24px rgba(80,55,36,.055), var(--inset-shadow);
+      box-shadow: 0 10px 24px rgba(16,23,34,.055), var(--inset-shadow);
     }
 
     .shift-card {
@@ -232,8 +457,8 @@ MINIAPP_HTML = """<!doctype html>
       align-items: center;
       gap: 5px;
       color: var(--sage-dark);
-      background: rgba(143,159,127,.16);
-      border: 1px solid rgba(143,159,127,.18);
+      background: rgba(49,168,107,.16);
+      border: 1px solid rgba(49,168,107,.18);
       border-radius: 99px;
       padding: 7px 9px;
       font-size: 10.5px;
@@ -243,14 +468,14 @@ MINIAPP_HTML = """<!doctype html>
 
     .status-chip.warn {
       color: var(--accent-dark);
-      background: rgba(195,111,85,.12);
-      border-color: rgba(195,111,85,.18);
+      background: rgba(25,89,243,.12);
+      border-color: rgba(25,89,243,.18);
     }
 
     .status-chip.gray {
       color: var(--muted);
-      background: rgba(120,96,76,.10);
-      border-color: rgba(120,96,76,.10);
+      background: rgba(109,124,158,.10);
+      border-color: rgba(109,124,158,.10);
     }
 
     .kpi-grid {
@@ -270,16 +495,16 @@ MINIAPP_HTML = """<!doctype html>
       min-width: 0;
       text-align: left;
       color: inherit;
-      border-color: rgba(195,111,85,.24);
+      border-color: rgba(25,89,243,.24);
       cursor: pointer;
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
 
     .home-kpi:hover {
       transform: translateY(-1px);
-      border-color: rgba(195,111,85,.52);
+      border-color: rgba(25,89,243,.52);
       background: rgba(255,255,255,.74);
-      box-shadow: 0 14px 28px rgba(195,111,85,.16);
+      box-shadow: 0 14px 28px rgba(25,89,243,.16);
     }
 
     .home-kpi:active {
@@ -353,7 +578,7 @@ MINIAPP_HTML = """<!doctype html>
       width: 40px;
       height: 40px;
       flex: 0 0 40px;
-      border: 1px solid rgba(195,111,85,.22);
+      border: 1px solid rgba(25,89,243,.22);
       border-radius: 15px;
       color: var(--accent-dark);
       background: rgba(255,255,255,.64);
@@ -363,7 +588,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .employee-detail-back:hover {
-      border-color: rgba(195,111,85,.5);
+      border-color: rgba(25,89,243,.5);
       background: rgba(255,255,255,.84);
     }
 
@@ -379,44 +604,87 @@ MINIAPP_HTML = """<!doctype html>
       color: inherit;
       font: inherit;
       cursor: pointer;
-      border-color: rgba(195,111,85,.24);
+      border-color: rgba(25,89,243,.24);
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
 
     .warehouse-category:hover {
       transform: translateY(-1px);
-      border-color: rgba(195,111,85,.52);
+      border-color: rgba(25,89,243,.52);
       background: rgba(255,255,255,.72);
-      box-shadow: 0 14px 28px rgba(195,111,85,.16);
+      box-shadow: 0 14px 28px rgba(25,89,243,.16);
     }
 
     .warehouse-category:active {
       transform: translateY(0);
     }
 
-    .kpi-top {
+    .kpi > .kpi-top {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
+      gap: 12px;
+      margin: 0;
       color: var(--muted);
       font-size: 11px;
       font-weight: 900;
     }
 
-    .kpi-ico {
-      width: 34px;
-      height: 34px;
+    .kpi > .kpi-top > span:first-child {
+      display: block;
+      min-width: 0;
+      margin: 0;
+      color: inherit;
+      font: inherit;
+      line-height: 1.2;
+    }
+
+    .kpi .kpi-ico {
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      margin: 0;
       border-radius: 13px;
-      background: rgba(195,111,85,.13);
+      border: 1px solid rgba(25,89,243,.16);
+      background: linear-gradient(145deg, rgba(25,89,243,.22), rgba(25,89,243,.08));
       color: var(--accent-dark);
       display: grid;
       place-items: center;
-      font-size: 16px;
+      box-shadow: var(--inset-shadow);
+    }
+
+    .kpi .kpi-ico svg {
+      display: block;
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .ui-icon {
+      display: block;
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
     .kpi.good .kpi-ico {
-      background: rgba(143,159,127,.15);
+      border-color: rgba(49,168,107,.18);
+      background: linear-gradient(145deg, rgba(49,168,107,.20), rgba(49,168,107,.07));
       color: var(--sage-dark);
+    }
+
+    .kpi.danger .kpi-ico {
+      border-color: rgba(221,79,93,.18);
+      background: linear-gradient(145deg, rgba(221,79,93,.18), rgba(221,79,93,.06));
+      color: var(--danger);
     }
 
     .kpi strong {
@@ -432,7 +700,7 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--muted);
     }
 
-    .kpi span {
+    .kpi > span:not(.kpi-top) {
       display: block;
       margin-top: 4px;
       color: var(--muted);
@@ -461,16 +729,16 @@ MINIAPP_HTML = """<!doctype html>
       color: inherit;
       font: inherit;
       cursor: pointer;
-      border-color: rgba(195,111,85,.28);
+      border-color: rgba(25,89,243,.28);
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
 
     .analytics-card:hover,
     .analytics-row:hover {
       transform: translateY(-1px);
-      border-color: rgba(195,111,85,.54);
+      border-color: rgba(25,89,243,.54);
       background: rgba(255,255,255,.74);
-      box-shadow: 0 14px 28px rgba(195,111,85,.15);
+      box-shadow: 0 14px 28px rgba(25,89,243,.15);
     }
 
     .analytics-card:active,
@@ -508,7 +776,7 @@ MINIAPP_HTML = """<!doctype html>
     .progress {
       height: 7px;
       border-radius: 99px;
-      background: rgba(120,96,76,.12);
+      background: rgba(109,124,158,.12);
       overflow: hidden;
       margin-top: 10px;
     }
@@ -549,7 +817,7 @@ MINIAPP_HTML = """<!doctype html>
       width: 44px;
       height: 44px;
       border-radius: 16px;
-      background: rgba(195,111,85,.13);
+      background: rgba(25,89,243,.13);
       display: grid;
       place-items: center;
       color: var(--accent-dark);
@@ -591,8 +859,8 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .op-row.selected {
-      border-color: rgba(195,111,85,.44);
-      box-shadow: 0 12px 28px rgba(195,111,85,.12), var(--inset-shadow);
+      border-color: rgba(25,89,243,.44);
+      box-shadow: 0 12px 28px rgba(25,89,243,.12), var(--inset-shadow);
     }
 
     .op-num {
@@ -641,7 +909,7 @@ MINIAPP_HTML = """<!doctype html>
     .field textarea {
       width: 100%;
       min-height: 42px;
-      border: 1px solid rgba(78,56,42,.13);
+      border: 1px solid rgba(109,124,158,.13);
       border-radius: 15px;
       background: rgba(255,255,255,.56);
       color: var(--text);
@@ -689,7 +957,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .segment-button:hover:not(.active) {
       color: var(--accent-dark);
-      background: rgba(195,111,85,.10);
+      background: rgba(25,89,243,.10);
     }
 
     .button-row {
@@ -697,6 +965,12 @@ MINIAPP_HTML = """<!doctype html>
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 9px;
       margin-top: 11px;
+    }
+
+    .button-row > .status-chip:only-child {
+      grid-column: 1 / -1;
+      min-height: 34px;
+      justify-content: center;
     }
 
     .small-button {
@@ -717,7 +991,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .small-button.secondary {
       color: var(--accent-dark);
-      background: rgba(195,111,85,.12);
+      background: rgba(25,89,243,.12);
     }
 
     .small-button.danger {
@@ -726,7 +1000,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .small-button:hover {
       filter: brightness(1.03);
-      box-shadow: 0 10px 18px rgba(195,111,85,.15);
+      box-shadow: 0 10px 18px rgba(25,89,243,.15);
     }
 
     button,
@@ -745,6 +1019,7 @@ MINIAPP_HTML = """<!doctype html>
     [data-order-color],
     [data-history-action],
     [data-feedback-action],
+    [data-profile-action],
     [data-select-operation],
     [data-select-order],
     [data-select-report-task],
@@ -763,8 +1038,8 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-select-order],
     .card[data-select-report-task],
     .card[data-select-cutting-report-task] {
-      border-color: rgba(195,111,85,.24);
-      box-shadow: 0 9px 22px rgba(95,67,48,.07);
+      border-color: rgba(25,89,243,.24);
+      box-shadow: 0 9px 22px rgba(16,23,34,.07);
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
 
@@ -777,9 +1052,9 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-select-report-task]:hover,
     .card[data-select-cutting-report-task]:hover {
       transform: translateY(-1px);
-      border-color: rgba(195,111,85,.52);
+      border-color: rgba(25,89,243,.52);
       background: rgba(255,255,255,.72);
-      box-shadow: 0 14px 28px rgba(195,111,85,.16);
+      box-shadow: 0 14px 28px rgba(25,89,243,.16);
     }
 
     .card[data-go]:active,
@@ -791,7 +1066,7 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-select-report-task]:active,
     .card[data-select-cutting-report-task]:active {
       transform: translateY(0);
-      box-shadow: 0 7px 16px rgba(195,111,85,.12);
+      box-shadow: 0 7px 16px rgba(25,89,243,.12);
     }
 
     .card[data-go] .status-chip.gray,
@@ -803,8 +1078,8 @@ MINIAPP_HTML = """<!doctype html>
     .card[data-select-report-task] .status-chip.gray,
     .card[data-select-cutting-report-task] .status-chip.gray {
       color: var(--accent-dark);
-      background: rgba(195,111,85,.13);
-      border-color: rgba(195,111,85,.18);
+      background: rgba(25,89,243,.13);
+      border-color: rgba(25,89,243,.18);
     }
 
     .choice-grid {
@@ -816,7 +1091,7 @@ MINIAPP_HTML = """<!doctype html>
     .choice-chip {
       min-width: 0;
       min-height: 38px;
-      border: 1px solid rgba(78,56,42,.13);
+      border: 1px solid rgba(109,124,158,.13);
       border-radius: 14px;
       background: rgba(255,255,255,.54);
       color: var(--muted);
@@ -831,9 +1106,9 @@ MINIAPP_HTML = """<!doctype html>
     .choice-chip.active,
     .choice-chip:hover {
       color: var(--accent-dark);
-      border-color: rgba(195,111,85,.44);
-      background: rgba(195,111,85,.12);
-      box-shadow: 0 8px 18px rgba(195,111,85,.10);
+      border-color: rgba(25,89,243,.44);
+      background: rgba(25,89,243,.12);
+      box-shadow: 0 8px 18px rgba(25,89,243,.10);
     }
 
     .stock-picker {
@@ -863,7 +1138,7 @@ MINIAPP_HTML = """<!doctype html>
       display: grid;
       gap: 7px;
       padding-top: 8px;
-      border-top: 1px solid rgba(49,39,33,.10);
+      border-top: 1px solid rgba(109,124,158,.10);
     }
 
     .stock-component-title {
@@ -893,7 +1168,7 @@ MINIAPP_HTML = """<!doctype html>
       gap: 10px;
       align-items: center;
       padding: 11px;
-      border: 1px solid rgba(49,39,33,.10);
+      border: 1px solid rgba(109,124,158,.10);
       border-radius: 18px;
       background: rgba(255,255,255,.58);
       transition: .16s ease;
@@ -901,9 +1176,9 @@ MINIAPP_HTML = """<!doctype html>
 
     .stock-pick-row.active,
     .stock-pick-row:hover {
-      border-color: rgba(195,111,85,.42);
-      background: rgba(195,111,85,.10);
-      box-shadow: 0 8px 18px rgba(195,111,85,.10);
+      border-color: rgba(25,89,243,.42);
+      background: rgba(25,89,243,.10);
+      box-shadow: 0 8px 18px rgba(25,89,243,.10);
     }
 
     .stock-pick-row input[type="checkbox"] {
@@ -931,7 +1206,7 @@ MINIAPP_HTML = """<!doctype html>
     .stock-pick-qty input {
       width: 100%;
       min-height: 42px;
-      border: 1px solid rgba(49,39,33,.12);
+      border: 1px solid rgba(109,124,158,.12);
       border-radius: 14px;
       background: rgba(255,255,255,.78);
       padding: 0 10px;
@@ -946,7 +1221,7 @@ MINIAPP_HTML = """<!doctype html>
       gap: 6px;
       margin-top: 10px;
       padding-top: 9px;
-      border-top: 1px solid rgba(49,39,33,.10);
+      border-top: 1px solid rgba(109,124,158,.10);
     }
 
     .route-inputs > b {
@@ -974,7 +1249,7 @@ MINIAPP_HTML = """<!doctype html>
     .report-row textarea {
       width: 100%;
       min-height: 42px;
-      border: 1px solid rgba(49,39,33,.12);
+      border: 1px solid rgba(109,124,158,.12);
       border-radius: 14px;
       background: rgba(255,255,255,.78);
       padding: 0 10px;
@@ -1010,7 +1285,7 @@ MINIAPP_HTML = """<!doctype html>
     .cutting-input-row input {
       width: 100%;
       min-height: 44px;
-      border: 1px solid rgba(49,39,33,.12);
+      border: 1px solid rgba(109,124,158,.12);
       border-radius: 14px;
       background: rgba(255,255,255,.78);
       padding: 0 12px;
@@ -1021,13 +1296,13 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .cutting-input-row input:focus {
-      border-color: rgba(195,111,85,.48);
-      box-shadow: 0 0 0 3px rgba(195,111,85,.12);
+      border-color: rgba(25,89,243,.48);
+      box-shadow: 0 0 0 3px rgba(25,89,243,.12);
     }
 
     .stock-pick-qty input:focus {
-      border-color: rgba(195,111,85,.48);
-      box-shadow: 0 0 0 3px rgba(195,111,85,.12);
+      border-color: rgba(25,89,243,.48);
+      box-shadow: 0 0 0 3px rgba(25,89,243,.12);
     }
 
     .report-row {
@@ -1104,8 +1379,8 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .order-card.selected {
-      border-color: rgba(195,111,85,.44);
-      box-shadow: 0 12px 28px rgba(195,111,85,.12), var(--inset-shadow);
+      border-color: rgba(25,89,243,.44);
+      box-shadow: 0 12px 28px rgba(25,89,243,.12), var(--inset-shadow);
     }
 
     .order-card .order-head {
@@ -1113,8 +1388,14 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .route-order-head {
-      grid-template-columns: 44px minmax(0, 1fr) auto;
+      grid-template-columns: 44px minmax(0, 1fr);
       align-items: start;
+    }
+
+    .route-order-head > .status-chip {
+      grid-column: 2;
+      justify-self: start;
+      margin-top: 0;
     }
 
     .route-assignee {
@@ -1150,11 +1431,11 @@ MINIAPP_HTML = """<!doctype html>
 
     .order-delete-button {
       min-height: 30px;
-      border: 1px solid rgba(189,103,88,.28);
+      border: 1px solid rgba(221,79,93,.28);
       border-radius: 11px;
       padding: 6px 11px;
       color: var(--danger);
-      background: rgba(189,103,88,.10);
+      background: rgba(221,79,93,.10);
       font-size: 11px;
       font-weight: 950;
     }
@@ -1166,7 +1447,132 @@ MINIAPP_HTML = """<!doctype html>
 
     .order-detail {
       padding: 14px;
-      background: linear-gradient(135deg, rgba(195,111,85,.12), rgba(143,159,127,.10));
+      background: linear-gradient(135deg, rgba(25,89,243,.12), rgba(49,168,107,.10));
+    }
+
+    .task-completion-card {
+      padding: 13px;
+      margin-top: 10px;
+    }
+
+    .task-completion-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 11px;
+    }
+
+    .task-completion-head b {
+      min-width: 0;
+      font-size: 14px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .task-action-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .task-action-grid .small-button {
+      min-height: 40px;
+    }
+
+    .task-note {
+      margin-top: 9px;
+      padding: 9px 10px;
+      border-left: 3px solid var(--accent);
+      background: rgba(25,89,243,.08);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+
+    .trace-code {
+      display: inline-flex;
+      margin-top: 7px;
+      color: var(--accent-dark);
+      font-size: 10.5px;
+      font-weight: 950;
+    }
+
+    .passport-timeline {
+      display: grid;
+      gap: 0;
+    }
+
+    .passport-event {
+      position: relative;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 9px;
+      padding: 0 0 14px;
+    }
+
+    .passport-event::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 14px;
+      bottom: 0;
+      width: 2px;
+      background: rgba(25,89,243,.18);
+    }
+
+    .passport-event:last-child::before {
+      display: none;
+    }
+
+    .passport-dot {
+      position: relative;
+      z-index: 1;
+      width: 16px;
+      height: 16px;
+      border: 4px solid rgba(25,89,243,.18);
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .passport-event b,
+    .passport-event span {
+      display: block;
+      overflow-wrap: anywhere;
+    }
+
+    .passport-event b {
+      font-size: 12px;
+      line-height: 1.25;
+    }
+
+    .passport-event span {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.35;
+    }
+
+    .party-qr {
+      display: block;
+      width: min(190px, 70vw);
+      aspect-ratio: 1;
+      margin: 10px auto;
+      border: 8px solid white;
+      background: white;
+    }
+
+    .scan-row {
+      display: flex;
+      justify-content: flex-end;
+      margin: -4px 0 10px;
+    }
+
+    .scan-row .small-button {
+      width: auto;
+      padding-inline: 14px;
     }
 
     .chart-card {
@@ -1202,7 +1608,7 @@ MINIAPP_HTML = """<!doctype html>
       width: 68px;
       height: 68px;
       border-radius: 50%;
-      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(195,111,85,.13) 0);
+      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(25,89,243,.13) 0);
       display: grid;
       place-items: center;
       position: relative;
@@ -1215,7 +1621,7 @@ MINIAPP_HTML = """<!doctype html>
       inset: 8px;
       border-radius: 50%;
       background: var(--cream);
-      box-shadow: inset 0 1px 2px rgba(80,55,36,.08);
+      box-shadow: inset 0 1px 2px rgba(16,23,34,.08);
     }
 
     .ring strong {
@@ -1286,7 +1692,7 @@ MINIAPP_HTML = """<!doctype html>
       min-width: min(360px, calc(100% - 32px));
       border: 1px solid rgba(255,255,255,.42);
       border-radius: 20px;
-      background: rgba(36,27,22,.88);
+      background: rgba(18,24,43,.88);
       color: white;
       padding: 14px 16px;
       box-shadow: 0 20px 60px rgba(0,0,0,.24);
@@ -1311,6 +1717,86 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 12px;
     }
 
+    .qr-scanner {
+      position: fixed;
+      z-index: 100;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+      background: #181513;
+      color: white;
+    }
+
+    .qr-scanner-shell {
+      position: relative;
+      width: min(560px, 100%);
+      height: min(760px, 100%);
+      overflow: hidden;
+      border-radius: 18px;
+      background: #090807;
+    }
+
+    .qr-scanner video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .qr-scanner-head,
+    .qr-scanner-actions {
+      position: absolute;
+      z-index: 2;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .qr-scanner-head {
+      top: 14px;
+      justify-content: space-between;
+      font-size: 15px;
+      font-weight: 950;
+    }
+
+    .qr-scanner-actions {
+      bottom: 14px;
+      justify-content: center;
+    }
+
+    .qr-scanner .small-button {
+      min-height: 44px;
+      background: rgba(255,255,255,.92);
+      color: #101722;
+    }
+
+    .qr-scanner-close {
+      width: 44px;
+      height: 44px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(255,255,255,.92);
+      color: #101722;
+      font-size: 26px;
+      line-height: 1;
+    }
+
+    .qr-scanner-frame {
+      position: absolute;
+      z-index: 1;
+      width: min(64vw, 280px);
+      aspect-ratio: 1;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      border: 3px solid rgba(255,255,255,.9);
+      border-radius: 16px;
+      box-shadow: 0 0 0 999px rgba(0,0,0,.28);
+      pointer-events: none;
+    }
+
     .main-button {
       position: fixed;
       z-index: 6;
@@ -1321,10 +1807,10 @@ MINIAPP_HTML = """<!doctype html>
       border-radius: 18px;
       padding: 15px 16px;
       color: white;
-      background: linear-gradient(135deg, var(--accent), #d27c5e);
+      background: linear-gradient(135deg, var(--accent), #1959f3);
       font-size: 15px;
       font-weight: 950;
-      box-shadow: 0 18px 36px rgba(195,111,85,.30);
+      box-shadow: 0 18px 36px rgba(25,89,243,.30);
     }
 
     .main-button:disabled {
@@ -1339,8 +1825,8 @@ MINIAPP_HTML = """<!doctype html>
       right: 0;
       bottom: 0;
       padding: 9px 12px calc(12px + env(safe-area-inset-bottom));
-      background: rgba(255,250,243,.88);
-      border-top: 1px solid rgba(78,56,42,.11);
+      background: rgba(255,255,255,.88);
+      border-top: 1px solid rgba(109,124,158,.11);
       backdrop-filter: blur(18px);
       display: grid;
       grid-template-columns: repeat(var(--nav-count, 5), minmax(0, 1fr));
@@ -1392,7 +1878,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .nav-btn.active .nav-ico {
-      background: rgba(195,111,85,.12);
+      background: rgba(25,89,243,.12);
     }
 
     .nav-btn:hover {
@@ -1400,7 +1886,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .nav-btn:hover .nav-ico {
-      background: rgba(195,111,85,.10);
+      background: rgba(25,89,243,.10);
     }
 
     @media (min-width: 680px) {
@@ -1430,46 +1916,539 @@ MINIAPP_HTML = """<!doctype html>
       .toast {
         bottom: 104px;
       }
+
+      body.web-mode .app {
+        width: min(760px, calc(100% - 32px));
+      }
+
+      body.web-mode .main-button,
+      body.web-mode .bottom-nav {
+        width: min(760px, calc(100% - 32px));
+      }
+
+      body.web-mode .login-shell {
+        width: min(100%, 460px);
+      }
+    }
+
+    body.web-mode .app {
+      padding-bottom: calc(92px + env(safe-area-inset-bottom));
+    }
+
+    body.web-mode .main-button {
+      position: static;
+      inset: auto;
+      width: 100%;
+      transform: none;
+      margin: 18px 0 4px;
+    }
+
+    /* Restored legacy blue-glass visual system. Structure and behavior stay current. */
+    .login-brand img {
+      border: 1px solid rgba(255,255,255,.78);
+      border-radius: 8px;
+      box-shadow: var(--blue-shadow), var(--inset-shadow);
+    }
+
+    .login-brand h1,
+    .app-title,
+    .screen-head h2,
+    .section-title b {
+      color: #101722;
+    }
+
+    .auth-tabs,
+    .tabs {
+      border-color: rgba(255,255,255,.82);
+      border-radius: 8px;
+      background: rgba(255,255,255,.72);
+      box-shadow: var(--shadow-soft), var(--inset-shadow);
+      backdrop-filter: blur(24px);
+    }
+
+    .auth-tab,
+    .tab,
+    .segment-button {
+      border-radius: 8px;
+    }
+
+    .auth-tab.active,
+    .tab.active,
+    .segment-button.active {
+      background: linear-gradient(135deg, #1959f3, var(--accent-dark));
+      box-shadow: var(--blue-shadow);
+    }
+
+    .login-card,
+    .card {
+      border-color: rgba(255,255,255,.78);
+      border-radius: 8px;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.88), rgba(234,239,255,.62)),
+        rgba(255,255,255,.74);
+      box-shadow: var(--shadow-soft), var(--inset-shadow);
+      backdrop-filter: blur(24px);
+    }
+
+    .login-card input,
+    .field input,
+    .field select,
+    .field textarea,
+    .report-row input,
+    .report-row select,
+    .report-row textarea,
+    .cutting-input-row input,
+    .stock-pick-qty input {
+      border-color: rgba(129,143,178,.24);
+      border-radius: 8px;
+      background: rgba(255,255,255,.72);
+      box-shadow: var(--inset-shadow);
+    }
+
+    .login-submit,
+    .small-button,
+    .main-button {
+      border-radius: 8px;
+      background: linear-gradient(135deg, #1959f3, var(--accent-dark));
+      box-shadow: var(--blue-shadow);
+    }
+
+    .small-button.secondary {
+      color: #101722;
+      border: 1px solid rgba(255,255,255,.76);
+      background: rgba(255,255,255,.64);
+      box-shadow: var(--inset-shadow);
+    }
+
+    .small-button.danger,
+    .order-delete-button:hover {
+      background: linear-gradient(135deg, #f16f78, var(--danger));
+      box-shadow: 0 12px 24px rgba(221,79,93,.22);
+    }
+
+    .status-chip.warn {
+      color: #925800;
+      border-color: rgba(242,162,58,.28);
+      background: rgba(242,162,58,.14);
+    }
+
+    .appbar {
+      margin-bottom: 8px;
+      padding: 4px 2px 12px;
+    }
+
+    .icon-btn,
+    .employee-detail-back {
+      border: 1px solid rgba(255,255,255,.78);
+      border-radius: 8px;
+      color: #101722;
+      background: rgba(255,255,255,.66);
+      box-shadow: var(--shadow-soft), var(--inset-shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .app-title {
+      font-size: 22px;
+      font-weight: 900;
+    }
+
+    .app-title small {
+      font-size: 11px;
+    }
+
+    .screen-head h2 {
+      font-size: 24px;
+    }
+
+    .date,
+    .kpi-ico,
+    .op-icon,
+    .detail-box,
+    .choice-chip,
+    .stock-pick-row,
+    .order-delete-button,
+    .task-note,
+    .toast,
+    .qr-scanner-shell,
+    .qr-scanner-frame {
+      border-radius: 8px;
+    }
+
+    .kpi-ico,
+    .op-icon {
+      color: var(--accent-dark);
+      background: rgba(25,89,243,.13);
+    }
+
+    .kpi.good .kpi-ico {
+      color: var(--sage-dark);
+      background: rgba(49,168,107,.14);
+    }
+
+    .progress {
+      background: rgba(109,124,158,.16);
+    }
+
+    .progress i {
+      background: linear-gradient(90deg, #1959f3, var(--accent-dark));
+    }
+
+    .detail-box,
+    .stock-pick-row,
+    .choice-chip {
+      border-color: rgba(255,255,255,.78);
+      background: rgba(255,255,255,.62);
+      box-shadow: var(--inset-shadow);
+    }
+
+    .order-detail {
+      background: linear-gradient(135deg, rgba(25,89,243,.12), rgba(49,168,107,.10));
+    }
+
+    .ring {
+      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(25,89,243,.13) 0);
+    }
+
+    .ring::before {
+      background: rgba(247,248,250,.96);
+    }
+
+    .main-button {
+      box-shadow: 0 18px 36px rgba(25,89,243,.30);
+    }
+
+    .bottom-nav {
+      border-color: rgba(109,124,158,.18);
+      background: rgba(255,255,255,.82);
+      box-shadow: 0 -10px 28px rgba(16,23,34,.10);
+      backdrop-filter: blur(24px);
+    }
+
+    .nav-btn {
+      border-radius: 8px;
+    }
+
+    .nav-btn.active {
+      color: var(--accent-dark);
+    }
+
+    .nav-btn.active .nav-ico {
+      color: #fff;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #1959f3, var(--accent-dark));
+      box-shadow: 0 8px 18px rgba(25,89,243,.22);
+    }
+
+    @media (min-width: 680px) {
+      .app {
+        border: 1px solid rgba(255,255,255,.78);
+        border-radius: 8px;
+        background: rgba(247,248,250,.58);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(24px);
+      }
+    }
+
+    @media (min-width: 1024px) {
+      body.web-mode .app {
+        width: min(1280px, calc(100% - 40px));
+        min-height: calc(100vh - 44px);
+        margin: 22px auto;
+        padding-bottom: 28px;
+      }
+
+      body.web-mode .body {
+        min-height: calc(100vh - 150px);
+        padding-right: 30px;
+        padding-left: 252px;
+      }
+
+      body.web-mode .bottom-nav {
+        top: 112px;
+        bottom: auto;
+        left: max(34px, calc(50% - 616px));
+        right: auto;
+        width: 210px;
+        padding: 10px;
+        transform: none;
+        grid-template-columns: 1fr;
+        gap: 5px;
+        border: 1px solid rgba(109,124,158,.16);
+        border-radius: 14px;
+        box-shadow: 0 18px 44px rgba(16,23,34,.12);
+      }
+
+      body.web-mode .nav-btn {
+        grid-template-columns: 38px minmax(0,1fr);
+        grid-template-rows: 1fr;
+        justify-items: start;
+        gap: 8px;
+        padding: 9px 10px;
+        font-size: 13px;
+        line-height: 1.2;
+      }
+
+      body.web-mode .nav-btn span:last-child {
+        text-align: left;
+      }
+
+      body.web-mode .nav-ico {
+        width: 34px;
+        height: 34px;
+      }
+
+      body.web-mode .toast {
+        right: 28px;
+        bottom: 28px;
+        left: auto;
+        width: min(430px, calc(100% - 56px));
+        transform: none;
+      }
+    }
+
+    /* Final brand overrides: the lockup stays visible above every app screen. */
+    .brand-lockup {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-lockup .brand-mark {
+      display: block;
+      flex: 0 0 auto;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+      object-fit: contain;
+      box-shadow: none;
+    }
+
+    .brand-wordmark {
+      display: grid;
+      min-width: 0;
+      margin: 0;
+      color: var(--text);
+      font-weight: 950;
+      line-height: .84;
+      letter-spacing: -.035em;
+      text-align: left;
+    }
+
+    .brand-wordmark-primary {
+      color: var(--accent);
+    }
+
+    .brand-wordmark-secondary {
+      color: var(--text);
+    }
+
+    .login-brand-lockup .brand-mark {
+      width: 88px;
+      height: 88px;
+    }
+
+    .login-brand-lockup .brand-wordmark {
+      font-size: 35px;
+    }
+
+    .login-brand p {
+      margin-top: 15px;
+      color: var(--muted);
+    }
+
+    .app-title {
+      display: grid;
+      justify-items: center;
+      min-width: 0;
+    }
+
+    .app-brand-lockup {
+      gap: 7px;
+      max-width: 100%;
+    }
+
+    .app-brand-lockup .brand-mark {
+      width: 34px;
+      height: 34px;
+    }
+
+    .app-brand-lockup .brand-wordmark {
+      font-size: 15px;
+      line-height: .82;
+      letter-spacing: -.025em;
+    }
+
+    .app-title small {
+      margin-top: 5px;
+      color: var(--muted);
+    }
+
+    .login-brand h1,
+    .app-title,
+    .screen-head h2,
+    .section-title b {
+      color: var(--text);
+    }
+
+    .auth-tab.active,
+    .tab.active,
+    .segment-button.active,
+    .login-submit,
+    .small-button,
+    .main-button,
+    .nav-btn.active .nav-ico {
+      background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+    }
+
+    .kpi-ico,
+    .op-icon {
+      color: var(--accent-dark);
+      background: rgba(25,89,243,.12);
+    }
+
+    .progress i {
+      background: linear-gradient(90deg, var(--accent), var(--accent-dark));
+    }
+
+    .ring {
+      background: conic-gradient(var(--accent) calc(var(--p)*1%), rgba(25,89,243,.12) 0);
+    }
+
+    .ring::before {
+      background: rgba(247,248,250,.96);
+    }
+
+    @media (max-height: 760px) {
+      .login-brand-lockup .brand-mark {
+        width: 68px;
+        height: 68px;
+      }
+
+      .login-brand-lockup .brand-wordmark {
+        font-size: 29px;
+      }
+
+      .login-brand p {
+        margin-top: 10px;
+      }
     }
   </style>
 </head>
 <body>
-  <main class="app">
+  <section class="login-view" id="connectionView" hidden aria-labelledby="connectionTitle">
+    <div class="login-shell">
+      <div class="login-brand">
+        <div class="brand-lockup login-brand-lockup">
+          <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
+          <h1 class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></h1>
+        </div>
+        <p>Управление производством</p>
+      </div>
+      <div class="login-card connection-card">
+        <div class="connection-orbit" aria-hidden="true"></div>
+        <div role="status" aria-live="polite" aria-atomic="true">
+          <h2 id="connectionTitle">Подключаемся</h2>
+          <p class="connection-message" id="connectionMessage">Проверяем защищённую сессию.</p>
+        </div>
+        <p class="connection-retry-status" id="connectionRetryStatus"></p>
+        <button class="login-submit" id="webConnectionRetry" type="button">Попробовать снова</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="login-view" id="loginView" hidden>
+    <div class="login-shell">
+      <div class="login-brand">
+        <div class="brand-lockup login-brand-lockup">
+          <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
+          <h1 class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></h1>
+        </div>
+        <p>Управление производством</p>
+      </div>
+      <div class="auth-tabs" role="tablist" aria-label="Доступ к приложению">
+        <button class="auth-tab active" id="webLoginTab" type="button" role="tab" aria-selected="true" aria-controls="webLoginForm">Вход</button>
+        <button class="auth-tab" id="webRegisterTab" type="button" role="tab" aria-selected="false" aria-controls="webRegisterForm">Регистрация</button>
+      </div>
+      <form class="login-card" id="webLoginForm">
+        <label>Почта, телефон или логин<input id="webUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+        <label>Пароль<input id="webPassword" name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+        <p class="login-error" id="webLoginError" role="alert" aria-live="polite"></p>
+        <button class="login-submit" id="webLoginButton" type="submit">Войти</button>
+      </form>
+      <form class="login-card" id="webRegisterForm" hidden>
+        <label>Фамилия, имя и отчество<input id="webFullName" name="full_name" autocomplete="name" minlength="5" maxlength="120" required></label>
+        <label>Электронная почта<input id="webEmail" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" maxlength="254" required></label>
+        <label>Номер телефона<input id="webPhone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 999 123-45-67" maxlength="24" required></label>
+        <label>Пароль<input id="webRegisterPassword" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+        <label>Повторите пароль<input id="webPasswordConfirm" name="password_confirm" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+        <p class="login-help">После регистрации администратор назначит должность и откроет доступ.</p>
+        <p class="login-error" id="webRegisterError" role="alert" aria-live="polite"></p>
+        <button class="login-submit" id="webRegisterButton" type="submit">Зарегистрироваться</button>
+      </form>
+    </div>
+  </section>
+
+  <main class="app" id="appRoot" hidden>
     <div class="appbar">
       <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
-      <div class="app-title">Шагаем вместе<small id="roleLabel">Загрузка</small></div>
+      <div class="app-title">
+        <div class="brand-lockup app-brand-lockup">
+          <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
+          <span class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></span>
+        </div>
+        <small id="roleLabel">Загрузка</small>
+      </div>
       <button class="icon-btn" id="menuBtn" aria-label="Меню">⋯</button>
     </div>
 
     <div class="body">
       <div class="tabs" id="topTabs" hidden></div>
       <div id="mount"></div>
+      <div id="webActionSlot"></div>
     </div>
   </main>
 
-  <button class="main-button" id="mainButton">Загрузка</button>
-  <nav class="bottom-nav" id="bottomNav" aria-label="Навигация миниаппа"></nav>
+  <button class="main-button" id="mainButton" hidden>Загрузка</button>
+  <nav class="bottom-nav" id="bottomNav" aria-label="Навигация приложения" hidden></nav>
   <div class="toast" id="toast"><b></b><span></span></div>
+  <section class="qr-scanner" id="qrScanner" aria-label="Сканер QR-кода" hidden>
+    <div class="qr-scanner-shell">
+      <video id="qrScannerVideo" playsinline muted></video>
+      <div class="qr-scanner-frame"></div>
+      <div class="qr-scanner-head"><span>QR-код партии</span><button class="qr-scanner-close" id="qrScannerClose" type="button" aria-label="Закрыть">×</button></div>
+      <div class="qr-scanner-actions"><button class="small-button" id="qrScannerManual" type="button">Ввести код</button></div>
+    </div>
+  </section>
 
   <script>
-    const tg = window.Telegram && window.Telegram.WebApp;
+    const tg = null;
     const urlParams = new URLSearchParams(window.location.search);
     const debugTelegramId = urlParams.get("debug_tg_id");
-    const queryAuthToken = urlParams.get("auth");
-    let storedAuthToken = "";
-
-    try {
-      if (queryAuthToken) {
-        window.localStorage.setItem("miniapp_auth", queryAuthToken);
-      }
-      storedAuthToken = window.localStorage.getItem("miniapp_auth") || "";
-    } catch (error) {
-      storedAuthToken = "";
+    if (urlParams.has("auth")) {
+      urlParams.delete("auth");
+      const cleanQuery = urlParams.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}${window.location.hash}`);
     }
-
-    const authToken = queryAuthToken || storedAuthToken;
-    const telegramUserId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? String(tg.initDataUnsafe.user.id || "") : "";
-    const uiStateStorageKey = `miniapp_ui_state_${debugTelegramId || telegramUserId || "telegram_anonymous"}`;
+    try {
+      window.localStorage.removeItem("miniapp_auth");
+    } catch (error) {
+      // Storage may be unavailable in private browsing mode.
+    }
+    const isStandaloneWeb = !debugTelegramId;
+    let webCsrfToken = "";
+    let webSessionProfile = {};
+    const webIdentityStorageKey = "webapp_identity";
+    let storedWebIdentity = "";
+    try {
+      storedWebIdentity = window.localStorage.getItem(webIdentityStorageKey) || "";
+    } catch (error) {
+      storedWebIdentity = "";
+    }
+    const authIdentity = debugTelegramId || storedWebIdentity || "web_anonymous";
+    const uiStateStorageKey = `miniapp_ui_state_${authIdentity}`;
+    const completionQueueKey = `miniapp_completion_queue_${authIdentity}`;
     const persistedUiStateKeys = [
       "screen",
       "selectedOrder",
@@ -1518,6 +2497,8 @@ MINIAPP_HTML = """<!doctype html>
       "taskCompletionDrafts",
       "cuttingStageDrafts",
       "feedbackDraft",
+      "passportBatchId",
+      "passportReturnScreen",
     ];
     let persistedUiState = {};
 
@@ -1531,7 +2512,6 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     const state = {
-      initData: tg ? tg.initData : "",
       screen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
@@ -1582,6 +2562,11 @@ MINIAPP_HTML = """<!doctype html>
       taskCompletionDrafts: {},
       cuttingStageDrafts: {},
       feedbackDraft: {category: "Производство", message: ""},
+      passportBatchId: "",
+      passportData: null,
+      passportReturnScreen: "orders",
+      profileReturnScreen: "shift",
+      taskDefectPhotos: {},
       ...persistedUiState,
       data: null,
     };
@@ -1593,13 +2578,33 @@ MINIAPP_HTML = """<!doctype html>
     if (!Array.isArray(state.orderColors)) state.orderColors = [];
     if (!state.orderStockQuantities || typeof state.orderStockQuantities !== "object") state.orderStockQuantities = {};
     if (!state.orderFabricRolls || typeof state.orderFabricRolls !== "object") state.orderFabricRolls = {};
+    if (!state.taskDefectPhotos || typeof state.taskDefectPhotos !== "object") state.taskDefectPhotos = {};
 
     const mount = document.getElementById("mount");
+    const appRoot = document.getElementById("appRoot");
+    const loginView = document.getElementById("loginView");
+    const connectionView = document.getElementById("connectionView");
+    const connectionTitle = document.getElementById("connectionTitle");
+    const connectionMessage = document.getElementById("connectionMessage");
+    const connectionRetryStatus = document.getElementById("connectionRetryStatus");
+    const webConnectionRetry = document.getElementById("webConnectionRetry");
+    const webLoginForm = document.getElementById("webLoginForm");
+    const webRegisterForm = document.getElementById("webRegisterForm");
+    const webActionSlot = document.getElementById("webActionSlot");
     const mainButton = document.getElementById("mainButton");
     const topTabs = document.getElementById("topTabs");
     const bottomNav = document.getElementById("bottomNav");
     const toast = document.getElementById("toast");
+    const qrScanner = document.getElementById("qrScanner");
+    const qrScannerVideo = document.getElementById("qrScannerVideo");
     const pendingActions = new Set();
+    const webSessionRetryDelaysMs = [2_000, 5_000, 10_000, 20_000, 30_000];
+    const webSessionRequestTimeoutMs = 8_000;
+    let webSessionRetryAttempt = 0;
+    let webSessionRetryTimer = null;
+    let webSessionRestorePromise = null;
+    let qrScannerStream = null;
+    let qrScannerFrame = 0;
 
     function beginAction(key) {
       if (pendingActions.has(key)) return false;
@@ -1651,13 +2656,14 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     async function api(path, payload = {}) {
+      const headers = {"Content-Type": "application/json"};
+      if (isStandaloneWeb && webCsrfToken) headers["X-CSRF-Token"] = webCsrfToken;
       const response = await fetch(path, {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
+        headers,
+        credentials: "same-origin",
         body: JSON.stringify({
           ...payload,
-          initData: state.initData,
-          authToken,
           telegram_id: debugTelegramId,
         }),
       });
@@ -1666,11 +2672,67 @@ MINIAPP_HTML = """<!doctype html>
       if (!response.ok) {
         const error = new Error(data.message || `HTTP ${response.status}`);
         error.apiMessage = data.message || "";
+        error.status = response.status;
+        if (response.status === 401 && isStandaloneWeb) showWebLogin(data.message || "Войдите в приложение.");
         throw error;
       }
 
       return data;
     }
+
+    function createRequestId() {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function getCompletionQueue() {
+      try {
+        const rows = JSON.parse(window.localStorage.getItem(completionQueueKey) || "[]");
+        return Array.isArray(rows) ? rows : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function saveCompletionQueue(rows) {
+      try {
+        window.localStorage.setItem(completionQueueKey, JSON.stringify(rows.slice(-20)));
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function queueCompletion(payload) {
+      const rows = getCompletionQueue().filter((row) => row.request_id !== payload.request_id);
+      rows.push(payload);
+      return saveCompletionQueue(rows);
+    }
+
+    async function flushCompletionQueue(showResult = false) {
+      const rows = getCompletionQueue();
+      if (!rows.length || !navigator.onLine) return;
+      const remaining = [];
+      let synced = 0;
+
+      for (const payload of rows) {
+        try {
+          const result = await api("/api/routes/complete", payload);
+          if (result.ok) synced += 1;
+          else remaining.push(payload);
+        } catch (error) {
+          remaining.push(payload);
+        }
+      }
+
+      saveCompletionQueue(remaining);
+      if (synced) {
+        if (showResult) showToast("Синхронизация", `Отправлено заданий: ${synced}`);
+        window.setTimeout(() => refreshState(), 0);
+      }
+    }
+
+    window.addEventListener("online", () => flushCompletionQueue(true));
 
     function showToast(title, text) {
       toast.querySelector("b").textContent = title;
@@ -1697,6 +2759,26 @@ MINIAPP_HTML = """<!doctype html>
       return `<svg viewBox="0 0 32 32" aria-hidden="true" width="25" height="25"><path d="M7 22h18v4H7z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 22V8h9a5 5 0 0 1 5 5v2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 14h5M19 15h8v7M13 8V5M22 15v-3M15 22v-5M13 17h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
     }
 
+    function uiIcon(name) {
+      const icons = {
+        target: `<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>`,
+        quality: `<path d="M12 3 19 6v5c0 4.6-2.8 8-7 10-4.2-2-7-5.4-7-10V6l7-3Z"/><path d="m8.8 12 2.1 2.1 4.6-5"/>`,
+        work: `<rect x="4" y="7" width="16" height="12" rx="2"/><path d="M9 7V5h6v2M4 12h16M10 12v2h4v-2"/>`,
+        layers: `<path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>`,
+        cycle: `<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2M7 3.8 4.5 4.4l.6 2.5"/>`,
+        lead: `<circle cx="5" cy="17" r="2"/><circle cx="19" cy="7" r="2"/><path d="M7 17h3c5 0 3-10 7-10M14 4l3 3-3 3"/>`,
+        schedule: `<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 9h16m-11 5 2 2 4-4"/>`,
+        defect: `<path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17.5h.01"/>`,
+        clipboard: `<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M8.5 12l2 2 4.5-5"/>`,
+        contour: `<path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/><path d="m8 16 8-8M9 8h7v7"/>`,
+        fabric: `<path d="M6 5h10a3 3 0 0 1 3 3v9H9a4 4 0 0 1-4-4V6a1 1 0 0 1 1-1Z"/><circle cx="9" cy="13" r="2.5"/><path d="M19 8h2v9h-2"/>`,
+        clock: `<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>`,
+        users: `<path d="M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M17 11a3 3 0 0 0 0-6M21 20v-2.2a3.6 3.6 0 0 0-2.5-3.4"/>`,
+        inbox: `<path d="M4 5h16v14H4zM4 14h4l2 2h4l2-2h4"/>`,
+      };
+      return `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.target}</svg>`;
+    }
+
     function itemEmpty(text) {
       return `<p class="empty">${escapeHtml(text)}</p>`;
     }
@@ -1708,8 +2790,6 @@ MINIAPP_HTML = """<!doctype html>
       url.searchParams.set("task_id", taskId);
       url.searchParams.set("mode", action === "download" ? "download" : "open");
 
-      if (state.initData) url.searchParams.set("initData", state.initData);
-      if (authToken) url.searchParams.set("authToken", authToken);
       if (debugTelegramId) url.searchParams.set("telegram_id", debugTelegramId);
 
       return url.toString();
@@ -1777,13 +2857,17 @@ MINIAPP_HTML = """<!doctype html>
     function renderTaskFabricRolls(task) {
       const rows = task && task.fabric_rolls ? task.fabric_rolls : [];
       if (!rows.length) return "";
+      const productionTaskId = task.production_task_id || task.source_id || task.id;
+      const canReject = Boolean(task.is_assigned_to_me && !(state.data && state.data.is_admin));
 
       return `
         <div class="card field-card">
-          <label>Списанные рулоны</label>
+          <label>Выданные рулоны</label>
           <div class="op-list">
             ${rows.map((row) => `
-              <div class="report-row"><div><b>${escapeHtml(row.product_color_label || row.product_color)}</b><span>${escapeHtml(row.material_name || "Ткань")}</span></div><span class="status-chip">${escapeHtml(row.rolls)} рул.</span></div>
+              <div class="report-row"><div><b>${escapeHtml(row.product_color_label || row.product_color)}</b><span>${escapeHtml(row.material_name || "Ткань")}${Number(row.rejected_rolls || 0) ? `<br>Брак: ${escapeHtml(row.rejected_rolls)} рул. · доступно ${escapeHtml(row.available_rolls)} рул.` : ""}</span></div><span class="status-chip ${Number(row.rejected_rolls || 0) ? "warn" : ""}">${escapeHtml(row.rolls)} рул.</span></div>
+              ${(row.defects || []).map((defect) => `<div class="task-note"><b>Брак ${escapeHtml(defect.quantity)} рул.</b> · ${escapeHtml(defect.comment)}<br><span>${escapeHtml((defect.created_at || "").replace("T", " ").slice(0, 16))}</span></div>`).join("")}
+              ${canReject && Number(row.available_rolls || 0) > 0 ? `<div class="button-row"><button type="button" class="small-button danger" data-fabric-defect-task-id="${escapeHtml(productionTaskId)}" data-fabric-defect-color="${escapeHtml(row.product_color)}" data-fabric-defect-available="${escapeHtml(row.available_rolls)}">Отправить рулоны в брак</button></div>` : ""}
             `).join("")}
           </div>
         </div>
@@ -1863,6 +2947,16 @@ MINIAPP_HTML = """<!doctype html>
       return getRouteTasks()
         .filter((task) => task.is_assigned_to_me)
         .map((task) => ({...task, task_kind: "route"}));
+    }
+
+    function getDisplayedRouteTask() {
+      if (state.screen === "orders") {
+        const rows = visibleOrderRows();
+        const task = rows[state.selectedOrder] || rows[0];
+        return task && task.task_kind === "route" && task.is_assigned_to_me ? task : null;
+      }
+      const tasks = getMyRouteTasks();
+      return tasks[state.selectedReportTask] || tasks[0] || null;
     }
 
     function getMyCuttingTasks() {
@@ -2296,8 +3390,8 @@ MINIAPP_HTML = """<!doctype html>
       const factPercent = plan > 0 ? Math.min(100, Math.round(fact * 100 / plan)) : 0;
       return `
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>План</span><div class="kpi-ico">◎</div></div><strong>${escapeHtml(entity.plan_text || "0")}</strong><span>Плановое количество</span><div class="progress"><i style="--w:0%"></i></div></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Факт</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(entity.fact_text || "0")}</strong><span>Сделано по заданиям</span><div class="progress sage"><i style="--w:${factPercent}%"></i></div></div>
+          <div class="card kpi"><div class="kpi-top"><span>План</span><div class="kpi-ico">${uiIcon("target")}</div></div><strong>${escapeHtml(entity.plan_text || "0")}</strong><span>Плановое количество</span><div class="progress"><i style="--w:0%"></i></div></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Факт</span><div class="kpi-ico">${uiIcon("quality")}</div></div><strong>${escapeHtml(entity.fact_text || "0")}</strong><span>Сделано по заданиям</span><div class="progress sage"><i style="--w:${factPercent}%"></i></div></div>
         </div>
       `;
     }
@@ -2486,9 +3580,10 @@ MINIAPP_HTML = """<!doctype html>
           employee_id: employeeId,
           status,
         });
+        if (!data.ok) throw new Error(data.message || "Не удалось изменить статус.");
         replaceAdminDashboard(data, "Статус сотрудника изменён.");
       } catch (error) {
-        showToast("Ошибка", "Не удалось изменить статус.");
+        showToast("Ошибка", error.message || "Не удалось изменить статус.");
         mainButton.disabled = false;
       }
     }
@@ -2502,10 +3597,72 @@ MINIAPP_HTML = """<!doctype html>
           employee_id: employeeId,
           position: select ? select.value : "",
         });
+        if (!data.ok) throw new Error(data.message || "Не удалось изменить должность.");
         replaceAdminDashboard(data, "Должность изменена.");
       } catch (error) {
-        showToast("Ошибка", "Не удалось изменить должность.");
+        showToast("Ошибка", error.message || "Не удалось изменить должность.");
         mainButton.disabled = false;
+      }
+    }
+
+    async function adminEmployeeRole(employeeId, role) {
+      const select = document.getElementById(`employeePosition${employeeId}`);
+      const position = select ? select.value : "";
+      if (role === "employee" && !position) {
+        showToast("Должность", "Выберите должность, с которой пользователь продолжит работу.");
+        select?.focus();
+        return;
+      }
+      const confirmation = role === "admin"
+        ? "Назначить этому пользователю права администратора?"
+        : "Снять права администратора и перевести пользователя в сотрудники?";
+      if (!window.confirm(confirmation)) return;
+
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/admin/employee/role", {
+          employee_id: employeeId,
+          role,
+          position,
+        });
+        if (!data.ok) throw new Error(data.message || "Не удалось изменить роль.");
+        replaceAdminDashboard(data, data.message || "Роль пользователя изменена.");
+      } catch (error) {
+        showToast("Ошибка", error.message || "Не удалось изменить роль.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function adminApproveEmployee(employeeId) {
+      const actionKey = `approve-employee-${employeeId}`;
+      if (!beginAction(actionKey)) return;
+      const select = document.getElementById(`employeePosition${employeeId}`);
+      const position = select ? select.value : "";
+      if (!position) {
+        showToast("Должность", "Сначала выберите должность сотрудника.");
+        select?.focus();
+        endAction(actionKey);
+        return;
+      }
+      mainButton.disabled = true;
+
+      try {
+        const positionResult = await api("/api/admin/employee/position", {
+          employee_id: employeeId,
+          position,
+        });
+        if (!positionResult.ok) throw new Error(positionResult.message || "Не удалось назначить должность.");
+        const statusResult = await api("/api/admin/employee/status", {
+          employee_id: employeeId,
+          status: "active",
+        });
+        if (!statusResult.ok) throw new Error(statusResult.message || "Не удалось активировать сотрудника.");
+        replaceAdminDashboard(statusResult, "Сотрудник активирован.");
+      } catch (error) {
+        showToast("Ошибка", error.message || "Не удалось активировать сотрудника.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -2598,13 +3755,14 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.disabled = true;
 
       try {
+        const exportHeaders = {"Content-Type": "application/json"};
+        if (isStandaloneWeb && webCsrfToken) exportHeaders["X-CSRF-Token"] = webCsrfToken;
         const response = await fetch("/api/admin/report/export", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: exportHeaders,
+          credentials: "same-origin",
           body: JSON.stringify({
             ...(state.adminAppliedReportPayload || getAdminReportPayload()),
-            initData: state.initData,
-            authToken,
             telegram_id: debugTelegramId,
           }),
         });
@@ -2731,13 +3889,13 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.disabled = Boolean(shift && shift.status === "closed");
 
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Сегодня</h2><p>${escapeHtml(employee ? employee.full_name : "Откройте приложение из Telegram")}</p></div><div class="date">${escapeHtml(shift ? shift.date : "сегодня")}</div></div>
+        <div class="screen-head"><div><h2>Сегодня</h2><p>${escapeHtml(employee ? employee.full_name : "Пользователь не определён")}</p></div><div class="date">${escapeHtml(shift ? shift.date : "сегодня")}</div></div>
         <div class="card shift-card"><div><b>${escapeHtml(shiftText())}</b><span>${escapeHtml(employee ? employee.position : "-")} · профиль ${escapeHtml(employee ? employee.status : "-")}<br>${escapeHtml(shift ? `${shift.start_time || "-"}-${shift.end_time || ""}` : "Начните смену, чтобы вести отчёт")}</span></div><span class="status-chip ${hasOpen ? "" : "gray"}">● ${hasOpen ? "в процессе" : "ожидает"}</span></div>
         <div class="kpi-grid">
           <button type="button" class="card kpi home-kpi" data-employee-home-detail="report"><div class="kpi-top"><span>Отчёт</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${operations.length}<small> строк</small></strong><span>Открыть операции ›</span><div class="progress"><i style="--w:${Math.min(100, operations.length * 12)}%"></i></div></button>
-          <button type="button" class="card kpi good home-kpi" data-employee-home-detail="tasks"><div class="kpi-top"><span>Задания</span><div class="kpi-ico">✓</div></div><strong>${activeTasks}<small> акт.</small></strong><span>Открыть задания ›</span><div class="progress sage"><i style="--w:${Math.min(100, activeTasks * 18)}%"></i></div></button>
-          <button type="button" class="card kpi home-kpi" data-employee-home-detail="contours"><div class="kpi-top"><span>Контуры</span><div class="kpi-ico">▣</div></div><strong>${contourTasks.length}<small> шт</small></strong><span>Посмотреть список ›</span></button>
-          <button type="button" class="card kpi home-kpi" data-employee-home-detail="fabric"><div class="kpi-top"><span>Ткань</span><div class="kpi-ico">▦</div></div><strong>${fabricRows.length}<small> поз.</small></strong><span>Ткань в заданиях ›</span></button>
+          <button type="button" class="card kpi good home-kpi" data-employee-home-detail="tasks"><div class="kpi-top"><span>Задания</span><div class="kpi-ico">${uiIcon("clipboard")}</div></div><strong>${activeTasks}<small> акт.</small></strong><span>Открыть задания ›</span><div class="progress sage"><i style="--w:${Math.min(100, activeTasks * 18)}%"></i></div></button>
+          <button type="button" class="card kpi home-kpi" data-employee-home-detail="contours"><div class="kpi-top"><span>Контуры</span><div class="kpi-ico">${uiIcon("contour")}</div></div><strong>${contourTasks.length}<small> шт</small></strong><span>Посмотреть список ›</span></button>
+          <button type="button" class="card kpi home-kpi" data-employee-home-detail="fabric"><div class="kpi-top"><span>Ткань</span><div class="kpi-ico">${uiIcon("fabric")}</div></div><strong>${fabricRows.length}<small> поз.</small></strong><span>Ткань в заданиях ›</span></button>
         </div>
         <div class="section-title"><b>Активная операция</b><button data-go="report">отчёт</button></div>
         ${operations.length ? `
@@ -2766,6 +3924,49 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderTaskCompletionForm(task) {
+      if (!task) return "";
+      const draft = state.taskCompletionDrafts[task.id] || {};
+      if (!draft.request_id) draft.request_id = createRequestId();
+      state.taskCompletionDrafts[task.id] = draft;
+      const quality = state.data && state.data.quality ? state.data.quality : {defect_reasons: [], defect_dispositions: []};
+      const defectVisible = Number(draft.defect || 0) > 0;
+      const photo = state.taskDefectPhotos[task.id];
+      const paused = task.work_state === "paused";
+      const blocked = task.work_state === "blocked";
+      const packingOptions = task.packing_options || [];
+      if (packingOptions.length && !draft.packaging_option) draft.packaging_option = "individual";
+
+      return `
+        <div class="card task-completion-card">
+          <div class="task-completion-head"><b>${escapeHtml(task.operation)}</b><span class="status-chip ${task.work_state === "in_work" ? "" : "warn"}">${escapeHtml(task.status_text || "В работе")}</span></div>
+          ${renderRouteTaskInputs(task)}
+          ${(paused || blocked) ? `<div class="task-note">${escapeHtml(task.blocked_reason || (paused ? "Работа приостановлена" : "Задание заблокировано"))}</div>` : ""}
+          <div class="form-grid" style="margin-top:11px">
+            ${packingOptions.length ? `<div class="field full"><label>Вариант упаковки</label><select id="taskPackagingOption">${packingOptions.map((option) => `<option value="${escapeHtml(option.id)}" ${draft.packaging_option === option.id ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select><div class="task-note">Для наборов приложение пересчитает готовые комплекты и спишет второй товар со склада, если он входит в комплект.</div></div>` : ""}
+            <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.good ?? task.quantity)}"></div>
+            <div class="field"><label>Брак</label><input id="taskDefectQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.defect ?? 0)}"></div>
+            <div class="field full"><button type="button" class="small-button secondary" data-task-action="all-good" data-task-id="${escapeHtml(task.id)}">Всё годное: ${escapeHtml(task.quantity)} шт</button></div>
+            <div class="field full" id="taskDefectDetails" style="display:${defectVisible ? "block" : "none"}">
+              <div class="form-grid">
+                <div class="field full"><label>Причина брака</label><select id="taskDefectReason"><option value="">Выберите причину</option>${(quality.defect_reasons || []).map((reason) => `<option value="${escapeHtml(reason)}" ${draft.defect_reason === reason ? "selected" : ""}>${escapeHtml(reason)}</option>`).join("")}</select></div>
+                <div class="field full"><label>Решение</label><select id="taskDefectDisposition"><option value="">Выберите решение</option>${(quality.defect_dispositions || []).map((disposition) => `<option value="${escapeHtml(disposition)}" ${draft.defect_disposition === disposition ? "selected" : ""}>${escapeHtml(disposition)}</option>`).join("")}</select></div>
+                <div class="field full"><label>Комментарий</label><textarea id="taskDefectComment" placeholder="Что произошло">${escapeHtml(draft.defect_comment || "")}</textarea></div>
+                <div class="field full"><label>Фото брака</label><input id="taskDefectPhoto" type="file" accept="image/jpeg,image/png,image/webp"><div class="task-note">${escapeHtml(photo ? photo.file_name : "Фото не выбрано")}</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="task-action-grid">
+            ${(paused || blocked) ? `<button type="button" class="small-button" data-task-action="resume" data-task-id="${escapeHtml(task.id)}">Продолжить</button>` : `<button type="button" class="small-button secondary" data-task-action="pause" data-task-id="${escapeHtml(task.id)}">Пауза</button>`}
+            ${!blocked ? `<button type="button" class="small-button secondary" data-task-action="block" data-task-id="${escapeHtml(task.id)}">Есть проблема</button>` : ""}
+            <button type="button" class="small-button secondary" data-task-action="release" data-task-id="${escapeHtml(task.id)}">Передать</button>
+            <button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button>
+          </div>
+          <div class="button-row"><button type="button" class="small-button" data-report-action="complete-task" ${task.can_complete ? "" : "disabled"}>Выполнить задание</button></div>
+        </div>
+      `;
+    }
+
     function renderReport() {
       const feedback = getFeedbackRows();
       const history = getHistory();
@@ -2782,9 +3983,9 @@ MINIAPP_HTML = """<!doctype html>
       const selectedCuttingTask = cuttingWorkTasks[state.selectedCuttingReportTask] || cuttingWorkTasks[0];
       state.selectedReportTaskKey = taskIdentity(selectedTask);
       state.selectedCuttingReportTaskKey = taskIdentity(selectedCuttingTask);
-      const taskDraft = selectedTask ? (state.taskCompletionDrafts[selectedTask.id] || {}) : {};
-      const quality = state.data && state.data.quality ? state.data.quality : {defect_reasons: [], defect_dispositions: []};
-      mainButton.textContent = state.reportSection === "work" && (selectedCuttingTask || selectedTask) ? (selectedCuttingTask ? "Выполнить этап" : "Выполнить задание") : "Обновить отчёт";
+      mainButton.textContent = state.reportSection === "work" && (selectedCuttingTask || selectedTask)
+        ? (selectedCuttingTask ? "Выполнить этап" : (selectedTask.can_complete ? "Выполнить задание" : "Продолжить задание"))
+        : "Обновить отчёт";
       mainButton.disabled = false;
 
       const historySummary = history && history.summary ? history.summary : null;
@@ -2798,7 +3999,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="op-list">
               ${cuttingWorkTasks.map((task, index) => `
                 <div class="card order-card ${index === state.selectedCuttingReportTask ? "selected" : ""}" data-select-cutting-report-task="${index}">
-                  <div class="order-head"><div class="op-icon">▣</div><div><b>${escapeHtml(task.stage_title)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">${escapeHtml(task.status_text || task.status)}</span></div>
+                  <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${escapeHtml(task.stage_title)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">${escapeHtml(task.status_text || task.status)}</span></div>
                   <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
                   <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${escapeHtml(task.next_action || "этап")}</span></div>
                 </div>
@@ -2820,23 +4021,7 @@ MINIAPP_HTML = """<!doctype html>
           </div>
           ${selectedTask ? `
             <div class="section-title"><b>Сдача задания</b><span>${escapeHtml(selectedTask.quantity)} шт</span></div>
-            <div class="card field-card">
-              <label>${escapeHtml(selectedTask.operation)}</label>
-              ${renderRouteTaskInputs(selectedTask)}
-              <div class="form-grid">
-                <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(taskDraft.good ?? selectedTask.quantity)}"></div>
-                <div class="field"><label>Брак</label><input id="taskDefectQuantity" type="number" min="0" max="${escapeHtml(selectedTask.quantity)}" step="1" value="${escapeHtml(taskDraft.defect ?? 0)}"></div>
-                <div class="field full" id="taskDefectDetails" style="display:${Number(taskDraft.defect || 0) > 0 ? "block" : "none"}">
-                  <div class="form-grid">
-                    <div class="field full"><label>Причина брака</label><select id="taskDefectReason"><option value="">Выберите причину</option>${(quality.defect_reasons || []).map((reason) => `<option value="${escapeHtml(reason)}" ${taskDraft.defect_reason === reason ? "selected" : ""}>${escapeHtml(reason)}</option>`).join("")}</select></div>
-                    <div class="field full"><label>Решение</label><select id="taskDefectDisposition"><option value="">Выберите решение</option>${(quality.defect_dispositions || []).map((disposition) => `<option value="${escapeHtml(disposition)}" ${taskDraft.defect_disposition === disposition ? "selected" : ""}>${escapeHtml(disposition)}</option>`).join("")}</select></div>
-                    <div class="field full"><label>Комментарий</label><textarea id="taskDefectComment" placeholder="Что произошло">${escapeHtml(taskDraft.defect_comment || "")}</textarea></div>
-                  </div>
-                </div>
-                <div class="field full"><label>Остаток задания</label><input type="text" value="${escapeHtml(selectedTask.product_size)} · ${escapeHtml(selectedTask.product_color)} · ${escapeHtml(selectedTask.quantity)} шт" disabled></div>
-              </div>
-              <div class="button-row"><button class="small-button" data-report-action="complete-task">Выполнить задание</button></div>
-            </div>
+            ${renderTaskCompletionForm(selectedTask)}
           ` : ""}
         `;
         return;
@@ -2849,9 +4034,10 @@ MINIAPP_HTML = """<!doctype html>
           <div class="op-list">
             ${doneTasks.length ? doneTasks.map((task, index) => `
               <div class="card order-card">
-                <div class="order-head route-order-head"><div class="op-icon">✓</div><div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">Завершено</span></div>
+                <div class="order-head route-order-head"><div class="op-icon">${uiIcon("quality")}</div><div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">Завершено</span></div>
                 <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.good_quantity || 0)} годн. · ${escapeHtml(task.defect_quantity || 0)} брак</strong></div>
-                ${(task.defects || []).length ? `<div class="route-inputs">${task.defects.map((defect) => `<div class="route-input-row"><span>${escapeHtml(defect.reason)} · ${escapeHtml(defect.disposition)}</span><span>${defect.rework_batch_id ? `переделка #${escapeHtml(defect.rework_batch_id)}` : `${escapeHtml(defect.quantity)} шт`}</span></div>`).join("")}</div>` : ""}
+                ${(task.defects || []).length ? `<div class="route-inputs">${task.defects.map((defect) => `<div class="route-input-row"><span>${escapeHtml(defect.reason)} · ${escapeHtml(defect.disposition)}${defect.has_photo ? `<br><a href="${escapeHtml(defectPhotoUrl(defect.id))}" target="_blank" rel="noopener">Открыть фото</a>` : ""}</span><span>${defect.rework_batch_id ? `переделка #${escapeHtml(defect.rework_batch_id)}` : `${escapeHtml(defect.quantity)} шт`}</span></div>`).join("")}</div>` : ""}
+                <div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button></div>
               </div>
             `).join("") : itemEmpty("Завершённых заданий пока нет.")}
           </div>
@@ -2885,8 +4071,8 @@ MINIAPP_HTML = """<!doctype html>
           <div class="button-row"><button class="small-button secondary" data-history-action="load">Показать</button></div>
         </div>
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">◷</div></div><strong>${historySummary ? historySummary.shift_count : 0}<small> шт</small></strong><span>За выбранный период</span></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(historySummary ? historySummary.total_time : "0:00")}</strong><span>Отработано суммарно</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">${uiIcon("clock")}</div></div><strong>${historySummary ? historySummary.shift_count : 0}<small> шт</small></strong><span>За выбранный период</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">${uiIcon("schedule")}</div></div><strong>${escapeHtml(historySummary ? historySummary.total_time : "0:00")}</strong><span>Отработано суммарно</span></div>
         </div>
         <div class="section-title"><b>Смены за период</b><span>${historyShifts.length}</span></div>
         <div class="op-list">
@@ -3211,7 +4397,7 @@ MINIAPP_HTML = """<!doctype html>
 
     async function deleteOrderTask(taskKind = "", taskId = 0) {
       if (!state.data || !state.data.is_admin) return;
-      const rows = visibleOrderRows();
+      const rows = taskKind && taskId ? currentOrderRows() : visibleOrderRows();
       const current = taskKind && taskId
         ? rows.find((task) => task.task_kind === taskKind && String(task.id) === String(taskId))
         : (rows[state.selectedOrder] || rows[0]);
@@ -3245,10 +4431,97 @@ MINIAPP_HTML = """<!doctype html>
         if (data.routes) state.data.routes = data.routes;
         state.selectedOrder = 0;
         state.selectedOrderKey = "";
+        if (state.screen === "analytics") {
+          state.analyticsView = state.analyticsReturnView && state.analyticsReturnView !== "task" ? state.analyticsReturnView : "overview";
+          state.analyticsTaskId = "";
+          await refreshAdminDashboard(data.message || "Задание удалено.");
+          return;
+        }
         render();
         showToast("Задание", data.message || "Задание удалено.");
       } catch (error) {
         showToast("Ошибка", "Не удалось удалить задание.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function adjustWarehouseStock(stockKind, stockId, currentQuantity, label) {
+      if (!state.data || !state.data.is_admin) return;
+      const rawQuantity = window.prompt(`Новый остаток: ${label}`, String(currentQuantity));
+      if (rawQuantity === null) return;
+      const normalized = String(rawQuantity).trim();
+      if (!/^[0-9]+$/.test(normalized)) {
+        showToast("Склад", "Введите целое количество от 0.");
+        return;
+      }
+      const reason = window.prompt("Причина корректировки", "Инвентаризация") || "";
+      if (!reason.trim()) {
+        showToast("Склад", "Причина корректировки обязательна.");
+        return;
+      }
+
+      const actionKey = `adjust-stock:${stockKind}:${stockId}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/production/adjust-stock", {
+          stock_kind: stockKind,
+          stock_id: stockId,
+          quantity: normalized,
+          reason: reason.trim(),
+        });
+        if (!data.ok) {
+          showToast("Склад", data.message || "Не удалось скорректировать остаток.");
+          mainButton.disabled = false;
+          return;
+        }
+        state.data.production = data.production || state.data.production;
+        render();
+        showToast("Склад", data.message || "Остаток скорректирован.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось скорректировать остаток.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function rejectFabricRolls(taskId, productColor, availableRolls) {
+      const rawQuantity = window.prompt(`Сколько рулонов отправить в брак? Доступно: ${availableRolls}`, "1");
+      if (rawQuantity === null) return;
+      const normalized = String(rawQuantity).trim();
+      if (!/^[0-9]+$/.test(normalized) || Number(normalized) <= 0 || Number(normalized) > Number(availableRolls)) {
+        showToast("Брак рулонов", `Введите количество от 1 до ${availableRolls}.`);
+        return;
+      }
+      const comment = window.prompt("Комментарий к браку рулонов", "") || "";
+      if (!comment.trim()) {
+        showToast("Брак рулонов", "Комментарий обязателен.");
+        return;
+      }
+
+      const actionKey = `reject-fabric-rolls:${taskId}:${productColor}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/production/reject-fabric-rolls", {
+          task_id: taskId,
+          product_color: productColor,
+          quantity: normalized,
+          comment: comment.trim(),
+        });
+        if (!data.ok) {
+          showToast("Брак рулонов", data.message || "Не удалось списать рулоны.");
+          mainButton.disabled = false;
+          return;
+        }
+        state.data.production = data.production || state.data.production;
+        render();
+        showToast("Брак рулонов", data.message || "Рулоны списаны в брак.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось списать рулоны в брак.");
         mainButton.disabled = false;
       } finally {
         endAction(actionKey);
@@ -3390,23 +4663,51 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function readDefectPhoto(file, task) {
+      if (!file || !task) return;
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) {
+        showToast("Фото брака", "Выберите JPG, PNG или WebP размером не больше 2 МБ.");
+        return;
+      }
+      const contentBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || "").split(",", 2)[1] || "");
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      state.taskDefectPhotos[task.id] = {
+        file_name: file.name || `defect-${task.id}.jpg`,
+        mime_type: file.type,
+        content_base64: contentBase64,
+      };
+      render();
+      showToast("Фото брака", "Фотография прикреплена.");
+    }
+
     async function completeOperationTask(current) {
       if (!current) return;
       const actionKey = `complete-operation-task:${current.id}`;
       if (!beginAction(actionKey)) return;
       const goodInput = document.getElementById("taskGoodQuantity");
       const defectInput = document.getElementById("taskDefectQuantity");
+      const draft = state.taskCompletionDrafts[current.id] || {};
+      if (!draft.request_id) draft.request_id = createRequestId();
+      state.taskCompletionDrafts[current.id] = draft;
+      const completionPayload = {
+        batch_id: current.id,
+        request_id: draft.request_id,
+        good_quantity: goodInput ? goodInput.value : (draft.good ?? current.quantity),
+        defect_quantity: defectInput ? defectInput.value : (draft.defect ?? 0),
+        defect_reason: document.getElementById("taskDefectReason") ? document.getElementById("taskDefectReason").value : (draft.defect_reason || ""),
+        defect_disposition: document.getElementById("taskDefectDisposition") ? document.getElementById("taskDefectDisposition").value : (draft.defect_disposition || ""),
+        defect_comment: document.getElementById("taskDefectComment") ? document.getElementById("taskDefectComment").value : (draft.defect_comment || ""),
+        defect_photo: state.taskDefectPhotos[current.id] || null,
+        packaging_option: document.getElementById("taskPackagingOption") ? document.getElementById("taskPackagingOption").value : (draft.packaging_option || ""),
+      };
       mainButton.disabled = true;
 
       try {
-        const data = await api("/api/routes/complete", {
-          batch_id: current.id,
-          good_quantity: goodInput ? goodInput.value : current.quantity,
-          defect_quantity: defectInput ? defectInput.value : 0,
-          defect_reason: document.getElementById("taskDefectReason") ? document.getElementById("taskDefectReason").value : "",
-          defect_disposition: document.getElementById("taskDefectDisposition") ? document.getElementById("taskDefectDisposition").value : "",
-          defect_comment: document.getElementById("taskDefectComment") ? document.getElementById("taskDefectComment").value : "",
-        });
+        const data = await api("/api/routes/complete", completionPayload);
 
         if (!data.ok) {
           showToast("Задание", data.message || "Не удалось завершить операцию.");
@@ -3418,6 +4719,7 @@ MINIAPP_HTML = """<!doctype html>
         if (state.data.routes) state.data.routes.completed_tasks = data.completed_tasks || [];
         state.data.production = data.production || state.data.production;
         delete state.taskCompletionDrafts[current.id];
+        delete state.taskDefectPhotos[current.id];
         state.selectedOrder = 0;
         state.selectedOrderKey = "";
         state.selectedReportTask = 0;
@@ -3425,8 +4727,14 @@ MINIAPP_HTML = """<!doctype html>
         render();
         showToast("Задание", data.message || "Операция завершена.");
       } catch (error) {
-        showToast("Ошибка", "Не удалось завершить операцию.");
-        mainButton.disabled = false;
+        if (!navigator.onLine || error instanceof TypeError) {
+          const saved = queueCompletion(completionPayload);
+          showToast(saved ? "Сохранено" : "Ошибка", saved ? "Отчёт отправится автоматически после появления связи." : "Не удалось сохранить отчёт на устройстве.");
+          mainButton.disabled = false;
+        } else {
+          showToast("Ошибка", "Не удалось завершить операцию.");
+          mainButton.disabled = false;
+        }
       } finally {
         endAction(actionKey);
       }
@@ -3436,9 +4744,8 @@ MINIAPP_HTML = """<!doctype html>
       if (!current || current.task_kind !== "route" || state.data.is_admin) return;
 
       if (current.is_assigned_to_me) {
-        state.reportSection = "work";
-        state.selectedReportTaskKey = taskIdentity(current);
-        setScreen("report");
+        state.selectedOrderKey = taskIdentity(current);
+        render();
         return;
       }
 
@@ -3465,10 +4772,9 @@ MINIAPP_HTML = """<!doctype html>
           state.data.routes.tasks = data.tasks || [];
           state.data.routes.completed_tasks = data.completed_tasks || state.data.routes.completed_tasks || [];
         }
-        state.reportSection = "work";
-        state.selectedReportTask = 0;
-        state.selectedReportTaskKey = taskIdentity(current);
-        setScreen("report");
+        state.selectedOrderKey = taskIdentity(current);
+        state.screen = "orders";
+        render();
         showToast("Задание", data.message || "Задание взято в работу.");
       } catch (error) {
         showToast("Ошибка", "Не удалось взять задание.");
@@ -3476,6 +4782,211 @@ MINIAPP_HTML = """<!doctype html>
       } finally {
         endAction(actionKey);
       }
+    }
+
+    function authenticatedFileUrl(path, params = {}) {
+      const url = new URL(path, window.location.href);
+      Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+      if (debugTelegramId) url.searchParams.set("telegram_id", debugTelegramId);
+      return url.toString();
+    }
+
+    function routeQrUrl(batchId) {
+      return authenticatedFileUrl("/api/routes/qr", {batch_id: batchId});
+    }
+
+    function defectPhotoUrl(defectId) {
+      return authenticatedFileUrl("/api/routes/defect-photo", {defect_id: defectId});
+    }
+
+    async function updateRouteTaskState(task, action) {
+      if (!task) return;
+      let reason = "";
+      if (action === "pause") reason = "Перерыв";
+      if (action === "block") {
+        reason = window.prompt("Что мешает продолжить работу?", task.blocked_reason || "") || "";
+        if (!reason.trim()) return;
+      }
+      if (action === "release") {
+        reason = window.prompt("Почему передаёте задание?", "Передача следующей смене") || "";
+        if (!reason.trim()) return;
+      }
+
+      const actionKey = `route-work-action:${task.id}:${action}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/routes/work-action", {batch_id: task.id, action, reason});
+        if (!data.ok) {
+          showToast("Задание", data.message || "Не удалось изменить состояние.");
+          mainButton.disabled = false;
+          return;
+        }
+        if (state.data.routes) {
+          state.data.routes.tasks = data.tasks || [];
+          state.data.routes.completed_tasks = data.completed_tasks || state.data.routes.completed_tasks || [];
+        }
+        state.selectedOrderKey = taskIdentity(data.batch || task);
+        render();
+        showToast("Задание", data.message || "Состояние обновлено.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось изменить состояние задания.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function openRoutePassport(batchId) {
+      if (!batchId) return;
+      const actionKey = `route-passport:${batchId}`;
+      if (!beginAction(actionKey)) return;
+      try {
+        const data = await api("/api/routes/passport", {batch_id: batchId});
+        if (!data.ok) {
+          showToast("Паспорт партии", data.message || "Паспорт не найден.");
+          return;
+        }
+        state.passportReturnScreen = state.screen === "passport" ? (state.passportReturnScreen || "orders") : state.screen;
+        state.passportBatchId = String(batchId);
+        state.passportData = data.passport;
+        state.screen = "passport";
+        render();
+      } catch (error) {
+        showToast("Ошибка", "Не удалось открыть паспорт партии.");
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function openTraceCode(rawValue) {
+      const traceCode = String(rawValue || "").trim().replace(/^TRACE:/i, "").toUpperCase();
+      if (!traceCode) return;
+      try {
+        const data = await api("/api/routes/lookup", {trace_code: traceCode});
+        if (!data.ok || !data.batch) {
+          showToast("QR партии", data.message || "Партия не найдена.");
+          return;
+        }
+        const task = {...data.batch, task_kind: "route"};
+        if (task.work_status === "done") {
+          openRoutePassport(task.id);
+          return;
+        }
+        state.screen = "orders";
+        state.orderCategory = state.data.is_admin ? adminOrderCategoryForTask(task) : (task.category || state.orderCategory);
+        state.selectedOrderKey = taskIdentity(task);
+        render();
+        showToast("QR партии", `Открыто задание ${task.trace_code || task.id}.`);
+      } catch (error) {
+        showToast("Ошибка", "Не удалось найти партию.");
+      }
+    }
+
+    function promptRouteCode() {
+      const value = window.prompt("Введите код партии", "RB-");
+      if (value) openTraceCode(value);
+    }
+
+    function stopWebQrScanner() {
+      if (qrScannerFrame) window.cancelAnimationFrame(qrScannerFrame);
+      qrScannerFrame = 0;
+      if (qrScannerStream) {
+        qrScannerStream.getTracks().forEach((track) => track.stop());
+      }
+      qrScannerStream = null;
+      qrScannerVideo.srcObject = null;
+      qrScanner.hidden = true;
+    }
+
+    async function openWebQrScanner() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof window.BarcodeDetector !== "function") {
+        promptRouteCode();
+        return;
+      }
+
+      try {
+        qrScannerStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {facingMode: {ideal: "environment"}},
+        });
+        qrScanner.hidden = false;
+        qrScannerVideo.srcObject = qrScannerStream;
+        await qrScannerVideo.play();
+        const detector = new window.BarcodeDetector({formats: ["qr_code"]});
+        let detecting = false;
+        const detectFrame = async () => {
+          if (!qrScannerStream || qrScanner.hidden) return;
+          if (!detecting && qrScannerVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            detecting = true;
+            try {
+              const codes = await detector.detect(qrScannerVideo);
+              const value = codes && codes[0] ? codes[0].rawValue : "";
+              if (value) {
+                stopWebQrScanner();
+                openTraceCode(value);
+                return;
+              }
+            } catch (error) {
+              // A transient unreadable frame is expected while the camera is moving.
+            } finally {
+              detecting = false;
+            }
+          }
+          qrScannerFrame = window.requestAnimationFrame(detectFrame);
+        };
+        qrScannerFrame = window.requestAnimationFrame(detectFrame);
+      } catch (error) {
+        stopWebQrScanner();
+        showToast("QR-код", "Камера недоступна. Введите код партии.");
+        promptRouteCode();
+      }
+    }
+
+    function scanRouteQr() {
+      if (tg && typeof tg.showScanQrPopup === "function") {
+        tg.showScanQrPopup({text: "Наведите камеру на QR-код партии"}, (value) => {
+          openTraceCode(value);
+          return true;
+        });
+        return;
+      }
+      openWebQrScanner();
+    }
+
+    function renderPassport() {
+      const passport = state.passportData;
+      mainButton.textContent = "Назад к заданиям";
+      mainButton.disabled = false;
+      if (!passport) {
+        mount.innerHTML = `<div class="screen-head"><div><h2>Паспорт партии</h2><p>Данные не загружены.</p></div></div>`;
+        return;
+      }
+      const events = passport.events || [];
+      const batches = passport.batches || [];
+      const fabricLots = passport.fabric_lots || [];
+      const workStateText = {
+        free: "Свободно",
+        in_work: "В работе",
+        paused: "Пауза",
+        blocked: "Заблокировано",
+        done: "Готово",
+      };
+      const focusBatch = batches.find((batch) => String(batch.id) === String(passport.focus_batch_id)) || batches[0];
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Паспорт партии</h2><p>${escapeHtml(focusBatch ? focusBatch.product_name : "Производственная партия")}</p></div><div class="date">${escapeHtml(passport.trace_code || "-")}</div></div>
+        <div class="card field-card">
+          <label>QR-код партии</label>
+          <img class="party-qr" src="${escapeHtml(routeQrUrl(passport.focus_batch_id))}" alt="QR-код ${escapeHtml(passport.trace_code || "партии")}">
+          <div class="detail-grid"><div class="detail-box"><span>Код</span><strong>${escapeHtml(passport.trace_code || "-")}</strong></div><div class="detail-box"><span>Версия маршрута</span><strong>${escapeHtml(passport.route_version || "-")}</strong></div></div>
+        </div>
+        <div class="section-title"><b>Материал и партии</b><span>${fabricLots.length}</span></div>
+        <div class="op-list">${fabricLots.length ? fabricLots.map((lot) => `<div class="card report-row"><div><b>${escapeHtml(lot.lot_code)}</b><span>${escapeHtml(lot.material_name)} · ${escapeHtml(lot.product_color)}</span></div><span class="status-chip gray">${escapeHtml(lot.rolls)} рул.</span></div>`).join("") : itemEmpty("Для этой части маршрута партии ткани пока не связаны.")}</div>
+        <div class="section-title"><b>Операции партии</b><span>${batches.length}</span></div>
+        <div class="op-list">${batches.map((batch) => `<div class="card report-row"><div><b>${escapeHtml((batch.step || {}).operation || "Производственный этап")}</b><span>${escapeHtml(batch.product_size)} · ${escapeHtml(batch.product_color_label || batch.product_color)}${batch.assignee ? `<br>${escapeHtml(batch.assignee.full_name)}` : ""}</span></div><span class="status-chip ${batch.status === "done" ? "" : "warn"}">${escapeHtml(workStateText[batch.status === "done" ? "done" : batch.work_state] || "Открыто")}</span></div>`).join("")}</div>
+        <div class="section-title"><b>Хронология</b><span>${events.length}</span></div>
+        <div class="card field-card"><div class="passport-timeline">${events.length ? events.map((event) => `<div class="passport-event"><i class="passport-dot"></i><div><b>${escapeHtml(event.event_text || event.event_type)}</b><span>${escapeHtml((event.created_at || "").replace("T", " ").slice(0, 16))}${event.employee_name ? ` · ${escapeHtml(event.employee_name)}` : ""}${event.operation_name ? `<br>${escapeHtml(event.operation_name)}` : ""}${event.reason ? `<br>${escapeHtml(event.reason)}` : ""}${Number(event.good_quantity || 0) || Number(event.defect_quantity || 0) ? `<br>Годно ${escapeHtml(event.good_quantity || 0)} · брак ${escapeHtml(event.defect_quantity || 0)}` : ""}</span></div></div>`).join("") : itemEmpty("Событий пока нет.")}</div></div>
+      `;
     }
 
     function renderOrderCreate() {
@@ -3556,12 +5067,13 @@ MINIAPP_HTML = """<!doctype html>
       return `
         <div class="card order-card ${isSelected ? "selected" : ""}" ${selectAttr}="${index}">
           <div class="order-head route-order-head">
-            <div class="op-icon">▣</div>
-            <div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}${assignee}</span></div>
+            <div class="op-icon">${uiIcon("work")}</div>
+            <div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span>${assignee}<span class="trace-code">${escapeHtml(task.trace_code || `RB-${task.id}`)}</span></div>
             <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
           </div>
           <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.quantity)} шт</strong></div>
-          ${(task.due_date || task.priority === "urgent" || task.parent_batch_id) ? `<div class="route-inputs"><div class="route-input-row"><span>${task.parent_batch_id ? `Переделка задания #${escapeHtml(task.parent_batch_id)}` : `Приоритет: ${escapeHtml(priorityLabel(task.priority))}`}</span><span>${task.due_date ? `до ${escapeHtml(task.due_date)}` : ""}</span></div></div>` : ""}
+          ${task.blocked_reason ? `<div class="task-note">${escapeHtml(task.blocked_reason)}</div>` : ""}
+          ${(task.due_date || task.priority === "urgent" || task.parent_batch_id) ? `<div class="route-inputs"><div class="route-input-row"><span>${task.parent_batch_id ? (task.parallel_group ? `Параллельная ветка · ${escapeHtml(task.parallel_branch || "операция")}` : `Связано с заданием #${escapeHtml(task.parent_batch_id)}`) : `Приоритет: ${escapeHtml(priorityLabel(task.priority))}`}</span><span>${task.due_date ? `до ${escapeHtml(task.due_date)}` : ""}</span></div></div>` : ""}
           ${renderRouteTaskInputs(task)}
           ${deleteButton}
         </div>
@@ -3600,17 +5112,20 @@ MINIAPP_HTML = """<!doctype html>
       state.selectedOrderKey = taskIdentity(current);
       mainButton.textContent = state.data && state.data.is_admin
         ? "Создать задание"
-        : (current && current.is_assigned_to_me ? "Открыть отчёт" : (current ? "Выбрать задание" : "Обновить статус"));
+        : (current && current.task_kind === "route" && current.is_assigned_to_me
+          ? (current.can_complete ? "Выполнить задание" : "Продолжить задание")
+          : (current && current.is_assigned_to_me ? "Открыть отчёт" : (current ? "Выбрать задание" : "Обновить статус")));
       mainButton.disabled = false;
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>${state.data && state.data.is_admin ? "Заказы в работе" : "Задания"}</h2><p>${state.data && state.data.is_admin ? "Создание и контроль заданий." : "Выберите свободное задание, чтобы взять его в работу."}</p></div><div class="date">${allTasks.length} активных</div></div>
+        <div class="scan-row"><button type="button" class="small-button secondary" data-task-action="scan">Сканировать QR</button></div>
         ${state.data && state.data.is_admin ? `<div class="card shift-card" data-order-action="new"><div><b>Создать задание</b><span>Раскрой и следующие операции из складского остатка.</span></div><span class="status-chip">+</span></div>` : ""}
         <div class="op-list">
           ${allTasks.length ? `
           ${tasks.map((task, index) => `
             <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
-              <div class="order-head"><div class="op-icon">▣</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${task.work_status === "free" ? "gray" : "warn"}">${escapeHtml(task.status_text || task.status)}</span></div>
+              <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${task.work_status === "free" ? "gray" : "warn"}">${escapeHtml(task.status_text || task.status)}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
               <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
               ${state.data && state.data.is_admin ? `<div class="order-card-actions"><button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button></div>` : ""}
@@ -3628,7 +5143,8 @@ MINIAPP_HTML = """<!doctype html>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
         ` : current ? `
-          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}${current.assigned_employee_name ? `<br>В работе: ${escapeHtml(current.assigned_employee_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}</div>
+          <div class="card order-detail"><div class="order-head route-order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}</span>${current.assigned_employee_name ? `<span class="route-assignee">В работе: ${escapeHtml(current.assigned_employee_name)}</span>` : ""}<span class="trace-code">${escapeHtml(current.trace_code || `RB-${current.id}`)}</span></div><span class="status-chip ${current.work_state === "free" ? "gray" : "warn"}">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}${current.blocked_reason ? `<div class="task-note">${escapeHtml(current.blocked_reason)}</div>` : ""}<div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(current.id)}">Паспорт / QR</button></div></div>
+          ${!state.data.is_admin && current.is_assigned_to_me ? renderTaskCompletionForm(current) : ""}
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
         ${state.data && state.data.is_admin && current ? `<div class="button-row"><button class="small-button danger" data-order-action="delete" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Удалить задание</button></div>` : ""}
       `;
@@ -3708,7 +5224,7 @@ MINIAPP_HTML = """<!doctype html>
         const taskDefects = (details.defects || control.defects || []).filter((row) => String(row.batch_id) === String(task.id));
         return `${head}
           <div class="card order-detail">
-            <div class="order-head"><div class="op-icon">▣</div><div><b>${escapeHtml(task.operation)}</b><span>#${escapeHtml(task.id)} · ${escapeHtml(task.product)}</span></div><span class="status-chip ${task.on_time === false ? "warn" : "gray"}">${escapeHtml(task.status_text)}</span></div>
+            <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${escapeHtml(task.operation)}</b><span>#${escapeHtml(task.id)} · ${escapeHtml(task.product)}</span></div><span class="status-chip ${task.on_time === false ? "warn" : "gray"}">${escapeHtml(task.status_text)}</span></div>
             <div class="detail-grid">
               <div class="detail-box"><span>Размер</span><strong>${escapeHtml(task.size || "-")}</strong></div>
               <div class="detail-box"><span>Цвет</span><strong>${escapeHtml(task.color || "-")}</strong></div>
@@ -3720,7 +5236,11 @@ MINIAPP_HTML = """<!doctype html>
               <div class="detail-box"><span>Этап</span><strong>${escapeHtml(task.stage || "-")}</strong></div>
               <div class="detail-box"><span>Cycle time</span><strong>${escapeHtml(task.cycle_minutes == null ? "-" : analyticsDuration(task.cycle_minutes))}</strong></div>
               <div class="detail-box"><span>Lead time</span><strong>${escapeHtml(task.lead_minutes == null ? "-" : analyticsDuration(task.lead_minutes))}</strong></div>
+              <div class="detail-box"><span>Код партии</span><strong>${escapeHtml(task.trace_code || `RB-${task.id}`)}</strong></div>
+              <div class="detail-box"><span>Версия маршрута</span><strong>${escapeHtml(task.route_version || "-")}</strong></div>
             </div>
+            ${task.blocked_reason ? `<div class="task-note">${escapeHtml(task.blocked_reason)}</div>` : ""}
+            <div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button>${task.status === "active" ? `<button type="button" class="small-button danger" data-analytics-delete-task-kind="${escapeHtml(task.task_kind || "route")}" data-analytics-delete-task-id="${escapeHtml(task.id)}">Удалить задание</button>` : ""}</div>
           </div>
           <div class="section-title"><b>Брак задания</b><span>${taskDefects.length}</span></div>
           <div class="op-list">${analyticsDefectRows(taskDefects)}</div>
@@ -3811,16 +5331,16 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Контроль производства</h2><p>План, качество, незавершёнка и отклонения.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
         <div class="kpi-grid">
-          <button type="button" class="card kpi analytics-card" data-analytics-view="planfact"><span class="kpi-top"><span>План / факт</span><span class="kpi-ico">◎</span></span><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi good analytics-card" data-analytics-view="fpy"><span class="kpi-top"><span>FPY</span><span class="kpi-ico">✓</span></span><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi analytics-card" data-analytics-view="active"><span class="kpi-top"><span>В работе</span><span class="kpi-ico">▣</span></span><strong>${escapeHtml(control.active_quantity || 0)}<small> шт</small></strong><span>${escapeHtml(control.active_tasks || 0)} заданий · подробнее ›</span></button>
-          <button type="button" class="card kpi analytics-card" data-analytics-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">▦</span></span><strong>${escapeHtml(control.semifinished_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="planfact"><span class="kpi-top"><span>План / факт</span><span class="kpi-ico">${uiIcon("target")}</span></span><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi good analytics-card" data-analytics-view="fpy"><span class="kpi-top"><span>FPY</span><span class="kpi-ico">${uiIcon("quality")}</span></span><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="active"><span class="kpi-top"><span>В работе</span><span class="kpi-ico">${uiIcon("work")}</span></span><strong>${escapeHtml(control.active_quantity || 0)}<small> шт</small></strong><span>${escapeHtml(control.active_tasks || 0)} заданий · подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">${uiIcon("layers")}</span></span><strong>${escapeHtml(control.semifinished_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
         </div>
         <div class="kpi-grid">
-          <button type="button" class="card kpi analytics-card" data-analytics-view="cycle"><span class="kpi-top"><span>Cycle time</span><span class="kpi-ico">◷</span></span><strong>${escapeHtml(analyticsDuration(control.average_cycle_minutes))}</strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi analytics-card" data-analytics-view="lead"><span class="kpi-top"><span>Lead time</span><span class="kpi-ico">◎</span></span><strong>${escapeHtml(analyticsDuration(control.average_lead_minutes))}</strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi good analytics-card" data-analytics-view="schedule"><span class="kpi-top"><span>В срок</span><span class="kpi-ico">✓</span></span><strong>${escapeHtml(control.schedule_adherence || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
-          <button type="button" class="card kpi analytics-card" data-analytics-view="defects"><span class="kpi-top"><span>Брак</span><span class="kpi-ico">!</span></span><strong>${escapeHtml(control.defect_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="cycle"><span class="kpi-top"><span>Cycle time</span><span class="kpi-ico">${uiIcon("cycle")}</span></span><strong>${escapeHtml(analyticsDuration(control.average_cycle_minutes))}</strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi analytics-card" data-analytics-view="lead"><span class="kpi-top"><span>Lead time</span><span class="kpi-ico">${uiIcon("lead")}</span></span><strong>${escapeHtml(analyticsDuration(control.average_lead_minutes))}</strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi good analytics-card" data-analytics-view="schedule"><span class="kpi-top"><span>В срок</span><span class="kpi-ico">${uiIcon("schedule")}</span></span><strong>${escapeHtml(control.schedule_adherence || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
+          <button type="button" class="card kpi danger analytics-card" data-analytics-view="defects"><span class="kpi-top"><span>Брак</span><span class="kpi-ico">${uiIcon("defect")}</span></span><strong>${escapeHtml(control.defect_quantity || 0)}<small> шт</small></strong><span>Подробнее ›</span></button>
         </div>
         <div class="section-title"><b>WIP по этапам</b><button type="button" data-analytics-view="wip">все этапы</button></div>
         <div class="op-list">
@@ -3874,9 +5394,9 @@ MINIAPP_HTML = """<!doctype html>
           <div class="screen-head"><div><h2>Склад</h2><p>Материалы, полуфабрикаты и готовая продукция.</p></div><div class="date">${warehouseRows.length + fabricRows.length} поз.</div></div>
           ${includeTabs ? renderAdminTabs() : ""}
           <div class="kpi-grid">
-            <button type="button" class="card kpi warehouse-category" data-warehouse-view="materials"><span class="kpi-top"><span>Материалы</span><span class="kpi-ico">▦</span></span><strong>${fabricRows.length}<small> поз</small></strong><span>Открыть остатки</span></button>
-            <button type="button" class="card kpi warehouse-category" data-warehouse-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">▣</span></span><strong>${semifinished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
-            <button type="button" class="card kpi good warehouse-category" data-warehouse-view="finished"><span class="kpi-top"><span>Готовое</span><span class="kpi-ico">✓</span></span><strong>${finished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+            <button type="button" class="card kpi warehouse-category" data-warehouse-view="materials"><span class="kpi-top"><span>Материалы</span><span class="kpi-ico">${uiIcon("fabric")}</span></span><strong>${fabricRows.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+            <button type="button" class="card kpi warehouse-category" data-warehouse-view="semifinished"><span class="kpi-top"><span>Полуфабрикаты</span><span class="kpi-ico">${uiIcon("layers")}</span></span><strong>${semifinished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
+            <button type="button" class="card kpi good warehouse-category" data-warehouse-view="finished"><span class="kpi-top"><span>Готовое</span><span class="kpi-ico">${uiIcon("quality")}</span></span><strong>${finished.length}<small> поз</small></strong><span>Открыть остатки</span></button>
           </div>
           <div class="section-title"><b>Приход материалов</b><span>рулоны</span></div>
           <div class="card field-card">
@@ -3925,9 +5445,9 @@ MINIAPP_HTML = """<!doctype html>
         return row ? row.product_color_label || row.product_color : value;
       };
       const rowsHtml = filteredRows.length ? filteredRows.map((row) => isMaterials ? `
-        <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit === "рул" ? "рул." : row.unit)}</span></div>
+        <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit === "рул" ? "рул." : row.unit)}</span><button type="button" class="small-button secondary" data-stock-adjust-kind="fabric" data-stock-adjust-id="${escapeHtml(row.id)}" data-stock-adjust-quantity="${escapeHtml(row.quantity)}" data-stock-adjust-label="${escapeHtml(`${row.material_name} · ${row.product_color_label || row.product_color}`)}">Изменить</button></div></div>
       ` : `
-        <div class="card report-row"><div><b>${escapeHtml(row.product_name)}</b><span>${escapeHtml(row.stage_name)}<br>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}${state.warehouseView === "semifinished" ? `<br>Для: ${escapeHtml(row.ready_for_position)}` : ""}</span></div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span></div>
+        <div class="card report-row"><div><b>${escapeHtml(row.product_name)}</b><span>${escapeHtml(row.stage_name)}<br>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}${state.warehouseView === "semifinished" ? `<br>Для: ${escapeHtml(row.ready_for_position)}` : ""}</span></div><div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span><button type="button" class="small-button secondary" data-stock-adjust-kind="warehouse" data-stock-adjust-id="${escapeHtml(row.id)}" data-stock-adjust-quantity="${escapeHtml(row.quantity)}" data-stock-adjust-label="${escapeHtml(`${row.product_name} · ${row.product_size} · ${row.product_color_label || row.product_color}`)}">Изменить</button></div></div>
       `).join("") : itemEmpty("По выбранным фильтрам остатков нет.");
 
       return `
@@ -4001,10 +5521,10 @@ MINIAPP_HTML = """<!doctype html>
           <div class="button-row"><button class="small-button secondary" data-admin-action="load-report">Показать</button><button class="small-button" data-admin-action="export-report">Выгрузить</button></div>
         </div>
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">◷</div></div><strong>${totals.shifts}<small> шт</small></strong><span>Закрытые смены</span></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">✓</div></div><strong>${escapeHtml(minutesLabel(totals.minutes))}</strong><span>Суммарно отработано</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">${uiIcon("clock")}</div></div><strong>${totals.shifts}<small> шт</small></strong><span>Закрытые смены</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Часы</span><div class="kpi-ico">${uiIcon("schedule")}</div></div><strong>${escapeHtml(minutesLabel(totals.minutes))}</strong><span>Суммарно отработано</span></div>
           <div class="card kpi"><div class="kpi-top"><span>Операции</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${totals.operations}<small> строк</small></strong><span>Строки отчёта</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Сотрудники</span><div class="kpi-ico">◎</div></div><strong>${totals.employees}<small> чел</small></strong><span>В выборке</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Сотрудники</span><div class="kpi-ico">${uiIcon("users")}</div></div><strong>${totals.employees}<small> чел</small></strong><span>В выборке</span></div>
         </div>
         <div class="section-title"><b>${escapeHtml(report ? report.title : "Отчёт")}</b><button data-admin-action="export-report">выгрузить</button></div>
         <div class="op-list">${summaryHtml}</div>
@@ -4020,40 +5540,68 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderAdminEmployees(admin) {
-      const employees = admin && admin.employees ? admin.employees : [];
+      const employees = admin && admin.user_accounts ? admin.user_accounts : (admin && admin.employees ? admin.employees : []);
       const pending = admin && admin.pending_employees ? admin.pending_employees : [];
       const positions = admin && admin.positions ? admin.positions : [];
+      const listedEmployees = employees.filter((employee) => employee.status !== "pending");
+      const currentTelegramId = Number(state.data && state.data.employee ? state.data.employee.telegram_id : 0);
       mainButton.textContent = "Обновить сотрудников";
 
-      const positionOptions = (employee) => positions.map((position) => `
-        <option value="${escapeHtml(position)}" ${employee.position === position ? "selected" : ""}>${escapeHtml(position)}</option>
-      `).join("");
-      const employeeCards = employees.length ? employees.map((employee) => `
+      const positionOptions = (employee) => {
+        const hasPosition = positions.includes(employee.position);
+        return `
+          <option value="" disabled ${hasPosition ? "" : "selected"}>Выберите должность</option>
+          ${positions.map((position) => `
+            <option value="${escapeHtml(position)}" ${employee.position === position ? "selected" : ""}>${escapeHtml(position)}</option>
+          `).join("")}
+        `;
+      };
+      const employeeContact = (employee) => {
+        const contact = [employee.email, employee.phone].filter(Boolean).map(escapeHtml).join(" · ");
+        if (contact) return contact;
+        const telegramId = Number(employee.telegram_id || 0);
+        return telegramId > 0 ? `Telegram ID ${escapeHtml(telegramId)}` : "Контакты не указаны";
+      };
+      const employeeStatusLabel = (status) => ({
+        active: "активен",
+        inactive: "отключён",
+        pending: "ожидает",
+        rejected: "отклонён",
+      }[status] || status || "-");
+      const employeeCards = listedEmployees.length ? listedEmployees.map((employee) => `
         <div class="card field-card">
-          <label>ID ${escapeHtml(employee.id)} · ${escapeHtml(employee.status)}</label>
-          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · TG ${escapeHtml(employee.telegram_id || "-")}</span></div><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employee.status)}</span></div>
-          <div class="form-grid"><div class="field full"><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>
-          <div class="button-row"><button class="small-button secondary" data-admin-action="position" data-employee-id="${escapeHtml(employee.id)}">Должность</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button></div>
+          <label>ID ${escapeHtml(employee.id)} · ${employee.role === "admin" ? "администратор" : "сотрудник"}</label>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employeeStatusLabel(employee.status))}</span></div>
+          ${employee.role === "admin" && Number(employee.telegram_id) === currentTelegramId ? "" : `<div class="form-grid"><div class="field full"><label>${employee.role === "admin" ? "Должность после снятия прав" : "Должность"}</label><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>`}
+          ${employee.role === "admin" ? `
+            <div class="button-row">
+              ${Number(employee.telegram_id) === currentTelegramId ? `<span class="status-chip gray">Это ваш аккаунт</span>` : `<button class="small-button secondary" data-admin-action="role-employee" data-employee-id="${escapeHtml(employee.id)}">Снять права</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button>`}
+            </div>
+          ` : `
+            <div class="button-row"><button class="small-button secondary" data-admin-action="position" data-employee-id="${escapeHtml(employee.id)}">Сохранить должность</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button></div>
+            <div class="button-row"><button class="small-button" data-admin-action="role-admin" data-employee-id="${escapeHtml(employee.id)}">Назначить администратором</button></div>
+          `}
         </div>
       `).join("") : itemEmpty("Сотрудников пока нет.");
       const pendingCards = pending.length ? pending.map((employee) => `
         <div class="card field-card">
           <label>Заявка · ${escapeHtml(employee.registered_at || "")}</label>
-          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · TG ${escapeHtml(employee.telegram_id || "-")}</span></div><span class="status-chip warn">pending</span></div>
-          <div class="button-row"><button class="small-button secondary" data-admin-action="inactive" data-employee-id="${escapeHtml(employee.id)}">Отклонить</button><button class="small-button" data-admin-action="active" data-employee-id="${escapeHtml(employee.id)}">Активировать</button></div>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${employeeContact(employee)}</span></div><span class="status-chip warn">ожидает</span></div>
+          <div class="form-grid"><div class="field full"><label>Должность</label><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>
+          <div class="button-row"><button class="small-button secondary" data-admin-action="inactive" data-employee-id="${escapeHtml(employee.id)}">Отклонить</button><button class="small-button" data-admin-action="approve" data-employee-id="${escapeHtml(employee.id)}">Назначить и активировать</button></div>
         </div>
       `).join("") : itemEmpty("Новых заявок нет.");
 
       return `
-        <div class="screen-head"><div><h2>Сотрудники</h2><p>Заявки, статусы и должности.</p></div><div class="date">${employees.length} всего</div></div>
+        <div class="screen-head"><div><h2>Пользователи</h2><p>Заявки, роли, статусы и должности.</p></div><div class="date">${employees.length} всего</div></div>
         ${renderAdminTabs()}
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Заявки</span><div class="kpi-ico">◎</div></div><strong>${pending.length}<small> шт</small></strong><span>Ожидают решения</span></div>
-          <div class="card kpi good"><div class="kpi-top"><span>Активные</span><div class="kpi-ico">✓</div></div><strong>${(admin.active_employees || []).length}<small> чел</small></strong><span>Могут работать</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Заявки</span><div class="kpi-ico">${uiIcon("inbox")}</div></div><strong>${pending.length}<small> шт</small></strong><span>Ожидают решения</span></div>
+          <div class="card kpi good"><div class="kpi-top"><span>Активные</span><div class="kpi-ico">${uiIcon("quality")}</div></div><strong>${(admin.active_employees || []).length}<small> чел</small></strong><span>Могут работать</span></div>
         </div>
         <div class="section-title"><b>Заявки</b><span>${pending.length}</span></div>
         <div class="op-list">${pendingCards}</div>
-        <div class="section-title"><b>Список сотрудников</b><button data-admin-action="refresh">обновить</button></div>
+        <div class="section-title"><b>Все пользователи</b><button data-admin-action="refresh">обновить</button></div>
         <div class="op-list">${employeeCards}</div>
       `;
     }
@@ -4138,11 +5686,40 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = renderAdminReports(admin);
     }
 
+    function renderProfile() {
+      const employee = state.data && state.data.employee ? state.data.employee : {};
+      const fullName = webSessionProfile.full_name || employee.full_name || "Пользователь";
+      const position = webSessionProfile.position || employee.position || "Сотрудник";
+      const role = webSessionProfile.role === "admin" || state.data.is_admin ? "Администратор" : "Сотрудник";
+      mainButton.textContent = "Вернуться";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Профиль</h2><p>Учётная запись и безопасность.</p></div><div class="date">${escapeHtml(role)}</div></div>
+        <div class="card field-card">
+          <label>Пользователь</label>
+          <div class="report-row"><div><b>${escapeHtml(fullName)}</b><span>${escapeHtml(position)}</span></div><span class="status-chip">активен</span></div>
+          <div class="op-list">
+            <div class="report-row"><div><b>Электронная почта</b><span>${escapeHtml(webSessionProfile.email || webSessionProfile.username || "Не указана")}</span></div></div>
+            <div class="report-row"><div><b>Телефон</b><span>${escapeHtml(webSessionProfile.phone || "Не указан")}</span></div></div>
+          </div>
+        </div>
+        <div class="card field-card">
+          <label>Сменить пароль</label>
+          <div class="form-grid">
+            <div class="field full"><label>Текущий пароль</label><input id="profileCurrentPassword" type="password" autocomplete="current-password" maxlength="128"></div>
+            <div class="field full"><label>Новый пароль</label><input id="profileNewPassword" type="password" autocomplete="new-password" minlength="10" maxlength="128"></div>
+            <div class="field full"><label>Повторите новый пароль</label><input id="profileNewPasswordConfirm" type="password" autocomplete="new-password" minlength="10" maxlength="128"></div>
+          </div>
+          <div class="button-row"><button class="small-button secondary" data-profile-action="logout">Выйти</button><button class="small-button" data-profile-action="password">Сменить пароль</button></div>
+        </div>
+      `;
+    }
+
     function render() {
       if (!state.data) return;
       const allowedScreens = state.data.is_admin
-        ? ["shift", "warehouse", "analytics", "orders", "admin"]
-        : ["shift", "report", "analytics", "orders", "admin"];
+        ? ["shift", "warehouse", "analytics", "orders", "admin", "passport", "profile"]
+        : ["shift", "report", "analytics", "orders", "admin", "passport", "profile"];
 
       if (!allowedScreens.includes(state.screen)) state.screen = "shift";
       document.getElementById("roleLabel").textContent = roleLabel();
@@ -4153,6 +5730,8 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "analytics") renderAnalytics();
       if (state.screen === "orders") renderOrders();
       if (state.screen === "admin") renderAdmin();
+      if (state.screen === "passport") renderPassport();
+      if (state.screen === "profile") renderProfile();
       renderBottomNav();
       renderTopTabs();
       persistUiState();
@@ -4194,6 +5773,7 @@ MINIAPP_HTML = """<!doctype html>
         state.data = data;
         if (message) showToast("Готово", message);
         render();
+        if (getCompletionQueue().length && navigator.onLine) window.setTimeout(() => flushCompletionQueue(true), 0);
       } catch (error) {
         state.data = null;
         document.getElementById("roleLabel").textContent = "Нет соединения";
@@ -4226,6 +5806,39 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     document.addEventListener("click", (event) => {
+      const taskAction = event.target.closest("[data-task-action]");
+      if (taskAction) {
+        const action = taskAction.dataset.taskAction;
+        if (action === "scan") {
+          scanRouteQr();
+          return;
+        }
+        const taskId = Number(taskAction.dataset.taskId || 0);
+        const task = getRouteTasks().find((row) => Number(row.id) === taskId) || getCompletedRouteTasks().find((row) => Number(row.id) === taskId);
+        if (action === "passport") {
+          openRoutePassport(taskId);
+          return;
+        }
+        if (action === "all-good" && task) {
+          const goodInput = document.getElementById("taskGoodQuantity");
+          const defectInput = document.getElementById("taskDefectQuantity");
+          if (goodInput) goodInput.value = task.quantity;
+          if (defectInput) defectInput.value = "0";
+          const details = document.getElementById("taskDefectDetails");
+          if (details) details.style.display = "none";
+          const draft = state.taskCompletionDrafts[task.id] || {request_id: createRequestId()};
+          draft.good = String(task.quantity);
+          draft.defect = "0";
+          state.taskCompletionDrafts[task.id] = draft;
+          persistUiState();
+          return;
+        }
+        if (["pause", "block", "resume", "release"].includes(action)) {
+          updateRouteTaskState(task, action);
+          return;
+        }
+      }
+
       const orderAction = event.target.closest("[data-order-action]");
       if (orderAction) {
         syncOrderDraft();
@@ -4268,6 +5881,27 @@ MINIAPP_HTML = """<!doctype html>
           state.orderStockQuantities[input.dataset.stockQuantity] = input.value;
         });
         render();
+        return;
+      }
+
+      const stockAdjustment = event.target.closest("[data-stock-adjust-id]");
+      if (stockAdjustment) {
+        adjustWarehouseStock(
+          stockAdjustment.dataset.stockAdjustKind,
+          Number(stockAdjustment.dataset.stockAdjustId || 0),
+          Number(stockAdjustment.dataset.stockAdjustQuantity || 0),
+          stockAdjustment.dataset.stockAdjustLabel || "остаток",
+        );
+        return;
+      }
+
+      const fabricDefect = event.target.closest("[data-fabric-defect-task-id]");
+      if (fabricDefect) {
+        rejectFabricRolls(
+          Number(fabricDefect.dataset.fabricDefectTaskId || 0),
+          fabricDefect.dataset.fabricDefectColor || "",
+          Number(fabricDefect.dataset.fabricDefectAvailable || 0),
+        );
         return;
       }
 
@@ -4355,6 +5989,15 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const analyticsDelete = event.target.closest("[data-analytics-delete-task-id]");
+      if (analyticsDelete) {
+        deleteOrderTask(
+          analyticsDelete.dataset.analyticsDeleteTaskKind || "route",
+          Number(analyticsDelete.dataset.analyticsDeleteTaskId || 0),
+        );
+        return;
+      }
+
       const analyticsTask = event.target.closest("[data-analytics-task-id]");
       if (analyticsTask) {
         state.analyticsReturnView = state.analyticsView === "task" ? "overview" : state.analyticsView || "overview";
@@ -4426,7 +6069,10 @@ MINIAPP_HTML = """<!doctype html>
         if (adminAction.dataset.adminAction === "load-feedback") loadAdminFeedback();
         if (adminAction.dataset.adminAction === "active") adminEmployeeStatus(adminAction.dataset.employeeId, "active");
         if (adminAction.dataset.adminAction === "inactive") adminEmployeeStatus(adminAction.dataset.employeeId, "inactive");
+        if (adminAction.dataset.adminAction === "approve") adminApproveEmployee(adminAction.dataset.employeeId);
         if (adminAction.dataset.adminAction === "position") adminEmployeePosition(adminAction.dataset.employeeId);
+        if (adminAction.dataset.adminAction === "role-admin") adminEmployeeRole(adminAction.dataset.employeeId, "admin");
+        if (adminAction.dataset.adminAction === "role-employee") adminEmployeeRole(adminAction.dataset.employeeId, "employee");
         if (adminAction.dataset.adminAction === "close-shift") adminCloseShift(adminAction.dataset.shiftId);
         if (adminAction.dataset.adminAction === "delete-shift") adminDeleteShift(adminAction.dataset.shiftId);
         return;
@@ -4450,11 +6096,17 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const profileAction = event.target.closest("[data-profile-action]");
+      if (profileAction) {
+        if (profileAction.dataset.profileAction === "logout") logoutWebApp();
+        if (profileAction.dataset.profileAction === "password") changeWebPassword();
+        return;
+      }
+
       const reportAction = event.target.closest("[data-report-action]");
       if (reportAction) {
         if (reportAction.dataset.reportAction === "complete-task") {
-          const tasks = getMyRouteTasks();
-          completeOperationTask(tasks[state.selectedReportTask] || tasks[0]);
+          completeOperationTask(getDisplayedRouteTask());
         }
         if (reportAction.dataset.reportAction === "complete-cutting-stage") {
           const tasks = getMyCuttingTasks();
@@ -4507,6 +6159,11 @@ MINIAPP_HTML = """<!doctype html>
 
     mainButton.addEventListener("click", () => {
       if (!state.data) { refreshState(); return; }
+      if (state.screen === "profile") {
+        state.screen = state.profileReturnScreen || "shift";
+        render();
+        return;
+      }
       if (state.screen === "shift") {
         if (state.data.is_admin) {
           refreshAdminDashboard("Главная обновлена.");
@@ -4528,6 +6185,7 @@ MINIAPP_HTML = """<!doctype html>
           if (cuttingCurrent) { submitCuttingStage(cuttingCurrent); return; }
           const tasks = getMyRouteTasks();
           const current = tasks[state.selectedReportTask] || tasks[0];
+          if (current && current.can_resume) { updateRouteTaskState(current, "resume"); return; }
           if (current) { completeOperationTask(current); return; }
         }
         refreshState("Отчёт обновлён.");
@@ -4549,8 +6207,19 @@ MINIAPP_HTML = """<!doctype html>
         const rows = visibleOrderRows();
         const current = rows[state.selectedOrder] || rows[0];
         if (current && current.task_kind === "cutting_stage") { selectCuttingTaskForReport(current); return; }
-        if (current && current.task_kind === "route") { startOperationTask(current); return; }
+        if (current && current.task_kind === "route") {
+          if (current.is_assigned_to_me && current.can_complete) { completeOperationTask(current); return; }
+          if (current.is_assigned_to_me && current.can_resume) { updateRouteTaskState(current, "resume"); return; }
+          startOperationTask(current);
+          return;
+        }
         refreshState("Статус обновлён.");
+        return;
+      }
+      if (state.screen === "passport") {
+        state.screen = state.passportReturnScreen || "orders";
+        state.passportData = null;
+        render();
         return;
       }
       if (state.screen === "admin") {
@@ -4568,10 +6237,9 @@ MINIAPP_HTML = """<!doctype html>
         syncWarehouseReceiptForm();
       }
 
-      const routeTasks = getMyRouteTasks();
-      const routeTask = routeTasks[state.selectedReportTask] || routeTasks[0];
+      const routeTask = getDisplayedRouteTask();
 
-      if (routeTask && event.target.closest("#taskGoodQuantity, #taskDefectQuantity, #taskDefectReason, #taskDefectDisposition, #taskDefectComment")) {
+      if (routeTask && event.target.closest("#taskGoodQuantity, #taskDefectQuantity, #taskDefectReason, #taskDefectDisposition, #taskDefectComment, #taskPackagingOption")) {
         const draft = state.taskCompletionDrafts[routeTask.id] || {};
         if (event.target.id === "taskGoodQuantity") draft.good = event.target.value;
         if (event.target.id === "taskDefectQuantity") {
@@ -4582,6 +6250,7 @@ MINIAPP_HTML = """<!doctype html>
         if (event.target.id === "taskDefectReason") draft.defect_reason = event.target.value;
         if (event.target.id === "taskDefectDisposition") draft.defect_disposition = event.target.value;
         if (event.target.id === "taskDefectComment") draft.defect_comment = event.target.value;
+        if (event.target.id === "taskPackagingOption") draft.packaging_option = event.target.value;
         state.taskCompletionDrafts[routeTask.id] = draft;
       }
 
@@ -4615,6 +6284,15 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
+      const defectPhotoInput = event.target.closest("#taskDefectPhoto");
+      if (defectPhotoInput) {
+        const task = getDisplayedRouteTask();
+        readDefectPhoto(defectPhotoInput.files && defectPhotoInput.files[0], task).catch(() => {
+          showToast("Фото брака", "Не удалось прочитать фотографию.");
+        });
+        return;
+      }
+
       const attachmentInput = event.target.closest("#orderAttachment");
       if (attachmentInput) {
         readOrderAttachment(attachmentInput.files && attachmentInput.files[0]);
@@ -4678,6 +6356,19 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
+      if (state.screen === "profile") {
+        state.screen = state.profileReturnScreen || "shift";
+        render();
+        return;
+      }
+
+      if (state.screen === "passport") {
+        state.screen = state.passportReturnScreen || "orders";
+        state.passportData = null;
+        render();
+        return;
+      }
+
       if (state.screen === "analytics" && state.data && state.data.is_admin && state.analyticsView !== "overview") {
         if (state.analyticsView === "task" && state.analyticsReturnView && state.analyticsReturnView !== "task") {
           state.analyticsView = state.analyticsReturnView;
@@ -4724,6 +6415,11 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.getElementById("menuBtn").addEventListener("click", () => {
+      if (isStandaloneWeb) {
+        state.profileReturnScreen = state.screen === "profile" ? (state.profileReturnScreen || "shift") : state.screen;
+        setScreen("profile");
+        return;
+      }
       if (state.data && state.data.is_admin) {
         setScreen("admin");
         return;
@@ -4731,7 +6427,362 @@ MINIAPP_HTML = """<!doctype html>
       showToast("Меню", "Настройки профиля и уведомления подключим позже.");
     });
 
-    refreshState();
+    function setWebAuthMode(mode, message = "", success = false) {
+      const isRegistration = mode === "register";
+      const loginTab = document.getElementById("webLoginTab");
+      const registerTab = document.getElementById("webRegisterTab");
+      const loginError = document.getElementById("webLoginError");
+      const registerError = document.getElementById("webRegisterError");
+      webLoginForm.hidden = isRegistration;
+      webRegisterForm.hidden = !isRegistration;
+      loginTab.classList.toggle("active", !isRegistration);
+      registerTab.classList.toggle("active", isRegistration);
+      loginTab.setAttribute("aria-selected", String(!isRegistration));
+      registerTab.setAttribute("aria-selected", String(isRegistration));
+      loginError.textContent = "";
+      registerError.textContent = "";
+      loginError.classList.remove("success");
+      registerError.classList.remove("success");
+      const messageNode = isRegistration ? registerError : loginError;
+      messageNode.textContent = message;
+      messageNode.classList.toggle("success", Boolean(message && success));
+      const focusTarget = isRegistration ? "webFullName" : "webUsername";
+      window.setTimeout(() => document.getElementById(focusTarget)?.focus(), 60);
+    }
+
+    function showWebLogin(message = "") {
+      clearWebSessionRetryTimer();
+      webSessionRetryAttempt = 0;
+      state.data = null;
+      appRoot.hidden = true;
+      mainButton.hidden = true;
+      bottomNav.hidden = true;
+      connectionView.hidden = true;
+      loginView.hidden = false;
+      setWebAuthMode("login", message);
+    }
+
+    function showWebApp() {
+      clearWebSessionRetryTimer();
+      webSessionRetryAttempt = 0;
+      connectionView.hidden = true;
+      loginView.hidden = true;
+      appRoot.hidden = false;
+      mainButton.hidden = false;
+      bottomNav.hidden = false;
+    }
+
+    function clearWebSessionRetryTimer() {
+      if (webSessionRetryTimer !== null) {
+        window.clearTimeout(webSessionRetryTimer);
+        webSessionRetryTimer = null;
+      }
+    }
+
+    function storeWebIdentity(identity) {
+      storedWebIdentity = String(identity || "");
+      try {
+        window.localStorage.setItem(webIdentityStorageKey, storedWebIdentity);
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function clearWebIdentity() {
+      storedWebIdentity = "";
+      try { window.localStorage.removeItem(webIdentityStorageKey); } catch (error) {}
+    }
+
+    function showWebConnection(message, {checking = false, retryDelayMs = 0} = {}) {
+      state.data = null;
+      appRoot.hidden = true;
+      mainButton.hidden = true;
+      bottomNav.hidden = true;
+      loginView.hidden = true;
+      connectionView.hidden = false;
+      connectionTitle.textContent = checking ? "Подключаемся" : "Нет связи с сервером";
+      connectionMessage.textContent = message || (checking
+        ? "Проверяем защищённую сессию."
+        : "Не удалось проверить сессию. Ваш вход не сброшен.");
+      connectionRetryStatus.textContent = retryDelayMs > 0
+        ? `Повторим автоматически через ${Math.ceil(retryDelayMs / 1000)} сек.`
+        : "";
+      webConnectionRetry.disabled = checking;
+      webConnectionRetry.textContent = checking ? "Проверяем…" : "Попробовать снова";
+    }
+
+    async function restoreWebSession() {
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      const requestOptions = {credentials: "same-origin", cache: "no-store"};
+      if (controller) requestOptions.signal = controller.signal;
+      const timeoutId = controller
+        ? window.setTimeout(() => controller.abort(), webSessionRequestTimeoutMs)
+        : null;
+      try {
+        const response = await fetch("/api/web/session", requestOptions);
+        const data = await response.json().catch(() => null);
+        if (response.status === 401) {
+          return {
+            status: "unauthorized",
+            message: data && data.message ? data.message : "Войдите в приложение.",
+          };
+        }
+        if (!response.ok || !data || !data.ok) {
+          return {
+            status: "network_error",
+            message: data && data.message
+              ? data.message
+              : "Сервер временно недоступен. Ваш вход сохранён, повторяем подключение.",
+          };
+        }
+        webCsrfToken = data.csrf_token || "";
+        webSessionProfile = data;
+        const identity = String(data.telegram_id || data.username || "web");
+        if (identity !== storedWebIdentity) {
+          const identityPersisted = storeWebIdentity(identity);
+          if (identityPersisted) {
+            window.location.reload();
+            return {status: "reloading"};
+          }
+        }
+        return {status: "authenticated"};
+      } catch (error) {
+        return {
+          status: "network_error",
+          message: error && error.name === "AbortError"
+            ? "Сервер отвечает слишком долго. Ваш вход сохранён, пробуем снова."
+            : "Не удалось связаться с сервером. Ваш вход сохранён, пробуем снова.",
+        };
+      } finally {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+      }
+    }
+
+    async function runWebSessionRestore({manual = false} = {}) {
+      if (webSessionRestorePromise) return webSessionRestorePromise;
+      clearWebSessionRetryTimer();
+      showWebConnection(
+        manual ? "Повторно проверяем соединение с сервером." : "Проверяем защищённую сессию.",
+        {checking: true},
+      );
+
+      webSessionRestorePromise = (async () => {
+        const result = await restoreWebSession();
+        if (result.status === "reloading") return;
+        if (result.status === "authenticated") {
+          showWebApp();
+          await refreshState();
+          return;
+        }
+        if (result.status === "unauthorized") {
+          showWebLogin(result.message);
+          return;
+        }
+
+        const retryDelayMs = webSessionRetryDelaysMs[
+          Math.min(webSessionRetryAttempt, webSessionRetryDelaysMs.length - 1)
+        ];
+        webSessionRetryAttempt += 1;
+        showWebConnection(result.message, {retryDelayMs});
+        webSessionRetryTimer = window.setTimeout(() => {
+          webSessionRetryTimer = null;
+          runWebSessionRestore();
+        }, retryDelayMs);
+      })();
+
+      try {
+        await webSessionRestorePromise;
+      } finally {
+        webSessionRestorePromise = null;
+      }
+    }
+
+    async function loginWebApp(event) {
+      event.preventDefault();
+      const username = document.getElementById("webUsername");
+      const password = document.getElementById("webPassword");
+      const button = document.getElementById("webLoginButton");
+      const errorNode = document.getElementById("webLoginError");
+      button.disabled = true;
+      errorNode.textContent = "";
+      errorNode.classList.remove("success");
+      try {
+        const response = await fetch("/api/web/login", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          credentials: "same-origin",
+          body: JSON.stringify({username: username.value, password: password.value}),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error(data.message || "Не удалось войти.");
+        storeWebIdentity(String(data.telegram_id || data.username || "web"));
+        window.location.reload();
+      } catch (error) {
+        errorNode.textContent = error.message || "Не удалось войти.";
+        password.value = "";
+        password.focus();
+        button.disabled = false;
+      }
+    }
+
+    async function registerWebApp(event) {
+      event.preventDefault();
+      const fullName = document.getElementById("webFullName");
+      const email = document.getElementById("webEmail");
+      const phone = document.getElementById("webPhone");
+      const password = document.getElementById("webRegisterPassword");
+      const passwordConfirm = document.getElementById("webPasswordConfirm");
+      const button = document.getElementById("webRegisterButton");
+      const errorNode = document.getElementById("webRegisterError");
+      errorNode.textContent = "";
+      errorNode.classList.remove("success");
+
+      if (password.value !== passwordConfirm.value) {
+        errorNode.textContent = "Пароли не совпадают.";
+        passwordConfirm.focus();
+        return;
+      }
+
+      button.disabled = true;
+      const loginValue = email.value.trim();
+      try {
+        const response = await fetch("/api/web/register", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          credentials: "same-origin",
+          body: JSON.stringify({
+            full_name: fullName.value,
+            email: email.value,
+            phone: phone.value,
+            password: password.value,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error(data.message || "Не удалось зарегистрироваться.");
+        webRegisterForm.reset();
+        document.getElementById("webUsername").value = loginValue;
+        setWebAuthMode("login", data.message || "Регистрация завершена.", true);
+      } catch (error) {
+        errorNode.textContent = error.message || "Не удалось зарегистрироваться.";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function logoutWebApp() {
+      if (!window.confirm("Выйти из приложения?")) return;
+      const actionKey = "web-logout";
+      if (!beginAction(actionKey)) return;
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      const timeoutId = controller
+        ? window.setTimeout(() => controller.abort(), webSessionRequestTimeoutMs)
+        : null;
+      try {
+        const requestOptions = {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "X-CSRF-Token": webCsrfToken},
+          credentials: "same-origin",
+          body: "{}",
+        };
+        if (controller) requestOptions.signal = controller.signal;
+        const response = await fetch("/api/web/logout", requestOptions);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+          throw new Error(data.message || "Не удалось завершить сессию.");
+        }
+        clearWebIdentity();
+        webCsrfToken = "";
+        window.location.reload();
+      } catch (error) {
+        showToast(
+          "Выход не выполнен",
+          error && error.name === "AbortError"
+            ? "Сервер отвечает слишком долго. Проверьте подключение и повторите."
+            : error.message || "Нет связи с сервером. Проверьте подключение и повторите.",
+        );
+      } finally {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        endAction(actionKey);
+      }
+    }
+
+    async function changeWebPassword() {
+      const currentPassword = document.getElementById("profileCurrentPassword");
+      const newPassword = document.getElementById("profileNewPassword");
+      const confirmation = document.getElementById("profileNewPasswordConfirm");
+      if (!currentPassword || !newPassword || !confirmation) return;
+      if (!currentPassword.value || !newPassword.value) {
+        showToast("Пароль", "Заполните текущий и новый пароль.");
+        return;
+      }
+      if (newPassword.value !== confirmation.value) {
+        showToast("Пароль", "Новые пароли не совпадают.");
+        confirmation.focus();
+        return;
+      }
+
+      const actionKey = "change-web-password";
+      if (!beginAction(actionKey)) return;
+      try {
+        const response = await fetch("/api/web/password", {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "X-CSRF-Token": webCsrfToken},
+          credentials: "same-origin",
+          body: JSON.stringify({
+            current_password: currentPassword.value,
+            new_password: newPassword.value,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error(data.message || "Не удалось изменить пароль.");
+        clearWebIdentity();
+        webCsrfToken = "";
+        webSessionProfile = {};
+        showWebLogin(data.message || "Пароль изменён. Войдите заново.");
+      } catch (error) {
+        currentPassword.value = "";
+        currentPassword.focus();
+        showToast("Пароль", error.message || "Не удалось изменить пароль.");
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function bootstrapApplication() {
+      if (isStandaloneWeb) {
+        document.body.classList.add("web-mode");
+        webActionSlot.appendChild(mainButton);
+        await runWebSessionRestore();
+        return;
+      }
+      showWebApp();
+      await refreshState();
+    }
+
+    document.getElementById("webLoginTab").addEventListener("click", () => setWebAuthMode("login"));
+    document.getElementById("webRegisterTab").addEventListener("click", () => setWebAuthMode("register"));
+    webConnectionRetry.addEventListener("click", () => {
+      webSessionRetryAttempt = 0;
+      runWebSessionRestore({manual: true});
+    });
+    window.addEventListener("online", () => {
+      if (isStandaloneWeb && !connectionView.hidden) runWebSessionRestore({manual: true});
+    });
+    document.getElementById("qrScannerClose").addEventListener("click", stopWebQrScanner);
+    document.getElementById("qrScannerManual").addEventListener("click", () => {
+      stopWebQrScanner();
+      promptRouteCode();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden" && qrScannerStream) stopWebQrScanner();
+      if (document.visibilityState === "visible" && isStandaloneWeb && !connectionView.hidden) {
+        runWebSessionRestore({manual: true});
+      }
+    });
+    webLoginForm.addEventListener("submit", loginWebApp);
+    webRegisterForm.addEventListener("submit", registerWebApp);
+    bootstrapApplication();
   </script>
 </body>
 </html>

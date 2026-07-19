@@ -1,0 +1,39 @@
+{
+    servers {
+        protocols h1 h2
+        max_header_size 64KB
+        timeouts {
+            read_body 60s
+            read_header 10s
+            write 120s
+            idle 2m
+        }
+    }
+}
+
+www.shagaemfabrika.ru {
+    encode zstd gzip
+
+    header {
+        -Server
+        Alt-Svc "clear"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "same-origin"
+        Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
+    }
+
+    request_body {
+        max_size 16MB
+    }
+
+    reverse_proxy 127.0.0.1:3000
+}
+
+shagaemfabrika.ru {
+    redir https://www.shagaemfabrika.ru{uri} permanent
+}
+
+sewing.161-104-33-59.sslip.io {
+    redir https://www.shagaemfabrika.ru{uri} permanent
+}

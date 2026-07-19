@@ -1,0 +1,26 @@
+[Unit]
+Description=Backup Shagaem Vmeste SQLite database
+After=sewing-web.service
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/sewing-web/current
+EnvironmentFile=/etc/sewing-web/sewing-web.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/sewing-web/venv/bin/python /opt/sewing-web/current/scripts/backup_webapp.py
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/sewing-web
