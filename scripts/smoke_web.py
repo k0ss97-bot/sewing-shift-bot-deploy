@@ -284,6 +284,16 @@ def run_smoke() -> None:
                     install_marker in html_text,
                     f"PWA installation interface marker is missing: {install_marker}",
                 )
+            for desktop_marker in (
+                '@media (min-width: 900px)',
+                'Desktop web workspace',
+                'grid-template-columns: repeat(auto-fit, minmax(200px, 1fr))',
+                'padding: 32px 36px 48px 286px',
+            ):
+                require(
+                    desktop_marker in html_text,
+                    f"Desktop web workspace marker is missing: {desktop_marker}",
+                )
             require(
                 "sessionStorage" not in html_text,
                 "Web session identity must not depend on ephemeral sessionStorage.",

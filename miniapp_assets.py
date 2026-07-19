@@ -263,6 +263,151 @@ MINIAPP_HTML = """<!doctype html>
       .connection-orbit::before { animation: none; }
     }
 
+    /* Desktop web workspace: this is intentionally a different layout from
+       the installable, phone-first application. */
+    @media (min-width: 900px) {
+      body.web-mode {
+        min-width: 900px;
+        background:
+          radial-gradient(circle at 92% 8%, rgba(25,89,243,.12), transparent 26%),
+          radial-gradient(circle at 8% 92%, rgba(79,178,142,.10), transparent 28%),
+          linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+      }
+
+      body.web-mode .app {
+        width: min(1440px, calc(100% - 48px));
+        min-height: calc(100vh - 48px);
+        margin: 24px auto;
+        padding-bottom: 0;
+        border-radius: 20px;
+        overflow: visible;
+        box-shadow: 0 26px 70px rgba(16,23,34,.14), 0 2px 8px rgba(16,23,34,.06);
+      }
+
+      body.web-mode .appbar {
+        min-height: 92px;
+        padding: 18px 36px 18px 286px;
+        border-bottom: 1px solid rgba(109,124,158,.15);
+        background: rgba(255,255,255,.74);
+        backdrop-filter: blur(22px);
+      }
+
+      body.web-mode .app-title {
+        justify-items: start;
+      }
+
+      body.web-mode .app-brand-lockup {
+        justify-content: flex-start;
+      }
+
+      body.web-mode .body {
+        min-height: calc(100vh - 188px);
+        padding: 32px 36px 48px 286px;
+      }
+
+      body.web-mode .bottom-nav {
+        top: 128px;
+        bottom: auto;
+        left: max(36px, calc(50% - 696px));
+        width: 224px;
+        padding: 12px;
+        transform: none;
+        grid-template-columns: 1fr;
+        gap: 6px;
+        border: 1px solid rgba(109,124,158,.16);
+        border-radius: 16px;
+        box-shadow: 0 18px 44px rgba(16,23,34,.12);
+      }
+
+      body.web-mode .nav-btn {
+        grid-template-columns: 40px minmax(0, 1fr);
+        grid-template-rows: 1fr;
+        justify-items: start;
+        gap: 10px;
+        padding: 10px 12px;
+        font-size: 13px;
+        line-height: 1.2;
+      }
+
+      body.web-mode .nav-btn span:last-child {
+        text-align: left;
+      }
+
+      body.web-mode .nav-ico {
+        width: 36px;
+        height: 36px;
+      }
+
+      body.web-mode .screen-head {
+        align-items: center;
+        margin: 0 0 20px;
+      }
+
+      body.web-mode .screen-head h2 {
+        font-size: 31px;
+        line-height: 1.05;
+      }
+
+      body.web-mode .screen-head p {
+        max-width: 680px;
+        font-size: 14px;
+      }
+
+      body.web-mode .tabs {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 6px;
+        margin-bottom: 20px;
+      }
+
+      body.web-mode .tab {
+        min-height: 46px;
+        font-size: 13px;
+      }
+
+      body.web-mode .kpi-grid {
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 14px;
+        margin: 18px 0 24px;
+      }
+
+      body.web-mode .kpi {
+        min-height: 150px;
+        padding: 18px;
+      }
+
+      body.web-mode .form-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      body.web-mode .field-card,
+      body.web-mode .card {
+        border-radius: 14px;
+      }
+
+      body.web-mode .op-list {
+        gap: 12px;
+      }
+
+      body.web-mode .report-row {
+        padding: 15px 18px;
+      }
+
+      body.web-mode #webActionSlot {
+        position: sticky;
+        bottom: 20px;
+        z-index: 4;
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 24px;
+      }
+
+      body.web-mode #webActionSlot .main-button {
+        width: min(360px, 100%);
+        min-height: 52px;
+      }
+    }
+
     @media (max-height: 760px) {
       .login-view {
         place-items: start center;
