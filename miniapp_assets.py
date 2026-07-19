@@ -2621,6 +2621,125 @@ MINIAPP_HTML = """<!doctype html>
         z-index: 5;
       }
     }
+    /* Desktop composition pass: establish hierarchy and comfortable reading
+       widths instead of stretching mobile forms across the entire monitor. */
+    @media (min-width: 900px) {
+      body.web-mode .app {
+        width: calc(100vw - 48px) !important;
+        min-height: calc(100vh - 48px);
+        margin: 24px !important;
+        border-radius: 20px;
+      }
+
+      body.web-mode .appbar {
+        min-height: 84px;
+        padding: 0 42px 0 300px !important;
+        display: flex !important;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      body.web-mode .appbar > button {
+        position: static !important;
+        flex: 0 0 auto;
+      }
+
+      body.web-mode .app-title,
+      body.web-mode .app-brand-lockup {
+        position: static !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: center;
+        justify-content: flex-start !important;
+        text-align: left !important;
+      }
+
+      body.web-mode .app-title {
+        flex: 1 1 auto;
+        order: -1;
+      }
+
+      body.web-mode .body {
+        min-height: 0;
+        padding: 38px 54px 72px 300px !important;
+      }
+
+      body.web-mode .body > * {
+        max-width: 1480px !important;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      body.web-mode .bottom-nav {
+        inset: 126px auto 48px 48px;
+        width: 224px;
+        padding: 12px;
+      }
+
+      body.web-mode .bottom-nav::before {
+        content: "РАБОЧЕЕ ПРОСТРАНСТВО";
+        display: block;
+        padding: 10px 12px 8px;
+        color: #71809a;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: .11em;
+      }
+
+      body.web-mode .nav-item,
+      body.web-mode .bottom-nav button {
+        min-height: 46px;
+        padding: 0 13px;
+        font-size: 14px;
+      }
+
+      body.web-mode .screen-head {
+        max-width: 1480px !important;
+        min-height: auto;
+        margin: 4px auto 24px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid rgba(111,128,159,.16);
+      }
+
+      body.web-mode .screen-head h1,
+      body.web-mode .screen-head h2 {
+        margin: 0;
+        font-size: clamp(30px, 2.1vw, 38px);
+      }
+
+      body.web-mode .card,
+      body.web-mode .report-row {
+        box-shadow: 0 9px 26px rgba(33,52,84,.07);
+      }
+
+      body.web-mode .body form {
+        max-width: 1080px;
+        margin-left: 0;
+      }
+
+      body.web-mode .body input,
+      body.web-mode .body select,
+      body.web-mode .body textarea {
+        max-width: 760px;
+      }
+
+      body.web-mode .form-grid input,
+      body.web-mode .form-grid select,
+      body.web-mode .form-grid textarea {
+        max-width: none;
+      }
+
+      body.web-mode .main-button,
+      body.web-mode #webActionSlot .main-button {
+        min-width: 240px;
+      }
+
+      body.web-mode #webActionSlot {
+        max-width: 1480px !important;
+        margin: 26px auto 0;
+      }
+    }
 </style>
 </head>
 <body>
