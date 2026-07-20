@@ -4071,8 +4071,22 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       state.data.admin = data;
+      notifyCriticalNotifications(data.critical_notifications || []);
       render();
       showToast("Админ", data.message || fallbackMessage || "Данные обновлены.");
+    }
+
+    function notifyCriticalNotifications(notifications) {
+      if (!("Notification" in window) || !notifications.length) return;
+      state.notifiedCriticalIds = state.notifiedCriticalIds || {};
+      const fresh = notifications.filter((item) => !state.notifiedCriticalIds[item.id]);
+      if (!fresh.length) return;
+      if (Notification.permission === "default") Notification.requestPermission().catch(() => {});
+      if (Notification.permission !== "granted") return;
+      fresh.slice(0, 3).forEach((item) => {
+        state.notifiedCriticalIds[item.id] = true;
+        new Notification(item.title || "Критичное уведомление", {body: item.message || "Проверьте входящую продукцию."});
+      });
     }
 
     function getAdminHomePeriod() {
@@ -4115,6 +4129,23 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderCriticalNotifications() {
+      const admin = getAdmin() || {};
+      const notifications = admin.critical_notifications || [];
+      if (!notifications.length) return "";
+      return `
+        <div class="section-title"><b>Критичные уведомления</b><span>${notifications.length}</span></div>
+        <div class="op-list">
+          ${notifications.map((item) => `
+            <div class="card report-row">
+              <div><b>Критично · ${escapeHtml(item.product_name || "Входящая продукция")}</b><span>${escapeHtml(item.operation_name || "Операция")} · ${escapeHtml(item.product_size || "-")} · ${escapeHtml(item.product_color || "-")}<br>Нужно ${escapeHtml(item.needed_quantity || 0)} шт. · доступно ${escapeHtml(item.available_quantity || 0)} шт. · не хватает ${escapeHtml(item.missing_quantity || 0)} шт.<br>${escapeHtml(item.message || "Проверьте остатки и маршрут.")}</span></div>
+              <button class="small-button secondary" data-critical-notification="${escapeHtml(item.id)}">Просмотрено</button>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
     function renderAdminHomeOverview(period) {
       const employees = period.employees || [];
       const title = period.id === "today" ? "Текущая смена" : period.title;
@@ -4129,6 +4160,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card report-row" data-admin-home-view="employees"><div><b>${escapeHtml(homeEmployeeTitle(period))}</b><span>${escapeHtml(employees.length)} сотрудников · план/факт по каждому</span></div><span class="status-chip gray">›</span></div>
           <div class="card report-row" data-admin-home-view="defects"><div><b>Брак</b><span>${escapeHtml(period.defect_count || 0)} записей · изделие, этап, причина</span></div><span class="status-chip gray">›</span></div>
         </div>
+        ${renderCriticalNotifications()}
       `;
     }
 
@@ -4813,14 +4845,12 @@ MINIAPP_HTML = """<!doctype html>
       state.orderMode = "create";
       state.orderProduct = firstProduct ? firstProduct.product_name : "";
       state.orderTaskType = "cutting";
-      state.orderRouteStep = "";
       state.orderMaterial = "Ткань";
       state.orderSizes = [];
       state.orderColors = [];
       state.orderQuantity = "1";
       state.orderPriority = "normal";
       state.orderDueDate = "";
-      state.orderStockQuantities = {};
       state.orderFabricRolls = {};
       state.orderAttachment = null;
     }
@@ -4843,37 +4873,23 @@ MINIAPP_HTML = """<!doctype html>
         if (!state.orderColors.includes(color)) delete state.orderFabricRolls[color];
       });
 
-      const operations = routeOperations(product);
-      if (state.orderTaskType === "route" && !operations.some((operation) => String(operation.index) === String(state.orderRouteStep))) {
-        state.orderRouteStep = operations[0] ? String(operations[0].index) : "";
-      }
-
       return product;
     }
 
     function syncOrderDraft() {
       const product = document.getElementById("orderProduct");
-      const taskType = document.getElementById("orderTaskType");
-      const routeStep = document.getElementById("orderRouteStep");
       const material = document.getElementById("orderMaterial");
       const quantity = document.getElementById("orderQuantity");
       const priority = document.getElementById("orderPriority");
       const dueDate = document.getElementById("orderDueDate");
-      const stockQuantityInputs = document.querySelectorAll("[data-stock-quantity]");
       const fabricRollInputs = document.querySelectorAll("[data-fabric-rolls]");
       const previousProduct = state.orderProduct;
-      const previousRouteStep = state.orderRouteStep;
 
       if (product) state.orderProduct = product.value;
-      if (taskType) state.orderTaskType = taskType.value;
-      if (routeStep) state.orderRouteStep = routeStep.value;
       if (material) state.orderMaterial = material.value;
       if (quantity) state.orderQuantity = quantity.value;
       if (priority) state.orderPriority = priority.value;
       if (dueDate) state.orderDueDate = dueDate.value;
-      stockQuantityInputs.forEach((input) => {
-        state.orderStockQuantities[input.dataset.stockQuantity] = input.value;
-      });
       fabricRollInputs.forEach((input) => {
         state.orderFabricRolls[input.dataset.fabricRolls] = input.value;
       });
@@ -4881,13 +4897,7 @@ MINIAPP_HTML = """<!doctype html>
       if (previousProduct && previousProduct !== state.orderProduct) {
         state.orderSizes = [];
         state.orderColors = [];
-        state.orderRouteStep = "";
-        state.orderStockQuantities = {};
         state.orderFabricRolls = {};
-      }
-
-      if (previousRouteStep && previousRouteStep !== state.orderRouteStep) {
-        state.orderStockQuantities = {};
       }
 
       ensureOrderDraftDefaults();
@@ -4975,24 +4985,18 @@ MINIAPP_HTML = """<!doctype html>
       if (!beginAction(actionKey)) return;
       syncOrderDraft();
       mainButton.disabled = true;
-      const stockItems = Object.entries(state.orderStockQuantities)
-        .map(([stockId, quantity]) => ({stock_id: stockId, quantity}))
-        .filter((item) => Number(item.quantity || 0) > 0);
-
       try {
         const data = await api("/api/production/create-order-task", {
           product_name: state.orderProduct,
-          task_type: state.orderTaskType,
-          route_step_index: state.orderRouteStep,
-          material_name: state.orderTaskType === "cutting" ? state.orderMaterial : "",
+          task_type: "cutting",
+          material_name: state.orderMaterial,
           sizes: state.orderSizes,
           colors: state.orderColors,
           quantity: state.orderQuantity,
           priority: state.orderPriority,
           due_date: state.orderDueDate,
           fabric_rolls: state.orderFabricRolls,
-          attachment: state.orderTaskType === "cutting" ? state.orderAttachment : null,
-          stock_items: stockItems,
+          attachment: state.orderAttachment,
         });
 
         if (!data.ok) {
@@ -5727,19 +5731,8 @@ MINIAPP_HTML = """<!doctype html>
     function renderOrderCreate() {
       const product = ensureOrderDraftDefaults();
       const catalog = getRouteCatalog();
-      const operations = routeOperations(product);
       const sizes = product ? product.sizes || [] : [];
       const colors = getOrderColors();
-      const operationOptions = operations.map((operation) => `
-        <option value="${operation.index}" ${String(operation.index) === String(state.orderRouteStep) ? "selected" : ""}>${escapeHtml(operation.position)} — ${escapeHtml(operation.operation)}</option>
-      `).join("");
-      const selectedOperation = operations.find((operation) => String(operation.index) === String(state.orderRouteStep)) || operations[0] || null;
-      const stockRows = selectedOperation ? getWarehouseStock().filter((row) =>
-        row.item_type === "semifinished" &&
-        row.product_name === state.orderProduct &&
-        row.ready_for_position === selectedOperation.position &&
-        (selectedOperation.accepted_stock_stages || []).includes(row.stage_name)
-      ) : [];
       const rollInputs = state.orderColors.length ? `
         <div class="card field-card">
           <label>Рулоны по цветам</label>
@@ -5756,13 +5749,11 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.disabled = false;
 
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Создать задание</h2><p>Массовое задание по размерам и цветам.</p></div><div class="date">админ</div></div>
+        <div class="screen-head"><div><h2>Создать задание на раскрой</h2><p>Дальнейшие операции система создаст по маршруту автоматически.</p></div><div class="date">админ</div></div>
         <div class="card field-card">
           <div class="form-grid">
             <div class="field full"><label>Изделие</label><select id="orderProduct">${catalog.map((item) => `<option value="${escapeHtml(item.product_name)}" ${item.product_name === state.orderProduct ? "selected" : ""}>${escapeHtml(item.product_name)}</option>`).join("")}</select></div>
-            <div class="field full"><label>Тип задания</label><select id="orderTaskType"><option value="cutting" ${state.orderTaskType === "cutting" ? "selected" : ""}>Раскрой</option><option value="route" ${state.orderTaskType === "route" ? "selected" : ""}>Операция</option></select></div>
-            ${state.orderTaskType === "route" ? `<div class="field full"><label>Операция</label><select id="orderRouteStep">${operationOptions || `<option value="">Нет операций</option>`}</select></div>` : ""}
-            ${state.orderTaskType === "cutting" ? `<div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>` : ""}
+            <div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>
           </div>
         </div>
         <div class="card field-card">
@@ -5772,14 +5763,10 @@ MINIAPP_HTML = """<!doctype html>
             <div class="field"><label>Срок</label><input id="orderDueDate" type="date" value="${escapeHtml(state.orderDueDate || "")}"></div>
           </div>
         </div>
-        ${state.orderTaskType === "cutting" ? `
-          <div class="card field-card"><label>Размеры</label>${sizes.length ? renderChoiceChips("size", sizes, state.orderSizes) : itemEmpty("У изделия нет размеров.")}</div>
-          <div class="card field-card"><label>Цвета ткани</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
-          ${rollInputs}
-          <div class="card field-card"><label>Файл задания</label><div class="form-grid"><div class="field full"><input id="orderAttachment" type="file" accept=".doc,.docx,.xls,.xlsx,.pdf,application/pdf,application/msword,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div></div><p class="empty">${escapeHtml(attachmentText)}</p></div>
-        ` : `
-          ${renderStockPicker(stockRows, selectedOperation)}
-        `}
+        <div class="card field-card"><label>Размеры</label>${sizes.length ? renderChoiceChips("size", sizes, state.orderSizes) : itemEmpty("У изделия нет размеров.")}</div>
+        <div class="card field-card"><label>Цвета ткани</label>${colors.length ? renderChoiceChips("color", colors, state.orderColors) : itemEmpty("У изделия нет цветов.")}</div>
+        ${rollInputs}
+        <div class="card field-card"><label>Файл задания</label><div class="form-grid"><div class="field full"><input id="orderAttachment" type="file" accept=".doc,.docx,.xls,.xlsx,.pdf,application/pdf,application/msword,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div></div><p class="empty">${escapeHtml(attachmentText)}</p></div>
         <div class="button-row"><button class="small-button secondary" data-order-action="cancel">К списку</button><button class="small-button" data-order-action="create">Создать</button></div>
       `;
     }
@@ -6575,6 +6562,15 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     document.addEventListener("click", (event) => {
+      const criticalNotification = event.target.closest("[data-critical-notification]");
+      if (criticalNotification) {
+        const notificationId = Number(criticalNotification.dataset.criticalNotification || 0);
+        api("/api/admin/critical-notification/acknowledge", {notification_id: notificationId})
+          .then((data) => replaceAdminDashboard(data, data.message || "Уведомление обработано."))
+          .catch(() => showToast("Критично", "Не удалось обновить уведомление."));
+        return;
+      }
+
       const taskAction = event.target.closest("[data-task-action]");
       if (taskAction) {
         const action = taskAction.dataset.taskAction;

@@ -804,22 +804,6 @@ class IsolatedDatabaseTest(unittest.TestCase):
             cutting_result["production"]["tasks"][0]["attachment"]["mime_type"],
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        stock_items = []
-
-        for product_size in ["86", "92"]:
-            for product_color in ["Бежевый", "Голубой"]:
-                stock_row = self.database.add_warehouse_stock(
-                    "semifinished",
-                    "Легинсы",
-                    product_size,
-                    product_color,
-                    "Раскроенные",
-                    "Швея",
-                    10,
-                    None,
-                )
-                stock_items.append({"stock_id": stock_row["id"], "quantity": "7"})
-
         sewing_step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
         route_result = miniapp_server.create_order_task_for_telegram(
             9001,
@@ -827,21 +811,14 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "product_name": "Легинсы",
                 "task_type": "route",
                 "route_step_index": sewing_step_index,
-                "stock_items": stock_items,
                 "priority": "urgent",
                 "due_date": "2026-07-21",
             },
         )
 
-        self.assertTrue(route_result["ok"], route_result)
-        batches = self.database.get_active_route_batches()
-        self.assertEqual(len(batches), 4)
-        self.assertEqual({batch["quantity"] for batch in batches}, {7})
-        self.assertEqual({batch["route_step_index"] for batch in batches}, {sewing_step_index})
-        self.assertEqual({batch["priority"] for batch in batches}, {"urgent"})
-        self.assertEqual({batch["due_date"] for batch in batches}, {"2026-07-21"})
-        self.assertEqual({row["quantity"] for row in self.database.get_warehouse_stock_rows()}, {3})
-        self.assertIn("Сборка на оверлоке", {task["operation"] for task in route_result["routes"]["tasks"]})
+        self.assertFalse(route_result["ok"], route_result)
+        self.assertIn("Администратор создаёт только задание на раскрой", route_result["message"])
+        self.assertEqual(self.database.get_active_route_batches(), [])
 
     def test_elastic_preparation_completion_creates_sewing_task(self):
         miniapp_server = importlib.import_module("miniapp_server")
@@ -875,11 +852,54 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(sewing_step["operation"], "Сшивание резинок в кольцо")
         self.assertEqual(sewing_batch["quantity"], 14)
         self.assertIsNotNone(sewing_batch["source_stock_id"])
-        self.assertEqual(self.database.get_warehouse_stock_by_id(sewing_batch["source_stock_id"])["quantity"], 0)
+        sewing_stock = self.database.get_warehouse_stock_by_id(sewing_batch["source_stock_id"])
+        self.assertEqual(sewing_stock["quantity"], 14)
+        self.assertEqual(sewing_stock["reserved_quantity"], 14)
 
         seamstress_tasks = miniapp_server.get_route_tasks_for_telegram(9004)
         self.assertTrue(seamstress_tasks["ok"], seamstress_tasks)
         self.assertEqual(seamstress_tasks["tasks"][0]["category"], "Подготовка")
+
+    def test_route_start_reserves_input_and_completion_consumes_it(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9120, "Тест Швея Резерв", "Швея")
+        employee = self.database.get_employee_by_telegram_id(9120)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
+        stock = self.database.add_warehouse_stock(
+            "semifinished", "Легинсы", "86", "Бежевый", "Раскроенные", "Швея", 10, None,
+        )
+        batch = self.database.create_route_batch("Легинсы", "86", "Бежевый", 10, None, step_index)
+
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(9120, batch["id"])["ok"])
+        reserved = self.database.get_warehouse_stock_by_id(stock["id"])
+        self.assertEqual((reserved["quantity"], reserved["reserved_quantity"]), (10, 10))
+        self.assertEqual(self.database.get_route_batch_inputs(batch["id"])[0]["quantity"], 10)
+
+        self.assertTrue(miniapp_server.complete_route_task_for_telegram(
+            9120, batch["id"], {"good_quantity": 10, "defect_quantity": 0},
+        )["ok"])
+        consumed = self.database.get_warehouse_stock_by_id(stock["id"])
+        self.assertEqual((consumed["quantity"], consumed["reserved_quantity"]), (0, 0))
+
+    def test_stock_shortage_alert_does_not_block_route_task(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9121, "Тест Швея Дефицит", "Швея")
+        employee = self.database.get_employee_by_telegram_id(9121)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
+        batch = self.database.create_route_batch("Легинсы", "86", "Бежевый", 6, None, step_index)
+
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(9121, batch["id"])["ok"])
+        notifications = self.database.get_open_critical_notifications()
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0]["batch_id"], batch["id"])
+        self.assertEqual(notifications[0]["severity"], "critical")
+        self.assertTrue(miniapp_server.complete_route_task_for_telegram(
+            9121, batch["id"], {"good_quantity": 6, "defect_quantity": 0},
+        )["ok"])
 
     def test_employee_starts_and_completes_route_task_with_defects(self):
         miniapp_server = importlib.import_module("miniapp_server")
@@ -1152,7 +1172,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
 
         route_steps = route_maps.PRODUCT_ROUTE_MAPS["Футболки"]
         first_step_index = len(route_maps.CUTTING_ROUTE)
-        skipped = miniapp_server.create_order_task_for_telegram(
+        manual_route = miniapp_server.create_order_task_for_telegram(
             9001,
             {
                 "product_name": "Футболки",
@@ -1161,39 +1181,16 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "stock_items": [{"stock_id": stock["id"], "quantity": "10"}],
             },
         )
-        self.assertFalse(skipped["ok"], skipped)
+        self.assertFalse(manual_route["ok"], manual_route)
         self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 10)
 
         position_telegram_ids = {position: data[0] for position, data in employees.items()}
 
         for step_index in range(first_step_index, len(route_steps)):
-            positive_stock = [row for row in self.database.get_warehouse_stock_rows() if row["quantity"] > 0]
-            self.assertEqual(len(positive_stock), 1, (step_index, positive_stock))
-            source_stock = positive_stock[0]
-
-            if step_index + 1 < len(route_steps) and route_steps[step_index + 1]["position"] == route_steps[step_index]["position"]:
-                skipped = miniapp_server.create_order_task_for_telegram(
-                    9001,
-                    {
-                        "product_name": "Футболки",
-                        "task_type": "route",
-                        "route_step_index": step_index + 1,
-                        "stock_items": [{"stock_id": source_stock["id"], "quantity": "10"}],
-                    },
-                )
-                self.assertFalse(skipped["ok"], (step_index, skipped))
-
-            created = miniapp_server.create_order_task_for_telegram(
-                9001,
-                {
-                    "product_name": "Футболки",
-                    "task_type": "route",
-                    "route_step_index": step_index,
-                    "stock_items": [{"stock_id": source_stock["id"], "quantity": "10"}],
-                },
-            )
-            self.assertTrue(created["ok"], (step_index, created))
-            active_batch = self.database.get_active_route_batches()[0]
+            active_batches = self.database.get_active_route_batches()
+            self.assertEqual(len(active_batches), 1, (step_index, active_batches))
+            active_batch = active_batches[0]
+            self.assertEqual(active_batch["route_step_index"], step_index)
             telegram_id = position_telegram_ids[route_steps[step_index]["position"]]
             started = miniapp_server.start_route_task_for_telegram(telegram_id, active_batch["id"])
             self.assertTrue(started["ok"], (step_index, started))
@@ -1256,7 +1253,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         )
         assembly_step_index = self.route_step_index("Шорты", "Сборка шорт на оверлоке", "Швея")
 
-        missing_component = miniapp_server.create_order_task_for_telegram(
+        manual_route = miniapp_server.create_order_task_for_telegram(
             9001,
             {
                 "product_name": "Шорты",
@@ -1265,59 +1262,12 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "stock_items": [{"stock_id": main_stock["id"], "quantity": "10"}],
             },
         )
-        self.assertFalse(missing_component["ok"], missing_component)
-        self.assertEqual(self.database.get_warehouse_stock_by_id(main_stock["id"])["quantity"], 10)
-        self.assertEqual(self.database.get_active_route_batches(), [])
-
-        created = miniapp_server.create_order_task_for_telegram(
-            9001,
-            {
-                "product_name": "Шорты",
-                "task_type": "route",
-                "route_step_index": assembly_step_index,
-                "stock_items": [
-                    {"stock_id": main_stock["id"], "quantity": "10"},
-                    {"stock_id": second_main_stock["id"], "quantity": "15"},
-                    {"stock_id": elastic_stock["id"], "quantity": "25"},
-                ],
-            },
-        )
-        self.assertTrue(created["ok"], created)
-        batches = self.database.get_active_route_batches()
-        self.assertEqual(len(batches), 2)
-        inputs = [
-            input_row
-            for batch in batches
-            for input_row in self.database.get_route_batch_inputs(batch["id"])
-        ]
-        self.assertEqual(
-            {(row["input_role"], row["stage_name"], row["quantity"]) for row in inputs},
-            {
-                ("main", "Раскроенные", 10),
-                ("main", "Раскроенные", 15),
-                ("component", "Резинка сшита в кольцо", 10),
-                ("component", "Резинка сшита в кольцо", 15),
-            },
-        )
-        self.assertEqual(self.database.get_warehouse_stock_by_id(main_stock["id"])["quantity"], 0)
-        self.assertEqual(self.database.get_warehouse_stock_by_id(second_main_stock["id"])["quantity"], 0)
-        self.assertEqual(self.database.get_warehouse_stock_by_id(elastic_stock["id"])["quantity"], 0)
-
-        employee_tasks = miniapp_server.get_route_tasks_for_telegram(9014)
-        self.assertTrue(employee_tasks["ok"], employee_tasks)
-        self.assertEqual(len(employee_tasks["tasks"]), 2)
-        self.assertTrue(all(len(task["inputs"]) == 2 for task in employee_tasks["tasks"]))
-
-        for batch in batches:
-            deleted = miniapp_server.delete_order_task_for_telegram(
-                9001,
-                {"task_kind": "route", "task_id": batch["id"]},
-            )
-            self.assertTrue(deleted["ok"], deleted)
-
+        self.assertFalse(manual_route["ok"], manual_route)
+        self.assertIn("создаёт система", manual_route["message"])
         self.assertEqual(self.database.get_warehouse_stock_by_id(main_stock["id"])["quantity"], 10)
         self.assertEqual(self.database.get_warehouse_stock_by_id(second_main_stock["id"])["quantity"], 15)
         self.assertEqual(self.database.get_warehouse_stock_by_id(elastic_stock["id"])["quantity"], 25)
+        self.assertEqual(self.database.get_active_route_batches(), [])
 
     def test_miniapp_admin_deletes_order_tasks(self):
         os.environ["ADMIN_IDS"] = "9001"
@@ -1337,31 +1287,14 @@ class IsolatedDatabaseTest(unittest.TestCase):
         )
         self.assertTrue(cutting_result["ok"], cutting_result)
         self.assertEqual(cutting_result["production"]["fabric_stock"][0]["quantity"], 3)
-        stock_row = self.database.add_warehouse_stock(
-            "semifinished",
-            "Легинсы",
-            "86",
-            "Бежевый",
-            "Раскроенные",
-            "Швея",
-            5,
-            None,
-        )
-
         sewing_step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
-        route_result = miniapp_server.create_order_task_for_telegram(
-            9001,
-            {
-                "product_name": "Легинсы",
-                "task_type": "route",
-                "route_step_index": sewing_step_index,
-                "stock_items": [{"stock_id": stock_row["id"], "quantity": "3"}],
-            },
+        route_batch = self.database.create_route_batch(
+            "Легинсы", "86", "Бежевый", 3, None, sewing_step_index,
         )
-        self.assertTrue(route_result["ok"], route_result)
+        self.assertIsNotNone(route_batch)
 
         production_id = self.database.get_active_production_tasks()[0][0]
-        route_id = self.database.get_active_route_batches()[0]["id"]
+        route_id = route_batch["id"]
 
         delete_production = miniapp_server.delete_order_task_for_telegram(
             9001,
@@ -1379,28 +1312,6 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(delete_route["ok"], delete_route)
         self.assertEqual(self.database.get_route_batch_by_id(route_id)["status"], "cancelled")
         self.assertEqual(self.database.get_active_route_batches(), [])
-        self.assertEqual(self.database.get_warehouse_stock_by_id(stock_row["id"])["quantity"], 5)
-
-        conn = sqlite3.connect(self.database.DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT quantity, movement_type, source_type, source_id
-            FROM warehouse_stock_movements
-            WHERE stock_id = ?
-            ORDER BY id
-            """,
-            (stock_row["id"],),
-        )
-        self.assertEqual(
-            cursor.fetchall(),
-            [
-                (5, "receipt", "", None),
-                (-3, "issue", "route_batch", route_id),
-                (3, "receipt", "cancelled_task", route_id),
-            ],
-        )
-        conn.close()
 
     def test_zero_quantity_is_not_saved_or_reported(self):
         self.database.create_employee(2002, "Тест Швея", "Швея")
@@ -1702,9 +1613,9 @@ class IsolatedDatabaseTest(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(lambda _index: miniapp_server.create_order_task_for_telegram(9001, payload), range(2)))
 
-        self.assertEqual(sum(result["ok"] for result in results), 1)
-        self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 0)
-        self.assertEqual(len(self.database.get_active_route_batches()), 1)
+        self.assertEqual(sum(result["ok"] for result in results), 0)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 10)
+        self.assertEqual(len(self.database.get_active_route_batches()), 0)
 
     def test_concurrent_route_cancellation_restores_stock_once(self):
         os.environ["ADMIN_IDS"] = "9001"

@@ -18,6 +18,7 @@ from database import (
     add_operation,
     add_cutting_layout,
     add_warehouse_stock,
+    acknowledge_critical_notification,
     adjust_fabric_stock,
     adjust_warehouse_stock,
     admin_close_shift,
@@ -60,6 +61,7 @@ from database import (
     get_fabric_stock_rows,
     get_fabric_stock_rows_with_ids,
     get_open_shifts,
+    get_open_critical_notifications,
     get_open_shift_for_today,
     get_pending_employees,
     get_period_employee_summary,
@@ -1116,10 +1118,9 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
         item_type,
         stage_name,
         ready_for_position,
-        auto_create_next=(
-            should_auto_create_next_preparation_task(current_step, next_step)
-            or bool(packing_options and next_step and packaging_option != "individual")
-        ),
+        # Every next step is created by the route engine.  The administrator
+        # creates only the cutting assignment; employees take free tasks.
+        auto_create_next=bool(next_step),
         defect_reason=defect_reason,
         defect_disposition=defect_disposition,
         defect_comment=defect_comment,
@@ -1596,11 +1597,15 @@ def warehouse_stock_to_dict(row: dict):
         "finished": "Готовая продукция",
     }.get(row["item_type"], row["item_type"])
 
+    available_quantity = max(0, int(row["quantity"] or 0) - int(row.get("reserved_quantity") or 0))
     return {
         **row,
         "item_type_text": item_type_text,
         "product_color_label": format_color_label(row["product_color"]),
         "quantity_text": format_number(row["quantity"]),
+        "reserved_quantity": int(row.get("reserved_quantity") or 0),
+        "available_quantity": available_quantity,
+        "available_quantity_text": format_number(available_quantity),
         "title": f"{row['product_name']} — {row['stage_name']}",
     }
 
@@ -2094,8 +2099,11 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     if product_name not in PRODUCT_ROUTE_MAPS:
         return {"ok": False, "message": "Выберите изделие."}
 
-    if task_type not in {"cutting", "route"}:
-        return {"ok": False, "message": "Выберите тип задания."}
+    if task_type != "cutting":
+        return {
+            "ok": False,
+            "message": "Операционные задания создаёт система по маршруту. Администратор создаёт только задание на раскрой.",
+        }
 
     employee = get_employee_for_access(telegram_id)
     employee_id = employee[0] if employee else None
@@ -3938,9 +3946,23 @@ def get_admin_dashboard(telegram_id: int):
             for row in get_feedback_entries(month_start, today)
         ],
         "production_control": get_production_control_payload(month_start, today),
+        "critical_notifications": get_open_critical_notifications(),
         "defect_reasons": DEFECT_REASONS,
         "defect_dispositions": DEFECT_DISPOSITIONS,
     }
+
+
+def acknowledge_critical_notification_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+    try:
+        notification_id = int(payload.get("notification_id") or 0)
+    except (TypeError, ValueError):
+        notification_id = 0
+    employee = get_employee_for_access(telegram_id)
+    if not acknowledge_critical_notification(notification_id, employee[0] if employee else None):
+        return {"ok": False, "message": "Уведомление уже обработано или не найдено."}
+    return {"ok": True, "message": "Критичное уведомление отмечено просмотренным.", "admin": get_admin_dashboard(telegram_id)}
 
 
 def get_admin_report_payload(
@@ -5029,6 +5051,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = lookup_route_trace_for_telegram(telegram_id, str(payload.get("trace_code") or ""))
             elif path == "/api/admin/dashboard":
                 result = get_admin_dashboard(telegram_id)
+            elif path == "/api/admin/critical-notification/acknowledge":
+                result = acknowledge_critical_notification_for_admin(telegram_id, payload)
             elif path == "/api/admin/report":
                 result = get_admin_report_for_telegram(telegram_id, payload)
             elif path == "/api/admin/feedback":

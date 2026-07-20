@@ -92,6 +92,7 @@ WAREHOUSE_STOCK_COLUMNS = [
     "stage_name",
     "ready_for_position",
     "quantity",
+    "reserved_quantity",
     "unit",
     "updated_at",
 ]
@@ -434,10 +435,11 @@ def _allocate_warehouse_lots(
             raise ValueError("warehouse lot changed")
         cursor.execute(
             """
-            INSERT INTO route_batch_input_lots (batch_id, lot_id, input_role, quantity, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO route_batch_input_lots (
+                batch_id, lot_id, input_role, quantity, reservation_state, consumed_at, created_at
+            ) VALUES (?, ?, ?, ?, 'consumed', ?, ?)
             """,
-            (batch_id, lot_id, input_role, allocated, now_text),
+            (batch_id, lot_id, input_role, allocated, now_text, now_text),
         )
         remaining -= allocated
 
@@ -474,6 +476,376 @@ def _consume_warehouse_lots(cursor, stock_id: int, quantity: int, now_text: str)
 
     if remaining:
         raise ValueError("warehouse lots unavailable")
+
+
+def _size_values_overlap(left: str, right: str):
+    """Keep grouped preparation sizes compatible with their individual sizes."""
+    left_text = str(left or "").strip()
+    right_text = str(right or "").strip()
+    if not left_text or not right_text:
+        return False
+    if left_text == right_text:
+        return True
+    return left_text in right_text.split() or right_text in left_text.split()
+
+
+def _route_batch_step(batch: dict):
+    steps = route_steps_from_snapshot(batch.get("route_snapshot") or "", batch.get("product_name") or "")
+    index = int(batch.get("route_step_index") or 0)
+    return steps[index] if 0 <= index < len(steps) else {}
+
+
+def _create_critical_shortage_notification(
+    cursor,
+    batch: dict,
+    *,
+    needed_quantity: int,
+    available_quantity: int,
+    now_text: str,
+    source: str,
+):
+    missing_quantity = max(0, int(needed_quantity or 0) - int(available_quantity or 0))
+    if missing_quantity <= 0:
+        return None
+    step = _route_batch_step(batch)
+    operation_name = step.get("operation") or "Операция маршрута"
+    position = step.get("position") or ""
+    event_key = f"stock-shortage:{source}:batch:{batch['id']}:step:{batch.get('route_step_index', 0)}"
+    title = "Критично: не хватает входящей продукции"
+    message = (
+        f"Задание #{batch['id']} — {batch.get('product_name', '')}, "
+        f"{operation_name}: нужно {int(needed_quantity)} шт., доступно {int(available_quantity)} шт., "
+        f"не хватает {missing_quantity} шт. Производство не остановлено."
+    )
+    cursor.execute(
+        """
+        INSERT INTO critical_notifications (
+            event_key, severity, title, message, batch_id, product_name, product_size,
+            product_color, operation_name, position, needed_quantity, available_quantity,
+            missing_quantity, status, created_at
+        ) VALUES (?, 'critical', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+        ON CONFLICT(event_key) DO UPDATE SET
+            title = excluded.title,
+            message = excluded.message,
+            needed_quantity = excluded.needed_quantity,
+            available_quantity = excluded.available_quantity,
+            missing_quantity = excluded.missing_quantity,
+            status = 'open',
+            acknowledged_at = NULL,
+            acknowledged_by_employee_id = NULL
+        """,
+        (
+            event_key,
+            title,
+            message,
+            batch["id"],
+            batch.get("product_name") or "",
+            batch.get("product_size") or "",
+            batch.get("product_color") or "",
+            operation_name,
+            position,
+            int(needed_quantity),
+            int(available_quantity),
+            missing_quantity,
+            now_text,
+        ),
+    )
+    return cursor.lastrowid
+
+
+def _reserve_explicit_route_batch_inputs(
+    cursor,
+    batch: dict,
+    inputs: list[dict],
+    employee_id: int | None,
+    now_text: str,
+    *,
+    source: str,
+):
+    """Reserve existing output for a newly created route task without issuing it."""
+    if not inputs:
+        return {"reserved": 0, "missing": 0}
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM route_batch_inputs WHERE batch_id = ?",
+        (batch["id"],),
+    )
+    if int(cursor.fetchone()[0] or 0):
+        return {"reserved": 0, "missing": 0}
+
+    input_totals = {}
+    reserved_total = 0
+    missing_total = 0
+    available_total = 0
+    for input_index, item in enumerate(inputs):
+        try:
+            stock_id = int(item.get("stock_id") or 0)
+            lot_id = int(item.get("lot_id") or 0)
+            requested = int(item.get("quantity") or 0)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if stock_id <= 0 or lot_id <= 0 or requested <= 0:
+            missing_total += max(0, requested)
+            continue
+        input_role = item.get("input_role") or ("main" if input_index == 0 else "component")
+        cursor.execute(f"SELECT {WAREHOUSE_STOCK_SELECT} FROM warehouse_stock WHERE id = ?", (stock_id,))
+        stock = warehouse_stock_from_row(cursor.fetchone())
+        cursor.execute(
+            "SELECT quantity_available, reserved_quantity FROM warehouse_stock_lots WHERE id = ? AND stock_id = ?",
+            (lot_id, stock_id),
+        )
+        lot = cursor.fetchone()
+        stock_available = max(0, int((stock or {}).get("quantity") or 0) - int((stock or {}).get("reserved_quantity") or 0))
+        lot_available = max(0, int(lot[0] or 0) - int(lot[1] or 0)) if lot else 0
+        available = min(stock_available, lot_available)
+        allocated = min(requested, available)
+        available_total += available
+        if allocated:
+            cursor.execute(
+                "UPDATE warehouse_stock SET reserved_quantity = reserved_quantity + ?, updated_at = ? WHERE id = ?",
+                (allocated, now_text, stock_id),
+            )
+            cursor.execute(
+                "UPDATE warehouse_stock_lots SET reserved_quantity = reserved_quantity + ?, updated_at = ? WHERE id = ?",
+                (allocated, now_text, lot_id),
+            )
+            input_totals[(stock_id, input_role)] = input_totals.get((stock_id, input_role), 0) + allocated
+            cursor.execute(
+                """
+                INSERT INTO route_batch_input_lots (
+                    batch_id, lot_id, input_role, quantity, reservation_state, reserved_at, created_at
+                ) VALUES (?, ?, ?, ?, 'reserved', ?, ?)
+                """,
+                (batch["id"], lot_id, input_role, allocated, now_text, now_text),
+            )
+            reserved_total += allocated
+        missing_total += requested - allocated
+
+    for (stock_id, input_role), quantity in input_totals.items():
+        cursor.execute(
+            """
+            INSERT INTO route_batch_inputs (
+                batch_id, stock_id, input_role, quantity, reservation_state, reserved_at, created_at
+            ) VALUES (?, ?, ?, ?, 'reserved', ?, ?)
+            """,
+            (batch["id"], stock_id, input_role, quantity, now_text, now_text),
+        )
+
+    if reserved_total:
+        _record_production_event(
+            cursor,
+            "inputs_reserved",
+            batch_id=batch["id"],
+            actor_employee_id=employee_id,
+            quantity=reserved_total,
+            details={"automatic": True, "source": source, "inputs": len(input_totals)},
+            request_key=f"route-batch:{batch['id']}:inputs-reserved",
+            created_at=now_text,
+        )
+    if missing_total:
+        _create_critical_shortage_notification(
+            cursor,
+            batch,
+            needed_quantity=reserved_total + missing_total,
+            available_quantity=reserved_total,
+            now_text=now_text,
+            source=source,
+        )
+    return {"reserved": reserved_total, "missing": missing_total, "available": available_total}
+
+
+def _consume_reserved_route_batch_inputs(cursor, batch: dict, employee_id: int | None, now_text: str):
+    """Write off only what was reserved; shortages create an alert but never block completion."""
+    cursor.execute(
+        """
+        SELECT route_batch_inputs.stock_id, route_batch_inputs.input_role, route_batch_inputs.quantity,
+               warehouse_stock.item_type, warehouse_stock.product_name, warehouse_stock.product_size,
+               warehouse_stock.product_color, warehouse_stock.stage_name, warehouse_stock.ready_for_position,
+               warehouse_stock.unit, warehouse_stock.quantity, warehouse_stock.reserved_quantity
+        FROM route_batch_inputs
+        JOIN warehouse_stock ON warehouse_stock.id = route_batch_inputs.stock_id
+        WHERE route_batch_inputs.batch_id = ? AND route_batch_inputs.reservation_state = 'reserved'
+        """,
+        (batch["id"],),
+    )
+    input_rows = cursor.fetchall()
+    if not input_rows:
+        return {"consumed": 0, "missing": 0}
+
+    consumed_total = 0
+    missing_total = 0
+    for row in input_rows:
+        stock_id, input_role, requested, item_type, product_name, product_size, product_color, stage_name, ready_for_position, unit, stock_quantity, stock_reserved = row
+        requested = int(requested or 0)
+        consumed = min(requested, max(0, int(stock_quantity or 0)), max(0, int(stock_reserved or 0)))
+        cursor.execute(
+            """
+            UPDATE warehouse_stock
+            SET quantity = quantity - ?,
+                reserved_quantity = CASE WHEN reserved_quantity >= ? THEN reserved_quantity - ? ELSE 0 END,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (consumed, requested, requested, now_text, stock_id),
+        )
+        cursor.execute(
+            """
+            SELECT lot_id, quantity
+            FROM route_batch_input_lots
+            WHERE batch_id = ? AND input_role = ? AND reservation_state = 'reserved'
+            ORDER BY id
+            """,
+            (batch["id"], input_role),
+        )
+        lot_rows = cursor.fetchall()
+        remaining = consumed
+        for lot_id, lot_requested in lot_rows:
+            lot_amount = min(int(lot_requested or 0), remaining)
+            cursor.execute(
+                """
+                UPDATE warehouse_stock_lots
+                SET quantity_available = quantity_available - ?,
+                    reserved_quantity = CASE WHEN reserved_quantity >= ? THEN reserved_quantity - ? ELSE 0 END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (lot_amount, int(lot_requested or 0), int(lot_requested or 0), now_text, lot_id),
+            )
+            cursor.execute(
+                """
+                UPDATE route_batch_input_lots
+                SET reservation_state = 'consumed', consumed_at = ?
+                WHERE batch_id = ? AND lot_id = ? AND input_role = ? AND reservation_state = 'reserved'
+                """,
+                (now_text, batch["id"], lot_id, input_role),
+            )
+            remaining -= lot_amount
+        cursor.execute(
+            """
+            UPDATE route_batch_inputs
+            SET reservation_state = 'consumed', consumed_at = ?
+            WHERE batch_id = ? AND stock_id = ? AND input_role = ? AND reservation_state = 'reserved'
+            """,
+            (now_text, batch["id"], stock_id, input_role),
+        )
+        if consumed:
+            cursor.execute(
+                """
+                INSERT INTO warehouse_stock_movements (
+                    stock_id, item_type, product_name, product_size, product_color, stage_name,
+                    ready_for_position, quantity, unit, movement_type, source_type, source_id,
+                    created_by_employee_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issue', 'route_batch', ?, ?, ?)
+                """,
+                (stock_id, item_type, product_name, product_size, product_color, stage_name, ready_for_position, -consumed, unit, batch["id"], employee_id, now_text),
+            )
+        consumed_total += consumed
+        missing_total += requested - consumed
+
+    _record_production_event(
+        cursor,
+        "inputs_consumed",
+        batch_id=batch["id"],
+        actor_employee_id=employee_id,
+        quantity=consumed_total,
+        details={"automatic": True, "missing": missing_total},
+        request_key=f"route-batch:{batch['id']}:inputs-consumed",
+        created_at=now_text,
+    )
+    if missing_total:
+        _create_critical_shortage_notification(
+            cursor,
+            batch,
+            needed_quantity=consumed_total + missing_total,
+            available_quantity=consumed_total,
+            now_text=now_text,
+            source="consume",
+        )
+    return {"consumed": consumed_total, "missing": missing_total}
+
+
+def _reserve_route_batch_inputs_on_start(cursor, batch: dict, employee_id: int | None, now_text: str):
+    """Fallback for legacy/open tasks which were created without automatic inputs."""
+    cursor.execute("SELECT COUNT(*) FROM route_batch_inputs WHERE batch_id = ?", (batch["id"],))
+    if int(cursor.fetchone()[0] or 0):
+        return
+    step = _route_batch_step(batch)
+    if not step or step.get("parallel_input") == "free":
+        return
+    explicit_stages = [str(stage).strip() for stage in (step.get("input_stages") or []) if str(stage).strip()]
+    if explicit_stages:
+        stages = explicit_stages
+    else:
+        index = int(batch.get("route_step_index") or 0)
+        steps = route_steps_from_snapshot(batch.get("route_snapshot") or "", batch.get("product_name") or "")
+        if index <= 0 or index >= len(steps):
+            return
+        from route_maps import CUTTING_ROUTE
+
+        if index == len(CUTTING_ROUTE):
+            stages = ["Раскроенные"]
+        else:
+            previous = steps[index - 1]
+            stages = [str(previous.get("status_after") or "").strip()]
+    stages = [stage for stage in stages if stage]
+    if not stages:
+        return
+
+    inputs = []
+    for index, stage_name in enumerate(stages):
+        cursor.execute(
+            f"""
+            SELECT {WAREHOUSE_STOCK_SELECT}
+            FROM warehouse_stock
+            WHERE item_type = 'semifinished'
+              AND product_name = ?
+              AND product_color = ?
+              AND stage_name = ?
+              AND ready_for_position = ?
+            ORDER BY updated_at ASC, id ASC
+            """,
+            (batch["product_name"], batch["product_color"], stage_name, step.get("position") or ""),
+        )
+        stock = next(
+            (warehouse_stock_from_row(row) for row in cursor.fetchall()
+             if _size_values_overlap(batch.get("product_size") or "", warehouse_stock_from_row(row).get("product_size") or "")),
+            None,
+        )
+        if stock is None:
+            continue
+        cursor.execute(
+            """
+            SELECT id
+            FROM warehouse_stock_lots
+            WHERE stock_id = ? AND quantity_available > reserved_quantity
+            ORDER BY (quantity_available - reserved_quantity) DESC, id ASC
+            LIMIT 1
+            """,
+            (stock["id"],),
+        )
+        lot = cursor.fetchone()
+        if lot is None:
+            continue
+        inputs.append(
+            {
+                "stock_id": stock["id"],
+                "lot_id": lot[0],
+                "quantity": int(batch["quantity"]),
+                "input_role": "main" if index == 0 else "component",
+            }
+        )
+
+    if not inputs:
+        _create_critical_shortage_notification(
+            cursor,
+            batch,
+            needed_quantity=int(batch.get("quantity") or 0),
+            available_quantity=0,
+            now_text=now_text,
+            source="start",
+        )
+        return
+    _reserve_explicit_route_batch_inputs(cursor, batch, inputs, employee_id, now_text, source="start")
 
 
 def _initialize_route_batch_trace(
@@ -1544,11 +1916,16 @@ def init_db():
             stage_name TEXT NOT NULL,
             ready_for_position TEXT NOT NULL,
             quantity INTEGER NOT NULL DEFAULT 0,
+            reserved_quantity INTEGER NOT NULL DEFAULT 0,
             unit TEXT NOT NULL DEFAULT 'шт',
             updated_at TEXT NOT NULL,
             UNIQUE(item_type, product_name, product_size, product_color, stage_name, ready_for_position, unit)
         )
     """)
+    cursor.execute("PRAGMA table_info(warehouse_stock)")
+    warehouse_stock_columns = {row[1] for row in cursor.fetchall()}
+    if "reserved_quantity" not in warehouse_stock_columns:
+        cursor.execute("ALTER TABLE warehouse_stock ADD COLUMN reserved_quantity INTEGER NOT NULL DEFAULT 0")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS warehouse_stock_movements (
@@ -1586,11 +1963,16 @@ def init_db():
             source_id INTEGER,
             quantity_received INTEGER NOT NULL,
             quantity_available INTEGER NOT NULL,
+            reserved_quantity INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (stock_id) REFERENCES warehouse_stock (id)
         )
     """)
+    cursor.execute("PRAGMA table_info(warehouse_stock_lots)")
+    warehouse_stock_lot_columns = {row[1] for row in cursor.fetchall()}
+    if "reserved_quantity" not in warehouse_stock_lot_columns:
+        cursor.execute("ALTER TABLE warehouse_stock_lots ADD COLUMN reserved_quantity INTEGER NOT NULL DEFAULT 0")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS production_tasks (
@@ -1785,12 +2167,28 @@ def init_db():
             stock_id INTEGER NOT NULL,
             input_role TEXT NOT NULL DEFAULT 'main',
             quantity INTEGER NOT NULL,
+            reservation_state TEXT NOT NULL DEFAULT 'reserved',
+            reserved_at TEXT,
+            consumed_at TEXT,
             created_at TEXT NOT NULL,
             UNIQUE(batch_id, stock_id, input_role),
             FOREIGN KEY (batch_id) REFERENCES route_batches (id),
             FOREIGN KEY (stock_id) REFERENCES warehouse_stock (id)
         )
     """)
+    cursor.execute("PRAGMA table_info(route_batch_inputs)")
+    route_batch_input_columns = {row[1] for row in cursor.fetchall()}
+    if "reservation_state" not in route_batch_input_columns:
+        cursor.execute("ALTER TABLE route_batch_inputs ADD COLUMN reservation_state TEXT NOT NULL DEFAULT 'reserved'")
+        cursor.execute("ALTER TABLE route_batch_inputs ADD COLUMN reserved_at TEXT")
+        cursor.execute("ALTER TABLE route_batch_inputs ADD COLUMN consumed_at TEXT")
+        # Existing inputs were already physically issued by the former workflow.
+        cursor.execute("UPDATE route_batch_inputs SET reservation_state = 'consumed', consumed_at = created_at")
+    else:
+        if "reserved_at" not in route_batch_input_columns:
+            cursor.execute("ALTER TABLE route_batch_inputs ADD COLUMN reserved_at TEXT")
+        if "consumed_at" not in route_batch_input_columns:
+            cursor.execute("ALTER TABLE route_batch_inputs ADD COLUMN consumed_at TEXT")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batch_input_lots (
@@ -1799,12 +2197,53 @@ def init_db():
             lot_id INTEGER NOT NULL,
             input_role TEXT NOT NULL DEFAULT 'main',
             quantity INTEGER NOT NULL,
+            reservation_state TEXT NOT NULL DEFAULT 'reserved',
+            reserved_at TEXT,
+            consumed_at TEXT,
             created_at TEXT NOT NULL,
             UNIQUE(batch_id, lot_id, input_role),
             FOREIGN KEY (batch_id) REFERENCES route_batches (id),
             FOREIGN KEY (lot_id) REFERENCES warehouse_stock_lots (id)
         )
     """)
+    cursor.execute("PRAGMA table_info(route_batch_input_lots)")
+    route_batch_input_lot_columns = {row[1] for row in cursor.fetchall()}
+    if "reservation_state" not in route_batch_input_lot_columns:
+        cursor.execute("ALTER TABLE route_batch_input_lots ADD COLUMN reservation_state TEXT NOT NULL DEFAULT 'reserved'")
+        cursor.execute("ALTER TABLE route_batch_input_lots ADD COLUMN reserved_at TEXT")
+        cursor.execute("ALTER TABLE route_batch_input_lots ADD COLUMN consumed_at TEXT")
+        cursor.execute("UPDATE route_batch_input_lots SET reservation_state = 'consumed', consumed_at = created_at")
+    else:
+        if "reserved_at" not in route_batch_input_lot_columns:
+            cursor.execute("ALTER TABLE route_batch_input_lots ADD COLUMN reserved_at TEXT")
+        if "consumed_at" not in route_batch_input_lot_columns:
+            cursor.execute("ALTER TABLE route_batch_input_lots ADD COLUMN consumed_at TEXT")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS critical_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_key TEXT NOT NULL UNIQUE,
+            severity TEXT NOT NULL DEFAULT 'critical',
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            batch_id INTEGER,
+            product_name TEXT NOT NULL DEFAULT '',
+            product_size TEXT NOT NULL DEFAULT '',
+            product_color TEXT NOT NULL DEFAULT '',
+            operation_name TEXT NOT NULL DEFAULT '',
+            position TEXT NOT NULL DEFAULT '',
+            needed_quantity INTEGER NOT NULL DEFAULT 0,
+            available_quantity INTEGER NOT NULL DEFAULT 0,
+            missing_quantity INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL,
+            acknowledged_at TEXT,
+            acknowledged_by_employee_id INTEGER,
+            FOREIGN KEY (batch_id) REFERENCES route_batches (id),
+            FOREIGN KEY (acknowledged_by_employee_id) REFERENCES employees (id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_critical_notifications_open ON critical_notifications(status, created_at DESC)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batch_history (
@@ -3204,6 +3643,7 @@ def cancel_route_batch_and_restore_inputs(batch_id: int, employee_id: int | None
             SELECT
                 route_batch_inputs.stock_id,
                 route_batch_inputs.quantity,
+                route_batch_inputs.reservation_state,
                 warehouse_stock.item_type,
                 warehouse_stock.product_name,
                 warehouse_stock.product_size,
@@ -3220,7 +3660,7 @@ def cancel_route_batch_and_restore_inputs(batch_id: int, employee_id: int | None
         input_rows = cursor.fetchall()
         cursor.execute(
             """
-            SELECT route_batch_input_lots.lot_id, route_batch_input_lots.quantity
+            SELECT route_batch_input_lots.lot_id, route_batch_input_lots.quantity, route_batch_input_lots.reservation_state
             FROM route_batch_input_lots
             WHERE route_batch_input_lots.batch_id = ?
             """,
@@ -3228,28 +3668,13 @@ def cancel_route_batch_and_restore_inputs(batch_id: int, employee_id: int | None
         )
         input_lot_rows = cursor.fetchall()
 
-        if not input_rows and batch.get("source_stock_id"):
-            cursor.execute(
-                f"SELECT {WAREHOUSE_STOCK_SELECT} FROM warehouse_stock WHERE id = ?",
-                (batch["source_stock_id"],),
-            )
-            stock = warehouse_stock_from_row(cursor.fetchone())
-            if stock is not None:
-                input_rows = [
-                    (
-                        stock["id"],
-                        batch["quantity"],
-                        stock["item_type"],
-                        stock["product_name"],
-                        stock["product_size"],
-                        stock["product_color"],
-                        stock["stage_name"],
-                        stock["ready_for_position"],
-                        stock["unit"],
-                    )
-                ]
-
-        for stock_id, quantity, item_type, product_name, product_size, product_color, stage_name, ready_for_position, unit in input_rows:
+        for stock_id, quantity, reservation_state, item_type, product_name, product_size, product_color, stage_name, ready_for_position, unit in input_rows:
+            if reservation_state == "reserved":
+                cursor.execute(
+                    "UPDATE warehouse_stock SET reserved_quantity = CASE WHEN reserved_quantity >= ? THEN reserved_quantity - ? ELSE 0 END, updated_at = ? WHERE id = ?",
+                    (quantity, quantity, now, stock_id),
+                )
+                continue
             cursor.execute(
                 "UPDATE warehouse_stock SET quantity = quantity + ?, updated_at = ? WHERE id = ?",
                 (quantity, now, stock_id),
@@ -3282,7 +3707,13 @@ def cancel_route_batch_and_restore_inputs(batch_id: int, employee_id: int | None
             )
 
         if input_lot_rows:
-            for lot_id, quantity in input_lot_rows:
+            for lot_id, quantity, reservation_state in input_lot_rows:
+                if reservation_state == "reserved":
+                    cursor.execute(
+                        "UPDATE warehouse_stock_lots SET reserved_quantity = CASE WHEN reserved_quantity >= ? THEN reserved_quantity - ? ELSE 0 END, updated_at = ? WHERE id = ?",
+                        (quantity, quantity, now, lot_id),
+                    )
+                    continue
                 cursor.execute(
                     """
                     UPDATE warehouse_stock_lots
@@ -3294,7 +3725,9 @@ def cancel_route_batch_and_restore_inputs(batch_id: int, employee_id: int | None
                 if cursor.rowcount != 1:
                     raise ValueError("lot unavailable")
         else:
-            for stock_id, quantity, *_rest in input_rows:
+            for stock_id, quantity, reservation_state, *_rest in input_rows:
+                if reservation_state == "reserved":
+                    continue
                 _create_warehouse_lot(
                     cursor,
                     stock_id,
@@ -3391,6 +3824,10 @@ def assign_route_batch(batch_id: int, employee_id: int):
         )
         changed = cursor.rowcount > 0
         if changed:
+            cursor.execute(f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE id = ?", (batch_id,))
+            batch = route_batch_from_row(cursor.fetchone())
+            if batch is not None:
+                _reserve_route_batch_inputs_on_start(cursor, batch, employee_id, now)
             _record_production_event(
                 cursor,
                 "task_started",
@@ -3608,11 +4045,10 @@ def create_route_batch_with_inputs(
             cursor.execute(
                 """
                 INSERT INTO route_batch_inputs (
-                    batch_id, stock_id, input_role, quantity, created_at
-                )
-                VALUES (?, ?, ?, ?, ?)
+                    batch_id, stock_id, input_role, quantity, reservation_state, consumed_at, created_at
+                ) VALUES (?, ?, ?, ?, 'consumed', ?, ?)
                 """,
-                (batch_id, stock_id, input_role, input_quantity, now),
+                (batch_id, stock_id, input_role, input_quantity, now, now),
             )
             _allocate_warehouse_lots(
                 cursor,
@@ -3781,10 +4217,11 @@ def create_route_batches_with_inputs(
                 )
                 cursor.execute(
                     """
-                    INSERT INTO route_batch_inputs (batch_id, stock_id, input_role, quantity, created_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO route_batch_inputs (
+                        batch_id, stock_id, input_role, quantity, reservation_state, consumed_at, created_at
+                    ) VALUES (?, ?, ?, ?, 'consumed', ?, ?)
                     """,
-                    (batch_id, stock_id, input_role, input_quantity, now),
+                    (batch_id, stock_id, input_role, input_quantity, now, now),
                 )
                 _allocate_warehouse_lots(
                     cursor,
@@ -4363,7 +4800,7 @@ def _insert_automatic_route_batch(
     quantity: int,
     employee_id: int | None,
     now: str,
-    parent_batch_id: int,
+    parent_batch_id: int | None,
     inputs: list[dict] | None = None,
     source: str = "automatic_next",
     packaging_option: str = "",
@@ -4413,78 +4850,100 @@ def _insert_automatic_route_batch(
         route_version=batch.get("route_version") or "",
     )
 
-    for input_index, item in enumerate(inputs):
-        stock_id = int(item["stock_id"])
-        lot_id = int(item["lot_id"])
-        input_quantity = int(item["quantity"])
-        input_role = item.get("input_role") or ("main" if input_index == 0 else "component")
-        cursor.execute(
-            f"SELECT {WAREHOUSE_STOCK_SELECT} FROM warehouse_stock WHERE id = ?",
-            (stock_id,),
-        )
-        stock = warehouse_stock_from_row(cursor.fetchone())
-        if stock is None:
-            raise ValueError("parallel stock unavailable")
-        cursor.execute(
-            "UPDATE warehouse_stock SET quantity = quantity - ?, updated_at = ? WHERE id = ? AND quantity >= ?",
-            (input_quantity, now, stock_id, input_quantity),
-        )
-        if cursor.rowcount != 1:
-            raise ValueError("parallel stock changed")
-        cursor.execute(
-            """
-            UPDATE warehouse_stock_lots
-            SET quantity_available = quantity_available - ?, updated_at = ?
-            WHERE id = ? AND quantity_available >= ?
-            """,
-            (input_quantity, now, lot_id, input_quantity),
-        )
-        if cursor.rowcount != 1:
-            raise ValueError("parallel lot changed")
-        cursor.execute(
-            """
-            INSERT INTO warehouse_stock_movements (
-                stock_id, item_type, product_name, product_size, product_color, stage_name,
-                ready_for_position, quantity, unit, movement_type, source_type, source_id,
-                created_by_employee_id, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issue', 'route_batch', ?, ?, ?)
-            """,
-            (
-                stock_id,
-                stock["item_type"],
-                stock["product_name"],
-                stock["product_size"],
-                stock["product_color"],
-                stock["stage_name"],
-                stock["ready_for_position"],
-                -input_quantity,
-                stock["unit"],
-                new_batch_id,
-                employee_id,
-                now,
-            ),
-        )
-        cursor.execute(
-            "INSERT INTO route_batch_inputs (batch_id, stock_id, input_role, quantity, created_at) VALUES (?, ?, ?, ?, ?)",
-            (new_batch_id, stock_id, input_role, input_quantity, now),
-        )
-        cursor.execute(
-            "INSERT INTO route_batch_input_lots (batch_id, lot_id, input_role, quantity, created_at) VALUES (?, ?, ?, ?, ?)",
-            (new_batch_id, lot_id, input_role, input_quantity, now),
-        )
-
-    _record_production_event(
+    new_batch = {
+        **batch,
+        "id": new_batch_id,
+        "route_step_index": route_step_index,
+        "quantity": quantity,
+    }
+    _reserve_explicit_route_batch_inputs(
         cursor,
-        "inputs_reserved",
-        batch_id=new_batch_id,
-        actor_employee_id=employee_id,
-        quantity=quantity,
-        details={"automatic": True, "parent_batch_id": parent_batch_id, "inputs": len(inputs)},
-        request_key=f"route-batch:{new_batch_id}:inputs-reserved",
-        created_at=now,
+        new_batch,
+        inputs,
+        employee_id,
+        now,
+        source=source,
     )
     return new_batch_id
+
+
+def _create_first_product_route_batches_from_cut(
+    cursor,
+    *,
+    cutting_batch_id: int,
+    product_name: str,
+    product_size: str,
+    product_color: str,
+    quantity: int,
+    stock_id: int,
+    lot_id: int,
+    employee_id: int | None,
+    now_text: str,
+    route_snapshot: str,
+    route_version: str,
+    priority: str = "normal",
+    due_date: str = "",
+):
+    """Create the first non-cutting work items directly from formed cut."""
+    from route_maps import CUTTING_ROUTE
+
+    steps = route_steps_from_snapshot(route_snapshot, product_name)
+    first_index = len(CUTTING_ROUTE)
+    while first_index < len(steps) and is_auto_preparation_operation(steps[first_index].get("operation", "")):
+        first_index += 1
+    if first_index >= len(steps):
+        return []
+
+    first_step = steps[first_index]
+    # Sequential preparation tasks feed their next step themselves.  Parallel
+    # work starts from the cut immediately, as defined in the route map.
+    previous_step = steps[first_index - 1] if first_index > len(CUTTING_ROUTE) else None
+    if not first_step.get("parallel_group") and previous_step and is_auto_preparation_operation(previous_step.get("operation", "")):
+        return []
+
+    candidates = [(first_index, first_step)]
+    if first_step.get("parallel_group"):
+        group_name = first_step["parallel_group"]
+        group_rows = [(index, item) for index, item in enumerate(steps) if item.get("parallel_group") == group_name]
+        candidates = []
+        for branch_name in dict.fromkeys(item.get("parallel_branch") for _index, item in group_rows):
+            branch_rows = [(index, item) for index, item in group_rows if item.get("parallel_branch") == branch_name]
+            candidates.append(min(branch_rows, key=lambda row: (row[1].get("parallel_order", 1), row[0])))
+
+    base = {
+        "product_name": product_name,
+        "product_size": product_size,
+        "product_color": product_color,
+        "quantity": quantity,
+        "priority": priority,
+        "due_date": due_date,
+        "route_snapshot": route_snapshot,
+        "route_version": route_version,
+    }
+    main_index = next((index for index, step in candidates if step.get("parallel_input") == "main"), candidates[0][0])
+    created_ids = []
+    parallel_root_id = None
+    for step_index, step in candidates:
+        inputs = []
+        if step_index == main_index and step.get("parallel_input") != "free":
+            inputs = [{"stock_id": stock_id, "lot_id": lot_id, "quantity": quantity, "input_role": "main"}]
+        created_id = _insert_automatic_route_batch(
+            cursor,
+            base,
+            step_index,
+            quantity,
+            employee_id,
+            now_text,
+            parallel_root_id,
+            inputs,
+            source="automatic_from_cut",
+        )
+        cursor.execute("UPDATE route_batches SET source_cutting_batch_id = ? WHERE id = ?", (cutting_batch_id, created_id))
+        if parallel_root_id is None and len(candidates) > 1:
+            parallel_root_id = created_id
+            cursor.execute("UPDATE route_batches SET parent_batch_id = ? WHERE id = ?", (parallel_root_id, created_id))
+        created_ids.append(created_id)
+    return created_ids
 
 
 def ensure_parallel_sibling_batches(batch_id: int, employee_id: int | None = None):
@@ -4819,6 +5278,10 @@ def complete_route_batch_step_atomic(
         if good_quantity < 0 or defect_quantity < 0 or good_quantity + defect_quantity != batch["quantity"]:
             raise ValueError("invalid quantities")
 
+        # Input batches are reserved when the downstream task appears and are
+        # physically issued only once this operation is completed.
+        _consume_reserved_route_batch_inputs(cursor, batch, employee_id, now)
+
         if packaging_component_products or packaging_component_prefix:
             _consume_finished_packaging_components(
                 cursor,
@@ -4959,112 +5422,19 @@ def complete_route_batch_step_atomic(
                 auto_batch_id = parallel_flow["batch_ids"][0] if parallel_flow["batch_ids"] else None
                 parallel_waiting = parallel_flow["waiting"]
             elif auto_create_next:
-                cursor.execute(
-                    """
-                    INSERT INTO route_batches (
-                        product_name, product_size, product_color, quantity,
-                        route_step_index, status, created_by_employee_id,
-                        created_at, updated_at, completed_at, source_stock_id,
-                        priority, due_date, parent_batch_id,
-                        packaging_option, packaging_output_name, packaging_ratio
-                    )
-                    VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        batch["product_name"],
-                        batch["product_size"],
-                        batch["product_color"],
-                        good_quantity,
-                        next_step_index,
-                        employee_id,
-                        now,
-                        now,
-                        stock_id,
-                        batch.get("priority") or "normal",
-                        batch.get("due_date"),
-                        batch_id,
-                        packaging_option or batch.get("packaging_option") or None,
-                        packaging_output_name or batch.get("packaging_output_name") or None,
-                        max(1, int(packaging_ratio or batch.get("packaging_ratio") or 1)),
-                    ),
-                )
-                auto_batch_id = cursor.lastrowid
-                _initialize_route_batch_trace(
+                auto_batch_id = _insert_automatic_route_batch(
                     cursor,
-                    auto_batch_id,
-                    batch["product_name"],
+                    batch,
+                    next_step_index,
+                    good_quantity,
                     employee_id,
                     now,
+                    batch_id,
+                    [{"stock_id": stock_id, "lot_id": output_lot_id, "quantity": good_quantity, "input_role": "main"}],
                     source="automatic_next",
-                    route_snapshot=batch.get("route_snapshot") or "",
-                    route_version=batch.get("route_version") or "",
-                )
-                cursor.execute(
-                    """
-                    UPDATE warehouse_stock
-                    SET quantity = quantity - ?, updated_at = ?
-                    WHERE id = ? AND quantity >= ?
-                    """,
-                    (good_quantity, now, stock_id, good_quantity),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("new stock unavailable")
-                cursor.execute(
-                    """
-                    INSERT INTO warehouse_stock_movements (
-                        stock_id, item_type, product_name, product_size, product_color, stage_name,
-                        ready_for_position, quantity, unit, movement_type, source_type, source_id,
-                        created_by_employee_id, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'шт', 'issue', 'route_batch', ?, ?, ?)
-                    """,
-                    (
-                        stock_id,
-                        item_type,
-                        batch["product_name"],
-                        batch["product_size"],
-                        batch["product_color"],
-                        stage_name,
-                        ready_for_position,
-                        -good_quantity,
-                        auto_batch_id,
-                        employee_id,
-                        now,
-                    ),
-                )
-                cursor.execute(
-                    """
-                    INSERT INTO route_batch_inputs (batch_id, stock_id, input_role, quantity, created_at)
-                    VALUES (?, ?, 'main', ?, ?)
-                    """,
-                    (auto_batch_id, stock_id, good_quantity, now),
-                )
-                cursor.execute(
-                    """
-                    UPDATE warehouse_stock_lots
-                    SET quantity_available = quantity_available - ?, updated_at = ?
-                    WHERE id = ? AND quantity_available >= ?
-                    """,
-                    (good_quantity, now, output_lot_id, good_quantity),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("output lot changed")
-                cursor.execute(
-                    """
-                    INSERT INTO route_batch_input_lots (batch_id, lot_id, input_role, quantity, created_at)
-                    VALUES (?, ?, 'main', ?, ?)
-                    """,
-                    (auto_batch_id, output_lot_id, good_quantity, now),
-                )
-                _record_production_event(
-                    cursor,
-                    "inputs_reserved",
-                    batch_id=auto_batch_id,
-                    actor_employee_id=employee_id,
-                    quantity=good_quantity,
-                    details={"automatic": True, "parent_batch_id": batch_id},
-                    request_key=f"route-batch:{auto_batch_id}:inputs-reserved",
-                    created_at=now,
+                    packaging_option=packaging_option or batch.get("packaging_option") or "",
+                    packaging_output_name=packaging_output_name or batch.get("packaging_output_name") or "",
+                    packaging_ratio=max(1, int(packaging_ratio or batch.get("packaging_ratio") or 1)),
                 )
 
         if defect_quantity > 0 and defect_disposition == "На переделку":
@@ -6287,15 +6657,26 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
     if changed:
         cursor.execute(
             """
-            SELECT product_name, production_task_id
+            SELECT
+                cutting_batches.product_name,
+                cutting_batches.production_task_id,
+                production_tasks.route_snapshot,
+                production_tasks.route_version,
+                production_tasks.priority,
+                production_tasks.due_date
             FROM cutting_batches
-            WHERE id = ?
+            LEFT JOIN production_tasks ON production_tasks.id = cutting_batches.production_task_id
+            WHERE cutting_batches.id = ?
             """,
             (batch_id,),
         )
         task_row = cursor.fetchone()
         batch_product_name = task_row[0] if task_row else ""
         task_id = task_row[1] if task_row else None
+        route_snapshot = task_row[2] if task_row and task_row[2] else current_route_snapshot(batch_product_name)
+        route_version = task_row[3] if task_row and task_row[3] else route_version_for_snapshot(route_snapshot)
+        task_priority = task_row[4] if task_row and task_row[4] else "normal"
+        task_due_date = task_row[5] if task_row and task_row[5] else ""
 
         if task_id is not None:
             cursor.execute("SELECT COUNT(*) FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
@@ -6429,7 +6810,7 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
                         now_stock_text,
                     ),
                 )
-                _create_warehouse_lot(
+                output_lot_id = _create_warehouse_lot(
                     cursor,
                     stock_id,
                     quantity,
@@ -6454,6 +6835,22 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
                     },
                     request_key=f"cutting-batch:{batch_id}:output:{stock_id}",
                     created_at=now_stock_text,
+                )
+                _create_first_product_route_batches_from_cut(
+                    cursor,
+                    cutting_batch_id=batch_id,
+                    product_name=batch_product_name,
+                    product_size=product_size,
+                    product_color=product_color,
+                    quantity=quantity,
+                    stock_id=stock_id,
+                    lot_id=output_lot_id,
+                    employee_id=employee_id,
+                    now_text=now_stock_text,
+                    route_snapshot=route_snapshot,
+                    route_version=route_version,
+                    priority=task_priority,
+                    due_date=task_due_date,
                 )
 
             cursor.execute(
@@ -7208,6 +7605,8 @@ def adjust_warehouse_stock(
             raise ValueError("stock unavailable")
 
         old_quantity = int(stock["quantity"] or 0)
+        if int(new_quantity) < int(stock.get("reserved_quantity") or 0):
+            raise ValueError("quantity below reserved stock")
         delta = int(new_quantity) - old_quantity
         if delta == 0:
             raise ValueError("quantity unchanged")
@@ -7322,6 +7721,48 @@ def get_warehouse_stock_rows():
     rows = [warehouse_stock_from_row(row) for row in cursor.fetchall()]
     conn.close()
     return rows
+
+
+def get_open_critical_notifications(limit: int = 50):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, severity, title, message, batch_id, product_name, product_size,
+               product_color, operation_name, position, needed_quantity,
+               available_quantity, missing_quantity, status, created_at,
+               acknowledged_at, acknowledged_by_employee_id
+        FROM critical_notifications
+        WHERE status = 'open'
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        (max(1, min(int(limit or 50), 200)),),
+    )
+    columns = [column[0] for column in cursor.description]
+    rows = [row_to_dict(columns, row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def acknowledge_critical_notification(notification_id: int, employee_id: int | None):
+    if notification_id <= 0:
+        return None
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    now_text = local_now().isoformat()
+    cursor.execute(
+        """
+        UPDATE critical_notifications
+        SET status = 'acknowledged', acknowledged_at = ?, acknowledged_by_employee_id = ?
+        WHERE id = ? AND status = 'open'
+        """,
+        (now_text, employee_id, notification_id),
+    )
+    changed = cursor.rowcount == 1
+    conn.commit()
+    conn.close()
+    return changed
 
 
 def create_production_task(
