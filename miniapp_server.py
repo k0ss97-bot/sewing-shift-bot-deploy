@@ -4478,6 +4478,34 @@ def make_handler(bot_token: str, debug: bool):
         registration_attempts = {}
         registration_attempts_lock = threading.Lock()
 
+        def handle_one_request(self):
+            """Wrap every HTTP request in a safety net.
+
+            Unhandled exceptions in do_GET / do_POST used to crash the worker
+            thread and, when combined with database contention, could take down
+            the whole server.  Now they return a 500 JSON response instead.
+            """
+            try:
+                super().handle_one_request()
+            except Exception:
+                logging.exception("Unhandled request error")
+                try:
+                    self._send_error_500()
+                except Exception:
+                    pass
+
+        def _send_error_500(self):
+            body = json.dumps(
+                {"ok": False, "message": "Внутренняя ошибка сервера."},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
         def client_ip(self):
             if os.getenv("TRUST_PROXY_HEADERS") == "1":
                 forwarded = self.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()

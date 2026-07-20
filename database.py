@@ -32,6 +32,20 @@ def resolve_database_path():
 
 DB_NAME = resolve_database_path()
 LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
+
+
+def get_db_connection(timeout=30):
+    """Open a database connection with busy timeout for WAL-mode safety.
+
+    Every write-capable function in this module must use this factory instead of
+    calling sqlite3.connect directly.  The busy_timeout PRAGMA tells SQLite to
+    wait up to 30 seconds when the database is locked by a concurrent writer,
+    which eliminates the "database is locked" crashes that happen when the
+    Telegram bot and the web application both write at the same time.
+    """
+    conn = sqlite3.connect(DB_NAME, timeout=timeout)
+    conn.execute("PRAGMA busy_timeout = 30000")
+    return conn
 ROUTE_BATCH_COLUMNS = [
     "id",
     "product_name",
@@ -128,7 +142,7 @@ def get_database_status():
         return status
 
     try:
-        conn = sqlite3.connect(DB_NAME)
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         for table in ["employees", "shifts", "shift_operations", "operations", "feedback_entries"]:
@@ -251,7 +265,7 @@ def has_route_completion_request(batch_id: int, employee_id: int, request_id: st
     request_id = str(request_id or "").strip()
     if not request_id:
         return False
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -1642,7 +1656,7 @@ def backfill_traceability(cursor):
 
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME, timeout=30)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("PRAGMA journal_mode = WAL")
     cursor.execute("PRAGMA synchronous = NORMAL")
@@ -2500,7 +2514,7 @@ def init_db():
 
 
 def get_employee_by_telegram_id(telegram_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2518,7 +2532,7 @@ def get_employee_by_telegram_id(telegram_id: int):
 
 
 def get_employee_by_id(employee_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2536,7 +2550,7 @@ def get_employee_by_id(employee_id: int):
 
 
 def ensure_admin_employee(telegram_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2611,7 +2625,7 @@ def ensure_admin_employee(telegram_id: int):
 
 
 def create_employee(telegram_id: int, full_name: str, position: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2627,7 +2641,7 @@ def create_employee(telegram_id: int, full_name: str, position: str):
 
 
 def get_pending_employees():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2645,7 +2659,7 @@ def get_pending_employees():
 
 
 def get_all_employees():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2663,7 +2677,7 @@ def get_all_employees():
 
 
 def get_all_user_accounts():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2684,7 +2698,7 @@ def get_all_user_accounts():
 
 
 def get_employees_by_status(status: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2707,7 +2721,7 @@ def update_employee_access_status(employee_id: int, status: str):
     if status not in {"active", "inactive", "pending", "rejected"}:
         return {"ok": False, "code": "invalid_status", "employee": None}
 
-    conn = sqlite3.connect(DB_NAME, timeout=30)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     try:
@@ -2768,7 +2782,7 @@ def update_employee_role(employee_id: int, role: str, position: str | None = Non
     if role == "employee" and not normalized_position:
         return {"ok": False, "code": "position_required", "employee": None}
 
-    conn = sqlite3.connect(DB_NAME, timeout=30)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     try:
@@ -2837,7 +2851,7 @@ def update_employee_role(employee_id: int, role: str, position: str | None = Non
 
 
 def update_employee_status(employee_id: int, status: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2866,7 +2880,7 @@ def update_employee_status(employee_id: int, status: str):
 
 
 def update_employee_position(employee_id: int, position: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2895,7 +2909,7 @@ def update_employee_position(employee_id: int, position: str):
 
 
 def get_shift_for_today(employee_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     today = local_today().isoformat()
@@ -2918,7 +2932,7 @@ def get_shift_for_today(employee_id: int):
 
 
 def get_employee_shifts_by_period(employee_id: int, start_date: str, end_date: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2944,7 +2958,7 @@ def add_feedback_entry(employee_id: int, shift_id: int | None, category: str, me
         return None
 
     now = local_now()
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -2964,7 +2978,7 @@ def add_feedback_entry(employee_id: int, shift_id: int | None, category: str, me
 
 
 def get_feedback_entries(start_date: str, end_date: str, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     params = [start_date, end_date]
@@ -3000,7 +3014,7 @@ def get_feedback_entries(start_date: str, end_date: str, employee_id: int | None
 
 
 def get_feedback_entries_by_shift(shift_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3034,7 +3048,7 @@ def get_month_feedback_entries():
 
 
 def get_open_shift_for_today(employee_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3056,7 +3070,7 @@ def get_open_shift_for_today(employee_id: int):
 
 
 def get_editable_shift_for_today(employee_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     today = local_today().isoformat()
@@ -3096,7 +3110,7 @@ def get_editable_shift_for_today(employee_id: int):
 
 
 def create_shift(employee_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now()
@@ -3173,7 +3187,7 @@ def create_shift(employee_id: int):
 
 
 def get_active_operation_groups(position: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3194,7 +3208,7 @@ def get_active_operation_groups(position: str):
 
 
 def get_active_operation_folders(position: str, operation_group: str | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     params = [position]
@@ -3223,7 +3237,7 @@ def get_active_operation_folders(position: str, operation_group: str | None = No
 
 
 def get_active_operations(position: str | None = None, folder: str | None = None, operation_group: str | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     if position:
@@ -3267,7 +3281,7 @@ def get_active_operations(position: str | None = None, folder: str | None = None
 
 
 def get_all_operations():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3284,7 +3298,7 @@ def get_all_operations():
 
 
 def get_operation_by_number(number: int, position: str | None = None, folder: str | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     if position:
@@ -3320,7 +3334,7 @@ def get_operation_by_number(number: int, position: str | None = None, folder: st
 
 
 def add_operation(name: str, position: str, operation_group: str, folder: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM operations")
@@ -3351,7 +3365,7 @@ def add_operation(name: str, position: str, operation_group: str, folder: str):
 
 
 def hide_operation(number: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3385,7 +3399,7 @@ def hide_operation(number: int):
 
 
 def restore_operation(number: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3429,7 +3443,7 @@ def update_operation_field(number: int, field: str, value: str):
     if field not in allowed_fields:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3489,7 +3503,7 @@ def add_shift_operation(
     if quantity <= 0:
         return False
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now().isoformat()
@@ -3522,7 +3536,7 @@ def set_shift_operation_quantity(
     product_color: str,
     quantity: int,
 ):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now().isoformat()
@@ -3563,7 +3577,7 @@ def set_shift_operation_quantity(
 
 
 def get_route_batch_by_id(batch_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3586,7 +3600,7 @@ def cancel_route_batch(batch_id: int):
     if batch is None or batch["status"] != "active":
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
 
@@ -3612,7 +3626,7 @@ def cancel_route_batch(batch_id: int):
 
 
 def cancel_route_batch_and_restore_inputs(batch_id: int, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
 
@@ -3759,7 +3773,7 @@ def cancel_route_batch_and_restore_inputs(batch_id: int, employee_id: int | None
 
 
 def get_active_route_batches():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3780,7 +3794,7 @@ def get_employee_route_batches(employee_id: int, status: str):
     if status not in {"active", "done"}:
         return []
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -3800,7 +3814,7 @@ def get_employee_route_batches(employee_id: int, status: str):
 
 
 def assign_route_batch(batch_id: int, employee_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
 
@@ -3867,7 +3881,7 @@ def create_route_batch(
     if priority not in {"low", "normal", "high", "urgent"}:
         priority = "normal"
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now().isoformat()
@@ -3953,7 +3967,7 @@ def create_route_batch_with_inputs(
         normalized_inputs.append((stock_id, input_role, input_quantity))
         stock_totals[stock_id] = stock_totals.get(stock_id, 0) + input_quantity
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
 
@@ -4127,7 +4141,7 @@ def create_route_batches_with_inputs(
 
         normalized_specs.append((product_size, product_color, quantity, normalized_inputs))
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
     batch_ids = []
@@ -4254,7 +4268,7 @@ def create_route_batches_with_inputs(
 
 
 def get_route_batch_inputs(batch_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -4298,7 +4312,7 @@ def get_route_batch_inputs(batch_id: int):
 
 
 def get_route_batch_input_lots(batch_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -4343,7 +4357,7 @@ def get_route_batch_input_lots(batch_id: int):
 
 
 def get_route_batch_by_trace_code(trace_code: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE trace_code = ?",
@@ -4369,7 +4383,7 @@ def set_route_batch_work_state(
     if action in {"block", "release"} and not reason:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
 
@@ -4477,7 +4491,7 @@ def get_route_batch_passport(batch_id: int):
     if root is None:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     family_ids = {batch_id}
     cutting_ids = set()
@@ -4742,7 +4756,7 @@ def complete_route_batch_step(
     if good_quantity < 0 or defect_quantity < 0 or good_quantity + defect_quantity > batch["quantity"]:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now().isoformat()
@@ -4947,7 +4961,7 @@ def _create_first_product_route_batches_from_cut(
 
 
 def ensure_parallel_sibling_batches(batch_id: int, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
     created_ids = []
@@ -5159,7 +5173,7 @@ def get_finished_component_quantity(product_size: str, product_color: str, produ
         params.append(f"{product_prefix}%")
     else:
         return 0
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(f"SELECT COALESCE(SUM(quantity), 0) FROM warehouse_stock WHERE {' AND '.join(clauses)}", params)
     quantity = int(cursor.fetchone()[0] or 0)
@@ -5236,7 +5250,7 @@ def complete_route_batch_step_atomic(
     if item_type not in {"semifinished", "finished"}:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
     stock_id = None
@@ -5585,7 +5599,7 @@ def add_route_batch_defect(
     if batch is None or quantity <= 0 or not reason.strip() or not disposition.strip():
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -5619,7 +5633,7 @@ def add_route_batch_defect(
 
 
 def get_route_batch_defect_rows(start_date: str, end_date: str, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -5653,7 +5667,7 @@ def get_route_batch_defect_rows(start_date: str, end_date: str, employee_id: int
 
 
 def get_route_batch_defects(batch_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -5684,7 +5698,7 @@ def get_route_batch_defects(batch_id: int):
 
 
 def get_route_batch_defect_photo(defect_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -5707,7 +5721,7 @@ def get_route_batch_defect_photo(defect_id: int):
 
 
 def get_shift_report(shift_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -5736,7 +5750,7 @@ def get_shift_report(shift_id: int):
 
 
 def get_shift_operation_choices(shift_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -5766,7 +5780,7 @@ def get_shift_operation_choices(shift_id: int):
 
 
 def update_shift_operation_quantity(shift_operation_id: int, quantity: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -5822,7 +5836,7 @@ def update_shift_operation_quantity(shift_operation_id: int, quantity: int):
 
 
 def delete_shift_operation(shift_operation_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -5881,7 +5895,7 @@ def create_cutting_contour_batch(
     operation_id: int,
     size_quantities: dict[str, int],
 ):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now()
@@ -5943,7 +5957,7 @@ def create_cutting_contour_batch_for_task(
     if not positive_matrix:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now()
     now_text = now.isoformat()
@@ -6046,7 +6060,7 @@ def create_cutting_contour_batch_for_task(
 
 
 def get_cutting_batches_for_layout(product_name: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -6082,7 +6096,7 @@ def get_cutting_batches_for_layout(product_name: str):
 
 
 def get_active_cutting_batch_product_names():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -6333,7 +6347,7 @@ def add_cutting_layout(
     operation_id: int,
     color_layers: dict[str, int],
 ):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now()
@@ -6437,7 +6451,7 @@ def add_cutting_layout(
 
 
 def get_cutting_batches_for_cutting(product_name: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -6478,7 +6492,7 @@ def update_cutting_batch_progress(
     operation_id: int,
     progress: int,
 ):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now()
@@ -6572,7 +6586,7 @@ def update_cutting_batch_progress(
 
 
 def get_cutting_batches_for_formation(product_name: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -6598,7 +6612,7 @@ def get_cutting_batches_for_formation(product_name: str):
 
 
 def get_cutting_batch_result_rows(batch_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     rows = _get_cutting_batch_result_rows(cursor, batch_id)
     conn.close()
@@ -6606,7 +6620,7 @@ def get_cutting_batch_result_rows(batch_id: int):
 
 
 def get_cutting_batch_owner(batch_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -6631,7 +6645,7 @@ def get_cutting_batch_owner(batch_id: int):
 
 
 def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, operation_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now()
@@ -6883,7 +6897,7 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
 
 
 def get_admin_cutting_batches(limit: int = 50):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -6922,7 +6936,7 @@ def get_admin_cutting_batches(limit: int = 50):
 
 
 def delete_cutting_batch(batch_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -6964,7 +6978,7 @@ def rollback_cutting_batch(batch_id: int, target_status: str):
     if target_status not in {"contours_done", "layout_done", "cutting_done"}:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -7091,7 +7105,7 @@ def admin_update_cutting_batch_progress(batch_id: int, progress: int):
     if progress not in {25, 50, 75, 100}:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -7159,7 +7173,7 @@ def add_fabric_receipt(
     if not material_name or not product_color or quantity <= 0:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
 
@@ -7236,7 +7250,7 @@ def add_fabric_receipt(
 
 
 def get_fabric_stock_rows():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -7254,7 +7268,7 @@ def get_fabric_stock_rows():
 
 
 def get_fabric_stock_rows_with_ids():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -7270,7 +7284,7 @@ def get_fabric_stock_rows_with_ids():
 
 
 def get_fabric_stock_by_id(stock_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -7295,7 +7309,7 @@ def adjust_fabric_stock(
     if stock_id <= 0 or new_quantity < 0 or not reason:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("BEGIN IMMEDIATE")
@@ -7431,7 +7445,7 @@ def add_warehouse_stock(
     if not product_name or not product_size or not product_color or not stage_name or quantity <= 0:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
 
@@ -7520,7 +7534,7 @@ def consume_warehouse_stock(stock_id: int, quantity: int, employee_id: int | Non
     if quantity <= 0:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     try:
@@ -7592,7 +7606,7 @@ def adjust_warehouse_stock(
     if stock_id <= 0 or new_quantity < 0 or not reason:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("BEGIN IMMEDIATE")
@@ -7684,7 +7698,7 @@ def adjust_warehouse_stock(
 
 
 def get_warehouse_stock_by_id(stock_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -7701,7 +7715,7 @@ def get_warehouse_stock_by_id(stock_id: int):
 
 
 def get_warehouse_stock_rows():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -7724,7 +7738,7 @@ def get_warehouse_stock_rows():
 
 
 def get_open_critical_notifications(limit: int = 50):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -7748,7 +7762,7 @@ def get_open_critical_notifications(limit: int = 50):
 def acknowledge_critical_notification(notification_id: int, employee_id: int | None):
     if notification_id <= 0:
         return None
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now_text = local_now().isoformat()
     cursor.execute(
@@ -7789,7 +7803,7 @@ def create_production_task(
     if not product_name or not sizes or not colors:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
     task_id = None
@@ -7936,7 +7950,7 @@ def create_production_task(
 
 
 def get_production_task_by_id(task_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -7969,7 +7983,7 @@ def get_production_task_by_id(task_id: int):
 
 
 def assign_production_task(task_id: int, employee_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
 
@@ -8008,7 +8022,7 @@ def assign_production_task(task_id: int, employee_id: int):
 
 
 def get_production_task_fabric_rolls(task_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8026,7 +8040,7 @@ def get_production_task_fabric_rolls(task_id: int):
 
 
 def get_production_task_fabric_defects(task_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -8073,7 +8087,7 @@ def reject_production_task_fabric_rolls(
     if task_id <= 0 or employee_id <= 0 or quantity <= 0 or not product_color or not comment:
         return None
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("BEGIN IMMEDIATE")
@@ -8191,7 +8205,7 @@ def reject_production_task_fabric_rolls(
 
 
 def get_production_task_attachment(task_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8216,7 +8230,7 @@ def get_production_task_attachment(task_id: int):
 
 
 def cancel_production_task(task_id: int, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     now = local_now().isoformat()
     try:
@@ -8391,7 +8405,7 @@ def cancel_production_task(task_id: int, employee_id: int | None = None):
 
 
 def get_production_task_options(task_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8421,7 +8435,7 @@ def get_production_task_options(task_id: int):
 
 
 def get_active_production_tasks():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8464,7 +8478,7 @@ def get_active_production_tasks_for_contours():
 
 
 def get_cutting_batch_task_options(batch_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8510,7 +8524,7 @@ def get_cutting_batch_task_options(batch_id: int):
 
 
 def close_shift(shift_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("BEGIN IMMEDIATE")
 
@@ -8568,7 +8582,7 @@ def close_shift(shift_id: int):
 
 
 def get_open_shifts():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8592,7 +8606,7 @@ def get_open_shifts():
 
 
 def get_recent_shifts(limit: int = 20):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8628,7 +8642,7 @@ def get_recent_shifts(limit: int = 20):
 
 
 def get_employee_recent_shifts(employee_id: int, limit: int = 20):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8661,7 +8675,7 @@ def get_employee_recent_shifts(employee_id: int, limit: int = 20):
 
 
 def delete_shift_by_id(shift_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("BEGIN IMMEDIATE")
 
@@ -8716,7 +8730,7 @@ def delete_shift_by_id(shift_id: int):
 
 
 def admin_close_shift(shift_id: int, end_time: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("BEGIN IMMEDIATE")
 
@@ -8783,7 +8797,7 @@ def admin_close_shift(shift_id: int, end_time: str):
 
 
 def get_today_shifts():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     today = local_today().isoformat()
@@ -8813,7 +8827,7 @@ def get_today_shifts():
 
 
 def get_month_employee_summary():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     month_start = local_today().replace(day=1).isoformat()
@@ -8843,7 +8857,7 @@ def get_month_employee_summary():
 
 
 def get_period_employee_summary(start_date: str, end_date: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8870,7 +8884,7 @@ def get_period_employee_summary(start_date: str, end_date: str):
 
 
 def get_employee_period_summary(employee_id: int, start_date: str, end_date: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8898,7 +8912,7 @@ def get_employee_period_summary(employee_id: int, start_date: str, end_date: str
 
 
 def get_employee_period_operation_totals(employee_id: int, start_date: str, end_date: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -8934,7 +8948,7 @@ def get_employee_period_operation_totals(employee_id: int, start_date: str, end_
 
 
 def get_month_operations_by_employee(employee_id: int):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     month_start = local_today().replace(day=1).isoformat()
@@ -8977,7 +8991,7 @@ def get_month_operations_by_employee(employee_id: int):
 
 
 def get_period_operations_by_employee(employee_id: int, start_date: str, end_date: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -9017,7 +9031,7 @@ def get_period_operations_by_employee(employee_id: int, start_date: str, end_dat
 
 
 def get_month_operation_rows():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     month_start = local_today().replace(day=1).isoformat()
@@ -9071,7 +9085,7 @@ def get_month_operation_rows():
 
 
 def get_period_operation_rows(start_date: str, end_date: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -9122,7 +9136,7 @@ def get_period_operation_rows(start_date: str, end_date: str):
 
 
 def get_month_shift_details():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     month_start = local_today().replace(day=1).isoformat()
@@ -9152,7 +9166,7 @@ def get_month_shift_details():
 
 
 def get_period_shift_details(start_date: str, end_date: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -9179,7 +9193,7 @@ def get_period_shift_details(start_date: str, end_date: str):
 
 
 def get_period_route_batch_rows(start_date: str, end_date: str, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -9238,7 +9252,7 @@ def get_period_employee_production_performance(start_date: str, end_date: str):
             employee["plan"] += int(plan or 0)
             employee["fact"] += int(fact or 0)
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -9398,7 +9412,7 @@ def get_period_employee_production_performance(start_date: str, end_date: str):
 
 
 def get_period_route_batch_input_rows(start_date: str, end_date: str, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -9436,7 +9450,7 @@ def get_period_route_batch_input_rows(start_date: str, end_date: str, employee_i
 
 
 def get_period_route_batch_input_lot_rows(start_date: str, end_date: str, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -9477,7 +9491,7 @@ def get_period_route_batch_input_lot_rows(start_date: str, end_date: str, employ
 
 
 def get_period_production_trace_event_rows(start_date: str, end_date: str, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -9518,7 +9532,7 @@ def get_period_production_trace_event_rows(start_date: str, end_date: str, emplo
 
 
 def get_period_production_task_item_rows(start_date: str, end_date: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -9551,7 +9565,7 @@ def get_period_production_task_item_rows(start_date: str, end_date: str):
 
 
 def get_period_warehouse_movement_rows(start_date: str, end_date: str, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -9586,7 +9600,7 @@ def get_period_warehouse_movement_rows(start_date: str, end_date: str, employee_
 
 
 def get_period_fabric_movement_rows(start_date: str, end_date: str, employee_id: int | None = None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -9614,7 +9628,7 @@ def get_period_fabric_movement_rows(start_date: str, end_date: str, employee_id:
 
 
 def add_edit_log(changed_by: int, role: str, action: str, entity_type: str, entity_id: int | None, details: str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -9640,7 +9654,7 @@ def add_edit_log(changed_by: int, role: str, action: str, entity_type: str, enti
 
 
 def get_recent_edit_logs(limit: int = 20):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(

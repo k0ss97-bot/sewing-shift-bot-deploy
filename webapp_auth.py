@@ -13,7 +13,7 @@ import sqlite3
 import time
 from http.cookies import SimpleCookie
 
-from database import DB_NAME, local_now
+from database import DB_NAME, get_db_connection, local_now
 
 
 COOKIE_NAME = "sewing_web_session"
@@ -151,15 +151,9 @@ def _password_hash(password: str, salt_hex: str, iterations: int = PASSWORD_ITER
     ).hex()
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_NAME, timeout=30)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 30000")
-    return conn
-
-
 def init_web_auth() -> None:
-    conn = _connect()
+
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON")
     cursor.execute(
@@ -256,7 +250,7 @@ def upsert_web_account(username: str, telegram_id: int, password: str, active: b
     password_digest = _password_hash(password, salt_hex)
     now_text = _now_text()
     status = "active" if active else "disabled"
-    conn = _connect()
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -315,7 +309,7 @@ def register_web_account(email: str, phone: str, full_name: str, password: str) 
     salt_hex = secrets.token_hex(16)
     password_digest = _password_hash(password, salt_hex)
     now_text = _now_text()
-    conn = _connect()
+    conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("PRAGMA foreign_keys = ON")
@@ -399,7 +393,7 @@ def get_web_account_profiles_by_telegram_ids(telegram_ids) -> dict[int, dict]:
         return {}
     init_web_auth()
     placeholders = ",".join("?" for _ in normalized_ids)
-    conn = _connect()
+    conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         f"""
@@ -429,7 +423,7 @@ def authenticate_web_credentials(username: str, password: str) -> dict | None:
     password = str(password or "")
     password_to_check = password if len(password) <= MAX_PASSWORD_LENGTH else password[:MAX_PASSWORD_LENGTH]
     init_web_auth()
-    conn = _connect()
+    conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     account = cursor.execute(
@@ -496,7 +490,7 @@ def change_web_password(account_id: int, current_password: str, new_password: st
         return {"ok": False, "code": error.code, "message": str(error)}
 
     init_web_auth()
-    conn = _connect()
+    conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     try:
@@ -552,7 +546,7 @@ def create_web_session(account: dict, ip_address: str = "", user_agent: str = ""
     csrf_token = secrets.token_urlsafe(24)
     now_epoch = int(time.time())
     expires_at = now_epoch + _session_ttl_seconds()
-    conn = _connect()
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -596,7 +590,7 @@ def get_web_session(
         return None
     init_web_auth()
     now_epoch = int(time.time())
-    conn = _connect()
+    conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     row = cursor.execute(
@@ -655,7 +649,7 @@ def revoke_web_session(session_token: str) -> bool:
     if not session_token:
         return False
     init_web_auth()
-    conn = _connect()
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE web_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
@@ -669,7 +663,7 @@ def revoke_web_session(session_token: str) -> bool:
 
 def revoke_web_sessions_for_telegram_id(telegram_id: int) -> int:
     init_web_auth()
-    conn = _connect()
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
