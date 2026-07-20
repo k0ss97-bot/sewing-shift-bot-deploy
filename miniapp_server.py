@@ -146,7 +146,7 @@ CONTENT_SECURITY_POLICY = (
     "img-src 'self' data: blob:; "
     "media-src 'self' blob:; "
     "object-src 'none'; "
-    "script-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline' https://telegram.org; "
     "style-src 'self' 'unsafe-inline'; "
     "worker-src 'self' blob:"
 )
