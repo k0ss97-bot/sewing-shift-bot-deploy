@@ -1077,10 +1077,6 @@ MINIAPP_HTML = """<!doctype html>
       margin-bottom: 12px;
     }
 
-    .segment-row.warehouse-segments {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
     .segment-button {
       min-width: 0;
       min-height: 34px;
@@ -3009,12 +3005,22 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     @media (min-width: 900px) {
+      body.web-mode .bottom-nav .desktop-redundant {
+        display: none;
+      }
+
       body.web-mode.warehouse-workspace .bottom-nav::before {
         content: "УПРАВЛЕНИЕ СКЛАДОМ";
       }
 
       body.web-mode.warehouse-workspace .bottom-nav {
         border-color: rgba(25,89,243,.16);
+      }
+    }
+
+    @media (max-width: 899px) {
+      body.warehouse-workspace .bottom-nav {
+        display: none;
       }
     }
   </style>
@@ -3850,7 +3856,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.data && state.data.is_admin) {
         return [
           { id: "shift", label: "Главная", icon: "⌂" },
-          { id: "warehouse", label: "Склад", icon: "▦" },
+          { id: "warehouse", label: "Склад", icon: "▦", desktop_redundant: true },
           { id: "analytics", label: "Аналитика", icon: "▥" },
           { id: "orders", label: "Заказы", icon: "▣" },
           { id: "admin", label: "Админ", icon: "◎" },
@@ -3879,7 +3885,7 @@ MINIAPP_HTML = """<!doctype html>
       const items = navItems();
       bottomNav.style.setProperty("--nav-count", items.length);
       bottomNav.innerHTML = items.map((item) => `
-        <button class="nav-btn ${state.screen === item.id ? "active" : ""}" data-go="${item.id}">
+        <button class="nav-btn ${state.screen === item.id ? "active" : ""} ${item.desktop_redundant ? "desktop-redundant" : ""}" data-go="${item.id}">
           <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
         </button>
       `).join("");
@@ -6185,9 +6191,6 @@ MINIAPP_HTML = """<!doctype html>
 
       return `
         <div class="screen-head"><div><h2>${escapeHtml(definition.label)}</h2><p>Остатки на складе.</p></div><div class="date">${filteredRows.length} из ${definition.rows.length}</div></div>
-        <div class="segment-row warehouse-segments">
-          ${Object.entries(viewDefinitions).map(([id, item]) => `<button class="segment-button ${state.warehouseView === id ? "active" : ""}" data-warehouse-view="${id}">${escapeHtml(item.label)}</button>`).join("")}
-        </div>
         <div class="card field-card">
           <div class="form-grid">
             <div class="field ${isMaterials ? "" : "full"}"><label>${isMaterials ? "Материал" : "Номенклатура изделия"}</label><select id="warehouseProductFilter">${optionHtml(productValues, state.warehouseProductFilter, isMaterials ? "Все материалы" : "Все изделия")}</select></div>

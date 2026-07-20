@@ -289,11 +289,18 @@ def run_smoke() -> None:
                 'Desktop web workspace',
                 'grid-template-columns: repeat(auto-fit, minmax(200px, 1fr))',
                 'padding: 32px 36px 48px 286px',
+                'desktop-redundant',
+                'body.warehouse-workspace .bottom-nav',
+                'data-warehouse-action="overview">К разделам',
             ):
                 require(
                     desktop_marker in html_text,
                     f"Desktop web workspace marker is missing: {desktop_marker}",
                 )
+            require(
+                "warehouse-segments" not in html_text,
+                "Warehouse category navigation must not be duplicated inside a warehouse section.",
+            )
             require(
                 "sessionStorage" not in html_text,
                 "Web session identity must not depend on ephemeral sessionStorage.",
