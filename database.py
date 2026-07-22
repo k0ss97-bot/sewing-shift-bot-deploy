@@ -2774,6 +2774,76 @@ def update_employee_access_status(employee_id: int, status: str):
         conn.close()
 
 
+def delete_employee_if_unused(employee_id: int):
+    """Remove a staff profile only when it has no production history to preserve."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            SELECT id, telegram_id, full_name, position, role, status
+            FROM employees
+            WHERE id = ?
+            """,
+            (employee_id,),
+        )
+        employee = cursor.fetchone()
+        if employee is None:
+            conn.rollback()
+            return {"ok": False, "code": "not_found", "employee": None, "references": []}
+
+        if employee[4] == "admin":
+            conn.rollback()
+            return {"ok": False, "code": "admin_protected", "employee": employee, "references": []}
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        table_names = {row[0] for row in cursor.fetchall()}
+        references = []
+        for table_name in sorted(table_names - {"employees", "sqlite_sequence", "web_accounts", "web_sessions"}):
+            cursor.execute(f'PRAGMA table_info("{table_name}")')
+            employee_columns = [
+                row[1]
+                for row in cursor.fetchall()
+                if row[1] == "employee_id" or row[1].endswith("_employee_id")
+            ]
+            for column_name in employee_columns:
+                cursor.execute(
+                    f'SELECT COUNT(*) FROM "{table_name}" WHERE "{column_name}" = ?',
+                    (employee_id,),
+                )
+                count = int(cursor.fetchone()[0] or 0)
+                if count:
+                    references.append({"table": table_name, "column": column_name, "count": count})
+
+        if references:
+            conn.rollback()
+            return {"ok": False, "code": "has_history", "employee": employee, "references": references}
+
+        if "web_accounts" in table_names:
+            if "web_sessions" in table_names:
+                cursor.execute(
+                    "DELETE FROM web_sessions WHERE account_id IN (SELECT id FROM web_accounts WHERE telegram_id = ?)",
+                    (employee[1],),
+                )
+            cursor.execute("DELETE FROM web_accounts WHERE telegram_id = ?", (employee[1],))
+
+        cursor.execute("DELETE FROM employees WHERE id = ?", (employee_id,))
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return {"ok": False, "code": "not_found", "employee": None, "references": []}
+
+        conn.commit()
+        return {"ok": True, "code": "", "employee": employee, "references": []}
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def update_employee_role(employee_id: int, role: str, position: str | None = None):
     if role not in {"admin", "employee"}:
         return {"ok": False, "code": "invalid_role", "employee": None}

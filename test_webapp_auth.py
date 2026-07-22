@@ -555,6 +555,78 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertFalse(demotion["ok"])
         self.assertIn("собственного аккаунта", demotion["message"])
 
+    def test_admin_can_delete_unused_employee_and_web_access(self):
+        self.database.create_employee(23003, "Веб Администратор", "Швея")
+        admin = self.database.get_employee_by_telegram_id(23003)
+        self.assertTrue(self.database.update_employee_role(admin[0], "admin")["ok"])
+        self.auth.upsert_web_account("delete-admin", 23003, "delete-admin-password")
+
+        status, login, headers = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "delete-admin", "password": "delete-admin-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        admin_headers = {
+            "Cookie": headers["Set-Cookie"].split(";", 1)[0],
+            "X-CSRF-Token": login["csrf_token"],
+            "Origin": self.origin,
+        }
+
+        self.database.create_employee(23004, "Удаляемый Сотрудник", "Упаковщик")
+        target = self.database.get_employee_by_telegram_id(23004)
+        self.database.update_employee_status(target[0], "active")
+        self.auth.upsert_web_account("delete-worker", 23004, "delete-worker-password")
+        signed_in_target = self.auth.authenticate_web_credentials("delete-worker", "delete-worker-password")
+        target_session = self.auth.create_web_session(signed_in_target)
+
+        status, result, _ = self.request(
+            "POST",
+            "/api/admin/employee/delete",
+            {"employee_id": target[0]},
+            admin_headers,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"], result)
+        self.assertIsNone(self.database.get_employee_by_telegram_id(23004))
+        self.assertIsNone(self.auth.authenticate_web_credentials("delete-worker", "delete-worker-password"))
+        self.assertIsNone(self.auth.get_web_session(target_session["session_token"]))
+
+    def test_admin_cannot_delete_employee_with_production_history(self):
+        self.database.create_employee(23003, "Веб Администратор", "Швея")
+        admin = self.database.get_employee_by_telegram_id(23003)
+        self.assertTrue(self.database.update_employee_role(admin[0], "admin")["ok"])
+        self.auth.upsert_web_account("history-admin", 23003, "history-admin-password")
+        status, login, headers = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "history-admin", "password": "history-admin-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        admin_headers = {
+            "Cookie": headers["Set-Cookie"].split(";", 1)[0],
+            "X-CSRF-Token": login["csrf_token"],
+            "Origin": self.origin,
+        }
+
+        self.database.create_employee(23004, "Сотрудник с историей", "Упаковщик")
+        target = self.database.get_employee_by_telegram_id(23004)
+        self.database.update_employee_status(target[0], "active")
+        self.database.create_shift(target[0])
+
+        status, result, _ = self.request(
+            "POST",
+            "/api/admin/employee/delete",
+            {"employee_id": target[0]},
+            admin_headers,
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(result["ok"])
+        self.assertIn("сохранить отчёты", result["message"])
+        self.assertIsNotNone(self.database.get_employee_by_telegram_id(23004))
+
     def test_disabled_employee_session_is_revoked_on_restore(self):
         status, login, headers = self.request(
             "POST",

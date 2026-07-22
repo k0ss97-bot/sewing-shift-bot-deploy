@@ -3123,11 +3123,6 @@ MINIAPP_HTML = """<!doctype html>
     const tg = null;
     const urlParams = new URLSearchParams(window.location.search);
     const debugTelegramId = urlParams.get("debug_tg_id");
-    if (urlParams.has("auth")) {
-      urlParams.delete("auth");
-      const cleanQuery = urlParams.toString();
-      window.history.replaceState(null, "", `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}${window.location.hash}`);
-    }
     try {
       window.localStorage.removeItem("miniapp_auth");
     } catch (error) {
@@ -4443,6 +4438,22 @@ MINIAPP_HTML = """<!doctype html>
         replaceAdminDashboard(data, "Смена удалена.");
       } catch (error) {
         showToast("Ошибка", "Не удалось удалить смену.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function adminDeleteEmployee(employeeId, employeeName) {
+      const name = String(employeeName || "этого сотрудника").trim();
+      const message = `Удалить ${name} из базы и закрыть ему доступ к приложению?\n\nУдаление доступно только если у сотрудника нет смен, операций и производственных записей. Для сохранения истории такого сотрудника нужно отключить.`;
+      if (!window.confirm(message)) return;
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/admin/employee/delete", { employee_id: employeeId });
+        if (!data.ok) throw new Error(data.message || "Не удалось удалить сотрудника.");
+        replaceAdminDashboard(data, "Сотрудник удалён.");
+      } catch (error) {
+        showToast("Удаление", error.message || "Не удалось удалить сотрудника.");
         mainButton.disabled = false;
       }
     }
@@ -6319,7 +6330,7 @@ MINIAPP_HTML = """<!doctype html>
             </div>
           ` : `
             <div class="button-row"><button class="small-button secondary" data-admin-action="position" data-employee-id="${escapeHtml(employee.id)}">Сохранить должность</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button></div>
-            <div class="button-row"><button class="small-button" data-admin-action="role-admin" data-employee-id="${escapeHtml(employee.id)}">Назначить администратором</button></div>
+            <div class="button-row"><button class="small-button" data-admin-action="role-admin" data-employee-id="${escapeHtml(employee.id)}">Назначить администратором</button><button class="small-button danger" data-admin-action="delete-employee" data-employee-id="${escapeHtml(employee.id)}" data-employee-name="${escapeHtml(employee.full_name)}">Удалить</button></div>
           `}
         </div>
       `).join("") : itemEmpty("По выбранным фильтрам сотрудников нет.");
@@ -6328,7 +6339,7 @@ MINIAPP_HTML = """<!doctype html>
           <label>Заявка · ${escapeHtml(employee.registered_at || "")}</label>
           <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${employeeContact(employee)}</span></div><span class="status-chip warn">ожидает</span></div>
           <div class="form-grid"><div class="field full"><label>Должность</label><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>
-          <div class="button-row"><button class="small-button secondary" data-admin-action="inactive" data-employee-id="${escapeHtml(employee.id)}">Отклонить</button><button class="small-button" data-admin-action="approve" data-employee-id="${escapeHtml(employee.id)}">Назначить и активировать</button></div>
+          <div class="button-row"><button class="small-button secondary" data-admin-action="inactive" data-employee-id="${escapeHtml(employee.id)}">Отклонить</button><button class="small-button" data-admin-action="approve" data-employee-id="${escapeHtml(employee.id)}">Назначить и активировать</button><button class="small-button danger" data-admin-action="delete-employee" data-employee-id="${escapeHtml(employee.id)}" data-employee-name="${escapeHtml(employee.full_name)}">Удалить</button></div>
         </div>
       `).join("") : itemEmpty("Новых заявок нет.");
 
@@ -6843,6 +6854,7 @@ MINIAPP_HTML = """<!doctype html>
         if (adminAction.dataset.adminAction === "position") adminEmployeePosition(adminAction.dataset.employeeId);
         if (adminAction.dataset.adminAction === "role-admin") adminEmployeeRole(adminAction.dataset.employeeId, "admin");
         if (adminAction.dataset.adminAction === "role-employee") adminEmployeeRole(adminAction.dataset.employeeId, "employee");
+        if (adminAction.dataset.adminAction === "delete-employee") adminDeleteEmployee(adminAction.dataset.employeeId, adminAction.dataset.employeeName);
         if (adminAction.dataset.adminAction === "close-shift") adminCloseShift(adminAction.dataset.shiftId);
         if (adminAction.dataset.adminAction === "delete-shift") adminDeleteShift(adminAction.dataset.shiftId);
         return;
@@ -7203,6 +7215,24 @@ MINIAPP_HTML = """<!doctype html>
       showToast("Меню", "Настройки профиля и уведомления подключим позже.");
     });
 
+    function requestedWebAuthMode() {
+      if (!isStandaloneWeb) return "login";
+      return new URLSearchParams(window.location.search).get("auth") === "register"
+        ? "register"
+        : "login";
+    }
+
+    function syncWebAuthModeUrl(mode) {
+      if (!isStandaloneWeb || !window.history || typeof window.history.replaceState !== "function") return;
+      const url = new URL(window.location.href);
+      if (mode === "register") url.searchParams.set("auth", "register");
+      else url.searchParams.delete("auth");
+      const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+      if (nextUrl !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+        window.history.replaceState(null, "", nextUrl);
+      }
+    }
+
     function setWebAuthMode(mode, message = "", success = false) {
       const isRegistration = mode === "register";
       const loginTab = document.getElementById("webLoginTab");
@@ -7222,6 +7252,7 @@ MINIAPP_HTML = """<!doctype html>
       const messageNode = isRegistration ? registerError : loginError;
       messageNode.textContent = message;
       messageNode.classList.toggle("success", Boolean(message && success));
+      syncWebAuthModeUrl(isRegistration ? "register" : "login");
       const focusTarget = isRegistration ? "webFullName" : "webUsername";
       window.setTimeout(() => document.getElementById(focusTarget)?.focus(), 60);
     }
@@ -7235,7 +7266,7 @@ MINIAPP_HTML = """<!doctype html>
       bottomNav.hidden = true;
       connectionView.hidden = true;
       loginView.hidden = false;
-      setWebAuthMode("login", message);
+      setWebAuthMode(requestedWebAuthMode(), message);
     }
 
     function showWebApp() {

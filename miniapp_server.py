@@ -33,6 +33,7 @@ from database import (
     create_route_batch,
     create_route_batches_with_inputs,
     create_shift,
+    delete_employee_if_unused,
     delete_shift_by_id,
     ensure_admin_employee,
     get_active_operations,
@@ -4226,6 +4227,47 @@ def set_employee_status_for_admin(telegram_id: int, payload: dict):
     return dashboard
 
 
+def delete_employee_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    try:
+        employee_id = int(payload.get("employee_id") or 0)
+    except (TypeError, ValueError):
+        employee_id = 0
+
+    current_employee = get_employee_by_id(employee_id)
+    if current_employee is None:
+        return {"ok": False, "message": "Сотрудник не найден."}
+    if current_employee[1] == telegram_id:
+        return {"ok": False, "message": "Нельзя удалить собственный аккаунт администратора."}
+
+    result = delete_employee_if_unused(employee_id)
+    if result.get("code") == "admin_protected":
+        return {"ok": False, "message": "Аккаунты администраторов удалять нельзя."}
+    if result.get("code") == "has_history":
+        return {
+            "ok": False,
+            "message": "У сотрудника есть смены, операции или производственные записи. Чтобы сохранить отчёты, его можно только отключить.",
+        }
+
+    employee = result.get("employee")
+    if not result.get("ok") or employee is None:
+        return {"ok": False, "message": "Сотрудник не найден."}
+
+    add_edit_log(
+        telegram_id,
+        "admin",
+        "Удалил сотрудника и веб-доступ из миниаппа",
+        "employee",
+        employee_id,
+        employee[2],
+    )
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["message"] = "Сотрудник и его доступ к приложению удалены."
+    return dashboard
+
+
 def set_employee_role_for_admin(telegram_id: int, payload: dict):
     if not is_admin(telegram_id):
         return {"ok": False, "message": "Нет прав администратора."}
@@ -4798,6 +4840,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/admin/report/export",
                 "/api/admin/feedback",
                 "/api/admin/employee/status",
+                "/api/admin/employee/delete",
                 "/api/admin/employee/position",
                 "/api/admin/employee/role",
                 "/api/admin/shift/close",
@@ -5087,6 +5130,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = get_admin_feedback_for_telegram(telegram_id, payload)
             elif path == "/api/admin/employee/status":
                 result = set_employee_status_for_admin(telegram_id, payload)
+            elif path == "/api/admin/employee/delete":
+                result = delete_employee_for_admin(telegram_id, payload)
             elif path == "/api/admin/employee/position":
                 result = set_employee_position_for_admin(telegram_id, payload)
             elif path == "/api/admin/employee/role":
