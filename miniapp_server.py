@@ -3814,12 +3814,16 @@ def get_admin_home_period_payload(
         employee["status"] = shift.get("status") or employee["status"]
 
     if period_id == "today":
-        for shift in open_shifts:
-            employee = ensure_employee(shift.get("employee") or "Сотрудник")
-            employee["on_shift"] = True
-            employee["status"] = "open"
-            employee["start_time"] = shift.get("start_time") or ""
-            employee["date"] = shift.get("date") or start_date
+        today_shifts = get_today_shifts()
+        for shift in today_shifts:
+            shift_dict = shift_detail_to_dict(shift)
+            employee = ensure_employee(shift_dict.get("employee") or "Сотрудник")
+            is_open = shift_dict.get("status") == "open"
+            employee["on_shift"] = is_open
+            employee["status"] = "open" if is_open else "closed"
+            employee["start_time"] = shift_dict.get("start_time") or ""
+            employee["end_time"] = shift_dict.get("end_time") or ""
+            employee["date"] = shift_dict.get("date") or start_date
 
     for operation in report.get("operations", []):
         employee = ensure_employee(operation.get("employee") or "Сотрудник")

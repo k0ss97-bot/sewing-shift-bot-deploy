@@ -4174,7 +4174,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="op-list">
           ${employees.length ? employees.map((employee, index) => `
             <div class="card report-row" data-admin-home-employee="${index}">
-              <div><b>${escapeHtml(employee.name)}</b><span>${escapeHtml(employee.position)}${employee.on_shift ? ` · на смене${employee.start_time ? ` с ${escapeHtml(employee.start_time)}` : ""}` : ""}<br>План ${escapeHtml(employee.plan_text || "0")} · факт ${escapeHtml(employee.fact_text || "0")}</span></div>
+              <div><b>${escapeHtml(employee.name)}</b><span>${escapeHtml(employee.position)}${employee.on_shift ? ` · на смене${employee.start_time ? ` с ${escapeHtml(employee.start_time)}` : ""}` : (employee.start_time && employee.end_time ? ` · смена ${escapeHtml(employee.start_time)} — ${escapeHtml(employee.end_time)}` : "")}<br>План ${escapeHtml(employee.plan_text || "0")} · факт ${escapeHtml(employee.fact_text || "0")}</span></div>
               <span class="status-chip gray">›</span>
             </div>
           `).join("") : itemEmpty(period.id === "today" ? "Сотрудников на смене пока нет." : "За период сотрудников с отчётами пока нет.")}
