@@ -2,3 +2,6 @@ aiogram==3.29.0
 python-dotenv==1.2.2
 openpyxl==3.1.5
 qrcode[pil]==8.2
+# WMS module (Postgres hybrid layer). Only imported by wms/* — the legacy
+# bot/server stay on SQLite and never import psycopg2.
+psycopg2-binary==2.9.10
