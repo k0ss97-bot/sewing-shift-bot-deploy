@@ -3170,6 +3170,7 @@ MINIAPP_HTML = """<!doctype html>
       "warehouseProductFilter",
       "warehouseSizeFilter",
       "warehouseColorFilter",
+      "wmsView",
       "adminSection",
       "employeePositionFilter",
       "employeeStatusFilter",
@@ -3265,6 +3266,8 @@ MINIAPP_HTML = """<!doctype html>
       passportReturnScreen: "orders",
       profileReturnScreen: "shift",
       taskDefectPhotos: {},
+      wmsView: "receive",
+      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", fromLocation: "", toLocation: ""},
       ...persistedUiState,
       data: null,
     };
@@ -3848,16 +3851,25 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function navItems() {
+      const wmsItem = canAccessWms() ? [{ id: "wms", label: "ТСД", icon: "▤" }] : [];
       if (state.data && state.data.is_admin) {
         return [
           { id: "shift", label: "Главная", icon: "⌂" },
           { id: "warehouse", label: "Склад", icon: "▦", desktop_redundant: true },
+          ...wmsItem,
           { id: "analytics", label: "Аналитика", icon: "▥" },
           { id: "orders", label: "Заказы", icon: "▣" },
           { id: "admin", label: "Админ", icon: "◎" },
         ];
       }
-      return [...baseNav];
+      return [...baseNav, ...wmsItem];
+    }
+
+    function canAccessWms() {
+      if (!state.data) return false;
+      if (state.data.is_admin) return true;
+      const pos = state.data.employee && state.data.employee.position;
+      return pos === "Кладовщик";
     }
 
     function renderBottomNav() {
@@ -3871,6 +3883,21 @@ MINIAPP_HTML = """<!doctype html>
         bottomNav.style.setProperty("--nav-count", warehouseItems.length);
         bottomNav.innerHTML = warehouseItems.map((item) => `
           <button class="nav-btn ${state.warehouseView === item.id ? "active" : ""}" data-warehouse-view="${item.id}">
+            <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
+          </button>
+        `).join("");
+        return;
+      }
+
+      if (state.screen === "wms") {
+        const wmsItems = [
+          {id: "receive", label: "Приёмка", icon: "↓"},
+          {id: "putaway", label: "Размещение", icon: "→"},
+          {id: "transfer", label: "Перемещение", icon: "⇄"},
+        ];
+        bottomNav.style.setProperty("--nav-count", wmsItems.length);
+        bottomNav.innerHTML = wmsItems.map((item) => `
+          <button class="nav-btn ${state.wmsView === item.id ? "active" : ""}" data-wms-view="${item.id}">
             <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
           </button>
         `).join("");
@@ -5238,6 +5265,137 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    function readWmsDraftFromForm() {
+      const productName = (document.getElementById("wmsProductName") || {}).value || "";
+      const productSize = (document.getElementById("wmsProductSize") || {}).value || "";
+      const productColor = (document.getElementById("wmsProductColor") || {}).value || "";
+      const itemType = (document.getElementById("wmsItemType") || {}).value || "finished";
+      const quantity = (document.getElementById("wmsQuantity") || {}).value || "";
+      const fromLocation = (document.getElementById("wmsFromLocation") || {}).value || "";
+      const toLocation = (document.getElementById("wmsToLocation") || {}).value || "";
+      const d = state.wmsDraft;
+      d.productName = productName; d.productSize = productSize; d.productColor = productColor;
+      d.itemType = itemType; d.quantity = quantity;
+      d.fromLocation = fromLocation; d.toLocation = toLocation;
+      return d;
+    }
+
+    function wmsProductKey(d) {
+      return {
+        item_type: d.itemType || "finished",
+        product_name: d.productName,
+        product_size: d.productSize,
+        product_color: d.productColor,
+        stage_name: "Готово",
+        ready_for_position: "Склад",
+      };
+    }
+
+    async function wmsReceive() {
+      const d = readWmsDraftFromForm();
+      const qty = parseInt(d.quantity, 10);
+      if (!d.productName || !qty || qty < 1) {
+        showToast("ТСД", "Укажите изделие и количество (≥ 1).");
+        return;
+      }
+      const actionKey = `wms:receive:${d.productName}:${d.productSize}:${d.productColor}:${qty}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/wms/receive", {
+          product_key: wmsProductKey(d),
+          quantity: qty,
+          reason: "Приёмка от производства (ТСД)",
+          tsd_device_id: navigator.userAgent.slice(0, 40),
+        });
+        const ok = data.status === "ok" || data.status === "duplicate";
+        showToast("ТСД", ok ? `Принято: ${qty} шт.` : (data.reason || "Ошибка приёмки."));
+        if (ok) { state.wmsDraft.quantity = ""; render(); }
+        else mainButton.disabled = false;
+      } catch (error) {
+        showToast("Ошибка", "Не удалось принять товар.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function wmsPutaway() {
+      const d = readWmsDraftFromForm();
+      const qty = parseInt(d.quantity, 10);
+      if (!d.productName || !qty || qty < 1) {
+        showToast("ТСД", "Укажите изделие и количество (≥ 1).");
+        return;
+      }
+      const toLoc = (d.toLocation || "").replace(/^LOC:/i, "").trim();
+      if (!toLoc) {
+        showToast("ТСД", "Отсканируйте или введите целевую ячейку.");
+        return;
+      }
+      const actionKey = `wms:putaway:${d.productName}:${d.productSize}:${d.productColor}:${toLoc}:${qty}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/wms/putaway", {
+          product_key: wmsProductKey(d),
+          quantity: qty,
+          to_location_code: toLoc,
+          reason: "Размещение (ТСД)",
+          tsd_device_id: navigator.userAgent.slice(0, 40),
+        });
+        const ok = data.status === "ok" || data.status === "duplicate";
+        showToast("ТСД", ok ? `Размещено: ${qty} шт. → ${toLoc}` : (data.reason || "Ошибка размещения."));
+        if (ok) { state.wmsDraft.quantity = ""; state.wmsDraft.toLocation = ""; render(); }
+        else mainButton.disabled = false;
+      } catch (error) {
+        showToast("Ошибка", "Не удалось разместить товар.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function wmsTransfer() {
+      const d = readWmsDraftFromForm();
+      const qty = parseInt(d.quantity, 10);
+      if (!d.productName || !qty || qty < 1) {
+        showToast("ТСД", "Укажите изделие и количество (≥ 1).");
+        return;
+      }
+      const fromLoc = (d.fromLocation || "").replace(/^LOC:/i, "").trim();
+      const toLoc = (d.toLocation || "").replace(/^LOC:/i, "").trim();
+      if (!fromLoc || !toLoc) {
+        showToast("ТСД", "Отсканируйте обе ячейки (из/в).");
+        return;
+      }
+      if (fromLoc === toLoc) {
+        showToast("ТСД", "Ячейки откуда и куда совпадают.");
+        return;
+      }
+      const actionKey = `wms:transfer:${d.productName}:${d.productSize}:${d.productColor}:${fromLoc}:${toLoc}:${qty}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/wms/transfer", {
+          product_key: wmsProductKey(d),
+          quantity: qty,
+          from_location_code: fromLoc,
+          to_location_code: toLoc,
+          reason: "Перемещение (ТСД)",
+          tsd_device_id: navigator.userAgent.slice(0, 40),
+        });
+        const ok = data.status === "ok" || data.status === "duplicate";
+        showToast("ТСД", ok ? `Перемещено: ${qty} шт. ${fromLoc} → ${toLoc}` : (data.reason || "Ошибка перемещения."));
+        if (ok) { state.wmsDraft.quantity = ""; state.wmsDraft.fromLocation = ""; state.wmsDraft.toLocation = ""; render(); }
+        else mainButton.disabled = false;
+      } catch (error) {
+        showToast("Ошибка", "Не удалось переместить товар.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
     async function rejectFabricRolls(taskId, productColor, availableRolls) {
       const rawQuantity = window.prompt(`Сколько рулонов отправить в брак? Доступно: ${availableRolls}`, "1");
       if (rawQuantity === null) return;
@@ -5702,6 +5860,87 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       openWebQrScanner();
+    }
+
+    function scanWms(field) {
+      const prompts = {
+        product: "Наведите камеру на штрихкод товара",
+        from_location: "Наведите камеру на штрихкод ячейки (LOC:…)",
+        to_location: "Наведите камеру на штрихкод ячейки (LOC:…)",
+      };
+      state.wmsScanField = field;
+      if (tg && typeof tg.showScanQrPopup === "function") {
+        tg.showScanQrPopup({text: prompts[field] || "Сканирование"}, (value) => {
+          handleWmsScan(value);
+          return true;
+        });
+        return;
+      }
+      openWmsScanner();
+    }
+
+    function handleWmsScan(rawValue) {
+      const v = String(rawValue || "").trim();
+      if (!v) return;
+      const field = state.wmsScanField || "product";
+      if (/^LOC:/i.test(v)) {
+        const code = v.replace(/^LOC:/i, "").trim();
+        const target = field === "from_location" ? "wmsFromLocation" : "wmsToLocation";
+        const el = document.getElementById(target);
+        if (el) el.value = code;
+        state.wmsDraft[field === "from_location" ? "fromLocation" : "toLocation"] = code;
+        showToast("ТСД", `Ячейка: ${code}`);
+      } else if (/^LPN:/i.test(v)) {
+        showToast("ТСД", `Контейнер: ${v} (поддержка LPN — в разработке)`);
+      } else {
+        // Product barcode: no backend resolve yet — fill productName as fallback.
+        showToast("ТСД", `Штрихкод товара: ${v} (привязка товаров — в разработке)`);
+      }
+    }
+
+    async function openWmsScanner() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof window.BarcodeDetector !== "function") {
+        const code = window.prompt("Введите код вручную (LOC:… или штрихкод товара):", "");
+        if (code) handleWmsScan(code);
+        return;
+      }
+      try {
+        qrScannerStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {facingMode: {ideal: "environment"}},
+        });
+        qrScanner.hidden = false;
+        qrScannerVideo.srcObject = qrScannerStream;
+        await qrScannerVideo.play();
+        const detector = new window.BarcodeDetector({formats: ["qr_code", "code_128", "ean_13", "code_39"]});
+        let detecting = false;
+        const detectFrame = async () => {
+          if (!qrScannerStream || qrScanner.hidden) return;
+          if (!detecting && qrScannerVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            detecting = true;
+            try {
+              const codes = await detector.detect(qrScannerVideo);
+              const value = codes && codes[0] ? codes[0].rawValue : "";
+              if (value) {
+                stopWebQrScanner();
+                handleWmsScan(value);
+                return;
+              }
+            } catch (error) {
+              // transient unreadable frame
+            } finally {
+              detecting = false;
+            }
+          }
+          qrScannerFrame = window.requestAnimationFrame(detectFrame);
+        };
+        qrScannerFrame = window.requestAnimationFrame(detectFrame);
+      } catch (error) {
+        stopWebQrScanner();
+        showToast("ТСД", "Камера недоступна. Введите код вручную.");
+        const code = window.prompt("Введите код (LOC:… или штрихкод товара):", "");
+        if (code) handleWmsScan(code);
+      }
     }
 
     function renderPassport() {
@@ -6216,6 +6455,113 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = renderAdminWarehouse(false);
     }
 
+    function renderWms() {
+      if (!canAccessWms()) {
+        mainButton.textContent = "Обновить";
+        mainButton.disabled = false;
+        mount.innerHTML = `
+          <div class="screen-head"><div><h2>ТСД</h2><p>Раздел доступен кладовщикам и администраторам.</p></div></div>
+          <div class="card field-card">${itemEmpty("Нет доступа к складским операциям.")}</div>
+        `;
+        return;
+      }
+      if (state.wmsView === "putaway") return renderWmsPutaway();
+      if (state.wmsView === "transfer") return renderWmsTransfer();
+      return renderWmsReceive();
+    }
+
+    function wmsProductOptions(selected) {
+      const catalog = getRouteCatalog();
+      const names = catalog.length ? catalog.map((c) => c.product_name) : ["Готовое изделие"];
+      const unique = [...new Set(names)];
+      return unique.map((name) => `<option value="${escapeHtml(name)}" ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+    }
+
+    function wmsSizeOptions(productName, selected) {
+      const catalog = getRouteCatalog();
+      const item = catalog.find((c) => c.product_name === productName);
+      const sizes = (item && item.sizes) || ["42", "44", "46", "48", "50", "52", "86", "92", "98", "104", "110", "116", "122", "128", "134", "140", "146", "152", "158", "164"];
+      return sizes.map((s) => `<option value="${escapeHtml(s)}" ${s === selected ? "selected" : ""}>${escapeHtml(s)}</option>`).join("");
+    }
+
+    function wmsColorOptions(productName, selected) {
+      const catalog = getRouteCatalog();
+      const item = catalog.find((c) => c.product_name === productName);
+      const colors = (item && item.colors) || ["Черный", "Белый", "Серый", "Бежевый", "Синий"];
+      return colors.map((c) => `<option value="${escapeHtml(c)}" ${c === selected ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
+    }
+
+    function renderWmsReceive() {
+      const d = state.wmsDraft;
+      mainButton.textContent = "Принять на склад";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Приёмка</h2><p>Принять готовую продукцию от производства в зону приёмки.</p></div></div>
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field full"><label>Изделие</label><select id="wmsProductName">${wmsProductOptions(d.productName)}</select></div>
+            <div class="field"><label>Размер</label><select id="wmsProductSize">${wmsSizeOptions(d.productName, d.productSize)}</select></div>
+            <div class="field"><label>Цвет</label><select id="wmsProductColor">${wmsColorOptions(d.productName, d.productColor)}</select></div>
+            <div class="field"><label>Тип</label><select id="wmsItemType">
+              <option value="finished" ${d.itemType === "finished" ? "selected" : ""}>Готовая продукция</option>
+              <option value="semifinished" ${d.itemType === "semifinished" ? "selected" : ""}>Полуфабрикат</option>
+            </select></div>
+            <div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>
+          </div>
+        </div>
+        <div class="button-row">
+          <button class="small-button" data-wms-scan="product">📷 Сканировать</button>
+          <button class="small-button secondary" data-wms-action="receive">Принять</button>
+        </div>
+      `;
+    }
+
+    function renderWmsPutaway() {
+      const d = state.wmsDraft;
+      mainButton.textContent = "Разместить";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Размещение</h2><p>Переместить товар из приёмки в ячейку хранения. Отсканируйте ячейку.</p></div></div>
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field full"><label>Изделие</label><select id="wmsProductName">${wmsProductOptions(d.productName)}</select></div>
+            <div class="field"><label>Размер</label><select id="wmsProductSize">${wmsSizeOptions(d.productName, d.productSize)}</select></div>
+            <div class="field"><label>Цвет</label><select id="wmsProductColor">${wmsColorOptions(d.productName, d.productColor)}</select></div>
+            <div class="field full"><label>Целевая ячейка (LOC:…)</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="A-03-02"></div>
+            <div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>
+          </div>
+        </div>
+        <div class="button-row">
+          <button class="small-button" data-wms-scan="to_location">📷 Ячейка</button>
+          <button class="small-button secondary" data-wms-action="putaway">Разместить</button>
+        </div>
+      `;
+    }
+
+    function renderWmsTransfer() {
+      const d = state.wmsDraft;
+      mainButton.textContent = "Переместить";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Перемещение</h2><p>Переместить товар между ячейками. Отсканируйте исходную и целевую ячейки.</p></div></div>
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field full"><label>Изделие</label><select id="wmsProductName">${wmsProductOptions(d.productName)}</select></div>
+            <div class="field"><label>Размер</label><select id="wmsProductSize">${wmsSizeOptions(d.productName, d.productSize)}</select></div>
+            <div class="field"><label>Цвет</label><select id="wmsProductColor">${wmsColorOptions(d.productName, d.productColor)}</select></div>
+            <div class="field full"><label>Из ячейки (LOC:…)</label><input id="wmsFromLocation" value="${escapeHtml(d.fromLocation || "")}" placeholder="A-03-02"></div>
+            <div class="field full"><label>В ячейку (LOC:…)</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="B-01-05"></div>
+            <div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>
+          </div>
+        </div>
+        <div class="button-row">
+          <button class="small-button" data-wms-scan="from_location">📷 Из ячейки</button>
+          <button class="small-button" data-wms-scan="to_location">📷 В ячейку</button>
+          <button class="small-button secondary" data-wms-action="transfer">Переместить</button>
+        </div>
+      `;
+    }
+
     function renderAdminReports(admin) {
       ensureAdminDefaults();
       const report = getAdminReport();
@@ -6477,10 +6823,11 @@ MINIAPP_HTML = """<!doctype html>
     function render() {
       if (!state.data) return;
       const allowedScreens = state.data.is_admin
-        ? ["shift", "warehouse", "analytics", "orders", "admin", "passport", "profile"]
-        : ["shift", "report", "analytics", "orders", "admin", "passport", "profile"];
+        ? ["shift", "warehouse", "wms", "analytics", "orders", "admin", "passport", "profile"]
+        : ["shift", "report", "wms", "analytics", "orders", "admin", "passport", "profile"];
 
       if (!allowedScreens.includes(state.screen)) state.screen = "shift";
+      if (state.screen === "wms" && !canAccessWms()) state.screen = "shift";
       document.getElementById("roleLabel").textContent = roleLabel();
       const isWarehouseWorkspace = state.screen === "warehouse";
       document.body.classList.toggle("warehouse-workspace", isWarehouseWorkspace);
@@ -6494,6 +6841,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "operations") renderOperations();
       if (state.screen === "report") renderReport();
       if (state.screen === "warehouse") renderWarehouse();
+      if (state.screen === "wms") renderWms();
       if (state.screen === "analytics") renderAnalytics();
       if (state.screen === "orders") renderOrders();
       if (state.screen === "admin") renderAdmin();
@@ -6707,6 +7055,28 @@ MINIAPP_HTML = """<!doctype html>
         state.warehouseView = warehouseView.dataset.warehouseView;
         resetWarehouseFilters();
         render();
+        return;
+      }
+
+      const wmsView = event.target.closest("[data-wms-view]");
+      if (wmsView) {
+        state.wmsView = wmsView.dataset.wmsView;
+        render();
+        return;
+      }
+
+      const wmsScan = event.target.closest("[data-wms-scan]");
+      if (wmsScan) {
+        scanWms(wmsScan.dataset.wmsScan);
+        return;
+      }
+
+      const wmsAction = event.target.closest("[data-wms-action]");
+      if (wmsAction) {
+        const action = wmsAction.dataset.wmsAction;
+        if (action === "receive") wmsReceive();
+        else if (action === "putaway") wmsPutaway();
+        else if (action === "transfer") wmsTransfer();
         return;
       }
 
@@ -6974,6 +7344,12 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       if (state.screen === "warehouse") { refreshState("Склад обновлён."); return; }
+      if (state.screen === "wms") {
+        if (state.wmsView === "receive") wmsReceive();
+        else if (state.wmsView === "putaway") wmsPutaway();
+        else if (state.wmsView === "transfer") wmsTransfer();
+        return;
+      }
       if (state.screen === "analytics") {
         if (state.data && state.data.is_admin) { refreshAdminDashboard("Контроль производства обновлён."); return; }
         setScreen("orders");
