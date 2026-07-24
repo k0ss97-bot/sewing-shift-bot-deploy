@@ -3208,6 +3208,9 @@ MINIAPP_HTML = """<!doctype html>
       wrapper.appendChild(arrow);
       select.parentNode.insertBefore(wrapper, select);
       document.body.appendChild(dropdown);
+      wrapper._sourceSelect = select;
+      dropdown._sourceSelect = select;
+      wrapper._dropdown = dropdown;
 
       let options = [];
       let selectedIndex = -1;
@@ -3367,16 +3370,16 @@ MINIAPP_HTML = """<!doctype html>
     function initSearchableSelects(root) {
       root = root || document;
 
-      /* Clean up orphaned searchable-select wrappers and dropdowns.
-         render() replaces mount.innerHTML, which removes <select>
-         elements, but the .searchable-select wrappers (inserted
-         via insertBefore next to the select) and .ss-dropdown
-         elements (appended to document.body) survive as orphans.
-         Remove them before creating new ones. */
+      /* Clean up only orphaned wrappers/dropdowns.  Working searchable
+         selects must survive MutationObserver callbacks. */
       document.querySelectorAll(".searchable-select").forEach(function(w) {
+        var source = w._sourceSelect;
+        if (source && source.isConnected) return;
+        if (w._dropdown) w._dropdown.remove();
         w.remove();
       });
       document.querySelectorAll(".ss-dropdown").forEach(function(d) {
+        if (d._sourceSelect && d._sourceSelect.isConnected) return;
         d.remove();
       });
 
