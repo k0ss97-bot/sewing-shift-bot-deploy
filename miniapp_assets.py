@@ -104,7 +104,7 @@ MINIAPP_HTML = """<!doctype html>
       margin: 8px 0 0;
       color: var(--muted);
       font-size: 14px;
-      font-weight: 750;
+      font-weight: 500;
     }
 
     .auth-tabs {
@@ -124,7 +124,7 @@ MINIAPP_HTML = """<!doctype html>
       border-radius: 12px;
       background: transparent;
       color: var(--muted);
-      font-weight: 900;
+      font-weight: 700;
     }
 
     .auth-tab.active {
@@ -148,7 +148,7 @@ MINIAPP_HTML = """<!doctype html>
       gap: 7px;
       color: var(--muted);
       font-size: 12px;
-      font-weight: 900;
+      font-weight: 700;
     }
 
     .login-card input {
@@ -173,7 +173,7 @@ MINIAPP_HTML = """<!doctype html>
       border-radius: 14px;
       background: var(--accent);
       color: white;
-      font-weight: 950;
+      font-weight: 700;
     }
 
     .login-submit:disabled {
@@ -248,7 +248,7 @@ MINIAPP_HTML = """<!doctype html>
     .connection-retry-status {
       min-height: 18px;
       font-size: 12px;
-      font-weight: 750;
+      font-weight: 500;
     }
 
     .connection-card .login-submit {
@@ -479,7 +479,7 @@ MINIAPP_HTML = """<!doctype html>
     .app-title {
       text-align: center;
       font-size: 16px;
-      font-weight: 950;
+      font-weight: 700;
       line-height: 1.05;
       letter-spacing: 0;
     }
@@ -489,7 +489,7 @@ MINIAPP_HTML = """<!doctype html>
       margin-top: 3px;
       color: var(--muted);
       font-size: 10px;
-      font-weight: 850;
+      font-weight: 600;
     }
 
     .body {
@@ -522,7 +522,7 @@ MINIAPP_HTML = """<!doctype html>
       padding: 8px 4px;
       font-size: 10.5px;
       line-height: 1.05;
-      font-weight: 900;
+      font-weight: 700;
       overflow-wrap: anywhere;
       word-break: break-word;
     }
@@ -563,7 +563,7 @@ MINIAPP_HTML = """<!doctype html>
     .date {
       color: var(--muted);
       font-size: 11px;
-      font-weight: 900;
+      font-weight: 700;
       padding: 8px 10px;
       border-radius: 99px;
       background: rgba(255,255,255,.54);
@@ -607,7 +607,7 @@ MINIAPP_HTML = """<!doctype html>
       border-radius: 99px;
       padding: 7px 9px;
       font-size: 10.5px;
-      font-weight: 950;
+      font-weight: 700;
       white-space: nowrap;
     }
 
@@ -658,7 +658,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .home-kpi > span:last-child {
       color: var(--accent-dark);
-      font-weight: 850;
+      font-weight: 600;
     }
 
     .summary-grid {
@@ -687,7 +687,7 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--muted);
       font-size: 11px;
       line-height: 1.2;
-      font-weight: 900;
+      font-weight: 700;
       overflow-wrap: anywhere;
     }
 
@@ -772,7 +772,7 @@ MINIAPP_HTML = """<!doctype html>
       margin: 0;
       color: var(--muted);
       font-size: 11px;
-      font-weight: 900;
+      font-weight: 700;
     }
 
     .kpi > .kpi-top > span:first-child {
@@ -893,7 +893,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .analytics-card > span:last-child {
       color: var(--accent-dark);
-      font-weight: 850;
+      font-weight: 600;
     }
 
     .analytics-row {
@@ -954,7 +954,7 @@ MINIAPP_HTML = """<!doctype html>
       border: none;
       background: transparent;
       color: var(--accent-dark);
-      font-weight: 900;
+      font-weight: 700;
       font-size: 11px;
     }
 
@@ -1012,7 +1012,7 @@ MINIAPP_HTML = """<!doctype html>
       text-align: right;
       font-size: 12px;
       color: var(--muted);
-      font-weight: 900;
+      font-weight: 700;
     }
 
     .op-num strong {
@@ -1031,7 +1031,7 @@ MINIAPP_HTML = """<!doctype html>
       display: block;
       color: var(--muted);
       font-size: 11px;
-      font-weight: 900;
+      font-weight: 700;
       margin-bottom: 9px;
     }
 
@@ -1061,7 +1061,7 @@ MINIAPP_HTML = """<!doctype html>
       padding: 9px 10px;
       outline: none;
       font-size: 16px;
-      font-weight: 850;
+      font-weight: 500;
     }
 
     .field textarea {
@@ -1085,9 +1085,9 @@ MINIAPP_HTML = """<!doctype html>
       padding: 8px 5px;
       background: rgba(255,255,255,.56);
       color: var(--muted);
-      font-size: 10.5px;
+      font-size: 12px;
       line-height: 1.05;
-      font-weight: 950;
+      font-weight: 600;
       overflow-wrap: anywhere;
     }
 
@@ -1125,7 +1125,7 @@ MINIAPP_HTML = """<!doctype html>
       color: white;
       background: var(--accent);
       font-size: 12px;
-      font-weight: 950;
+      font-weight: 700;
       overflow-wrap: anywhere;
       text-decoration: none;
     }
@@ -1238,7 +1238,7 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--muted);
       padding: 9px 10px;
       font-size: 11px;
-      font-weight: 900;
+      font-weight: 700;
       line-height: 1.12;
       overflow-wrap: anywhere;
       transition: .16s ease;
@@ -1265,7 +1265,7 @@ MINIAPP_HTML = """<!doctype html>
       align-items: center;
       color: var(--muted);
       font-size: 12px;
-      font-weight: 850;
+      font-weight: 600;
       line-height: 1.25;
     }
 
@@ -1289,7 +1289,7 @@ MINIAPP_HTML = """<!doctype html>
       align-items: center;
       color: var(--text);
       font-size: 12px;
-      font-weight: 950;
+      font-weight: 700;
     }
 
     .stock-component-title span {
@@ -1340,7 +1340,7 @@ MINIAPP_HTML = """<!doctype html>
       margin-top: 4px;
       color: var(--muted);
       font-size: 11px;
-      font-weight: 800;
+      font-weight: 600;
       line-height: 1.32;
     }
 
@@ -1353,7 +1353,7 @@ MINIAPP_HTML = """<!doctype html>
       padding: 0 10px;
       color: var(--text);
       font-size: 16px;
-      font-weight: 900;
+      font-weight: 700;
       outline: none;
     }
 
@@ -1375,14 +1375,14 @@ MINIAPP_HTML = """<!doctype html>
       justify-content: space-between;
       gap: 10px;
       font-size: 11px;
-      font-weight: 850;
+      font-weight: 600;
       line-height: 1.3;
     }
 
     .route-input-row span:last-child {
       flex: 0 0 auto;
       color: var(--accent-dark);
-      font-weight: 950;
+      font-weight: 700;
     }
 
     .report-row input,
@@ -1396,7 +1396,7 @@ MINIAPP_HTML = """<!doctype html>
       padding: 0 10px;
       color: var(--text);
       font-size: 16px;
-      font-weight: 900;
+      font-weight: 700;
       outline: none;
     }
 
@@ -1432,7 +1432,7 @@ MINIAPP_HTML = """<!doctype html>
       padding: 0 12px;
       color: var(--text);
       font-size: 16px;
-      font-weight: 900;
+      font-weight: 700;
       outline: none;
     }
 
@@ -1504,7 +1504,7 @@ MINIAPP_HTML = """<!doctype html>
       display: block;
       color: var(--muted);
       font-size: 10px;
-      font-weight: 900;
+      font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0;
     }
@@ -1544,7 +1544,7 @@ MINIAPP_HTML = """<!doctype html>
       margin-top: 5px;
       color: var(--accent-dark);
       font-size: 11px;
-      font-weight: 950;
+      font-weight: 700;
     }
 
     .order-foot {
@@ -1555,7 +1555,7 @@ MINIAPP_HTML = """<!doctype html>
       margin-top: 8px;
       color: var(--muted);
       font-size: 12px;
-      font-weight: 850;
+      font-weight: 600;
     }
 
     .order-foot strong {
@@ -1578,7 +1578,7 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--danger);
       background: rgba(221,79,93,.10);
       font-size: 11px;
-      font-weight: 950;
+      font-weight: 700;
     }
 
     .order-delete-button:hover {
@@ -1629,7 +1629,7 @@ MINIAPP_HTML = """<!doctype html>
       background: rgba(25,89,243,.08);
       color: var(--muted);
       font-size: 11px;
-      font-weight: 800;
+      font-weight: 600;
       line-height: 1.35;
     }
 
@@ -1638,7 +1638,7 @@ MINIAPP_HTML = """<!doctype html>
       margin-top: 7px;
       color: var(--accent-dark);
       font-size: 10.5px;
-      font-weight: 950;
+      font-weight: 700;
     }
 
     .passport-timeline {
@@ -1899,7 +1899,7 @@ MINIAPP_HTML = """<!doctype html>
       top: 14px;
       justify-content: space-between;
       font-size: 15px;
-      font-weight: 950;
+      font-weight: 700;
     }
 
     .qr-scanner-actions {
@@ -1950,7 +1950,7 @@ MINIAPP_HTML = """<!doctype html>
       color: white;
       background: linear-gradient(135deg, var(--accent), #1959f3);
       font-size: 15px;
-      font-weight: 950;
+      font-weight: 700;
       box-shadow: 0 18px 36px rgba(25,89,243,.30);
     }
 
@@ -1995,7 +1995,7 @@ MINIAPP_HTML = """<!doctype html>
       place-items: center;
       font-size: 10px;
       line-height: 1.05;
-      font-weight: 850;
+      font-weight: 600;
     }
 
     .nav-btn span:last-child {
@@ -2190,7 +2190,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .app-title {
       font-size: 22px;
-      font-weight: 900;
+      font-weight: 700;
     }
 
     .app-title small {
@@ -2371,7 +2371,7 @@ MINIAPP_HTML = """<!doctype html>
       min-width: 0;
       margin: 0;
       color: var(--text);
-      font-weight: 950;
+      font-weight: 700;
       line-height: .84;
       letter-spacing: -.035em;
       text-align: left;
@@ -2679,7 +2679,7 @@ MINIAPP_HTML = """<!doctype html>
         padding: 10px 12px 8px;
         color: #71809a;
         font-size: 10px;
-        font-weight: 800;
+        font-weight: 600;
         letter-spacing: .11em;
       }
 
@@ -2778,7 +2778,7 @@ MINIAPP_HTML = """<!doctype html>
         border-left: 1px solid rgba(111,128,159,.2);
         color: #74829a;
         font-size: 11px;
-        font-weight: 800;
+        font-weight: 600;
         letter-spacing: .1em;
         white-space: nowrap;
       }
@@ -2890,7 +2890,7 @@ MINIAPP_HTML = """<!doctype html>
         background: transparent;
         font: inherit;
         font-size: 11px;
-        font-weight: 850;
+        font-weight: 600;
         line-height: 1.15;
         text-align: center;
         white-space: normal;
@@ -2919,7 +2919,7 @@ MINIAPP_HTML = """<!doctype html>
       body.web-mode .appbar-profile span {
         color: #7a899f;
         font-size: 10px;
-        font-weight: 850;
+        font-weight: 600;
         letter-spacing: .07em;
         text-transform: uppercase;
         white-space: nowrap;
@@ -2929,7 +2929,7 @@ MINIAPP_HTML = """<!doctype html>
         margin: 0 !important;
         color: #17243a;
         font-size: 14px;
-        font-weight: 900;
+        font-weight: 700;
         white-space: nowrap;
       }
 
@@ -3214,9 +3214,7 @@ MINIAPP_HTML = """<!doctype html>
       let activeIndex = -1;
 
       function rebuildOptionList() {
-        options = Array.from(select.options).filter(function(opt) {
-          return opt.value !== "";
-        });
+        options = Array.from(select.options);
         if (select.selectedIndex >= 0) {
           selectedIndex = options.indexOf(select.options[select.selectedIndex]);
         }
@@ -3298,8 +3296,16 @@ MINIAPP_HTML = """<!doctype html>
       rebuildOptionList();
 
       input.addEventListener("focus", function() {
+        activeIndex = -1;
         input.select();
         filterOptions(input.value);
+      });
+
+      input.addEventListener("click", function() {
+        if (!dropdown.classList.contains("open")) {
+          input.select();
+          filterOptions(input.value);
+        }
       });
 
       input.addEventListener("input", function() {
@@ -3354,13 +3360,13 @@ MINIAPP_HTML = """<!doctype html>
       });
 
       document.addEventListener("click", function(e) {
-        if (!wrapper.contains(e.target)) closeDropdown();
+        if (!wrapper.contains(e.target) && e.target !== input) closeDropdown();
       });
     }
 
     function initSearchableSelects(root) {
       root = root || document;
-      root.querySelectorAll("select:not([data-ss-applied])").forEach(makeSearchable);
+      root.querySelectorAll("select:not([data-ss-applied]):not([disabled])").forEach(makeSearchable);
     }
     const urlParams = new URLSearchParams(window.location.search);
     const debugTelegramId = urlParams.get("debug_tg_id");
@@ -7812,7 +7818,7 @@ MINIAPP_HTML = """<!doctype html>
     /* ── MutationObserver: apply searchable selects on DOM changes ── */
     new MutationObserver(function() {
       initSearchableSelects();
-    }).observe(document.getElementById("app-main") || document.body, {childList: true, subtree: true});
+    }).observe(document.getElementById("appRoot") || document.body, {childList: true, subtree: true});
 
     document.getElementById("webLoginTab").addEventListener("click", () => setWebAuthMode("login"));
     document.getElementById("webRegisterTab").addEventListener("click", () => setWebAuthMode("register"));
