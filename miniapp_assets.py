@@ -3298,13 +3298,13 @@ MINIAPP_HTML = """<!doctype html>
       input.addEventListener("focus", function() {
         activeIndex = -1;
         input.select();
-        filterOptions(input.value);
+        filterOptions("");
       });
 
       input.addEventListener("click", function() {
         if (!dropdown.classList.contains("open")) {
           input.select();
-          filterOptions(input.value);
+          filterOptions("");
         }
       });
 
