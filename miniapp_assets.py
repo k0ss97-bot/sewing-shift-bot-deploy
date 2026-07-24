@@ -3065,8 +3065,9 @@ MINIAPP_HTML = """<!doctype html>
       border: 1px solid var(--border);
       border-top: none;
       border-radius: 0 0 var(--radius, 6px) var(--radius, 6px);
-      z-index: 100;
+      z-index: 200;
       display: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
     }
     .searchable-select .ss-dropdown.open {
       display: block;
@@ -3252,6 +3253,19 @@ MINIAPP_HTML = """<!doctype html>
             dropdown.appendChild(div);
           });
         }
+
+        /* Move dropdown to body to escape parent overflow:hidden */
+        if (dropdown.parentNode !== document.body) {
+          document.body.appendChild(dropdown);
+        }
+
+        /* Position dropdown under the input */
+        var inputRect = input.getBoundingClientRect();
+        dropdown.style.position = "fixed";
+        dropdown.style.top = (inputRect.bottom + 1) + "px";
+        dropdown.style.left = inputRect.left + "px";
+        dropdown.style.width = inputRect.width + "px";
+
         dropdown.classList.add("open");
       }
 
