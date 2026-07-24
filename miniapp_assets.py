@@ -3366,6 +3366,20 @@ MINIAPP_HTML = """<!doctype html>
 
     function initSearchableSelects(root) {
       root = root || document;
+
+      /* Clean up orphaned searchable-select wrappers and dropdowns.
+         render() replaces mount.innerHTML, which removes <select>
+         elements, but the .searchable-select wrappers (inserted
+         via insertBefore next to the select) and .ss-dropdown
+         elements (appended to document.body) survive as orphans.
+         Remove them before creating new ones. */
+      document.querySelectorAll(".searchable-select").forEach(function(w) {
+        w.remove();
+      });
+      document.querySelectorAll(".ss-dropdown").forEach(function(d) {
+        d.remove();
+      });
+
       root.querySelectorAll("select:not([data-ss-applied]):not([disabled])").forEach(makeSearchable);
     }
     const urlParams = new URLSearchParams(window.location.search);
