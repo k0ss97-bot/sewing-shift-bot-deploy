@@ -567,7 +567,7 @@ PWA_INSTALL_STYLE = """<style id="pwa-install-ui-style">
     min-height: 42px;
     border-radius: 12px;
     padding: 0 16px;
-    font-weight: 800;
+    font-weight: 600;
   }
   .pwa-install-primary {
     border: 0;
