@@ -3054,37 +3054,33 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--muted);
       font-size: 12px;
     }
-    .searchable-select .ss-dropdown {
-      position: absolute;
-      top: 100%;
-      left: 0;
-      right: 0;
+    .ss-dropdown {
+      position: fixed;
       max-height: 240px;
       overflow-y: auto;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-top: none;
-      border-radius: 0 0 var(--radius, 6px) var(--radius, 6px);
-      z-index: 200;
+      background: var(--card, #fff);
+      border: 1px solid var(--border, #ccc);
+      border-radius: var(--radius, 6px);
+      z-index: 9999;
       display: none;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
     }
-    .searchable-select .ss-dropdown.open {
+    .ss-dropdown.open {
       display: block;
     }
-    .searchable-select .ss-option {
-      padding: 8px;
+    .ss-dropdown .ss-option {
+      padding: 8px 10px;
       cursor: pointer;
       font: inherit;
-      color: var(--text);
+      color: var(--text, #111);
     }
-    .searchable-select .ss-option:hover,
-    .searchable-select .ss-option.active {
+    .ss-dropdown .ss-option:hover,
+    .ss-dropdown .ss-option.active {
       background: var(--accent-bg, rgba(74,144,217,0.12));
     }
-    .searchable-select .ss-no-match {
-      padding: 8px;
-      color: var(--muted);
+    .ss-dropdown .ss-no-match {
+      padding: 8px 10px;
+      color: var(--muted, #888);
       font-style: italic;
     }
   </style>
@@ -3210,8 +3206,8 @@ MINIAPP_HTML = """<!doctype html>
 
       wrapper.appendChild(input);
       wrapper.appendChild(arrow);
-      wrapper.appendChild(dropdown);
       select.parentNode.insertBefore(wrapper, select);
+      document.body.appendChild(dropdown);
 
       let options = [];
       let selectedIndex = -1;
@@ -3231,6 +3227,26 @@ MINIAPP_HTML = """<!doctype html>
       function syncInput() {
         var opt = options[selectedIndex];
         input.value = opt ? opt.textContent : "";
+      }
+
+      function positionDropdown() {
+        var inputRect = input.getBoundingClientRect();
+        var viewportHeight = window.innerHeight;
+        var maxHeight = 240;
+        var spaceBelow = viewportHeight - inputRect.bottom;
+        var openUpward = spaceBelow < maxHeight && inputRect.top > spaceBelow;
+
+        dropdown.style.left = inputRect.left + "px";
+        dropdown.style.width = inputRect.width + "px";
+        if (openUpward) {
+          dropdown.style.maxHeight = Math.min(maxHeight, inputRect.top - 8) + "px";
+          dropdown.style.bottom = (viewportHeight - inputRect.top + 1) + "px";
+          dropdown.style.top = "auto";
+        } else {
+          dropdown.style.maxHeight = Math.min(maxHeight, spaceBelow - 8) + "px";
+          dropdown.style.top = (inputRect.bottom + 1) + "px";
+          dropdown.style.bottom = "auto";
+        }
       }
 
       function filterOptions(query) {
@@ -3254,18 +3270,7 @@ MINIAPP_HTML = """<!doctype html>
           });
         }
 
-        /* Move dropdown to body to escape parent overflow:hidden */
-        if (dropdown.parentNode !== document.body) {
-          document.body.appendChild(dropdown);
-        }
-
-        /* Position dropdown under the input */
-        var inputRect = input.getBoundingClientRect();
-        dropdown.style.position = "fixed";
-        dropdown.style.top = (inputRect.bottom + 1) + "px";
-        dropdown.style.left = inputRect.left + "px";
-        dropdown.style.width = inputRect.width + "px";
-
+        positionDropdown();
         dropdown.classList.add("open");
       }
 
@@ -3282,6 +3287,13 @@ MINIAPP_HTML = """<!doctype html>
       function closeDropdown() {
         dropdown.classList.remove("open");
       }
+
+      /* Keep dropdown pinned to input on scroll/resize while open */
+      var repositionHandler = function() {
+        if (dropdown.classList.contains("open")) positionDropdown();
+      };
+      window.addEventListener("scroll", repositionHandler, true);
+      window.addEventListener("resize", repositionHandler);
 
       rebuildOptionList();
 
