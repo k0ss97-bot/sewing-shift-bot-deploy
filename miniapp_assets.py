@@ -3383,7 +3383,14 @@ MINIAPP_HTML = """<!doctype html>
         d.remove();
       });
 
-      root.querySelectorAll("select:not([data-ss-applied]):not([disabled])").forEach(makeSearchable);
+      root.querySelectorAll("select:not([data-ss-applied]):not([disabled])").forEach(function(select) {
+        /* Keep the admin employee report selector native.  It contains
+           many employees and must remain a reliable browser dropdown;
+           the custom searchable wrapper was interfering with rerenders
+           when the report type changed. */
+        if (select.id === "adminEmployeeId") return;
+        makeSearchable(select);
+      });
     }
     const urlParams = new URLSearchParams(window.location.search);
     const debugTelegramId = urlParams.get("debug_tg_id");
