@@ -289,9 +289,13 @@ def run_smoke() -> None:
                 'Desktop web workspace',
                 'grid-template-columns: repeat(auto-fit, minmax(200px, 1fr))',
                 'padding: 32px 36px 48px 286px',
-                'desktop-redundant',
-                'body.warehouse-workspace .bottom-nav',
-                'data-warehouse-action="overview">К разделам',
+                'body.web-mode.warehouse-workspace .bottom-nav',
+                'id="mobileWorkspaceNav"',
+                'body.has-wms-access .mobile-workspace-nav',
+                'function switchWorkspace(workspace)',
+                'function refreshWmsWorkspace({silent = false} = {})',
+                'data-wms-view="stock"',
+                '+ Кладовщик',
             ):
                 require(
                     desktop_marker in html_text,

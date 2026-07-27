@@ -2869,9 +2869,43 @@ MINIAPP_HTML = """<!doctype html>
     /* Desktop product shell: global directions live in the header, while the
        side navigation stays focused on the production workspace. */
     .workspace-nav,
+    .mobile-workspace-nav,
     .appbar-profile,
     .appbar-actions {
       display: none;
+    }
+
+    .mobile-workspace-nav {
+      position: relative;
+      z-index: 2;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px;
+      margin: 0 2px 14px;
+      padding: 4px;
+      border: 1px solid rgba(111,128,159,.13);
+      border-radius: 14px;
+      background: rgba(255,255,255,.74);
+      box-shadow: var(--inset-shadow);
+    }
+
+    .mobile-workspace-nav button {
+      min-width: 0;
+      min-height: 44px;
+      padding: 8px 6px;
+      border: 0;
+      border-radius: 10px;
+      color: #65748d;
+      background: transparent;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.15;
+    }
+
+    .mobile-workspace-nav button.active {
+      color: #fff;
+      background: linear-gradient(135deg, #2160f3, #1647c9);
+      box-shadow: 0 8px 18px rgba(25,89,243,.22);
     }
 
     @media (min-width: 900px) {
@@ -2914,7 +2948,7 @@ MINIAPP_HTML = """<!doctype html>
 
       body.web-mode .workspace-nav {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         align-items: center;
         gap: 4px;
         padding: 5px;
@@ -2947,6 +2981,10 @@ MINIAPP_HTML = """<!doctype html>
       body.web-mode .workspace-nav button:disabled {
         cursor: not-allowed;
         opacity: .46;
+      }
+
+      body.web-mode.has-wms-access .workspace-nav {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
       }
 
       body.web-mode .appbar-profile {
@@ -3036,6 +3074,10 @@ MINIAPP_HTML = """<!doctype html>
         display: none !important;
       }
 
+      body.has-wms-access .mobile-workspace-nav {
+        display: grid;
+      }
+
       .appbar-actions {
         display: flex;
         gap: 8px;
@@ -3057,12 +3099,6 @@ MINIAPP_HTML = """<!doctype html>
 
       body.web-mode.warehouse-workspace .bottom-nav {
         border-color: rgba(25,89,243,.16);
-      }
-    }
-
-    @media (max-width: 899px) {
-      body.warehouse-workspace .bottom-nav {
-        display: none;
       }
     }
 
@@ -3190,8 +3226,8 @@ MINIAPP_HTML = """<!doctype html>
         </div>
       </div>
       <nav class="workspace-nav" aria-label="Разделы системы">
-        <button class="active" type="button" data-workspace="production" data-go="shift" aria-current="page">Управление производством</button>
-        <button type="button" data-workspace="warehouse" data-go="warehouse">Управление складом</button>
+        <button class="active" type="button" data-workspace="production" aria-current="page">Управление производством</button>
+        <button type="button" data-workspace="warehouse">Управление складом</button>
         <button type="button" disabled title="Раздел готовится">Управление маркетплейсами</button>
         <button type="button" disabled title="Раздел готовится">Отчёт</button>
       </nav>
@@ -3201,6 +3237,11 @@ MINIAPP_HTML = """<!doctype html>
         <button class="icon-btn" id="menuBtn" aria-label="Меню">⋯</button>
       </div>
     </div>
+
+    <nav class="mobile-workspace-nav" id="mobileWorkspaceNav" aria-label="Рабочая среда" hidden>
+      <button class="active" type="button" data-workspace="production" aria-current="page">Производство</button>
+      <button type="button" data-workspace="warehouse">Склад</button>
+    </nav>
 
     <div class="body">
       <div class="tabs" id="topTabs" hidden></div>
@@ -3458,7 +3499,9 @@ MINIAPP_HTML = """<!doctype html>
     const uiStateStorageKey = `miniapp_ui_state_${authIdentity}`;
     const completionQueueKey = `miniapp_completion_queue_${authIdentity}`;
     const persistedUiStateKeys = [
+      "workspace",
       "screen",
+      "productionScreen",
       "selectedOrder",
       "selectedOrderKey",
       "selectedReportTask",
@@ -3524,7 +3567,9 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     const state = {
+      workspace: "production",
       screen: "shift",
+      productionScreen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
       selectedOrderKey: "",
@@ -3582,7 +3627,8 @@ MINIAPP_HTML = """<!doctype html>
       passportReturnScreen: "orders",
       profileReturnScreen: "shift",
       taskDefectPhotos: {},
-      wmsView: "receive",
+      wmsView: "overview",
+      wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: []},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
       wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
@@ -3644,6 +3690,8 @@ MINIAPP_HTML = """<!doctype html>
       { id: "analytics", label: "Аналитика", icon: "▥" },
       { id: "orders", label: "Задания", icon: "▣" },
     ];
+    const productionScreens = new Set(["shift", "report", "analytics", "orders", "admin", "passport", "profile"]);
+    const warehouseMoreViews = new Set(["more", "stock", "movements", "inventory", "scrap"]);
 
     if (tg) {
       tg.ready();
@@ -4182,18 +4230,15 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function navItems() {
-      const wmsItem = canAccessWms() ? [{ id: "wms", label: "ТСД", icon: "▤" }] : [];
       if (state.data && state.data.is_admin) {
         return [
           { id: "shift", label: "Главная", icon: "⌂" },
-          { id: "warehouse", label: "Склад", icon: "▦", desktop_redundant: true },
-          ...wmsItem,
           { id: "analytics", label: "Аналитика", icon: "▥" },
           { id: "orders", label: "Заказы", icon: "▣" },
           { id: "admin", label: "Админ", icon: "◎" },
         ];
       }
-      return [...baseNav, ...wmsItem];
+      return baseNav;
     }
 
     function canAccessWms() {
@@ -4202,33 +4247,17 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderBottomNav() {
-      if (state.screen === "warehouse") {
-        const warehouseItems = [
-          {id: "overview", label: "Обзор склада", icon: "⌂"},
-          {id: "finished", label: "Готовая продукция", icon: "✓"},
-          {id: "semifinished", label: "Полуфабрикаты", icon: "▣"},
-          {id: "materials", label: "Материалы", icon: "▦"},
-        ];
-        bottomNav.style.setProperty("--nav-count", warehouseItems.length);
-        bottomNav.innerHTML = warehouseItems.map((item) => `
-          <button class="nav-btn ${state.warehouseView === item.id ? "active" : ""}" data-warehouse-view="${item.id}">
-            <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
-          </button>
-        `).join("");
-        return;
-      }
-
-      if (state.screen === "wms") {
+      if (state.workspace === "warehouse") {
         const wmsItems = [
+          {id: "overview", label: "Главная", icon: "⌂"},
           {id: "receive", label: "Приёмка", icon: "↓"},
           {id: "putaway", label: "Размещение", icon: "→"},
           {id: "transfer", label: "Перемещение", icon: "⇄"},
-          {id: "inventory", label: "Пересчёт", icon: "≡"},
-          {id: "scrap", label: "Списание", icon: "×"},
+          {id: "more", label: "Ещё", icon: "•••"},
         ];
         bottomNav.style.setProperty("--nav-count", wmsItems.length);
         bottomNav.innerHTML = wmsItems.map((item) => `
-          <button class="nav-btn ${state.wmsView === item.id ? "active" : ""}" data-wms-view="${item.id}">
+          <button class="nav-btn ${(item.id === "more" ? warehouseMoreViews.has(state.wmsView) : state.wmsView === item.id) ? "active" : ""}" data-wms-view="${item.id}">
             <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
           </button>
         `).join("");
@@ -4304,7 +4333,8 @@ MINIAPP_HTML = """<!doctype html>
       if (state.data && state.data.is_admin) return "Администратор";
       const employee = state.data && state.data.employee;
       if (!employee) return "Нет доступа";
-      return employee.position || "Сотрудник";
+      const position = employee.position || "Сотрудник";
+      return canAccessWms() ? `${position} + Кладовщик` : position;
     }
 
     function getAdmin() {
@@ -5796,7 +5826,7 @@ MINIAPP_HTML = """<!doctype html>
         });
         const ok = data.status === "ok" || data.status === "duplicate";
         showToast("ТСД", ok ? `Принято: ${qty} шт.` : (data.reason || "Ошибка приёмки."));
-        if (ok) { state.wmsDraft.quantity = ""; render(); }
+        if (ok) { state.wmsDraft.quantity = ""; render(); refreshWmsWorkspace({silent: true}); }
         else mainButton.disabled = false;
       } catch (error) {
         showToast("Ошибка", error.apiMessage || "Не удалось принять товар.");
@@ -5833,7 +5863,7 @@ MINIAPP_HTML = """<!doctype html>
         });
         const ok = data.status === "ok" || data.status === "duplicate";
         showToast("ТСД", ok ? `Размещено: ${qty} шт. → ${toLoc}` : (data.reason || "Ошибка размещения."));
-        if (ok) { state.wmsDraft.quantity = ""; state.wmsDraft.toLocation = ""; render(); }
+        if (ok) { state.wmsDraft.quantity = ""; state.wmsDraft.toLocation = ""; render(); refreshWmsWorkspace({silent: true}); }
         else mainButton.disabled = false;
       } catch (error) {
         showToast("Ошибка", error.apiMessage || "Не удалось разместить товар.");
@@ -5876,7 +5906,7 @@ MINIAPP_HTML = """<!doctype html>
         });
         const ok = data.status === "ok" || data.status === "duplicate";
         showToast("ТСД", ok ? `Перемещено: ${qty} шт. ${fromLoc} → ${toLoc}` : (data.reason || "Ошибка перемещения."));
-        if (ok) { state.wmsDraft.quantity = ""; state.wmsDraft.fromLocation = ""; state.wmsDraft.toLocation = ""; render(); }
+        if (ok) { state.wmsDraft.quantity = ""; state.wmsDraft.fromLocation = ""; state.wmsDraft.toLocation = ""; render(); refreshWmsWorkspace({silent: true}); }
         else mainButton.disabled = false;
       } catch (error) {
         showToast("Ошибка", error.apiMessage || "Не удалось переместить товар.");
@@ -5909,7 +5939,7 @@ MINIAPP_HTML = """<!doctype html>
         });
         const ok = data.status === "ok" || data.status === "duplicate";
         showToast("ТСД", ok ? `Пересчёт сохранён: ${countedQty} шт.` : (data.reason || "Ошибка пересчёта."));
-        if (ok) { state.wmsDraft.quantity = ""; render(); }
+        if (ok) { state.wmsDraft.quantity = ""; render(); refreshWmsWorkspace({silent: true}); }
         else mainButton.disabled = false;
       } catch (error) {
         showToast("Ошибка", error.apiMessage || "Не удалось сохранить пересчёт.");
@@ -5946,7 +5976,7 @@ MINIAPP_HTML = """<!doctype html>
         });
         const ok = data.status === "ok" || data.status === "duplicate";
         showToast("ТСД", ok ? `Списано: ${qty} шт.` : (data.reason || "Ошибка списания."));
-        if (ok) { state.wmsDraft.quantity = ""; state.wmsDraft.reason = ""; render(); }
+        if (ok) { state.wmsDraft.quantity = ""; state.wmsDraft.reason = ""; render(); refreshWmsWorkspace({silent: true}); }
         else mainButton.disabled = false;
       } catch (error) {
         showToast("Ошибка", error.apiMessage || "Не удалось списать товар.");
@@ -5997,6 +6027,7 @@ MINIAPP_HTML = """<!doctype html>
         });
         state.wmsDraft.toLocation = code;
         render();
+        refreshWmsWorkspace({silent: true});
         showToast("ТСД", data.message || `Ячейка ${code} создана.`);
       } catch (error) {
         showToast("Ошибка", error.apiMessage || "Не удалось создать ячейку.");
@@ -7070,18 +7101,154 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function wmsLocationMap() {
+      return new Map((state.wmsData.locations || []).map((location) => [Number(location.id), location]));
+    }
+
+    function wmsLocationLabel(locationId) {
+      if (!locationId) return "—";
+      const location = wmsLocationMap().get(Number(locationId));
+      return location ? location.code : `Ячейка #${locationId}`;
+    }
+
+    function wmsProductLabel(productKey) {
+      const product = productKey || {};
+      return [product.product_name, product.product_size, product.product_color].filter(Boolean).join(" · ") || "Товар";
+    }
+
+    function wmsMovementLabel(type) {
+      return ({
+        receive: "Приёмка",
+        production_receipt: "Приёмка",
+        putaway: "Размещение",
+        transfer: "Перемещение",
+        inventory: "Инвентаризация",
+        count: "Инвентаризация",
+        inventory_adjustment: "Корректировка",
+        scrap: "Списание",
+      })[type] || type || "Операция";
+    }
+
+    function wmsMovementTime(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString("ru-RU", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
+    }
+
+    function renderWmsDataNotice() {
+      if (state.wmsData.loading && !state.wmsData.loaded) {
+        return `<div class="card field-card">${itemEmpty("Загружаем остатки и движения…")}</div>`;
+      }
+      if (state.wmsData.error) {
+        return `<div class="card field-card"><div class="task-note"><b>Не удалось обновить склад</b><br>${escapeHtml(state.wmsData.error)}</div><div class="button-row"><button class="small-button" data-wms-action="refresh">Повторить</button></div></div>`;
+      }
+      return "";
+    }
+
+    function renderWmsOverview() {
+      const stock = state.wmsData.stock || [];
+      const locations = state.wmsData.locations || [];
+      const movements = state.wmsData.movements || [];
+      const total = stock.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+      const reserved = stock.reduce((sum, row) => sum + Number(row.reserved_quantity || 0), 0);
+      const activeLocations = locations.filter((row) => row.status === "active").length;
+      mainButton.textContent = state.wmsData.loading ? "Обновляем…" : "Обновить склад";
+      mainButton.disabled = state.wmsData.loading;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Управление складом</h2><p>Сканирование продукции, адресное хранение и все складские операции.</p></div><div class="date">Кладовщик</div></div>
+        ${renderWmsDataNotice()}
+        <div class="kpi-grid">
+          <button type="button" class="card kpi warehouse-category" data-wms-view="stock"><span class="kpi-top"><span>Остатки</span><span class="kpi-ico">▤</span></span><strong>${escapeHtml(total)}<small> шт.</small></strong><span>${stock.length} позиций · резерв ${escapeHtml(reserved)}</span></button>
+          <button type="button" class="card kpi warehouse-category" data-wms-view="movements"><span class="kpi-top"><span>Движения</span><span class="kpi-ico">⇄</span></span><strong>${movements.length}<small> зап.</small></strong><span>Последние операции</span></button>
+          <button type="button" class="card kpi warehouse-category" data-wms-view="putaway"><span class="kpi-top"><span>Ячейки</span><span class="kpi-ico">▦</span></span><strong>${activeLocations}<small> шт.</small></strong><span>Разместить продукцию</span></button>
+          <button type="button" class="card kpi warehouse-category" data-wms-view="inventory"><span class="kpi-top"><span>Пересчёт</span><span class="kpi-ico">≡</span></span><strong>0<small> расх.</small></strong><span>Провести инвентаризацию</span></button>
+        </div>
+        <div class="section-title"><b>Быстрые действия</b><span>сканер</span></div>
+        <div class="kpi-grid">
+          <button type="button" class="card summary-card clickable" data-wms-view="receive"><span>Приёмка</span><strong>↓</strong><small>Принять от производства</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="putaway"><span>Размещение</span><strong>→</strong><small>Положить в ячейку</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="transfer"><span>Перемещение</span><strong>⇄</strong><small>Между ячейками</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="scrap"><span>Списание</span><strong>×</strong><small>Брак или карантин</small></button>
+        </div>
+        <div class="section-title"><b>Последние движения</b><button type="button" data-wms-view="movements">показать все</button></div>
+        <div class="op-list">${movements.length ? movements.slice(0, 4).map((movement) => `
+          <div class="card report-row"><div><b>${escapeHtml(wmsMovementLabel(movement.movement_type))}</b><span>${escapeHtml(wmsProductLabel(movement.product_key))}<br>${escapeHtml(wmsLocationLabel(movement.from_location_id))} → ${escapeHtml(wmsLocationLabel(movement.to_location_id))}</span></div><div><span class="status-chip">${escapeHtml(movement.quantity)} шт.</span><small>${escapeHtml(wmsMovementTime(movement.occurred_at))}</small></div></div>
+        `).join("") : itemEmpty("Складских движений пока нет.")}</div>
+      `;
+    }
+
+    function renderWmsMore() {
+      mainButton.textContent = "Обновить склад";
+      mainButton.disabled = state.wmsData.loading;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Складские операции</h2><p>Контроль остатков, пересчёт и специальные операции.</p></div></div>
+        ${renderWmsDataNotice()}
+        <div class="kpi-grid">
+          <button type="button" class="card summary-card clickable" data-wms-view="stock"><span>Остатки</span><strong>▤</strong><small>По адресным ячейкам</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="movements"><span>История</span><strong>⇄</strong><small>Все движения</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="inventory"><span>Инвентаризация</span><strong>≡</strong><small>Фактический пересчёт</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="scrap"><span>Списание</span><strong>×</strong><small>Брак и карантин</small></button>
+        </div>
+      `;
+    }
+
+    function renderWmsStock() {
+      const stock = state.wmsData.stock || [];
+      mainButton.textContent = "Обновить остатки";
+      mainButton.disabled = state.wmsData.loading;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Адресные остатки</h2><p>Продукция по складским ячейкам.</p></div><div class="date">${stock.length} поз.</div></div>
+        ${renderWmsDataNotice()}
+        <div class="op-list">${stock.length ? stock.map((row) => {
+          const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
+          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${escapeHtml(wmsLocationLabel(row.location_id))} · ${row.product_key && row.product_key.item_type === "semifinished" ? "полуфабрикат" : "готовая продукция"}<br>Доступно ${escapeHtml(available)}, резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>`;
+        }).join("") : itemEmpty("В адресном складе пока нет остатков.")}</div>
+      `;
+    }
+
+    function renderWmsMovements() {
+      const movements = state.wmsData.movements || [];
+      mainButton.textContent = "Обновить историю";
+      mainButton.disabled = state.wmsData.loading;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>История движений</h2><p>Последние складские операции сверху.</p></div><div class="date">${movements.length} зап.</div></div>
+        ${renderWmsDataNotice()}
+        <div class="op-list">${movements.length ? movements.map((movement) => `
+          <div class="card report-row"><div><b>${escapeHtml(wmsMovementLabel(movement.movement_type))}</b><span>${escapeHtml(wmsProductLabel(movement.product_key))}<br>${escapeHtml(wmsLocationLabel(movement.from_location_id))} → ${escapeHtml(wmsLocationLabel(movement.to_location_id))}${movement.reason ? `<br>${escapeHtml(movement.reason)}` : ""}</span></div><div><span class="status-chip">${escapeHtml(movement.quantity)} шт.</span><small>${escapeHtml(wmsMovementTime(movement.occurred_at))}</small></div></div>
+        `).join("") : itemEmpty("Складских движений пока нет.")}</div>
+      `;
+    }
+
+    async function refreshWmsWorkspace({silent = false} = {}) {
+      if (!canAccessWms() || state.wmsData.loading) return;
+      state.wmsData.loading = true;
+      state.wmsData.error = "";
+      if (!silent) render();
+      try {
+        const [locations, stock, movements] = await Promise.all([
+          api("/api/wms/locations"),
+          api("/api/wms/stock"),
+          api("/api/wms/movements", {limit: 100}),
+        ]);
+        state.wmsData.locations = locations.locations || [];
+        state.wmsData.stock = stock.stock || [];
+        state.wmsData.movements = movements.movements || [];
+        state.wmsData.loaded = true;
+      } catch (error) {
+        state.wmsData.error = error.apiMessage || "Проверьте соединение и повторите попытку.";
+      } finally {
+        state.wmsData.loading = false;
+        if (state.workspace === "warehouse") render();
+      }
+    }
+
     function renderWarehouse() {
-      if (!state.data || !state.data.is_admin) {
-        mainButton.textContent = "Обновить";
-        mainButton.disabled = false;
-        mount.innerHTML = `
-          <div class="screen-head"><div><h2>Склад</h2><p>Раздел доступен только администратору.</p></div></div>
-          <div class="card field-card">${itemEmpty("Нет прав администратора.")}</div>
-        `;
+      if (!canAccessWms()) {
+        switchWorkspace("production");
         return;
       }
-
-      mount.innerHTML = renderAdminWarehouse(false);
+      renderWms();
     }
 
     function renderWms() {
@@ -7094,6 +7261,10 @@ MINIAPP_HTML = """<!doctype html>
         `;
         return;
       }
+      if (state.wmsView === "overview") return renderWmsOverview();
+      if (state.wmsView === "more") return renderWmsMore();
+      if (state.wmsView === "stock") return renderWmsStock();
+      if (state.wmsView === "movements") return renderWmsMovements();
       if (state.wmsView === "inventory") return renderWmsInventory();
       if (state.wmsView === "scrap") return renderWmsScrap();
       if (state.wmsView === "putaway") return renderWmsPutaway();
@@ -7362,7 +7533,7 @@ MINIAPP_HTML = """<!doctype html>
       const employeeCards = filteredEmployees.length ? filteredEmployees.map((employee) => `
         <div class="card field-card">
           <label>ID ${escapeHtml(employee.id)} · ${employee.role === "admin" ? "администратор" : "сотрудник"}</label>
-          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><div class="employee-statuses"><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employeeStatusLabel(employee.status))}</span><span class="status-chip ${employeeIsOnShift(employee) ? "on-shift" : "gray"}">${employeeIsOnShift(employee) ? "на смене" : "не на смене"}</span>${employee.can_access_wms ? `<span class="status-chip">доступ к складу</span>` : ""}</div></div>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><div class="employee-statuses"><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employeeStatusLabel(employee.status))}</span><span class="status-chip ${employeeIsOnShift(employee) ? "on-shift" : "gray"}">${employeeIsOnShift(employee) ? "на смене" : "не на смене"}</span>${employee.can_access_wms ? `<span class="status-chip">Кладовщик</span>` : ""}</div></div>
           ${employee.role === "admin" && Number(employee.telegram_id) === currentTelegramId ? "" : `<div class="form-grid"><div class="field full"><label>${employee.role === "admin" ? "Должность после снятия прав" : "Должность"}</label><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>`}
           ${employee.role === "admin" ? `
             <div class="button-row">
@@ -7370,7 +7541,7 @@ MINIAPP_HTML = """<!doctype html>
             </div>
           ` : `
             <div class="button-row"><button class="small-button secondary" data-admin-action="position" data-employee-id="${escapeHtml(employee.id)}">Сохранить должность</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button></div>
-            <div class="button-row"><button class="small-button ${employee.can_access_wms ? "danger" : "secondary"}" data-admin-action="${employee.can_access_wms ? "wms-revoke" : "wms-grant"}" data-employee-id="${escapeHtml(employee.id)}">${employee.can_access_wms ? "Убрать доступ к складу" : "Дать доступ к складу"}</button></div>
+            <div class="button-row"><button class="small-button ${employee.can_access_wms ? "danger" : "secondary"}" data-admin-action="${employee.can_access_wms ? "wms-revoke" : "wms-grant"}" data-employee-id="${escapeHtml(employee.id)}">${employee.can_access_wms ? "Снять права кладовщика" : "Назначить кладовщиком"}</button></div>
             <div class="button-row"><button class="small-button" data-admin-action="role-admin" data-employee-id="${escapeHtml(employee.id)}">Назначить администратором</button><button class="small-button danger" data-admin-action="delete-employee" data-employee-id="${escapeHtml(employee.id)}" data-employee-name="${escapeHtml(employee.full_name)}">Удалить</button></div>
           `}
         </div>
@@ -7517,16 +7688,35 @@ MINIAPP_HTML = """<!doctype html>
 
     function render() {
       if (!state.data) return;
-      const allowedScreens = state.data.is_admin
-        ? ["shift", "warehouse", "wms", "analytics", "orders", "admin", "passport", "profile"]
-        : ["shift", "report", "wms", "analytics", "orders", "admin", "passport", "profile"];
+      if (state.screen === "wms") {
+        state.workspace = "warehouse";
+        state.screen = "warehouse";
+      }
+      if (!canAccessWms() && state.workspace === "warehouse") {
+        state.workspace = "production";
+        state.screen = "shift";
+      }
+      if (!['production', 'warehouse'].includes(state.workspace)) {
+        state.workspace = state.screen === "warehouse" ? "warehouse" : "production";
+      }
+      if (state.workspace === "warehouse" && !["warehouse", "profile"].includes(state.screen)) {
+        state.screen = "warehouse";
+      }
 
-      if (!allowedScreens.includes(state.screen)) state.screen = "shift";
-      if (state.screen === "wms" && !canAccessWms()) state.screen = "shift";
+      const allowedProductionScreens = state.data.is_admin
+        ? ["shift", "analytics", "orders", "admin", "passport", "profile"]
+        : ["shift", "report", "analytics", "orders", "admin", "passport", "profile"];
+      if (state.workspace === "production" && !allowedProductionScreens.includes(state.screen)) {
+        state.screen = "shift";
+      }
       document.getElementById("roleLabel").textContent = roleLabel();
-      const isWarehouseWorkspace = state.screen === "warehouse";
+      const isWarehouseWorkspace = state.workspace === "warehouse";
       document.body.classList.toggle("warehouse-workspace", isWarehouseWorkspace);
+      document.body.classList.toggle("has-wms-access", canAccessWms());
+      const mobileWorkspaceNav = document.getElementById("mobileWorkspaceNav");
+      mobileWorkspaceNav.hidden = !canAccessWms();
       document.querySelectorAll("[data-workspace]").forEach((button) => {
+        if (button.dataset.workspace === "warehouse") button.hidden = !canAccessWms();
         const isActive = button.dataset.workspace === "warehouse" ? isWarehouseWorkspace : !isWarehouseWorkspace;
         button.classList.toggle("active", isActive);
         if (isActive) button.setAttribute("aria-current", "page");
@@ -7545,11 +7735,43 @@ MINIAPP_HTML = """<!doctype html>
       renderBottomNav();
       renderTopTabs();
       persistUiState();
-      if (state.data.is_admin && state.screen === "shift") window.setTimeout(syncWebPushDeviceState, 0);
+      if (isWarehouseWorkspace && !state.wmsData.loaded && !state.wmsData.loading && !state.wmsData.error) {
+        window.setTimeout(() => refreshWmsWorkspace({silent: true}), 0);
+      }
+      if (state.data.is_admin && state.workspace === "production" && state.screen === "shift") window.setTimeout(syncWebPushDeviceState, 0);
     }
 
     function setScreen(screen) {
+      if (screen === "warehouse" || screen === "wms") {
+        switchWorkspace("warehouse");
+        return;
+      }
+      if (state.workspace === "warehouse" && screen !== "profile") state.workspace = "production";
       state.screen = screen;
+      if (state.workspace === "production" && !["profile", "passport"].includes(screen) && productionScreens.has(screen)) {
+        state.productionScreen = screen;
+      }
+      render();
+    }
+
+    function switchWorkspace(workspace) {
+      if (workspace === "warehouse") {
+        if (!canAccessWms()) {
+          showToast("Склад", "Нет доступа к складским операциям.");
+          return;
+        }
+        if (state.workspace === "production" && !["profile", "passport"].includes(state.screen) && productionScreens.has(state.screen)) {
+          state.productionScreen = state.screen;
+        }
+        state.workspace = "warehouse";
+        state.screen = "warehouse";
+      } else {
+        state.workspace = "production";
+        const allowed = state.data && state.data.is_admin
+          ? new Set(["shift", "analytics", "orders", "admin"])
+          : new Set(["shift", "report", "analytics", "orders", "admin"]);
+        state.screen = allowed.has(state.productionScreen) ? state.productionScreen : "shift";
+      }
       render();
     }
 
@@ -7767,6 +7989,8 @@ MINIAPP_HTML = """<!doctype html>
 
       const wmsView = event.target.closest("[data-wms-view]");
       if (wmsView) {
+        state.workspace = "warehouse";
+        state.screen = "warehouse";
         state.wmsView = wmsView.dataset.wmsView;
         render();
         return;
@@ -7781,7 +8005,8 @@ MINIAPP_HTML = """<!doctype html>
       const wmsAction = event.target.closest("[data-wms-action]");
       if (wmsAction) {
         const action = wmsAction.dataset.wmsAction;
-        if (action === "receive") wmsReceive();
+        if (action === "refresh") refreshWmsWorkspace();
+        else if (action === "receive") wmsReceive();
         else if (action === "putaway") wmsPutaway();
         else if (action === "transfer") wmsTransfer();
         else if (action === "inventory") wmsInventory();
@@ -7893,6 +8118,12 @@ MINIAPP_HTML = """<!doctype html>
       if (employeeHomeBack) {
         state.employeeHomeView = "overview";
         render();
+        return;
+      }
+
+      const workspace = event.target.closest("[data-workspace]");
+      if (workspace && !workspace.disabled) {
+        switchWorkspace(workspace.dataset.workspace);
         return;
       }
 
@@ -8056,13 +8287,13 @@ MINIAPP_HTML = """<!doctype html>
         refreshState("Отчёт обновлён.");
         return;
       }
-      if (state.screen === "warehouse") { refreshState("Склад обновлён."); return; }
-      if (state.screen === "wms") {
+      if (state.screen === "warehouse" || state.screen === "wms") {
         if (state.wmsView === "receive") wmsReceive();
         else if (state.wmsView === "putaway") wmsPutaway();
         else if (state.wmsView === "transfer") wmsTransfer();
         else if (state.wmsView === "inventory") wmsInventory();
         else if (state.wmsView === "scrap") wmsScrap();
+        else refreshWmsWorkspace();
         return;
       }
       if (state.screen === "analytics") {
@@ -8273,10 +8504,14 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      if (state.screen === "warehouse" && state.warehouseView !== "overview") {
-        state.warehouseView = "overview";
-        resetWarehouseFilters();
+      if (state.workspace === "warehouse" && state.screen === "warehouse" && state.wmsView !== "overview") {
+        state.wmsView = warehouseMoreViews.has(state.wmsView) && state.wmsView !== "more" ? "more" : "overview";
         render();
+        return;
+      }
+
+      if (state.workspace === "warehouse" && state.screen === "warehouse") {
+        switchWorkspace("production");
         return;
       }
 

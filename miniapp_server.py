@@ -4515,17 +4515,17 @@ def set_employee_wms_access_for_admin(telegram_id: int, payload: dict):
     if not result.get("ok") or employee is None:
         return {"ok": False, "message": "Сотрудник не найден."}
 
-    access_label = "выдан" if enabled else "отозван"
+    access_label = "назначены" if enabled else "сняты"
     add_edit_log(
         telegram_id,
         "admin",
-        f"Доступ к складу {access_label} из миниаппа",
+        f"Права кладовщика {access_label} из миниаппа",
         "employee",
         employee_id,
         employee[2],
     )
     dashboard = get_admin_dashboard(telegram_id)
-    dashboard["message"] = f"Доступ к складу {access_label}."
+    dashboard["message"] = f"Права кладовщика {access_label}."
     return dashboard
 
 
