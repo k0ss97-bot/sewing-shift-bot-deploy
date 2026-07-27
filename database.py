@@ -112,6 +112,27 @@ WAREHOUSE_STOCK_COLUMNS = [
     "updated_at",
 ]
 WAREHOUSE_STOCK_SELECT = ", ".join(WAREHOUSE_STOCK_COLUMNS)
+WMS_RECEIPT_OUTBOX_COLUMNS = [
+    "id",
+    "request_key",
+    "route_batch_id",
+    "stock_id",
+    "item_type",
+    "product_name",
+    "product_size",
+    "product_color",
+    "stage_name",
+    "ready_for_position",
+    "quantity",
+    "employee_id",
+    "status",
+    "attempts",
+    "last_attempt_at",
+    "last_error",
+    "created_at",
+    "processed_at",
+]
+WMS_RECEIPT_OUTBOX_SELECT = ", ".join(WMS_RECEIPT_OUTBOX_COLUMNS)
 MATERIAL_PREPARATION_FOLDERS = {"Нарезание резинки", "Нарезание дублерина"}
 AUTO_PREPARATION_FOLDERS = {*MATERIAL_PREPARATION_FOLDERS, "Дублирование"}
 
@@ -2396,6 +2417,32 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wms_receipt_outbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_key TEXT NOT NULL UNIQUE,
+            route_batch_id INTEGER NOT NULL UNIQUE,
+            stock_id INTEGER NOT NULL,
+            item_type TEXT NOT NULL,
+            product_name TEXT NOT NULL,
+            product_size TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            stage_name TEXT NOT NULL,
+            ready_for_position TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            employee_id INTEGER,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_attempt_at TEXT,
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            processed_at TEXT,
+            FOREIGN KEY (route_batch_id) REFERENCES route_batches (id),
+            FOREIGN KEY (stock_id) REFERENCES warehouse_stock (id),
+            FOREIGN KEY (employee_id) REFERENCES employees (id)
+        )
+    """)
+
     repair_legacy_uniqueness_conflicts(cursor)
     backfill_traceability(cursor)
 
@@ -2442,6 +2489,10 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trace_events_batch ON production_trace_events (batch_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trace_events_cutting ON production_trace_events (cutting_batch_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trace_events_task ON production_trace_events (production_task_id, created_at)")
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_wms_receipt_outbox_pending "
+        "ON wms_receipt_outbox(status, created_at, id)"
+    )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_handoffs_batch ON route_batch_handoffs (batch_id, created_at)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_route_batches_trace_code ON route_batches (trace_code) WHERE trace_code IS NOT NULL")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_production_tasks_trace_code ON production_tasks (trace_code) WHERE trace_code IS NOT NULL")
@@ -5438,6 +5489,7 @@ def complete_route_batch_step_atomic(
     cursor = conn.cursor()
     now = local_now().isoformat()
     stock_id = None
+    wms_receipt_outbox_id = None
     auto_batch_id = None
     rework_batch_id = None
     parallel_waiting = False
@@ -5457,6 +5509,7 @@ def complete_route_batch_step_atomic(
                 return {
                     "batch": get_route_batch_by_id(batch_id),
                     "stock": None,
+                    "wms_receipt_outbox": get_wms_receipt_outbox_by_batch_id(batch_id),
                     "auto_batch": None,
                     "rework_batch": None,
                     "replayed": True,
@@ -5605,6 +5658,40 @@ def complete_route_batch_step_atomic(
                 source_type="route_batch",
                 source_id=batch_id,
             )
+
+            if item_type == "finished":
+                wms_request_key = f"production:route-batch:{batch_id}"
+                cursor.execute(
+                    """
+                    INSERT INTO wms_receipt_outbox (
+                        request_key, route_batch_id, stock_id,
+                        item_type, product_name, product_size, product_color,
+                        stage_name, ready_for_position, quantity, employee_id,
+                        status, attempts, last_error, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, '', ?)
+                    ON CONFLICT(request_key) DO NOTHING
+                    """,
+                    (
+                        wms_request_key,
+                        batch_id,
+                        stock_id,
+                        item_type,
+                        output_product_name,
+                        batch["product_size"],
+                        batch["product_color"],
+                        stage_name,
+                        ready_for_position,
+                        output_quantity,
+                        employee_id,
+                        now,
+                    ),
+                )
+                cursor.execute(
+                    "SELECT id FROM wms_receipt_outbox WHERE request_key = ?",
+                    (wms_request_key,),
+                )
+                wms_receipt_outbox_id = cursor.fetchone()[0]
 
             parallel_flow = _parallel_route_transition(
                 cursor,
@@ -5760,6 +5847,7 @@ def complete_route_batch_step_atomic(
     return {
         "batch": get_route_batch_by_id(batch_id),
         "stock": get_warehouse_stock_by_id(stock_id) if stock_id else None,
+        "wms_receipt_outbox": get_wms_receipt_outbox_by_id(wms_receipt_outbox_id) if wms_receipt_outbox_id else None,
         "auto_batch": get_route_batch_by_id(auto_batch_id) if auto_batch_id else None,
         "rework_batch": get_route_batch_by_id(rework_batch_id) if rework_batch_id else None,
         "parallel_waiting": parallel_waiting,
@@ -7896,6 +7984,89 @@ def get_warehouse_stock_by_id(stock_id: int):
     row = warehouse_stock_from_row(cursor.fetchone())
     conn.close()
     return row
+
+
+def wms_receipt_outbox_from_row(row):
+    return row_to_dict(WMS_RECEIPT_OUTBOX_COLUMNS, row)
+
+
+def get_wms_receipt_outbox_by_id(outbox_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT {WMS_RECEIPT_OUTBOX_SELECT} FROM wms_receipt_outbox WHERE id = ?",
+        (outbox_id,),
+    )
+    row = wms_receipt_outbox_from_row(cursor.fetchone())
+    conn.close()
+    return row
+
+
+def get_wms_receipt_outbox_by_batch_id(route_batch_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT {WMS_RECEIPT_OUTBOX_SELECT} FROM wms_receipt_outbox WHERE route_batch_id = ?",
+        (route_batch_id,),
+    )
+    row = wms_receipt_outbox_from_row(cursor.fetchone())
+    conn.close()
+    return row
+
+
+def get_pending_wms_receipt_outbox(limit: int = 50):
+    safe_limit = max(1, min(int(limit or 50), 200))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT {WMS_RECEIPT_OUTBOX_SELECT}
+        FROM wms_receipt_outbox
+        WHERE status IN ('pending', 'failed')
+        ORDER BY created_at ASC, id ASC
+        LIMIT ?
+        """,
+        (safe_limit,),
+    )
+    rows = [wms_receipt_outbox_from_row(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def mark_wms_receipt_outbox_sent(outbox_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+    cursor.execute(
+        """
+        UPDATE wms_receipt_outbox
+        SET status = 'sent', attempts = attempts + 1,
+            last_attempt_at = ?, last_error = '', processed_at = ?
+        WHERE id = ?
+        """,
+        (now, now, outbox_id),
+    )
+    conn.commit()
+    conn.close()
+    return get_wms_receipt_outbox_by_id(outbox_id)
+
+
+def mark_wms_receipt_outbox_failed(outbox_id: int, error: str = ""):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+    cursor.execute(
+        """
+        UPDATE wms_receipt_outbox
+        SET status = 'failed', attempts = attempts + 1,
+            last_attempt_at = ?, last_error = ?, processed_at = NULL
+        WHERE id = ? AND status != 'sent'
+        """,
+        (now, str(error or "")[:500], outbox_id),
+    )
+    conn.commit()
+    conn.close()
+    return get_wms_receipt_outbox_by_id(outbox_id)
 
 
 def get_warehouse_stock_rows():

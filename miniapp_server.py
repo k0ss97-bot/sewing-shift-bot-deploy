@@ -69,6 +69,7 @@ from database import (
     get_open_critical_notifications,
     get_open_shift_for_today,
     get_pending_employees,
+    get_pending_wms_receipt_outbox,
     get_period_employee_summary,
     get_period_employee_production_performance,
     get_period_fabric_movement_rows,
@@ -99,6 +100,7 @@ from database import (
     get_shift_report,
     get_warehouse_stock_by_id,
     get_warehouse_stock_rows,
+    get_wms_receipt_outbox_by_batch_id,
     get_web_push_subscription_status,
     get_today_shifts,
     hide_operation,
@@ -106,6 +108,8 @@ from database import (
     local_now,
     local_today,
     mark_cutting_batch_formed,
+    mark_wms_receipt_outbox_failed,
+    mark_wms_receipt_outbox_sent,
     record_web_push_delivery,
     reject_production_task_fabric_rolls,
     route_steps_from_snapshot,
@@ -140,7 +144,9 @@ from webapp_auth import (
 )
 from webapp_pwa import app_shell_revision, inject_pwa_markup, send_pwa_resource
 from wms import api as wms_api
+from wms import operations as wms_operations
 from wms.api import WMS_READ_ROUTES, WMS_ROUTES
+from wms.models import ProductKey
 from web_push import WebPushDeliveryError, get_public_web_push_config, send_web_push
 
 
@@ -165,6 +171,7 @@ CONTENT_SECURITY_POLICY = (
     "worker-src 'self' blob:"
 )
 ROUTES_MINIAPP_ENABLED = False
+LOGGER = logging.getLogger(__name__)
 CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
 CUTTING_LAYOUT_OPERATION = "Формирование настила"
 CUTTING_CUT_OPERATION = "Раскрой"
@@ -226,6 +233,82 @@ def can_access_wms(telegram_id: int) -> bool:
         and employee[5] == "active"
         and (is_admin(telegram_id) or employee_has_wms_access(telegram_id))
     )
+
+
+def wms_auto_receipt_enabled() -> bool:
+    return os.environ.get("WMS_AUTO_RECEIPT_ENABLED", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def sync_wms_receipt_outbox_entry(entry: dict | None):
+    if not entry:
+        return {"status": "not_applicable"}
+    if entry.get("status") == "sent":
+        return {"status": "sent", "entry": entry}
+    if not wms_auto_receipt_enabled():
+        return {"status": "queued", "entry": entry}
+
+    product_key = ProductKey(
+        item_type=entry["item_type"],
+        product_name=entry["product_name"],
+        product_size=entry["product_size"],
+        product_color=entry["product_color"],
+        stage_name=entry["stage_name"],
+        ready_for_position=entry["ready_for_position"],
+    )
+    try:
+        result = wms_operations.receive_from_production(
+            product_key,
+            int(entry["quantity"]),
+            employee_id=entry.get("employee_id"),
+            request_key=entry["request_key"],
+            reason="Автоматическая приёмка после финальной упаковки",
+            tsd_device_id="production-route",
+            source_id=entry.get("route_batch_id"),
+        )
+    except Exception as exc:  # PostgreSQL can be retried from the durable outbox.
+        error_name = type(exc).__name__
+        mark_wms_receipt_outbox_failed(entry["id"], error_name)
+        LOGGER.warning(
+            "WMS receipt queued for retry: outbox_id=%s error=%s",
+            entry["id"],
+            error_name,
+        )
+        return {"status": "queued", "entry": entry, "error": error_name}
+
+    if not result.ok:
+        reason = str(result.reason or "WMS receipt rejected")
+        mark_wms_receipt_outbox_failed(entry["id"], reason)
+        return {"status": "queued", "entry": entry, "error": reason}
+
+    updated_entry = mark_wms_receipt_outbox_sent(entry["id"])
+    return {
+        "status": "duplicate" if result.skipped_duplicate else "sent",
+        "entry": updated_entry,
+        "movement_id": result.movement_id,
+    }
+
+
+def sync_wms_receipt_for_route_batch(route_batch_id: int):
+    return sync_wms_receipt_outbox_entry(
+        get_wms_receipt_outbox_by_batch_id(route_batch_id)
+    )
+
+
+def flush_pending_wms_receipts(limit: int = 50):
+    summary = {"sent": 0, "queued": 0, "duplicate": 0}
+    if not wms_auto_receipt_enabled():
+        return summary
+    for entry in get_pending_wms_receipt_outbox(limit=limit):
+        result = sync_wms_receipt_outbox_entry(entry)
+        status = result.get("status", "queued")
+        if status in summary:
+            summary[status] += 1
+    return summary
 
 
 def format_minutes(total_minutes: int | None):
@@ -558,7 +641,13 @@ def get_route_step_for_batch(batch: dict, step_index: int | None = None):
 def get_route_previous_status(batch: dict):
     if batch["status"] == "done":
         steps = get_route_steps_for_batch(batch)
-        return steps[-1]["status_after"] if steps else "Процесс завершён"
+        if not steps:
+            return "Процесс завершён"
+        completed_index = max(
+            0,
+            min(int(batch.get("route_step_index") or 1) - 1, len(steps) - 1),
+        )
+        return steps[completed_index]["status_after"]
 
     step_index = batch["route_step_index"]
 
@@ -721,6 +810,14 @@ def get_route_flow_next_step(batch: dict):
     if sequential_index >= len(steps):
         return sequential_index, None
     sequential_step = steps[sequential_index]
+    if (
+        current_step.get("operation") == "Упаковка"
+        and sequential_step.get("operation") == "Размещение на склад"
+    ):
+        # Route snapshots created before the WMS cutover still contain the
+        # obsolete production step.  Final packaging now hands the goods to
+        # RECEIVE-01; physical putaway belongs to the warehouse workspace.
+        return sequential_index + 1, None
     next_group = sequential_step.get("parallel_group")
     if not next_group:
         return sequential_index, sequential_step
@@ -1025,6 +1122,7 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
 
     request_id = str(payload.get("request_id") or "").strip()
     if request_id and has_route_completion_request(batch_id, employee[0], request_id):
+        sync_wms_receipt_for_route_batch(batch_id)
         return {
             "ok": True,
             "message": "Задание уже было синхронизировано. Данные обновлены.",
@@ -1170,6 +1268,11 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     updated_batch = completion["batch"]
     auto_batch = completion["auto_batch"]
     rework_batch = completion["rework_batch"]
+    wms_receipt = (
+        sync_wms_receipt_for_route_batch(batch["id"])
+        if item_type == "finished" and good_quantity > 0
+        else {"status": "not_applicable"}
+    )
 
     add_edit_log(
         telegram_id,
@@ -1194,7 +1297,13 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     elif next_step:
         message = f"Этап завершён. Результат на складе для должности {next_step['position']}."
     else:
-        message = "Этап завершён. Готовая продукция принята на склад."
+        message = "Упаковка завершена." if current_step["operation"] == "Упаковка" else "Этап завершён."
+
+    if item_type == "finished" and good_quantity > 0:
+        if wms_receipt.get("status") in {"sent", "duplicate"}:
+            message += " Готовая продукция автоматически поступила в зону приёмки склада."
+        else:
+            message += " Передача в зону приёмки поставлена в очередь и повторится автоматически."
 
     return {
         "ok": True,
@@ -4991,6 +5100,8 @@ def make_handler(bot_token: str, debug: bool):
                     )
                     return
                 employee = get_employee_for_access(telegram_id)
+                if path == "/api/wms/stock":
+                    flush_pending_wms_receipts()
                 status, result = wms_api.handle(path, query, employee_id=int(employee[0]))
                 self.send_json(result, status=status)
                 return
@@ -5261,13 +5372,15 @@ def make_handler(bot_token: str, debug: bool):
                         status=403,
                     )
                     return
-                if path in {"/api/wms/barcode/register", "/api/wms/locations/create"} and not is_admin(telegram_id):
+                if path in {"/api/wms/receive", "/api/wms/barcode/register", "/api/wms/locations/create"} and not is_admin(telegram_id):
                     self.send_json(
-                        {"ok": False, "code": "forbidden", "message": "Настраивать склад может только администратор."},
+                        {"ok": False, "code": "forbidden", "message": "Эту складскую операцию может выполнять только администратор."},
                         status=403,
                     )
                     return
                 employee = get_employee_for_access(telegram_id)
+                if path != "/api/wms/receive":
+                    flush_pending_wms_receipts()
                 status, result = wms_api.handle(path, payload, employee_id=int(employee[0]))
                 self.send_json(result, status=status)
                 return

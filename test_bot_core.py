@@ -1,6 +1,7 @@
 import importlib
 import base64
 import io
+import json
 import os
 import sqlite3
 import sys
@@ -20,8 +21,10 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_dir = os.environ.get("DB_DIR")
         self.old_admin_ids = os.environ.get("ADMIN_IDS")
+        self.old_wms_auto_receipt = os.environ.get("WMS_AUTO_RECEIPT_ENABLED")
         self.old_cwd = os.getcwd()
         os.environ["DB_DIR"] = self.temp_dir.name
+        os.environ["WMS_AUTO_RECEIPT_ENABLED"] = "0"
         os.chdir(self.temp_dir.name)
 
         for module_name in ["database", "catalog", "route_maps", "miniapp_server", "webapp_auth"]:
@@ -41,6 +44,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
             os.environ.pop("ADMIN_IDS", None)
         else:
             os.environ["ADMIN_IDS"] = self.old_admin_ids
+
+        if self.old_wms_auto_receipt is None:
+            os.environ.pop("WMS_AUTO_RECEIPT_ENABLED", None)
+        else:
+            os.environ["WMS_AUTO_RECEIPT_ENABLED"] = self.old_wms_auto_receipt
 
         if str(PROJECT_DIR) in sys.path:
             sys.path.remove(str(PROJECT_DIR))
@@ -76,6 +84,36 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(cardigan_options, {"individual", "suit"})
         self.assertEqual(shorts_options, {"individual"})
         self.assertEqual(len({id(step) for step in (tshirt_step, leggings_step, joggers_step, pants_step, cardigan_step, shorts_step)}), 6)
+
+    def test_packaging_is_the_final_production_step(self):
+        route_maps = importlib.import_module("route_maps")
+
+        for product_name, steps in route_maps.PRODUCT_ROUTE_MAPS.items():
+            self.assertEqual(steps[-1]["operation"], "Упаковка", product_name)
+            self.assertNotIn("Размещение на склад", [step["operation"] for step in steps])
+
+    def test_legacy_route_snapshot_skips_production_putaway_after_packaging(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        legacy_steps = [
+            {"position": "Упаковщик", "operation": "Упаковка", "status_after": "Упаковано"},
+            {"position": "Упаковщик", "operation": "Размещение на склад", "status_after": "На складе"},
+        ]
+        batch = {
+            "product_name": "Легинсы",
+            "route_step_index": 0,
+            "route_snapshot": json.dumps(legacy_steps, ensure_ascii=False),
+        }
+
+        next_index, next_step = miniapp_server.get_route_flow_next_step(batch)
+
+        self.assertEqual(next_index, 2)
+        self.assertIsNone(next_step)
+        self.assertEqual(
+            miniapp_server.get_route_previous_status(
+                {**batch, "status": "done", "route_step_index": 1}
+            ),
+            "Упаковано",
+        )
 
     def test_opening_shift_returns_close_shift_reminder_once(self):
         miniapp_server = importlib.import_module("miniapp_server")
@@ -1334,7 +1372,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 final_stock[0]["ready_for_position"],
                 final_stock[0]["quantity"],
             ),
-            ("finished", "На складе", "Склад", 10),
+            ("finished", "Упаковано", "Склад", 10),
         )
         self.assertEqual(self.database.get_active_route_batches(), [])
 
@@ -1710,6 +1748,147 @@ class IsolatedDatabaseTest(unittest.TestCase):
         ).fetchone()[0]
         conn.close()
         self.assertEqual(history_count, 1)
+
+    def test_final_packaging_receives_finished_goods_in_wms_once(self):
+        from wms.models import OperationResult
+
+        os.environ["WMS_AUTO_RECEIPT_ENABLED"] = "1"
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+        step_index = len(route_maps.PRODUCT_ROUTE_MAPS["Легинсы"]) - 1
+        self.assertEqual(route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][step_index]["operation"], "Упаковка")
+        telegram_id = 1104
+        self.database.create_employee(telegram_id, "Тест Автоприёмка", "Упаковщик")
+        employee = self.database.get_employee_by_telegram_id(telegram_id)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        batch = self.database.create_route_batch(
+            "Легинсы", "86", "Бежевый", 6, employee[0], route_step_index=step_index
+        )
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(telegram_id, batch["id"])["ok"])
+
+        with patch.object(
+            miniapp_server.wms_operations,
+            "receive_from_production",
+            return_value=OperationResult(ok=True, movement_id=73),
+        ) as receive:
+            completed = miniapp_server.complete_route_task_for_telegram(
+                telegram_id,
+                batch["id"],
+                {"request_id": "pack-auto-receipt-1", "good_quantity": 6, "defect_quantity": 0},
+            )
+            replayed = miniapp_server.complete_route_task_for_telegram(
+                telegram_id,
+                batch["id"],
+                {"request_id": "pack-auto-receipt-1", "good_quantity": 6, "defect_quantity": 0},
+            )
+
+        self.assertTrue(completed["ok"], completed)
+        self.assertTrue(replayed["ok"], replayed)
+        self.assertIn("зону приёмки", completed["message"])
+        receive.assert_called_once()
+        product_key, quantity = receive.call_args.args
+        self.assertEqual(quantity, 6)
+        self.assertEqual(
+            (
+                product_key.item_type,
+                product_key.product_name,
+                product_key.product_size,
+                product_key.product_color,
+                product_key.stage_name,
+                product_key.ready_for_position,
+            ),
+            ("finished", "Легинсы", "86", "Бежевый", "Упаковано", "Склад"),
+        )
+        self.assertEqual(receive.call_args.kwargs["source_id"], batch["id"])
+        self.assertEqual(
+            receive.call_args.kwargs["request_key"],
+            f"production:route-batch:{batch['id']}",
+        )
+        outbox = self.database.get_wms_receipt_outbox_by_batch_id(batch["id"])
+        self.assertEqual((outbox["status"], outbox["quantity"], outbox["attempts"]), ("sent", 6, 1))
+        self.assertEqual(self.database.get_active_route_batches(), [])
+
+    def test_preparation_without_packaging_does_not_enter_wms_receiving(self):
+        os.environ["WMS_AUTO_RECEIPT_ENABLED"] = "1"
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+        step_index = len(route_maps.PRODUCT_ROUTE_MAPS["Легинсы"]) - 2
+        self.assertEqual(
+            route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][step_index]["operation"],
+            "Подготовка к упаковке",
+        )
+        telegram_id = 1106
+        self.database.create_employee(telegram_id, "Тест До Упаковки", "Упаковщик")
+        employee = self.database.get_employee_by_telegram_id(telegram_id)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        batch = self.database.create_route_batch(
+            "Легинсы", "98", "Синий", 3, employee[0], route_step_index=step_index
+        )
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(telegram_id, batch["id"])["ok"])
+
+        with patch.object(miniapp_server.wms_operations, "receive_from_production") as receive:
+            completed = miniapp_server.complete_route_task_for_telegram(
+                telegram_id,
+                batch["id"],
+                {"good_quantity": 3, "defect_quantity": 0},
+            )
+
+        self.assertTrue(completed["ok"], completed)
+        receive.assert_not_called()
+        self.assertIsNone(self.database.get_wms_receipt_outbox_by_batch_id(batch["id"]))
+        next_batches = self.database.get_active_route_batches()
+        self.assertEqual(len(next_batches), 1)
+        self.assertEqual(
+            route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][next_batches[0]["route_step_index"]]["operation"],
+            "Упаковка",
+        )
+
+    def test_failed_wms_receipt_stays_queued_and_retries(self):
+        from wms.models import OperationResult
+
+        os.environ["WMS_AUTO_RECEIPT_ENABLED"] = "1"
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+        step_index = len(route_maps.PRODUCT_ROUTE_MAPS["Легинсы"]) - 1
+        telegram_id = 1105
+        self.database.create_employee(telegram_id, "Тест Очередь WMS", "Упаковщик")
+        employee = self.database.get_employee_by_telegram_id(telegram_id)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.create_shift(employee[0])
+        batch = self.database.create_route_batch(
+            "Легинсы", "92", "Черный", 4, employee[0], route_step_index=step_index
+        )
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(telegram_id, batch["id"])["ok"])
+
+        with patch.object(
+            miniapp_server.wms_operations,
+            "receive_from_production",
+            side_effect=RuntimeError("synthetic WMS outage"),
+        ):
+            completed = miniapp_server.complete_route_task_for_telegram(
+                telegram_id,
+                batch["id"],
+                {"good_quantity": 4, "defect_quantity": 0},
+            )
+
+        self.assertTrue(completed["ok"], completed)
+        self.assertIn("поставлена в очередь", completed["message"])
+        failed = self.database.get_wms_receipt_outbox_by_batch_id(batch["id"])
+        self.assertEqual((failed["status"], failed["attempts"]), ("failed", 1))
+
+        with patch.object(
+            miniapp_server.wms_operations,
+            "receive_from_production",
+            return_value=OperationResult(ok=True, movement_id=74),
+        ) as receive:
+            summary = miniapp_server.flush_pending_wms_receipts()
+
+        self.assertEqual(summary["sent"], 1)
+        receive.assert_called_once()
+        sent = self.database.get_wms_receipt_outbox_by_batch_id(batch["id"])
+        self.assertEqual((sent["status"], sent["attempts"]), ("sent", 2))
 
     def test_concurrent_orders_cannot_consume_same_semifinished_stock(self):
         os.environ["ADMIN_IDS"] = "9001"

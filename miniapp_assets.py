@@ -7271,6 +7271,10 @@ MINIAPP_HTML = """<!doctype html>
       );
     }
 
+    function wmsReceivingStock() {
+      return wmsStockAtLocation("RECEIVE-01");
+    }
+
     function wmsProductKeysEqual(first, second) {
       const keys = ["item_type", "product_name", "product_size", "product_color", "stage_name", "ready_for_position"];
       return keys.every((key) => String((first || {})[key] || "") === String((second || {})[key] || ""));
@@ -7375,7 +7379,7 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="section-title"><b>Быстрые действия</b><span>сканер</span></div>
         <div class="kpi-grid">
-          <button type="button" class="card summary-card clickable" data-wms-view="receive"><span>Приёмка</span><strong>↓</strong><small>Принять от производства</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="receive"><span>Зона приёмки</span><strong>↓</strong><small>Поступает после упаковки</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="putaway"><span>Размещение</span><strong>→</strong><small>Положить в ячейку</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="pick"><span>Выдача</span><strong>↑</strong><small>Забрать из ячейки</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="transfer"><span>Перемещение</span><strong>⇄</strong><small>Между ячейками</small></button>
@@ -7507,28 +7511,28 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderWmsReceive() {
       const d = state.wmsDraft;
-      mainButton.textContent = "Принять на склад";
-      mainButton.disabled = false;
+      const receiving = wmsReceivingStock();
+      const total = receiving.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+      const selectedProduct = receiving.find((row) => wmsProductKeysEqual(row.product_key, wmsProductKey(d)));
+      mainButton.textContent = state.wmsData.loading ? "Обновляем…" : "Обновить приёмку";
+      mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Приёмка</h2><p>Принять готовую продукцию от производства в зону приёмки.</p></div></div>
-        <div class="card field-card">
-          <div class="form-grid">
-            <div class="field full"><label>Изделие</label><select id="wmsProductName">${wmsProductOptions(d.productName)}</select></div>
-            <div class="field"><label>Размер</label><select id="wmsProductSize">${wmsSizeOptions(d.productName, d.productSize)}</select></div>
-            <div class="field"><label>Цвет</label><select id="wmsProductColor">${wmsColorOptions(d.productName, d.productColor)}</select></div>
-            <div class="field"><label>Тип</label><select id="wmsItemType">
-              <option value="finished" ${d.itemType === "finished" ? "selected" : ""}>Готовая продукция</option>
-              <option value="semifinished" ${d.itemType === "semifinished" ? "selected" : ""}>Полуфабрикат</option>
-            </select></div>
-            <div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>
-            ${state.data && state.data.is_admin ? `<div class="field full"><label>Новый штрихкод товара</label><input id="wmsBarcode" value="${escapeHtml(d.barcode || "")}" placeholder="EAN-13 / Code 128"></div>` : ""}
+        <div class="screen-head"><div><h2>Зона приёмки</h2><p>Товар появляется здесь автоматически после завершения упаковки.</p></div><div class="date">${escapeHtml(total)} шт.</div></div>
+        ${renderWmsDataNotice()}
+        <div class="card field-card"><div class="task-note"><b>Как работать</b><br>Проверьте поступление, откройте «Размещение», отсканируйте ячейку, затем штрихкод товара и укажите количество.</div></div>
+        <div class="section-title"><b>Ожидает размещения</b><span>${receiving.length} поз.</span></div>
+        <div class="op-list">${receiving.length ? receiving.map((row, index) => {
+          const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
+          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${row.product_key && row.product_key.item_type === "semifinished" ? "Полуфабрикат" : "Готовая продукция"} · доступно ${escapeHtml(available)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span>${state.data && state.data.is_admin ? `<button type="button" class="link-button" data-wms-receipt-product="${index}">штрихкод</button>` : ""}</div></div>`;
+        }).join("") : itemEmpty("После завершения упаковки товар появится здесь автоматически.")}</div>
+        ${state.data && state.data.is_admin && selectedProduct ? `
+          <div class="card field-card">
+            <label>Штрихкод выбранного товара</label>
+            <div class="report-row"><div><b>${escapeHtml(wmsProductLabel(selectedProduct.product_key))}</b><span>Привяжите нанесённый на товар код один раз</span></div><span class="status-chip">выбран</span></div>
+            <div class="field full"><label>Новый штрихкод</label><input id="wmsBarcode" value="${escapeHtml(d.barcode || "")}" placeholder="EAN-13 / Code 128"></div>
+            <div class="button-row"><button class="small-button" data-wms-scan="bind_product">📷 Сканировать код</button><button class="small-button secondary" data-wms-action="register_barcode">Привязать код</button></div>
           </div>
-        </div>
-        <div class="button-row">
-          <button class="small-button" data-wms-scan="product">📷 Сканировать</button>
-          ${state.data && state.data.is_admin ? `<button class="small-button" data-wms-scan="bind_product">📷 Новый код</button><button class="small-button" data-wms-action="register_barcode">Привязать код</button>` : ""}
-          <button class="small-button secondary" data-wms-action="receive">Принять</button>
-        </div>
+        ` : ""}
       `;
     }
 
@@ -8249,6 +8253,23 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       const wmsScan = event.target.closest("[data-wms-scan]");
+      const wmsReceiptProduct = event.target.closest("[data-wms-receipt-product]");
+      if (wmsReceiptProduct) {
+        const row = wmsReceivingStock()[Number(wmsReceiptProduct.dataset.wmsReceiptProduct || 0)];
+        const pk = row && row.product_key;
+        if (pk) {
+          state.wmsDraft.itemType = pk.item_type || "finished";
+          state.wmsDraft.productName = pk.product_name || "";
+          state.wmsDraft.productSize = pk.product_size || "";
+          state.wmsDraft.productColor = pk.product_color || "";
+          state.wmsDraft.stageName = pk.stage_name || "Упаковано";
+          state.wmsDraft.readyForPosition = pk.ready_for_position || "Склад";
+          state.wmsDraft.barcode = "";
+          render();
+        }
+        return;
+      }
+
       if (wmsScan) {
         scanWms(wmsScan.dataset.wmsScan);
         return;
@@ -8541,7 +8562,7 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       if (state.screen === "warehouse" || state.screen === "wms") {
-        if (state.wmsView === "receive") wmsReceive();
+        if (state.wmsView === "receive") refreshWmsWorkspace();
         else if (state.wmsView === "putaway") wmsPutaway();
         else if (state.wmsView === "transfer") wmsTransfer();
         else if (state.wmsView === "pick") wmsPick();

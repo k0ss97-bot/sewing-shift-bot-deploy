@@ -294,6 +294,7 @@ def run_smoke() -> None:
                 'body.has-wms-access .mobile-workspace-nav',
                 'function switchWorkspace(workspace)',
                 'function refreshWmsWorkspace({silent = false} = {})',
+                'function wmsReceivingStock()',
                 'data-wms-view="stock"',
                 'data-wms-view="pick"',
                 'id="wmsHardwareScannerInput"',
@@ -301,11 +302,16 @@ def run_smoke() -> None:
                 'src="/assets/jsqr.js"',
                 'const hasQrFallback = typeof window.jsQR === "function"',
                 '+ Кладовщик',
+                'Товар появляется здесь автоматически после завершения упаковки.',
             ):
                 require(
                     desktop_marker in html_text,
                     f"Desktop web workspace marker is missing: {desktop_marker}",
                 )
+            require(
+                'data-wms-action="receive"' not in html_text,
+                "Warehouse employees must not see manual production receipt controls.",
+            )
             require(
                 "warehouse-segments" not in html_text,
                 "Warehouse category navigation must not be duplicated inside a warehouse section.",

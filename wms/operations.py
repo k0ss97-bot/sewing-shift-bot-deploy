@@ -54,6 +54,7 @@ def receive_from_production(
     request_key: str | None = None,
     reason: str | None = None,
     tsd_device_id: str | None = None,
+    source_id: int | None = None,
 ) -> OperationResult:
     """Accept finished/semi-finished goods into the RECEIVE zone.
 
@@ -84,6 +85,7 @@ def receive_from_production(
             to_location_id=receive_loc.id,
             to_state="SELLABLE",
             source_type="production",
+            source_id=source_id,
             reason=reason,
             actor_employee_id=employee_id,
             tsd_device_id=tsd_device_id,
