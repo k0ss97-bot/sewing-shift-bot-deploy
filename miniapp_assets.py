@@ -4133,9 +4133,7 @@ MINIAPP_HTML = """<!doctype html>
 
     function canAccessWms() {
       if (!state.data) return false;
-      if (state.data.is_admin) return true;
-      const pos = state.data.employee && state.data.employee.position;
-      return pos === "Кладовщик";
+      return Boolean(state.data.features && state.data.features.can_wms);
     }
 
     function renderBottomNav() {
@@ -4642,6 +4640,22 @@ MINIAPP_HTML = """<!doctype html>
         replaceAdminDashboard(data, "Должность изменена.");
       } catch (error) {
         showToast("Ошибка", error.message || "Не удалось изменить должность.");
+        mainButton.disabled = false;
+      }
+    }
+
+    async function adminEmployeeWmsAccess(employeeId, enabled) {
+      mainButton.disabled = true;
+
+      try {
+        const data = await api("/api/admin/employee/wms-access", {
+          employee_id: employeeId,
+          enabled,
+        });
+        if (!data.ok) throw new Error(data.message || "Не удалось изменить доступ к складу.");
+        replaceAdminDashboard(data, data.message || "Доступ к складу изменён.");
+      } catch (error) {
+        showToast("Склад", error.message || "Не удалось изменить доступ к складу.");
         mainButton.disabled = false;
       }
     }
@@ -7158,7 +7172,7 @@ MINIAPP_HTML = """<!doctype html>
       const employeeCards = filteredEmployees.length ? filteredEmployees.map((employee) => `
         <div class="card field-card">
           <label>ID ${escapeHtml(employee.id)} · ${employee.role === "admin" ? "администратор" : "сотрудник"}</label>
-          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><div class="employee-statuses"><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employeeStatusLabel(employee.status))}</span><span class="status-chip ${employeeIsOnShift(employee) ? "on-shift" : "gray"}">${employeeIsOnShift(employee) ? "на смене" : "не на смене"}</span></div></div>
+          <div class="report-row"><div><b>${escapeHtml(employee.full_name)}</b><span>${escapeHtml(employee.position)} · ${employeeContact(employee)}</span></div><div class="employee-statuses"><span class="status-chip ${employee.status === "active" ? "" : "gray"}">${escapeHtml(employeeStatusLabel(employee.status))}</span><span class="status-chip ${employeeIsOnShift(employee) ? "on-shift" : "gray"}">${employeeIsOnShift(employee) ? "на смене" : "не на смене"}</span>${employee.can_access_wms ? `<span class="status-chip">доступ к складу</span>` : ""}</div></div>
           ${employee.role === "admin" && Number(employee.telegram_id) === currentTelegramId ? "" : `<div class="form-grid"><div class="field full"><label>${employee.role === "admin" ? "Должность после снятия прав" : "Должность"}</label><select id="employeePosition${escapeHtml(employee.id)}">${positionOptions(employee)}</select></div></div>`}
           ${employee.role === "admin" ? `
             <div class="button-row">
@@ -7166,6 +7180,7 @@ MINIAPP_HTML = """<!doctype html>
             </div>
           ` : `
             <div class="button-row"><button class="small-button secondary" data-admin-action="position" data-employee-id="${escapeHtml(employee.id)}">Сохранить должность</button><button class="small-button ${employee.status === "active" ? "danger" : ""}" data-admin-action="${employee.status === "active" ? "inactive" : "active"}" data-employee-id="${escapeHtml(employee.id)}">${employee.status === "active" ? "Отключить" : "Активировать"}</button></div>
+            <div class="button-row"><button class="small-button ${employee.can_access_wms ? "danger" : "secondary"}" data-admin-action="${employee.can_access_wms ? "wms-revoke" : "wms-grant"}" data-employee-id="${escapeHtml(employee.id)}">${employee.can_access_wms ? "Убрать доступ к складу" : "Дать доступ к складу"}</button></div>
             <div class="button-row"><button class="small-button" data-admin-action="role-admin" data-employee-id="${escapeHtml(employee.id)}">Назначить администратором</button><button class="small-button danger" data-admin-action="delete-employee" data-employee-id="${escapeHtml(employee.id)}" data-employee-name="${escapeHtml(employee.full_name)}">Удалить</button></div>
           `}
         </div>
@@ -7716,6 +7731,8 @@ MINIAPP_HTML = """<!doctype html>
         if (adminAction.dataset.adminAction === "inactive") adminEmployeeStatus(adminAction.dataset.employeeId, "inactive");
         if (adminAction.dataset.adminAction === "approve") adminApproveEmployee(adminAction.dataset.employeeId);
         if (adminAction.dataset.adminAction === "position") adminEmployeePosition(adminAction.dataset.employeeId);
+        if (adminAction.dataset.adminAction === "wms-grant") adminEmployeeWmsAccess(adminAction.dataset.employeeId, true);
+        if (adminAction.dataset.adminAction === "wms-revoke") adminEmployeeWmsAccess(adminAction.dataset.employeeId, false);
         if (adminAction.dataset.adminAction === "role-admin") adminEmployeeRole(adminAction.dataset.employeeId, "admin");
         if (adminAction.dataset.adminAction === "role-employee") adminEmployeeRole(adminAction.dataset.employeeId, "employee");
         if (adminAction.dataset.adminAction === "delete-employee") adminDeleteEmployee(adminAction.dataset.employeeId, adminAction.dataset.employeeName);

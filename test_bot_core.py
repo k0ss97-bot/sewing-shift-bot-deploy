@@ -23,7 +23,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         os.environ["DB_DIR"] = self.temp_dir.name
         os.chdir(self.temp_dir.name)
 
-        for module_name in ["database", "catalog", "route_maps", "miniapp_server"]:
+        for module_name in ["database", "catalog", "route_maps", "miniapp_server", "webapp_auth"]:
             sys.modules.pop(module_name, None)
 
         sys.path.insert(0, str(PROJECT_DIR))
@@ -45,7 +45,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             sys.path.remove(str(PROJECT_DIR))
 
         os.chdir(self.old_cwd)
-        for module_name in ["database", "catalog", "route_maps", "miniapp_server"]:
+        for module_name in ["database", "catalog", "route_maps", "miniapp_server", "webapp_auth"]:
             sys.modules.pop(module_name, None)
 
         self.temp_dir.cleanup()
@@ -76,20 +76,59 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(shorts_options, {"individual"})
         self.assertEqual(len({id(step) for step in (tshirt_step, leggings_step, joggers_step, pants_step, cardigan_step, shorts_step)}), 6)
 
-    def test_only_active_storekeeper_or_admin_can_access_wms(self):
+    def test_only_selected_active_employee_or_admin_can_access_wms(self):
         miniapp_server = importlib.import_module("miniapp_server")
-        self.database.create_employee(4101, "Тест Кладовщик", "Кладовщик")
+        self.database.create_employee(4101, "Тест Упаковщик WMS", "Упаковщик")
         storekeeper = self.database.get_employee_by_telegram_id(4101)
         self.database.update_employee_status(storekeeper[0], "active")
 
-        self.database.create_employee(4102, "Тест Швея WMS", "Швея")
-        seamstress = self.database.get_employee_by_telegram_id(4102)
-        self.database.update_employee_status(seamstress[0], "active")
+        self.database.create_employee(4102, "Тест Упаковщик без WMS", "Упаковщик")
+        second_packer = self.database.get_employee_by_telegram_id(4102)
+        self.database.update_employee_status(second_packer[0], "active")
 
+        self.assertTrue(self.database.update_employee_wms_access(storekeeper[0], True)["ok"])
         self.assertTrue(miniapp_server.can_access_wms(4101))
         self.assertFalse(miniapp_server.can_access_wms(4102))
+        self.assertEqual(storekeeper[3], "Упаковщик")
         self.database.update_employee_status(storekeeper[0], "inactive")
         self.assertFalse(miniapp_server.can_access_wms(4101))
+
+    def test_admin_can_grant_and_revoke_wms_without_changing_position(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(4110, "Тест Администратор", "Швея")
+        admin = self.database.get_employee_by_telegram_id(4110)
+        self.assertTrue(self.database.update_employee_role(admin[0], "admin")["ok"])
+
+        self.database.create_employee(4111, "Тест Упаковщик", "Упаковщик")
+        packer = self.database.get_employee_by_telegram_id(4111)
+        self.database.update_employee_status(packer[0], "active")
+
+        granted = miniapp_server.set_employee_wms_access_for_admin(
+            4110, {"employee_id": packer[0], "enabled": True}
+        )
+        self.assertTrue(granted["ok"])
+        granted_row = next(row for row in granted["user_accounts"] if row["id"] == packer[0])
+        self.assertTrue(granted_row["can_access_wms"])
+        self.assertEqual(granted_row["position"], "Упаковщик")
+        self.assertTrue(miniapp_server.can_access_wms(4111))
+
+        revoked = miniapp_server.set_employee_wms_access_for_admin(
+            4110, {"employee_id": packer[0], "enabled": False}
+        )
+        self.assertTrue(revoked["ok"])
+        self.assertFalse(miniapp_server.can_access_wms(4111))
+
+    def test_employee_wms_permission_column_is_additive_and_defaults_off(self):
+        conn = self.database.get_db_connection()
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(employees)").fetchall()}
+        self.assertIn("can_access_wms", columns)
+        conn.close()
+
+        self.database.create_employee(4112, "Тест Без Склада", "Упаковщик")
+        employee = self.database.get_employee_by_telegram_id(4112)
+        access_map = self.database.get_employee_wms_access_map([employee[0]])
+        self.assertFalse(access_map[employee[0]])
+        self.assertEqual(employee[3], "Упаковщик")
 
     def route_step_index(self, product_name: str, operation_name: str, position: str | None = None):
         route_maps = importlib.import_module("route_maps")

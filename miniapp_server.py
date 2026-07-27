@@ -36,6 +36,7 @@ from database import (
     delete_employee_if_unused,
     delete_shift_by_id,
     ensure_admin_employee,
+    employee_has_wms_access,
     get_active_operations,
     get_active_cutting_batch_product_names,
     get_active_production_tasks,
@@ -56,6 +57,7 @@ from database import (
     get_employee_period_operation_totals,
     get_employee_period_summary,
     get_employee_shifts_by_period,
+    get_employee_wms_access_map,
     get_employees_by_status,
     get_feedback_entries,
     get_feedback_entries_by_shift,
@@ -109,6 +111,7 @@ from database import (
     update_employee_access_status,
     update_employee_position,
     update_employee_role,
+    update_employee_wms_access,
     update_operation_field,
 )
 from catalog import PREPARATION_OPERATION_OPTIONS, format_color_label
@@ -215,7 +218,7 @@ def can_access_wms(telegram_id: int) -> bool:
     return bool(
         employee
         and employee[5] == "active"
-        and (employee[3] == "Кладовщик" or is_admin(telegram_id))
+        and (is_admin(telegram_id) or employee_has_wms_access(telegram_id))
     )
 
 
@@ -309,6 +312,7 @@ def employee_to_dict(employee):
         "position": employee[3],
         "role": employee[4],
         "status": employee[5],
+        "can_access_wms": can_access_wms(employee[1]),
     }
 
 
@@ -2749,7 +2753,7 @@ ADMIN_MENU = [
     },
 ]
 
-POSITIONS = ["Швея", "Упаковщик", "Раскройщик", "Ремонт", "Кладовщик"]
+POSITIONS = ["Швея", "Упаковщик", "Раскройщик", "Ремонт"]
 
 
 def clean_date(value: str | None, fallback: str):
@@ -2772,7 +2776,7 @@ def quarter_bounds():
     return today.replace(month=quarter_start_month, day=1).isoformat(), today.isoformat()
 
 
-def employee_admin_to_dict(employee, web_profiles=None):
+def employee_admin_to_dict(employee, web_profiles=None, wms_access=None):
     employee_id, full_name, position, telegram_id_value, employee_status = employee
     profile = (web_profiles or {}).get(int(telegram_id_value), {})
 
@@ -2785,10 +2789,11 @@ def employee_admin_to_dict(employee, web_profiles=None):
         "email": profile.get("email", ""),
         "phone": profile.get("phone", ""),
         "is_web_account": bool(profile),
+        "can_access_wms": bool((wms_access or {}).get(int(employee_id), False)),
     }
 
 
-def user_account_admin_to_dict(employee, web_profiles=None):
+def user_account_admin_to_dict(employee, web_profiles=None, wms_access=None):
     employee_id, full_name, position, telegram_id_value, employee_status, role, registered_at = employee
     profile = (web_profiles or {}).get(int(telegram_id_value), {})
 
@@ -2803,10 +2808,11 @@ def user_account_admin_to_dict(employee, web_profiles=None):
         "email": profile.get("email", ""),
         "phone": profile.get("phone", ""),
         "is_web_account": bool(profile),
+        "can_access_wms": bool(role == "admin" or (wms_access or {}).get(int(employee_id), False)),
     }
 
 
-def pending_employee_to_dict(employee, web_profiles=None):
+def pending_employee_to_dict(employee, web_profiles=None, wms_access=None):
     employee_id, full_name, position, telegram_id_value, registered_at = employee
     profile = (web_profiles or {}).get(int(telegram_id_value), {})
 
@@ -2819,6 +2825,7 @@ def pending_employee_to_dict(employee, web_profiles=None):
         "email": profile.get("email", ""),
         "phone": profile.get("phone", ""),
         "is_web_account": bool(profile),
+        "can_access_wms": bool((wms_access or {}).get(int(employee_id), False)),
     }
 
 
@@ -3928,7 +3935,8 @@ def get_admin_dashboard(telegram_id: int):
     employees = get_all_employees()
     user_accounts = get_all_user_accounts()
     web_profiles = get_web_account_profiles_by_telegram_ids(employee[3] for employee in user_accounts)
-    employee_rows = [employee_admin_to_dict(employee, web_profiles) for employee in employees]
+    wms_access = get_employee_wms_access_map(employee[0] for employee in user_accounts)
+    employee_rows = [employee_admin_to_dict(employee, web_profiles, wms_access) for employee in employees]
     open_shift_rows = [open_shift_to_dict(shift) for shift in get_open_shifts()]
     month_start, today = month_bounds()
 
@@ -3939,16 +3947,16 @@ def get_admin_dashboard(telegram_id: int):
         "period_defaults": {"start_date": month_start, "end_date": today},
         "employees": employee_rows,
         "user_accounts": [
-            user_account_admin_to_dict(employee, web_profiles) for employee in user_accounts
+            user_account_admin_to_dict(employee, web_profiles, wms_access) for employee in user_accounts
         ],
         "active_employees": [
-            employee_admin_to_dict(employee, web_profiles) for employee in get_employees_by_status("active")
+            employee_admin_to_dict(employee, web_profiles, wms_access) for employee in get_employees_by_status("active")
         ],
         "inactive_employees": [
-            employee_admin_to_dict(employee, web_profiles) for employee in get_employees_by_status("inactive")
+            employee_admin_to_dict(employee, web_profiles, wms_access) for employee in get_employees_by_status("inactive")
         ],
         "pending_employees": [
-            pending_employee_to_dict(employee, web_profiles) for employee in get_pending_employees()
+            pending_employee_to_dict(employee, web_profiles, wms_access) for employee in get_pending_employees()
         ],
         "open_shifts": open_shift_rows,
         "recent_shifts": [recent_shift_to_dict(shift) for shift in get_recent_shifts(20)],
@@ -4364,6 +4372,44 @@ def set_employee_position_for_admin(telegram_id: int, payload: dict):
     return dashboard
 
 
+def set_employee_wms_access_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+
+    try:
+        employee_id = int(payload.get("employee_id") or 0)
+    except (TypeError, ValueError):
+        employee_id = 0
+
+    raw_enabled = payload.get("enabled")
+    if isinstance(raw_enabled, bool):
+        enabled = raw_enabled
+    elif raw_enabled in {0, 1, "0", "1"}:
+        enabled = str(raw_enabled) == "1"
+    else:
+        return {"ok": False, "message": "Некорректное значение доступа к складу."}
+
+    result = update_employee_wms_access(employee_id, enabled)
+    if result.get("code") == "admin":
+        return {"ok": False, "message": "Администратор уже имеет доступ к складу."}
+    employee = result.get("employee")
+    if not result.get("ok") or employee is None:
+        return {"ok": False, "message": "Сотрудник не найден."}
+
+    access_label = "выдан" if enabled else "отозван"
+    add_edit_log(
+        telegram_id,
+        "admin",
+        f"Доступ к складу {access_label} из миниаппа",
+        "employee",
+        employee_id,
+        employee[2],
+    )
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["message"] = f"Доступ к складу {access_label}."
+    return dashboard
+
+
 def close_shift_for_admin(telegram_id: int, payload: dict):
     if not is_admin(telegram_id):
         return {"ok": False, "message": "Нет прав администратора."}
@@ -4502,6 +4548,7 @@ def get_app_state(telegram_id: int, message: str = ""):
         "features": {
             "can_work": bool(employee and employee.get("status") == "active"),
             "can_admin": is_admin_user,
+            "can_wms": can_access_wms(telegram_id),
             "routes_enabled": ROUTES_MINIAPP_ENABLED,
         },
     }
@@ -4882,6 +4929,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/admin/employee/delete",
                 "/api/admin/employee/position",
                 "/api/admin/employee/role",
+                "/api/admin/employee/wms-access",
                 "/api/admin/shift/close",
                 "/api/admin/shift/delete",
                 "/api/admin/operation",
@@ -5194,6 +5242,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = set_employee_position_for_admin(telegram_id, payload)
             elif path == "/api/admin/employee/role":
                 result = set_employee_role_for_admin(telegram_id, payload)
+            elif path == "/api/admin/employee/wms-access":
+                result = set_employee_wms_access_for_admin(telegram_id, payload)
             elif path == "/api/admin/shift/close":
                 result = close_shift_for_admin(telegram_id, payload)
             elif path == "/api/admin/shift/delete":

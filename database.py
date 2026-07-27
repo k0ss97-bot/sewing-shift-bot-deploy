@@ -1671,9 +1671,17 @@ def init_db():
             position TEXT,
             role TEXT NOT NULL DEFAULT 'employee',
             status TEXT NOT NULL DEFAULT 'pending',
+            can_access_wms INTEGER NOT NULL DEFAULT 0,
             registered_at TEXT NOT NULL
         )
     """)
+
+    cursor.execute("PRAGMA table_info(employees)")
+    employee_columns = {column[1] for column in cursor.fetchall()}
+    if "can_access_wms" not in employee_columns:
+        cursor.execute(
+            "ALTER TABLE employees ADD COLUMN can_access_wms INTEGER NOT NULL DEFAULT 0"
+        )
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS shifts (
@@ -2547,6 +2555,69 @@ def get_employee_by_id(employee_id: int):
     employee = cursor.fetchone()
     conn.close()
     return employee
+
+
+def employee_has_wms_access(telegram_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT can_access_wms
+        FROM employees
+        WHERE telegram_id = ? AND status = 'active'
+        """,
+        (telegram_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return bool(row and row[0])
+
+
+def get_employee_wms_access_map(employee_ids) -> dict[int, bool]:
+    normalized_ids = sorted({int(employee_id) for employee_id in employee_ids if employee_id})
+    if not normalized_ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in normalized_ids)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT id, can_access_wms FROM employees WHERE id IN ({placeholders})",
+        normalized_ids,
+    )
+    result = {int(employee_id): bool(enabled) for employee_id, enabled in cursor.fetchall()}
+    conn.close()
+    return result
+
+
+def update_employee_wms_access(employee_id: int, enabled: bool):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            "SELECT id, telegram_id, full_name, position, role, status FROM employees WHERE id = ?",
+            (employee_id,),
+        )
+        employee = cursor.fetchone()
+        if employee is None:
+            conn.rollback()
+            return {"ok": False, "code": "not_found", "employee": None, "enabled": False}
+        if employee[4] == "admin":
+            conn.rollback()
+            return {"ok": False, "code": "admin", "employee": employee, "enabled": True}
+
+        cursor.execute(
+            "UPDATE employees SET can_access_wms = ? WHERE id = ?",
+            (1 if enabled else 0, employee_id),
+        )
+        conn.commit()
+        return {"ok": True, "code": "", "employee": employee, "enabled": bool(enabled)}
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def ensure_admin_employee(telegram_id: int):

@@ -466,7 +466,7 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertEqual(result["code"], "forbidden")
 
         employee = self.database.get_employee_by_telegram_id(23001)
-        self.database.update_employee_position(employee[0], "Кладовщик")
+        self.assertTrue(self.database.update_employee_wms_access(employee[0], True)["ok"])
         with patch.object(
             self.server_module.wms_api,
             "handle",
@@ -485,6 +485,7 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(result["ok"])
         self.assertEqual(handler.call_args.kwargs["employee_id"], employee[0])
+        self.assertEqual(self.database.get_employee_by_id(employee[0])[3], "Швея")
 
     def test_registration_waits_for_admin_approval_then_allows_phone_login(self):
         payload = {
