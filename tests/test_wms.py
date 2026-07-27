@@ -241,6 +241,24 @@ class WmsDbTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("Недостаточно", result.reason)
 
+    def test_negative_adjustment_is_guarded_and_never_inserts_negative_row(self):
+        from wms import repository as repo
+
+        receive = repo.list_locations(self.conn, zone_code="RECEIVE")[0]
+        pk = self._pk(product_name="Тест-Защита-Отрицательного-Остатка")
+        repo.upsert_stock(self.conn, pk, delta=5, location_id=receive.id)
+        self.assertEqual(
+            repo.find_stock(self.conn, pk, location_id=receive.id).quantity,
+            5,
+        )
+        repo.upsert_stock(self.conn, pk, delta=-3, location_id=receive.id)
+        self.assertEqual(
+            repo.find_stock(self.conn, pk, location_id=receive.id).quantity,
+            2,
+        )
+        with self.assertRaises(ValueError):
+            repo.upsert_stock(self.conn, pk, delta=-3, location_id=receive.id)
+
     def test_partial_putaway_and_transfer_keep_separate_location_balances(self):
         from wms import operations as ops
         from wms import repository as repo

@@ -150,11 +150,42 @@ def upsert_stock(
     location_id: int | None = None,
     legacy_sqlite_id: int | None = None,
 ) -> int:
-    """Insert or increment a stock row.  Returns the stock id.
+    """Insert or adjust a stock row.  Returns the stock id.
 
-    Uses ``ON CONFLICT … DO UPDATE`` for atomic upsert (Postgres native).
+    Positive deltas use ``ON CONFLICT … DO UPDATE``. Negative deltas use a
+    guarded ``UPDATE`` so PostgreSQL never attempts to insert a temporary
+    negative row before conflict resolution.
     """
     with conn.cursor() as cur:
+        if delta < 0:
+            cur.execute(
+                """UPDATE warehouse_stock
+                      SET quantity = quantity + %s,
+                          updated_at = now()
+                    WHERE item_type=%s AND product_name=%s AND product_size=%s
+                      AND product_color=%s AND stage_name=%s AND ready_for_position=%s
+                      AND unit='шт' AND item_state=%s
+                      AND location_id IS NOT DISTINCT FROM %s
+                      AND quantity + %s >= 0
+                RETURNING id""",
+                (
+                    delta,
+                    product_key.item_type,
+                    product_key.product_name,
+                    product_key.product_size,
+                    product_key.product_color,
+                    product_key.stage_name,
+                    product_key.ready_for_position,
+                    item_state,
+                    location_id,
+                    delta,
+                ),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise ValueError("Недостаточно товара для списания.")
+            return int(row[0])
+
         cur.execute(
             """INSERT INTO warehouse_stock
                (legacy_sqlite_id, item_type, product_name, product_size,
