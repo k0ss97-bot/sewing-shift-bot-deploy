@@ -1,0 +1,25 @@
+[Unit]
+Description=Backup Shagaem Vmeste WMS PostgreSQL database
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/sewing-web/current
+Environment=WMS_DATABASE_URL=postgresql:///sewing_wms?host=/var/run/postgresql
+Environment=WMS_BACKUP_DIR=/var/backups/sewing-wms
+ExecStart=/opt/sewing-web/venv/bin/python /opt/sewing-web/current/scripts/backup_wms.py
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+ReadWritePaths=/var/backups/sewing-wms

@@ -132,6 +132,28 @@ class WmsContractTests(unittest.TestCase):
         self.assertIn("code = 'RECEIVE-01'", bridge)
         self.assertIn("Сначала выполните миграции WMS", bridge)
 
+    def test_wms_backup_creates_verified_private_dump(self):
+        from scripts import backup_wms
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination_dir = Path(temp_dir)
+
+            def fake_run(command, **kwargs):
+                if command[0] == "pg_dump":
+                    output = next(item.split("=", 1)[1] for item in command if item.startswith("--file="))
+                    Path(output).write_bytes(b"test-dump")
+                return None
+
+            with patch("scripts.backup_wms.subprocess.run", side_effect=fake_run) as run:
+                destination = backup_wms.create_backup(
+                    "postgresql:///sewing_wms", destination_dir
+                )
+
+            self.assertTrue(destination.is_file())
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args_list[1].args[0][:2], ["pg_restore", "--list"])
+
 
 # ──────────────────────────────────────────────────────────────────────
 # DB-dependent tests (skipped if Postgres unreachable)
