@@ -125,6 +125,13 @@ class WmsContractTests(unittest.TestCase):
         self.assertIn("CHECK (quantity >= 0)", schema)
         self.assertIn("reserved_quantity <= quantity", schema)
 
+    def test_initial_bridge_places_legacy_stock_in_receive_location(self):
+        root = Path(__file__).resolve().parents[1]
+        bridge = (root / "wms" / "bridge.py").read_text(encoding="utf-8")
+        self.assertIn("location_id, updated_at", bridge)
+        self.assertIn("code = 'RECEIVE-01'", bridge)
+        self.assertIn("Сначала выполните миграции WMS", bridge)
+
 
 # ──────────────────────────────────────────────────────────────────────
 # DB-dependent tests (skipped if Postgres unreachable)

@@ -30,8 +30,12 @@ _PG_INSERT = """
     INSERT INTO warehouse_stock
       (legacy_sqlite_id, item_type, product_name, product_size, product_color,
        stage_name, ready_for_position, quantity, reserved_quantity, unit,
-       item_state, updated_at)
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'SELLABLE',now())
+       item_state, location_id, updated_at)
+    VALUES (
+      %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'SELLABLE',
+      (SELECT id FROM wms_locations WHERE code = 'RECEIVE-01'),
+      now()
+    )
     ON CONFLICT (legacy_sqlite_id) WHERE legacy_sqlite_id IS NOT NULL
     DO NOTHING
 """
@@ -62,6 +66,9 @@ def sync_warehouse_stock_from_sqlite(
         finally:
             cur.close()
         with pg.cursor() as pcur:
+            pcur.execute("SELECT id FROM wms_locations WHERE code = 'RECEIVE-01'")
+            if pcur.fetchone() is None:
+                raise RuntimeError("Системная ячейка RECEIVE-01 не создана. Сначала выполните миграции WMS.")
             for row in rows:
                 try:
                     pcur.execute(_PG_UPSERT if overwrite_existing else _PG_INSERT, row)
