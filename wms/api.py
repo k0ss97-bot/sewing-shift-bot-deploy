@@ -27,7 +27,11 @@ from typing import Any
 
 from . import operations as ops
 from . import repository as repo
-from .barcode import register_product_barcode, resolve_product_barcode
+from .barcode import (
+    PHYSICAL_LOCATION_PATTERN,
+    register_product_barcode,
+    resolve_product_barcode,
+)
 from .connection import get_pg_connection
 from .models import ProductKey
 
@@ -204,10 +208,15 @@ def _create_location(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         if existing is not None:
             conn.rollback()
             return 409, {"ok": False, "message": "Ячейка с таким кодом уже существует."}
+        requested_barcode = str(payload.get("barcode") or "").strip()
+        location_barcode = requested_barcode or (
+            code if PHYSICAL_LOCATION_PATTERN.fullmatch(code) else None
+        )
         location = repo.create_location(
             conn,
             zone_id=zone.id,
             code=code,
+            barcode=location_barcode,
             name_ru=str(payload.get("name_ru") or "").strip() or None,
         )
         conn.commit()

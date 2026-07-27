@@ -14,6 +14,7 @@ The registry maps a product barcode to a :class:`~wms.models.ProductKey` so the
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .connection import get_pg_connection
@@ -21,12 +22,26 @@ from .models import ProductKey
 
 LOCATION_PREFIX = "LOC:"
 CONTAINER_PREFIX = "LPN:"
+PHYSICAL_LOCATION_PATTERN = re.compile(r"^Z\d+-S\d+-P\d+-\d+$", re.IGNORECASE)
+
+
+def is_location_barcode(raw: str) -> bool:
+    """Return whether *raw* is a supported warehouse-cell barcode.
+
+    Existing physical labels from MoySklad contain the cell code itself
+    (``Z1-S1-P1-1``) and must remain printable/scannable without a ``LOC:``
+    prefix. Legacy prefixed labels stay supported for compatibility.
+    """
+    value = raw.strip()
+    return value.upper().startswith(LOCATION_PREFIX) or bool(
+        PHYSICAL_LOCATION_PATTERN.fullmatch(value)
+    )
 
 
 def classify_barcode(raw: str) -> str:
     """Return the kind of a scanned barcode string."""
     s = raw.strip()
-    if s.startswith(LOCATION_PREFIX):
+    if is_location_barcode(s):
         return "location"
     if s.startswith(CONTAINER_PREFIX):
         return "container"
@@ -34,8 +49,13 @@ def classify_barcode(raw: str) -> str:
 
 
 def location_code_from_barcode(raw: str) -> str:
-    """Extract the location code (e.g. 'A-03-02') from a 'LOC:...' scan."""
-    return raw.strip()[len(LOCATION_PREFIX) :]
+    """Extract a normalized location code from a supported cell scan."""
+    value = raw.strip()
+    if value.upper().startswith(LOCATION_PREFIX):
+        return value[len(LOCATION_PREFIX) :].strip().upper()
+    if PHYSICAL_LOCATION_PATTERN.fullmatch(value):
+        return value.upper()
+    raise ValueError("barcode is not a warehouse location")
 
 
 def register_product_barcode(

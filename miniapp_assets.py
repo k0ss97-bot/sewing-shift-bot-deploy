@@ -6583,8 +6583,8 @@ MINIAPP_HTML = """<!doctype html>
       const prompts = {
         product: "Наведите камеру на штрихкод товара",
         bind_product: "Наведите камеру на новый штрихкод товара",
-        from_location: "Наведите камеру на штрихкод ячейки (LOC:…)",
-        to_location: "Наведите камеру на штрихкод ячейки (LOC:…)",
+        from_location: "Наведите камеру на штрихкод ячейки",
+        to_location: "Наведите камеру на штрихкод ячейки",
       };
       state.wmsScanField = field;
       qrScannerTitle.textContent = prompts[field] || "Сканирование";
@@ -6593,7 +6593,7 @@ MINIAPP_HTML = """<!doctype html>
 
     function promptCurrentScannerCode() {
       if (state.workspace === "warehouse" && state.wmsScanField) {
-        const code = window.prompt("Введите код (LOC:… или штрихкод товара):", "");
+        const code = window.prompt("Введите код ячейки или штрихкод товара:", "");
         if (code) handleWmsScan(code);
         return;
       }
@@ -6612,18 +6612,19 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       const expectsLocation = field === "from_location" || field === "to_location";
-      const scannedLocation = /^LOC:/i.test(v);
+      const location = wmsLocationByScan(v);
+      const looksLikeLocation = /^LOC:/i.test(v) || /^Z\\d+-S\\d+-P\\d+-\\d+$/i.test(v);
+      const scannedLocation = Boolean(location) || looksLikeLocation;
       if (expectsLocation && !scannedLocation) {
-        showToast("Склад", "Сначала отсканируйте штрихкод ячейки LOC:…");
+        showToast("Склад", "Сначала отсканируйте штрихкод ячейки.");
         return;
       }
       if (!expectsLocation && scannedLocation) {
         showToast("Склад", "Сейчас нужно отсканировать товар, а не ячейку.");
         return;
       }
-      if (/^LOC:/i.test(v)) {
-        const code = v.replace(/^LOC:/i, "").trim();
-        const location = (state.wmsData.locations || []).find((row) => String(row.code).toUpperCase() === code.toUpperCase());
+      if (scannedLocation) {
+        const code = location ? String(location.code) : v.replace(/^LOC:/i, "").trim().toUpperCase();
         if (state.wmsData.loaded && !location) {
           showToast("Склад", `Ячейка ${code} не найдена.`);
           return;
@@ -6667,10 +6668,140 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    // Code 128 fallback for Safari/iPhone, where BarcodeDetector is often
+    // unavailable. It keeps the existing MoySklad labels (Z1-S1-P1-1) usable
+    // without reprinting them as QR codes or adding a LOC: prefix.
+    const code128Patterns = [
+      "212222","222122","222221","121223","121322","131222","122213","122312","132212","221213","221312","231212","112232","122132","122231","113222","123122","123221","223211","221132","221231","213212","223112","312131","311222","321122","321221","312212","322112","322211","212123","212321","232121","111323","131123","131321","112313","132113","132311","211313","231113","231311","112133","112331","132131","113123","113321","133121","313121","211331","231131","213113","213311","213131","311123","311321","331121","312113","312311","332111","314111","221411","431111","111224","111422","121124","121421","141122","141221","112214","112412","122114","122411","142112","142211","241211","221114","413111","241112","134111","111242","121142","121241","114212","124112","124211","411212","421112","421211","212141","214121","412121","111143","111341","131141","114113","114311","411113","411311","113141","114131","311141","411131","211412","211214","211232","2331112",
+    ];
+
+    function code128PatternError(widths, pattern) {
+      if (!pattern || widths.length !== pattern.length) return Number.POSITIVE_INFINITY;
+      const modules = Array.from(pattern, Number);
+      const scale = widths.reduce((sum, value) => sum + value, 0) / modules.reduce((sum, value) => sum + value, 0);
+      if (scale < 0.65) return Number.POSITIVE_INFINITY;
+      return widths.reduce((sum, value, index) => {
+        const delta = (value / scale) - modules[index];
+        return sum + (delta * delta);
+      }, 0) / widths.length;
+    }
+
+    function nearestCode128Pattern(widths, allowedCodes = null) {
+      let best = null;
+      const codes = allowedCodes || code128Patterns.map((_pattern, index) => index);
+      codes.forEach((code) => {
+        const error = code128PatternError(widths, code128Patterns[code]);
+        if (!best || error < best.error) best = {code, error};
+      });
+      return best;
+    }
+
+    function decodeCode128Values(values) {
+      if (values.length < 3) return "";
+      const start = values[0];
+      const checksum = values[values.length - 1];
+      const expected = values.slice(1, -1).reduce((sum, value, index) => sum + ((index + 1) * value), start) % 103;
+      if (checksum !== expected) return "";
+      let codeSet = start === 103 ? "A" : (start === 104 ? "B" : (start === 105 ? "C" : ""));
+      if (!codeSet) return "";
+      let result = "";
+      for (const value of values.slice(1, -1)) {
+        if (value === 102) continue; // FNC1
+        if (codeSet === "C") {
+          if (value === 100) { codeSet = "B"; continue; }
+          if (value === 101) { codeSet = "A"; continue; }
+          if (value > 99) return "";
+          result += String(value).padStart(2, "0");
+          continue;
+        }
+        if (value === 99) { codeSet = "C"; continue; }
+        if (codeSet === "A" && value === 100) { codeSet = "B"; continue; }
+        if (codeSet === "B" && value === 101) { codeSet = "A"; continue; }
+        if (value > 95) return "";
+        const charCode = codeSet === "A" && value >= 64 ? value - 64 : value + 32;
+        if (charCode < 32 || charCode > 126) return "";
+        result += String.fromCharCode(charCode);
+      }
+      return result;
+    }
+
+    function decodeCode128Runs(runs) {
+      for (let startRun = 0; startRun + 19 <= runs.length; startRun += 1) {
+        if (!runs[startRun].dark) continue;
+        const startMatch = nearestCode128Pattern(
+          runs.slice(startRun, startRun + 6).map((run) => run.width),
+          [103, 104, 105],
+        );
+        if (!startMatch || startMatch.error > 1.8) continue;
+        const values = [startMatch.code];
+        const errors = [startMatch.error];
+        let cursor = startRun + 6;
+        while (cursor + 7 <= runs.length && values.length < 80) {
+          const stopError = code128PatternError(
+            runs.slice(cursor, cursor + 7).map((run) => run.width),
+            code128Patterns[106],
+          );
+          if (values.length >= 3 && stopError <= 2.2) {
+            const decoded = decodeCode128Values(values);
+            const averageError = errors.reduce((sum, value) => sum + value, 0) / errors.length;
+            if (decoded && averageError <= 2.0) return decoded;
+          }
+          if (cursor + 6 > runs.length) break;
+          const match = nearestCode128Pattern(runs.slice(cursor, cursor + 6).map((run) => run.width));
+          if (!match || match.code === 106 || match.error > 2.4) break;
+          values.push(match.code);
+          errors.push(match.error);
+          cursor += 6;
+        }
+      }
+      return "";
+    }
+
+    function decodeCode128Image(image) {
+      const {data, width, height} = image;
+      if (!data || width < 40 || height < 20) return "";
+      const rows = [];
+      for (let index = 0; index < 17; index += 1) {
+        rows.push(Math.max(0, Math.min(height - 1, Math.round(height * (0.16 + (index * 0.0425))))));
+      }
+      for (const y of rows) {
+        const luminance = [];
+        let minimum = 255;
+        let maximum = 0;
+        for (let x = 0; x < width; x += 1) {
+          const offset = ((y * width) + x) * 4;
+          const value = (data[offset] * 0.299) + (data[offset + 1] * 0.587) + (data[offset + 2] * 0.114);
+          luminance.push(value);
+          minimum = Math.min(minimum, value);
+          maximum = Math.max(maximum, value);
+        }
+        if (maximum - minimum < 70) continue;
+        const threshold = minimum + ((maximum - minimum) * 0.48);
+        const runs = [];
+        let dark = luminance[0] < threshold;
+        let runWidth = 0;
+        luminance.forEach((value) => {
+          const nextDark = value < threshold;
+          if (nextDark === dark) {
+            runWidth += 1;
+          } else {
+            runs.push({dark, width: runWidth});
+            dark = nextDark;
+            runWidth = 1;
+          }
+        });
+        runs.push({dark, width: runWidth});
+        const decoded = decodeCode128Runs(runs);
+        if (decoded) return decoded;
+      }
+      return "";
+    }
+
     async function openWmsScanner() {
       const hasNativeDetector = typeof window.BarcodeDetector === "function";
       const hasQrFallback = typeof window.jsQR === "function";
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || (!hasNativeDetector && !hasQrFallback)) {
+      const hasCanvasFallback = typeof document.createElement === "function";
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || (!hasNativeDetector && !hasQrFallback && !hasCanvasFallback)) {
         if (tg && typeof tg.showScanQrPopup === "function") {
           tg.showScanQrPopup({text: qrScannerTitle.textContent || "Сканирование"}, (value) => {
             handleWmsScan(value);
@@ -6678,7 +6809,7 @@ MINIAPP_HTML = """<!doctype html>
           });
           return;
         }
-        const code = window.prompt("Введите код вручную (LOC:… или штрихкод товара):", "");
+        const code = window.prompt("Введите код ячейки или штрихкод товара вручную:", "");
         if (code) handleWmsScan(code);
         return;
       }
@@ -6702,35 +6833,36 @@ MINIAPP_HTML = """<!doctype html>
             }
           }
         }
-        if (!detector && !hasQrFallback) {
+        if (!detector && !hasQrFallback && !hasCanvasFallback) {
           stopWebQrScanner();
-          const code = window.prompt("Введите код вручную (LOC:… или штрихкод товара):", "");
+          const code = window.prompt("Введите код ячейки или штрихкод товара вручную:", "");
           if (code) handleWmsScan(code);
           return;
         }
-        const canvas = detector ? null : document.createElement("canvas");
+        const canvas = hasCanvasFallback ? document.createElement("canvas") : null;
         const canvasContext = canvas ? canvas.getContext("2d", {willReadFrequently: true}) : null;
         let detecting = false;
         let lastFallbackScanAt = 0;
         const detectFrame = async (frameTime = 0) => {
           if (!qrScannerStream || qrScanner.hidden) return;
-          const fallbackDue = detector || frameTime - lastFallbackScanAt >= 140;
-          if (!detecting && fallbackDue && qrScannerVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          const fallbackDue = frameTime - lastFallbackScanAt >= 140;
+          if (!detecting && (detector || fallbackDue) && qrScannerVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
             detecting = true;
             try {
               let value = "";
               if (detector) {
                 const codes = await detector.detect(qrScannerVideo);
                 value = codes && codes[0] ? codes[0].rawValue : "";
-              } else if (canvasContext && qrScannerVideo.videoWidth && qrScannerVideo.videoHeight) {
+              }
+              if (!value && fallbackDue && canvasContext && qrScannerVideo.videoWidth && qrScannerVideo.videoHeight) {
                 lastFallbackScanAt = frameTime;
                 const scale = Math.min(1, 960 / qrScannerVideo.videoWidth);
                 canvas.width = Math.max(1, Math.round(qrScannerVideo.videoWidth * scale));
                 canvas.height = Math.max(1, Math.round(qrScannerVideo.videoHeight * scale));
                 canvasContext.drawImage(qrScannerVideo, 0, 0, canvas.width, canvas.height);
                 const image = canvasContext.getImageData(0, 0, canvas.width, canvas.height);
-                const code = window.jsQR(image.data, image.width, image.height);
-                value = code ? code.data : "";
+                const qrCode = hasQrFallback ? window.jsQR(image.data, image.width, image.height) : null;
+                value = qrCode ? qrCode.data : decodeCode128Image(image);
               }
               if (value) {
                 stopWebQrScanner();
@@ -6749,7 +6881,7 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         stopWebQrScanner();
         showToast("ТСД", "Камера недоступна. Введите код вручную.");
-        const code = window.prompt("Введите код (LOC:… или штрихкод товара):", "");
+        const code = window.prompt("Введите код ячейки или штрихкод товара:", "");
         if (code) handleWmsScan(code);
       }
     }
@@ -7261,6 +7393,15 @@ MINIAPP_HTML = """<!doctype html>
       return (state.wmsData.locations || []).find((location) => String(location.code || "").toUpperCase() === normalized) || null;
     }
 
+    function wmsLocationByScan(value) {
+      const scanned = String(value || "").trim().toUpperCase();
+      const normalizedCode = scanned.replace(/^LOC:/i, "").trim();
+      return (state.wmsData.locations || []).find((location) =>
+        String(location.code || "").trim().toUpperCase() === normalizedCode
+        || String(location.barcode || "").trim().toUpperCase() === scanned
+      ) || null;
+    }
+
     function wmsStockAtLocation(code) {
       const location = wmsLocationByCode(code);
       if (!location) return [];
@@ -7293,7 +7434,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card field-card">
           <label>Порядок сканирования</label>
           <div class="op-list">
-            <div class="report-row"><div><b>1. ${escapeHtml(locationLabel)}</b><span>${locationReady ? escapeHtml(locationCode) : "Наведите сканер на код LOC:…"}</span></div><span class="status-chip ${locationReady ? "" : "gray"}">${locationReady ? "✓" : "1"}</span></div>
+            <div class="report-row"><div><b>1. ${escapeHtml(locationLabel)}</b><span>${locationReady ? escapeHtml(locationCode) : "Наведите сканер на штрихкод ячейки"}</span></div><span class="status-chip ${locationReady ? "" : "gray"}">${locationReady ? "✓" : "1"}</span></div>
             <div class="report-row"><div><b>2. Товар</b><span>${productDetected ? escapeHtml(wmsProductLabel(wmsProductKey(state.wmsDraft))) : "Отсканируйте штрихкод изделия"}</span></div><span class="status-chip ${productDetected ? "" : "gray"}">${productDetected ? "✓" : "2"}</span></div>
             <div class="report-row"><div><b>3. Количество</b><span>Введите количество и подтвердите операцию</span></div><span class="status-chip gray">3</span></div>
           </div>
@@ -7602,8 +7743,8 @@ MINIAPP_HTML = """<!doctype html>
             <div class="field full"><label>Изделие</label><select id="wmsProductName">${wmsProductOptions(d.productName)}</select></div>
             <div class="field"><label>Размер</label><select id="wmsProductSize">${wmsSizeOptions(d.productName, d.productSize)}</select></div>
             <div class="field"><label>Цвет</label><select id="wmsProductColor">${wmsColorOptions(d.productName, d.productColor)}</select></div>
-            <div class="field full"><label>Из ячейки (LOC:…)</label><input id="wmsFromLocation" value="${escapeHtml(d.fromLocation || "")}" placeholder="A-03-02"></div>
-            <div class="field full"><label>В ячейку (LOC:…)</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="B-01-05"></div>
+            <div class="field full"><label>Из ячейки</label><input id="wmsFromLocation" value="${escapeHtml(d.fromLocation || "")}" placeholder="Z1-S1-P1-1"></div>
+            <div class="field full"><label>В ячейку</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="Z2-S1-P1-1"></div>
             <div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>
           </div>
         </div>
@@ -7623,7 +7764,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="screen-head"><div><h2>Инвентаризация</h2><p>Сначала отсканируйте ячейку, затем товар и введите фактическое количество.</p></div></div>
         <div class="card field-card">
           <div class="form-grid">
-            <div class="field full"><label>Ячейка (LOC:…)</label><input id="wmsFromLocation" value="${escapeHtml(d.fromLocation || "")}" placeholder="A-03-02"></div>
+            <div class="field full"><label>Ячейка</label><input id="wmsFromLocation" value="${escapeHtml(d.fromLocation || "")}" placeholder="Z1-S1-P1-1"></div>
             <div class="field full"><label>Изделие</label><select id="wmsProductName">${wmsProductOptions(d.productName)}</select></div>
             <div class="field"><label>Размер</label><select id="wmsProductSize">${wmsSizeOptions(d.productName, d.productSize)}</select></div>
             <div class="field"><label>Цвет</label><select id="wmsProductColor">${wmsColorOptions(d.productName, d.productColor)}</select></div>
@@ -7646,7 +7787,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="screen-head"><div><h2>Списание</h2><p>Списание брака, повреждённого товара или отправка в карантин.</p></div></div>
         <div class="card field-card">
           <div class="form-grid">
-            <div class="field full"><label>Ячейка (LOC:…)</label><input id="wmsFromLocation" value="${escapeHtml(d.fromLocation || "")}" placeholder="A-03-02"></div>
+            <div class="field full"><label>Ячейка</label><input id="wmsFromLocation" value="${escapeHtml(d.fromLocation || "")}" placeholder="Z1-S1-P1-1"></div>
             <div class="field full"><label>Изделие</label><select id="wmsProductName">${wmsProductOptions(d.productName)}</select></div>
             <div class="field"><label>Размер</label><select id="wmsProductSize">${wmsSizeOptions(d.productName, d.productSize)}</select></div>
             <div class="field"><label>Цвет</label><select id="wmsProductColor">${wmsColorOptions(d.productName, d.productColor)}</select></div>

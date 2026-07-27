@@ -19,6 +19,7 @@ os.environ.setdefault("WMS_DATABASE_URL", "postgresql://wms:wms@127.0.0.1:5432/w
 
 from wms.barcode import (  # noqa: E402
     classify_barcode,
+    is_location_barcode,
     location_code_from_barcode,
     LOCATION_PREFIX,
     CONTAINER_PREFIX,
@@ -53,6 +54,10 @@ class BarcodeClassifyTests(unittest.TestCase):
     def test_location(self):
         self.assertEqual(classify_barcode("LOC:A-03-02"), "location")
 
+    def test_existing_moysklad_location_without_prefix(self):
+        self.assertEqual(classify_barcode("Z1-S1-P1-1"), "location")
+        self.assertTrue(is_location_barcode("z4-s2-p3-2"))
+
     def test_container(self):
         self.assertEqual(classify_barcode("LPN:000125"), "container")
 
@@ -61,6 +66,10 @@ class BarcodeClassifyTests(unittest.TestCase):
 
     def test_location_code_extract(self):
         self.assertEqual(location_code_from_barcode("LOC:A-03-02"), "A-03-02")
+        self.assertEqual(location_code_from_barcode("z3-s5-p2-1"), "Z3-S5-P2-1")
+
+    def test_product_barcode_is_not_mistaken_for_location(self):
+        self.assertFalse(is_location_barcode("4600000000012"))
 
     def test_prefixes(self):
         self.assertTrue("LOC:A-01".startswith(LOCATION_PREFIX))
@@ -144,6 +153,17 @@ class WmsContractTests(unittest.TestCase):
         self.assertIn("location_id, updated_at", bridge)
         self.assertIn("code = 'RECEIVE-01'", bridge)
         self.assertIn("Сначала выполните миграции WMS", bridge)
+
+    def test_physical_storage_migration_keeps_existing_barcode_payloads(self):
+        root = Path(__file__).resolve().parents[1]
+        migration = (root / "wms_migrations" / "004_seed_physical_storage.sql").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("generate_series(1, 4)", migration)
+        self.assertIn("generate_series(1, 5)", migration)
+        self.assertIn("generate_series(1, 3)", migration)
+        self.assertIn("generate_series(1, 2)", migration)
+        self.assertIn("cells.cell_code,\n    cells.cell_code", migration)
 
     def test_wms_backup_creates_verified_private_dump(self):
         from scripts import backup_wms
@@ -281,6 +301,18 @@ class WmsDbTests(unittest.TestCase):
         with self.conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM wms_zones")
             self.assertGreaterEqual(cur.fetchone()[0], 11)
+
+    def test_physical_storage_cells_present_with_unchanged_barcodes(self):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT count(*), count(DISTINCT l.barcode),
+                          count(*) FILTER (WHERE l.code = l.barcode)
+                     FROM wms_locations l
+                     JOIN wms_zones z ON z.id = l.zone_id
+                    WHERE z.code IN ('Z1', 'Z2', 'Z3', 'Z4')"""
+            )
+            total, unique_barcodes, unchanged = cur.fetchone()
+        self.assertEqual((total, unique_barcodes, unchanged), (102, 102, 102))
 
     def test_seed_item_states_present(self):
         with self.conn.cursor() as cur:

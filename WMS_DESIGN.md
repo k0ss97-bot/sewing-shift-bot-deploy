@@ -39,10 +39,11 @@ warehouse_stock │                 wms_containers
 | `repository.py` | CRUD к Postgres: zones/locations/stock/movements |
 | `operations.py` | Складские операции (транзакционные, идемпотентные) |
 | `bridge.py` | Синхронизация SQLite `warehouse_stock` → Postgres |
-| `barcode.py` | Реестр штрихкодов + парсинг `LOC:` / `LPN:` / товарных |
+| `barcode.py` | Реестр штрихкодов + парсинг физических `Z…`/`LOC:` ячеек, `LPN:` и товарных |
 | `api.py` | HTTP-обработчики для `miniapp_server` |
 | `wms_migrations/001_initial_wms.sql` | DDL: зоны, ячейки, штрихкоды, состояния, движения, инвентаризация |
 | `wms_migrations/002_seed_reference.sql` | Эталонные зоны (11 шт) + состояния товара (9 шт) |
+| `wms_migrations/004_seed_physical_storage.sql` | 4 физические зоны и 102 ячейки из исходных этикеток |
 
 ## Схема данных
 
@@ -50,8 +51,9 @@ warehouse_stock │                 wms_containers
 - **`wms_zones`** — зоны: `RECEIVE` (Приёмка), `STORAGE` (Хранение), `PICK`
   (Отбор), `PACK` (Упаковка), `READY_TO_SHIP`, `RETURNS`, `QUARANTINE`,
   `DAMAGED`, `PRODUCTION`, `TRANSIT`. 11 эталонных зон из плана §5.1.
-- **`wms_locations`** — ячейки с кодом (`A-03-02`), штрихкодом (`LOC:A-03-02`),
-  зоной, приоритетом отбора, статусом (`active`/`blocked`/`inventory`).
+- **`wms_locations`** — ячейки с кодом и исходным штрихкодом (`Z1-S1-P1-1` для
+  физической адресации; `LOC:…` для старых системных этикеток), зоной,
+  приоритетом отбора и статусом (`active`/`blocked`/`inventory`).
 
 ### Идентификация товара
 Товар идентифицируется бизнес-ключом **`ProductKey`** — кортеж из 6 полей
