@@ -243,6 +243,86 @@ def transfer(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# pick (Подбор/выдача из ячейки)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def pick(
+    product_key: ProductKey,
+    quantity: int,
+    *,
+    from_location_code: str,
+    employee_id: int | None = None,
+    request_key: str | None = None,
+    reason: str | None = None,
+    tsd_device_id: str | None = None,
+) -> OperationResult:
+    """Take sellable goods from an addressable location.
+
+    The quantity leaves addressable stock and is recorded as a ``pick``
+    movement. Reserved units are protected: an unbound manual pick may only
+    consume the unreserved balance.
+    """
+    if quantity <= 0:
+        return OperationResult(False, reason="Количество должно быть больше нуля.")
+    request_key = request_key or _new_request_key("pick")
+    conn = get_pg_connection()
+    try:
+        source = repo.get_location_by_code(conn, from_location_code)
+        if source is None:
+            conn.rollback()
+            return OperationResult(False, reason=f"Ячейка {from_location_code} не найдена.")
+        if source.status != "active":
+            conn.rollback()
+            return OperationResult(False, reason=f"Ячейка {from_location_code} недоступна.")
+        if repo.movement_exists(conn, request_key):
+            conn.rollback()
+            return OperationResult(True, skipped_duplicate=True)
+
+        stock = repo.find_stock(
+            conn,
+            product_key,
+            item_state="SELLABLE",
+            location_id=source.id,
+            for_update=True,
+        )
+        available = 0 if stock is None else stock.quantity - stock.reserved_quantity
+        if stock is None or available < quantity:
+            conn.rollback()
+            return OperationResult(
+                False,
+                reason=f"В ячейке доступно только {max(available, 0)} шт.",
+            )
+
+        repo.upsert_stock(
+            conn,
+            product_key,
+            delta=-quantity,
+            item_state="SELLABLE",
+            location_id=source.id,
+        )
+        movement_id = repo.insert_movement(
+            conn,
+            request_key=request_key,
+            movement_type="pick",
+            product_key=product_key,
+            quantity=quantity,
+            from_location_id=source.id,
+            from_state="SELLABLE",
+            to_state="PICKED",
+            source_type="manual",
+            reason=reason,
+            actor_employee_id=employee_id,
+            tsd_device_id=tsd_device_id,
+        )
+        conn.commit()
+        return OperationResult(True, movement_id=movement_id)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+# ──────────────────────────────────────────────────────────────────────
 # scrap (Списание: SELLABLE → DAMAGED/SCRAPPED)
 # ──────────────────────────────────────────────────────────────────────
 

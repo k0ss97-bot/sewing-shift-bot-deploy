@@ -87,6 +87,7 @@ warehouse_stock │                 wms_containers
 | Приёмка от производства | `receive_from_production()` | `production_receipt`, stock+ в RECEIVE |
 | Размещение | `putaway()` | RECEIVE → ячейка хранения |
 | Перемещение | `transfer()` | ячейка → ячейка |
+| Подбор / выдача | `pick()` | ячейка → отобрано |
 | Списание | `scrap()` | SELLABLE → DAMAGED/SCRAPPED/QUARANTINE |
 | Инвентаризация | `inventory_count()` | слепой пересчёт → корректировки |
 
@@ -100,6 +101,7 @@ warehouse_stock │                 wms_containers
 POST /api/wms/receive     приёмка
 POST /api/wms/putaway     размещение
 POST /api/wms/transfer    перемещение
+POST /api/wms/pick        подбор / выдача из ячейки
 POST /api/wms/scrap       списание
 POST /api/wms/inventory   инвентаризация
 GET  /api/wms/locations   список ячеек
@@ -149,8 +151,9 @@ python -m wms.migrate --status  # список применённых
 3. **Создать ячейки**: `wms_locations` для физических зон склада (коды,
    штрихкоды для печати `LOC:`).
 4. **miniapp_server**: выполнено — маршруты и серверная авторизация подключены.
-5. **miniapp_assets (PWA)**: выполнено — приёмка, размещение, перемещение,
-   инвентаризация, списание, создание ячеек и привязка штрихкодов.
+5. **miniapp_assets (PWA)**: выполнено — приёмка, пошаговое размещение и выдача
+   через сканирование ячейки и товара, перемещение, инвентаризация, списание,
+   создание ячеек и привязка штрихкодов.
 6. **Маркетплейсы** (Ozon/WB) — Этап 4, отдельный трек.
 
 ## Тесты

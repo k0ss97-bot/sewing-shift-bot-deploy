@@ -295,6 +295,9 @@ def run_smoke() -> None:
                 'function switchWorkspace(workspace)',
                 'function refreshWmsWorkspace({silent = false} = {})',
                 'data-wms-view="stock"',
+                'data-wms-view="pick"',
+                'id="wmsHardwareScannerInput"',
+                'api("/api/wms/pick"',
                 '+ Кладовщик',
             ):
                 require(

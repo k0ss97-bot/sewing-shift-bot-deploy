@@ -11,6 +11,7 @@ Routes (to be added to ``allowed_paths`` + dispatch in miniapp_server.py):
     POST /api/wms/receive     receive_from_production
     POST /api/wms/putaway     putaway
     POST /api/wms/transfer    transfer
+    POST /api/wms/pick        pick from location
     POST /api/wms/scrap       scrap
     POST /api/wms/inventory   inventory_count
     GET  /api/wms/locations   list_locations
@@ -45,6 +46,8 @@ def handle(
             return _putaway(payload, employee_id)
         if path == "/api/wms/transfer":
             return _transfer(payload, employee_id)
+        if path == "/api/wms/pick":
+            return _pick(payload, employee_id)
         if path == "/api/wms/scrap":
             return _scrap(payload, employee_id)
         if path == "/api/wms/inventory":
@@ -111,6 +114,19 @@ def _transfer(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str,
         int(payload["quantity"]),
         from_location_code=payload["from_location_code"],
         to_location_code=payload["to_location_code"],
+        employee_id=employee_id,
+        request_key=payload.get("request_key"),
+        reason=payload.get("reason"),
+        tsd_device_id=payload.get("tsd_device_id"),
+    )
+    return _result_response(result)
+
+
+def _pick(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
+    result = ops.pick(
+        _pk(payload),
+        int(payload["quantity"]),
+        from_location_code=payload["from_location_code"],
         employee_id=employee_id,
         request_key=payload.get("request_key"),
         reason=payload.get("reason"),
@@ -296,6 +312,7 @@ WMS_WRITE_ROUTES = {
     "/api/wms/receive",
     "/api/wms/putaway",
     "/api/wms/transfer",
+    "/api/wms/pick",
     "/api/wms/scrap",
     "/api/wms/inventory",
     "/api/wms/barcode/resolve",

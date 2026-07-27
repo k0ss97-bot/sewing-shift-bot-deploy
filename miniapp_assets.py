@@ -3265,7 +3265,7 @@ MINIAPP_HTML = """<!doctype html>
     <div class="qr-scanner-shell">
       <video id="qrScannerVideo" playsinline muted></video>
       <div class="qr-scanner-frame"></div>
-      <div class="qr-scanner-head"><span>QR-код партии</span><button class="qr-scanner-close" id="qrScannerClose" type="button" aria-label="Закрыть">×</button></div>
+      <div class="qr-scanner-head"><span id="qrScannerTitle">QR-код партии</span><button class="qr-scanner-close" id="qrScannerClose" type="button" aria-label="Закрыть">×</button></div>
       <div class="qr-scanner-actions"><button class="small-button" id="qrScannerManual" type="button">Ввести код</button></div>
     </div>
   </section>
@@ -3631,7 +3631,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: []},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
-      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
+      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, stageName: "Готово", readyForPosition: "Склад", quantity: "", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
       ...persistedUiState,
       data: null,
     };
@@ -3665,6 +3665,7 @@ MINIAPP_HTML = """<!doctype html>
     const shiftReminderClose = document.getElementById("shiftReminderClose");
     const qrScanner = document.getElementById("qrScanner");
     const qrScannerVideo = document.getElementById("qrScannerVideo");
+    const qrScannerTitle = document.getElementById("qrScannerTitle");
     const pendingActions = new Set();
     const webSessionRetryDelaysMs = [2_000, 5_000, 10_000, 20_000, 30_000];
     const webSessionRequestTimeoutMs = 8_000;
@@ -3691,7 +3692,7 @@ MINIAPP_HTML = """<!doctype html>
       { id: "orders", label: "Задания", icon: "▣" },
     ];
     const productionScreens = new Set(["shift", "report", "analytics", "orders", "admin", "passport", "profile"]);
-    const warehouseMoreViews = new Set(["more", "stock", "movements", "inventory", "scrap"]);
+    const warehouseMoreViews = new Set(["more", "transfer", "stock", "movements", "inventory", "scrap"]);
 
     if (tg) {
       tg.ready();
@@ -4252,7 +4253,7 @@ MINIAPP_HTML = """<!doctype html>
           {id: "overview", label: "Главная", icon: "⌂"},
           {id: "receive", label: "Приёмка", icon: "↓"},
           {id: "putaway", label: "Размещение", icon: "→"},
-          {id: "transfer", label: "Перемещение", icon: "⇄"},
+          {id: "pick", label: "Выдача", icon: "↑"},
           {id: "more", label: "Ещё", icon: "•••"},
         ];
         bottomNav.style.setProperty("--nav-count", wmsItems.length);
@@ -5839,6 +5840,14 @@ MINIAPP_HTML = """<!doctype html>
     async function wmsPutaway() {
       const d = readWmsDraftFromForm();
       const qty = parseInt(d.quantity, 10);
+      if (!d.toLocationScanned) {
+        showToast("Склад", "Сначала отсканируйте ячейку размещения.");
+        return;
+      }
+      if (!d.productScanned) {
+        showToast("Склад", "Отсканируйте штрихкод товара.");
+        return;
+      }
       if (!d.productName || !qty || qty < 1) {
         showToast("ТСД", "Укажите изделие и количество (≥ 1).");
         return;
@@ -5863,7 +5872,17 @@ MINIAPP_HTML = """<!doctype html>
         });
         const ok = data.status === "ok" || data.status === "duplicate";
         showToast("ТСД", ok ? `Размещено: ${qty} шт. → ${toLoc}` : (data.reason || "Ошибка размещения."));
-        if (ok) { state.wmsDraft.quantity = ""; state.wmsDraft.toLocation = ""; render(); refreshWmsWorkspace({silent: true}); }
+        if (ok) {
+          state.wmsDraft.quantity = "";
+          state.wmsDraft.toLocation = "";
+          state.wmsDraft.productName = "";
+          state.wmsDraft.productSize = "";
+          state.wmsDraft.productColor = "";
+          state.wmsDraft.productScanned = false;
+          state.wmsDraft.toLocationScanned = false;
+          render();
+          refreshWmsWorkspace({silent: true});
+        }
         else mainButton.disabled = false;
       } catch (error) {
         showToast("Ошибка", error.apiMessage || "Не удалось разместить товар.");
@@ -5910,6 +5929,61 @@ MINIAPP_HTML = """<!doctype html>
         else mainButton.disabled = false;
       } catch (error) {
         showToast("Ошибка", error.apiMessage || "Не удалось переместить товар.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function wmsPick() {
+      const d = readWmsDraftFromForm();
+      const qty = parseInt(d.quantity, 10);
+      const fromLoc = (d.fromLocation || "").replace(/^LOC:/i, "").trim();
+      if (!fromLoc || !d.fromLocationScanned) {
+        showToast("Склад", "Сначала отсканируйте ячейку.");
+        return;
+      }
+      if (!d.productName || !d.productScanned) {
+        showToast("Склад", "Отсканируйте товар из выбранной ячейки.");
+        return;
+      }
+      if (!qty || qty < 1) {
+        showToast("Склад", "Введите количество (1 или больше).");
+        return;
+      }
+      const stockRow = wmsFindScannedStock(fromLoc, wmsProductKey(d));
+      const available = stockRow ? Math.max(0, Number(stockRow.quantity || 0) - Number(stockRow.reserved_quantity || 0)) : 0;
+      if (!stockRow || qty > available) {
+        showToast("Склад", `В ячейке доступно ${available} шт.`);
+        return;
+      }
+      const actionKey = `wms:pick:${fromLoc}:${d.productName}:${d.productSize}:${d.productColor}:${qty}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/wms/pick", {
+          product_key: wmsProductKey(d),
+          quantity: qty,
+          from_location_code: fromLoc,
+          request_key: `wms:pick:${createRequestId()}`,
+          reason: "Подбор из ячейки (ТСД)",
+          tsd_device_id: navigator.userAgent.slice(0, 40),
+        });
+        const ok = data.status === "ok" || data.status === "duplicate";
+        showToast("Склад", ok ? `Выдано: ${qty} шт. из ${fromLoc}` : (data.reason || "Ошибка выдачи."));
+        if (ok) {
+          state.wmsDraft.quantity = "";
+          state.wmsDraft.productName = "";
+          state.wmsDraft.productSize = "";
+          state.wmsDraft.productColor = "";
+          state.wmsDraft.productScanned = false;
+          render();
+          refreshWmsWorkspace({silent: true});
+        } else {
+          mainButton.disabled = false;
+        }
+      } catch (error) {
+        showToast("Ошибка", error.apiMessage || "Не удалось выдать товар из ячейки.");
         mainButton.disabled = false;
       } finally {
         endAction(actionKey);
@@ -6012,7 +6086,8 @@ MINIAPP_HTML = """<!doctype html>
 
     async function wmsCreateLocation() {
       const d = readWmsDraftFromForm();
-      const code = (d.toLocation || "").replace(/^LOC:/i, "").trim().toUpperCase();
+      const newLocationInput = document.getElementById("wmsNewLocation");
+      const code = ((newLocationInput ? newLocationInput.value : "") || d.toLocation || "").replace(/^LOC:/i, "").trim().toUpperCase();
       if (!code) {
         showToast("ТСД", "Введите код новой ячейки.");
         return;
@@ -6448,6 +6523,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     async function openWebQrScanner() {
+      qrScannerTitle.textContent = "QR-код партии";
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof window.BarcodeDetector !== "function") {
         promptRouteCode();
         return;
@@ -6510,14 +6586,17 @@ MINIAPP_HTML = """<!doctype html>
         to_location: "Наведите камеру на штрихкод ячейки (LOC:…)",
       };
       state.wmsScanField = field;
-      if (tg && typeof tg.showScanQrPopup === "function") {
-        tg.showScanQrPopup({text: prompts[field] || "Сканирование"}, (value) => {
-          handleWmsScan(value);
-          return true;
-        });
+      qrScannerTitle.textContent = prompts[field] || "Сканирование";
+      openWmsScanner();
+    }
+
+    function promptCurrentScannerCode() {
+      if (state.workspace === "warehouse" && state.wmsScanField) {
+        const code = window.prompt("Введите код (LOC:… или штрихкод товара):", "");
+        if (code) handleWmsScan(code);
         return;
       }
-      openWmsScanner();
+      promptRouteCode();
     }
 
     async function handleWmsScan(rawValue) {
@@ -6531,12 +6610,29 @@ MINIAPP_HTML = """<!doctype html>
         showToast("ТСД", `Штрихкод считан: ${v}`);
         return;
       }
+      const expectsLocation = field === "from_location" || field === "to_location";
+      const scannedLocation = /^LOC:/i.test(v);
+      if (expectsLocation && !scannedLocation) {
+        showToast("Склад", "Сначала отсканируйте штрихкод ячейки LOC:…");
+        return;
+      }
+      if (!expectsLocation && scannedLocation) {
+        showToast("Склад", "Сейчас нужно отсканировать товар, а не ячейку.");
+        return;
+      }
       if (/^LOC:/i.test(v)) {
         const code = v.replace(/^LOC:/i, "").trim();
+        const location = (state.wmsData.locations || []).find((row) => String(row.code).toUpperCase() === code.toUpperCase());
+        if (state.wmsData.loaded && !location) {
+          showToast("Склад", `Ячейка ${code} не найдена.`);
+          return;
+        }
         const target = field === "from_location" ? "wmsFromLocation" : "wmsToLocation";
         const el = document.getElementById(target);
         if (el) el.value = code;
         state.wmsDraft[field === "from_location" ? "fromLocation" : "toLocation"] = code;
+        state.wmsDraft[field === "from_location" ? "fromLocationScanned" : "toLocationScanned"] = true;
+        render();
         showToast("ТСД", `Ячейка: ${code}`);
       } else if (/^LPN:/i.test(v)) {
         showToast("ТСД", `Контейнер: ${v} (поддержка LPN — в разработке)`);
@@ -6550,8 +6646,20 @@ MINIAPP_HTML = """<!doctype html>
           state.wmsDraft.productColor = pk.product_color || "";
           state.wmsDraft.stageName = pk.stage_name || "Готово";
           state.wmsDraft.readyForPosition = pk.ready_for_position || "Склад";
-          render();
-          showToast("ТСД", `Товар: ${state.wmsDraft.productName}`);
+          state.wmsDraft.productScanned = true;
+          const locationCode = state.wmsView === "putaway" ? state.wmsDraft.toLocation : state.wmsDraft.fromLocation;
+          const stockRow = state.wmsView === "pick" && locationCode ? wmsFindScannedStock(locationCode, pk) : null;
+          if (state.wmsView === "pick" && locationCode && !stockRow) {
+            state.wmsDraft.productName = "";
+            state.wmsDraft.productSize = "";
+            state.wmsDraft.productColor = "";
+            state.wmsDraft.productScanned = false;
+            render();
+            showToast("Склад", "Этого товара нет в отсканированной ячейке.");
+          } else {
+            render();
+            showToast("ТСД", `Товар: ${state.wmsDraft.productName}`);
+          }
         } catch (error) {
           showToast("ТСД", error.apiMessage || "Штрихкод товара не зарегистрирован.");
         }
@@ -6560,6 +6668,13 @@ MINIAPP_HTML = """<!doctype html>
 
     async function openWmsScanner() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof window.BarcodeDetector !== "function") {
+        if (tg && typeof tg.showScanQrPopup === "function") {
+          tg.showScanQrPopup({text: qrScannerTitle.textContent || "Сканирование"}, (value) => {
+            handleWmsScan(value);
+            return true;
+          });
+          return;
+        }
         const code = window.prompt("Введите код вручную (LOC:… или штрихкод товара):", "");
         if (code) handleWmsScan(code);
         return;
@@ -7105,6 +7220,63 @@ MINIAPP_HTML = """<!doctype html>
       return new Map((state.wmsData.locations || []).map((location) => [Number(location.id), location]));
     }
 
+    function wmsLocationByCode(code) {
+      const normalized = String(code || "").replace(/^LOC:/i, "").trim().toUpperCase();
+      return (state.wmsData.locations || []).find((location) => String(location.code || "").toUpperCase() === normalized) || null;
+    }
+
+    function wmsStockAtLocation(code) {
+      const location = wmsLocationByCode(code);
+      if (!location) return [];
+      return (state.wmsData.stock || []).filter((row) =>
+        Number(row.location_id) === Number(location.id)
+        && row.item_state === "SELLABLE"
+        && Number(row.quantity || 0) > 0
+      );
+    }
+
+    function wmsProductKeysEqual(first, second) {
+      const keys = ["item_type", "product_name", "product_size", "product_color", "stage_name", "ready_for_position"];
+      return keys.every((key) => String((first || {})[key] || "") === String((second || {})[key] || ""));
+    }
+
+    function wmsFindScannedStock(locationCode, productKey) {
+      return wmsStockAtLocation(locationCode).find((row) => wmsProductKeysEqual(row.product_key, productKey)) || null;
+    }
+
+    function renderWmsGuidedScanner(locationField, locationCode, productDetected, locationLabel) {
+      const locationWasScanned = locationField === "from_location" ? state.wmsDraft.fromLocationScanned : state.wmsDraft.toLocationScanned;
+      const locationReady = Boolean(locationWasScanned && locationCode && wmsLocationByCode(locationCode));
+      const expectedField = locationReady ? "product" : locationField;
+      const expectedText = locationReady ? "Отсканируйте товар" : `Отсканируйте ${locationLabel.toLowerCase()}`;
+      return `
+        <div class="card field-card">
+          <label>Порядок сканирования</label>
+          <div class="op-list">
+            <div class="report-row"><div><b>1. ${escapeHtml(locationLabel)}</b><span>${locationReady ? escapeHtml(locationCode) : "Наведите сканер на код LOC:…"}</span></div><span class="status-chip ${locationReady ? "" : "gray"}">${locationReady ? "✓" : "1"}</span></div>
+            <div class="report-row"><div><b>2. Товар</b><span>${productDetected ? escapeHtml(wmsProductLabel(wmsProductKey(state.wmsDraft))) : "Отсканируйте штрихкод изделия"}</span></div><span class="status-chip ${productDetected ? "" : "gray"}">${productDetected ? "✓" : "2"}</span></div>
+            <div class="report-row"><div><b>3. Количество</b><span>Введите количество и подтвердите операцию</span></div><span class="status-chip gray">3</span></div>
+          </div>
+          <div class="field full"><label>Сканер ТСД</label><input id="wmsHardwareScannerInput" data-wms-hardware-field="${expectedField}" inputmode="none" autocomplete="off" placeholder="${escapeHtml(expectedText)}" autofocus></div>
+          <div class="button-row"><button class="small-button" data-wms-scan="${expectedField}">📷 ${escapeHtml(expectedText)}</button></div>
+        </div>
+      `;
+    }
+
+    function renderWmsLocationContents(code) {
+      if (!code) return "";
+      const location = wmsLocationByCode(code);
+      if (!location) return `<div class="card field-card">${itemEmpty(`Ячейка ${code} не найдена.`)}</div>`;
+      const rows = wmsStockAtLocation(code);
+      return `
+        <div class="section-title"><b>Содержимое ${escapeHtml(location.code)}</b><span>${rows.length} поз.</span></div>
+        <div class="op-list">${rows.length ? rows.map((row) => {
+          const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
+          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>Доступно ${escapeHtml(available)} · резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>`;
+        }).join("") : itemEmpty("Ячейка пустая.")}</div>
+      `;
+    }
+
     function wmsLocationLabel(locationId) {
       if (!locationId) return "—";
       const location = wmsLocationMap().get(Number(locationId));
@@ -7122,6 +7294,7 @@ MINIAPP_HTML = """<!doctype html>
         production_receipt: "Приёмка",
         putaway: "Размещение",
         transfer: "Перемещение",
+        pick: "Выдача из ячейки",
         inventory: "Инвентаризация",
         count: "Инвентаризация",
         inventory_adjustment: "Корректировка",
@@ -7168,8 +7341,8 @@ MINIAPP_HTML = """<!doctype html>
         <div class="kpi-grid">
           <button type="button" class="card summary-card clickable" data-wms-view="receive"><span>Приёмка</span><strong>↓</strong><small>Принять от производства</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="putaway"><span>Размещение</span><strong>→</strong><small>Положить в ячейку</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="pick"><span>Выдача</span><strong>↑</strong><small>Забрать из ячейки</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="transfer"><span>Перемещение</span><strong>⇄</strong><small>Между ячейками</small></button>
-          <button type="button" class="card summary-card clickable" data-wms-view="scrap"><span>Списание</span><strong>×</strong><small>Брак или карантин</small></button>
         </div>
         <div class="section-title"><b>Последние движения</b><button type="button" data-wms-view="movements">показать все</button></div>
         <div class="op-list">${movements.length ? movements.slice(0, 4).map((movement) => `
@@ -7185,6 +7358,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="screen-head"><div><h2>Складские операции</h2><p>Контроль остатков, пересчёт и специальные операции.</p></div></div>
         ${renderWmsDataNotice()}
         <div class="kpi-grid">
+          <button type="button" class="card summary-card clickable" data-wms-view="transfer"><span>Перемещение</span><strong>⇄</strong><small>Между ячейками</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="stock"><span>Остатки</span><strong>▤</strong><small>По адресным ячейкам</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="movements"><span>История</span><strong>⇄</strong><small>Все движения</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="inventory"><span>Инвентаризация</span><strong>≡</strong><small>Фактический пересчёт</small></button>
@@ -7267,6 +7441,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.wmsView === "movements") return renderWmsMovements();
       if (state.wmsView === "inventory") return renderWmsInventory();
       if (state.wmsView === "scrap") return renderWmsScrap();
+      if (state.wmsView === "pick") return renderWmsPick();
       if (state.wmsView === "putaway") return renderWmsPutaway();
       if (state.wmsView === "transfer") return renderWmsTransfer();
       return renderWmsReceive();
@@ -7323,31 +7498,56 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderWmsPutaway() {
       const d = state.wmsDraft;
+      const locationCode = (d.toLocation || "").replace(/^LOC:/i, "").trim();
+      const productDetected = Boolean(d.productScanned && d.productName && d.productSize && d.productColor);
       mainButton.textContent = "Разместить";
       mainButton.disabled = false;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Размещение</h2><p>Переместить товар из приёмки в ячейку хранения. Отсканируйте ячейку.</p></div></div>
+        <div class="screen-head"><div><h2>Размещение</h2><p>Сначала ячейка, затем товар и количество.</p></div></div>
+        ${renderWmsGuidedScanner("to_location", locationCode, productDetected, "Ячейка размещения")}
         <div class="card field-card">
+          <label>Данные размещения</label>
           <div class="form-grid">
-            <div class="field full"><label>Изделие</label><select id="wmsProductName">${wmsProductOptions(d.productName)}</select></div>
-            <div class="field"><label>Размер</label><select id="wmsProductSize">${wmsSizeOptions(d.productName, d.productSize)}</select></div>
-            <div class="field"><label>Цвет</label><select id="wmsProductColor">${wmsColorOptions(d.productName, d.productColor)}</select></div>
-            <div class="field full"><label>Целевая ячейка (LOC:…)</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="A-03-02"></div>
-            ${state.data && state.data.is_admin ? `<div class="field"><label>Зона новой ячейки</label><select id="wmsLocationZone">
+            <div class="field full"><label>Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="Сначала отсканируйте ячейку" readonly></div>
+            ${productDetected ? `<div class="field full"><label>Товар</label><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(wmsProductKey(d)))}</b><span>Штрихкод распознан</span></div><span class="status-chip">✓</span></div></div>` : ""}
+            ${state.data && state.data.is_admin ? `<div class="field full"><label>Код новой ячейки</label><input id="wmsNewLocation" placeholder="Например A-03-02"></div><div class="field"><label>Зона новой ячейки</label><select id="wmsLocationZone">
               <option value="STORAGE" ${d.locationZone === "STORAGE" ? "selected" : ""}>Хранение</option>
               <option value="PICK" ${d.locationZone === "PICK" ? "selected" : ""}>Отбор</option>
               <option value="PACK" ${d.locationZone === "PACK" ? "selected" : ""}>Упаковка</option>
               <option value="RECEIVE" ${d.locationZone === "RECEIVE" ? "selected" : ""}>Приёмка</option>
               <option value="QUARANTINE" ${d.locationZone === "QUARANTINE" ? "selected" : ""}>Карантин</option>
             </select></div><div class="field"><label>Название ячейки</label><input id="wmsLocationName" value="${escapeHtml(d.locationName || "")}" placeholder="Стеллаж A"></div>` : ""}
-            <div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>
+            ${productDetected ? `<div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>` : ""}
           </div>
         </div>
+        ${renderWmsLocationContents(locationCode)}
         <div class="button-row">
-          <button class="small-button" data-wms-scan="to_location">📷 Ячейка</button>
           ${state.data && state.data.is_admin ? `<button class="small-button" data-wms-action="create_location">Создать ячейку</button>` : ""}
           <button class="small-button secondary" data-wms-action="putaway">Разместить</button>
         </div>
+      `;
+    }
+
+    function renderWmsPick() {
+      const d = state.wmsDraft;
+      const locationCode = (d.fromLocation || "").replace(/^LOC:/i, "").trim();
+      const productDetected = Boolean(d.productScanned && d.productName && d.productSize && d.productColor);
+      const stockRow = productDetected ? wmsFindScannedStock(locationCode, wmsProductKey(d)) : null;
+      const available = stockRow ? Math.max(0, Number(stockRow.quantity || 0) - Number(stockRow.reserved_quantity || 0)) : 0;
+      mainButton.textContent = "Подтвердить выдачу";
+      mainButton.disabled = !locationCode || !stockRow;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Выдача из ячейки</h2><p>Отсканируйте ячейку, проверьте содержимое, затем отсканируйте товар.</p></div></div>
+        ${renderWmsGuidedScanner("from_location", locationCode, productDetected, "Исходная ячейка")}
+        ${renderWmsLocationContents(locationCode)}
+        ${productDetected ? `
+          <div class="card field-card">
+            <label>Выбранный товар</label>
+            <div class="report-row"><div><b>${escapeHtml(wmsProductLabel(wmsProductKey(d)))}</b><span>${stockRow ? `Доступно в ячейке: ${escapeHtml(available)} шт.` : "Товар отсутствует в этой ячейке"}</span></div><span class="status-chip ${stockRow ? "" : "warn"}">${stockRow ? "✓" : "!"}</span></div>
+            <div class="field full"><label>Количество к выдаче</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" max="${escapeHtml(available)}" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>
+          </div>
+        ` : ""}
+        <div class="button-row"><button class="small-button secondary" data-wms-action="pick" ${stockRow ? "" : "disabled"}>Подтвердить выдачу</button></div>
       `;
     }
 
@@ -7989,9 +8189,25 @@ MINIAPP_HTML = """<!doctype html>
 
       const wmsView = event.target.closest("[data-wms-view]");
       if (wmsView) {
+        const nextView = wmsView.dataset.wmsView;
+        if (nextView !== state.wmsView && ["putaway", "pick"].includes(nextView)) {
+          state.wmsDraft.quantity = "";
+          state.wmsDraft.productName = "";
+          state.wmsDraft.productSize = "";
+          state.wmsDraft.productColor = "";
+          state.wmsDraft.productScanned = false;
+          if (nextView === "putaway") {
+            state.wmsDraft.toLocation = "";
+            state.wmsDraft.toLocationScanned = false;
+          }
+          if (nextView === "pick") {
+            state.wmsDraft.fromLocation = "";
+            state.wmsDraft.fromLocationScanned = false;
+          }
+        }
         state.workspace = "warehouse";
         state.screen = "warehouse";
-        state.wmsView = wmsView.dataset.wmsView;
+        state.wmsView = nextView;
         render();
         return;
       }
@@ -8009,6 +8225,7 @@ MINIAPP_HTML = """<!doctype html>
         else if (action === "receive") wmsReceive();
         else if (action === "putaway") wmsPutaway();
         else if (action === "transfer") wmsTransfer();
+        else if (action === "pick") wmsPick();
         else if (action === "inventory") wmsInventory();
         else if (action === "scrap") wmsScrap();
         else if (action === "register_barcode") wmsRegisterBarcode();
@@ -8291,6 +8508,7 @@ MINIAPP_HTML = """<!doctype html>
         if (state.wmsView === "receive") wmsReceive();
         else if (state.wmsView === "putaway") wmsPutaway();
         else if (state.wmsView === "transfer") wmsTransfer();
+        else if (state.wmsView === "pick") wmsPick();
         else if (state.wmsView === "inventory") wmsInventory();
         else if (state.wmsView === "scrap") wmsScrap();
         else refreshWmsWorkspace();
@@ -8333,7 +8551,21 @@ MINIAPP_HTML = """<!doctype html>
       }
     });
 
+    document.addEventListener("keydown", (event) => {
+      const scannerInput = event.target.closest("#wmsHardwareScannerInput");
+      if (!scannerInput || event.key !== "Enter") return;
+      event.preventDefault();
+      const value = scannerInput.value.trim();
+      if (!value) return;
+      state.wmsScanField = scannerInput.dataset.wmsHardwareField || "product";
+      scannerInput.value = "";
+      handleWmsScan(value);
+    });
+
     document.addEventListener("input", (event) => {
+      if (event.target.closest("#wmsQuantity, #wmsFromLocation, #wmsToLocation, #wmsReason")) {
+        readWmsDraftFromForm();
+      }
       if (event.target.closest("#orderProduct, #orderTaskType, #orderRouteStep, #orderMaterial, #orderQuantity, #orderPriority, #orderDueDate, [data-stock-quantity], [data-fabric-rolls]")) {
         syncOrderDraft();
       }
@@ -8390,6 +8622,7 @@ MINIAPP_HTML = """<!doctype html>
     document.addEventListener("change", (event) => {
       if (event.target.closest("#wmsProductName")) {
         readWmsDraftFromForm();
+        state.wmsDraft.productScanned = false;
         state.wmsDraft.productSize = "";
         state.wmsDraft.productColor = "";
         render();
@@ -8924,7 +9157,7 @@ MINIAPP_HTML = """<!doctype html>
     document.getElementById("qrScannerClose").addEventListener("click", stopWebQrScanner);
     document.getElementById("qrScannerManual").addEventListener("click", () => {
       stopWebQrScanner();
-      promptRouteCode();
+      promptCurrentScannerCode();
     });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden" && qrScannerStream) stopWebQrScanner();

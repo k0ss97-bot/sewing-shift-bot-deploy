@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 # Ensure tests never touch a working DB.
 os.environ.setdefault("WMS_DATABASE_URL", "postgresql://wms:wms@127.0.0.1:5432/wms_test")
@@ -23,7 +23,7 @@ from wms.barcode import (  # noqa: E402
     LOCATION_PREFIX,
     CONTAINER_PREFIX,
 )
-from wms.models import OperationResult, ProductKey  # noqa: E402
+from wms.models import Location, OperationResult, ProductKey, WarehouseStock  # noqa: E402
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -103,6 +103,19 @@ class WmsContractTests(unittest.TestCase):
         self.assertTrue(body["ok"])
         self.assertEqual(receive.call_args.kwargs["employee_id"], 17)
 
+    def test_pick_api_uses_authenticated_employee_and_location(self):
+        from wms import api
+
+        payload = self._payload()
+        payload["from_location_code"] = "A-01-01"
+        with patch("wms.api.ops.pick") as pick:
+            pick.return_value = OperationResult(ok=True, movement_id=11)
+            status, body = api.handle("/api/wms/pick", payload, employee_id=23)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(pick.call_args.kwargs["employee_id"], 23)
+        self.assertEqual(pick.call_args.kwargs["from_location_code"], "A-01-01")
+
     def test_stock_api_passes_postgres_connection_to_repository(self):
         from wms import api
 
@@ -153,6 +166,59 @@ class WmsContractTests(unittest.TestCase):
             self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
             self.assertEqual(run.call_count, 2)
             self.assertEqual(run.call_args_list[1].args[0][:2], ["pg_restore", "--list"])
+
+
+class PickOperationTests(unittest.TestCase):
+    def setUp(self):
+        self.pk = ProductKey("finished", "Брюки", "128", "Черный", "Готово", "Склад")
+        self.location = Location(7, 2, "A-01-01", "LOC:A-01-01", None, 0, 0, "active")
+        self.conn = MagicMock()
+
+    def test_pick_protects_reserved_balance(self):
+        from wms import operations as ops
+
+        stock = WarehouseStock(3, self.pk, 5, 2, "SELLABLE", self.location.id, "шт")
+        with patch("wms.operations.get_pg_connection", return_value=self.conn), patch(
+            "wms.operations.repo.get_location_by_code", return_value=self.location
+        ), patch("wms.operations.repo.movement_exists", return_value=False), patch(
+            "wms.operations.repo.find_stock", return_value=stock
+        ), patch("wms.operations.repo.upsert_stock") as upsert:
+            result = ops.pick(self.pk, 4, from_location_code=self.location.code)
+        self.assertFalse(result.ok)
+        self.assertIn("доступно только 3", result.reason)
+        upsert.assert_not_called()
+        self.conn.rollback.assert_called()
+
+    def test_pick_decrements_scanned_location_and_records_actor(self):
+        from wms import operations as ops
+
+        stock = WarehouseStock(3, self.pk, 5, 1, "SELLABLE", self.location.id, "шт")
+        with patch("wms.operations.get_pg_connection", return_value=self.conn), patch(
+            "wms.operations.repo.get_location_by_code", return_value=self.location
+        ), patch("wms.operations.repo.movement_exists", return_value=False), patch(
+            "wms.operations.repo.find_stock", return_value=stock
+        ), patch("wms.operations.repo.upsert_stock") as upsert, patch(
+            "wms.operations.repo.insert_movement", return_value=91
+        ) as movement:
+            result = ops.pick(
+                self.pk,
+                2,
+                from_location_code=self.location.code,
+                employee_id=23,
+                request_key="test:pick:unit",
+            )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.movement_id, 91)
+        upsert.assert_called_once_with(
+            self.conn,
+            self.pk,
+            delta=-2,
+            item_state="SELLABLE",
+            location_id=self.location.id,
+        )
+        self.assertEqual(movement.call_args.kwargs["movement_type"], "pick")
+        self.assertEqual(movement.call_args.kwargs["actor_employee_id"], 23)
+        self.conn.commit.assert_called_once()
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -328,6 +394,45 @@ class WmsDbTests(unittest.TestCase):
         )
         self.assertEqual(repo.find_stock(self.conn, pk, location_id=locations[0].id).quantity, 2)
         self.assertEqual(repo.find_stock(self.conn, pk, location_id=locations[1].id).quantity, 2)
+
+    def test_pick_decrements_only_scanned_location_and_is_idempotent(self):
+        from wms import operations as ops
+        from wms import repository as repo
+
+        storage = repo.get_zone_by_code(self.conn, "STORAGE")
+        location = repo.get_location_by_code(self.conn, "ST-PICK-A")
+        if location is None:
+            location = repo.create_location(self.conn, zone_id=storage.id, code="ST-PICK-A")
+        self.conn.commit()
+
+        pk = self._pk(product_name="Тест-Подбор-Из-Ячейки")
+        repo.upsert_stock(self.conn, pk, delta=7, location_id=location.id)
+        self.conn.commit()
+
+        first = ops.pick(
+            pk,
+            3,
+            from_location_code=location.code,
+            request_key="test:pick:one",
+        )
+        repeated = ops.pick(
+            pk,
+            3,
+            from_location_code=location.code,
+            request_key="test:pick:one",
+        )
+        self.assertTrue(first.ok)
+        self.assertTrue(repeated.skipped_duplicate)
+        self.assertEqual(repo.find_stock(self.conn, pk, location_id=location.id).quantity, 4)
+
+        too_many = ops.pick(
+            pk,
+            5,
+            from_location_code=location.code,
+            request_key="test:pick:too-many",
+        )
+        self.assertFalse(too_many.ok)
+        self.assertIn("доступно только 4", too_many.reason)
 
     def test_scrap_changes_state(self):
         from wms import operations as ops

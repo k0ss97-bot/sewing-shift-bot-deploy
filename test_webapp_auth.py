@@ -482,8 +482,21 @@ class WebAppHttpTest(unittest.TestCase):
                     "Origin": self.origin,
                 },
             )
+            pick_status, pick_result, _ = self.request(
+                "POST",
+                "/api/wms/pick",
+                {"from_location_code": "A-01-01", "quantity": 1},
+                {
+                    "Cookie": cookie,
+                    "X-CSRF-Token": login["csrf_token"],
+                    "Origin": self.origin,
+                },
+            )
         self.assertEqual(status, 200)
         self.assertTrue(result["ok"])
+        self.assertEqual(pick_status, 200)
+        self.assertTrue(pick_result["ok"])
+        self.assertEqual(handler.call_args.args[0], "/api/wms/pick")
         self.assertEqual(handler.call_args.kwargs["employee_id"], employee[0])
         self.assertEqual(self.database.get_employee_by_id(employee[0])[3], "Швея")
 
