@@ -298,6 +298,8 @@ def run_smoke() -> None:
                 'data-wms-view="pick"',
                 'id="wmsHardwareScannerInput"',
                 'api("/api/wms/pick"',
+                'src="/assets/jsqr.js"',
+                'const hasQrFallback = typeof window.jsQR === "function"',
                 '+ Кладовщик',
             ):
                 require(
@@ -361,6 +363,22 @@ def run_smoke() -> None:
             require(status == 200, f"Brand mark returned HTTP {status}.")
             require(mark_headers.get_content_type() == "image/svg+xml", "Brand mark is not SVG.")
             require(b"brand-main" in mark_body, "Brand mark SVG is incomplete.")
+
+            status, jsqr_headers, jsqr_body = http_request(f"{base_url}/assets/jsqr.js")
+            require(status == 200, f"Local QR decoder returned HTTP {status}.")
+            require(jsqr_headers.get_content_type() == "text/javascript", "Local QR decoder is not JavaScript.")
+            require(len(jsqr_body) > 100_000, "Local QR decoder asset is incomplete.")
+
+            status, test_headers, test_body = http_request(f"{base_url}/wms/scanner-test")
+            require(status == 200, f"WMS scanner test page returned HTTP {status}.")
+            require(test_headers.get_content_type() == "text/html", "WMS scanner test page is not HTML.")
+            require(b"LOC:TEST-PHONE-01" in test_body, "WMS scanner test cell code is missing.")
+            require(b"TEST-PHONE-PRODUCT-01" in test_body, "WMS scanner test product code is missing.")
+            for test_qr_path in ("/wms/test-cell.svg", "/wms/test-product.svg"):
+                status, qr_headers, qr_body = http_request(f"{base_url}{test_qr_path}")
+                require(status == 200, f"Test QR {test_qr_path} returned HTTP {status}.")
+                require(qr_headers.get_content_type() == "image/svg+xml", f"Test QR {test_qr_path} is not SVG.")
+                require(b"QRcode" in qr_body, f"Test QR {test_qr_path} is incomplete.")
 
             status, headers, worker_body = http_request(f"{base_url}/service-worker.js")
             require(status == 200, f"Service worker returned HTTP {status}.")

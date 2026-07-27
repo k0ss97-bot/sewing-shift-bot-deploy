@@ -19,6 +19,7 @@ import struct
 import zlib
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 from urllib.parse import urlsplit
@@ -45,6 +46,32 @@ APPLE_TOUCH_ICON_PATH = "/pwa/apple-touch-icon-180.png"
 ICON_192_PATH = "/pwa/icon-192.png"
 ICON_512_PATH = "/pwa/icon-512.png"
 MS_TILE_ICON_PATH = "/pwa/mstile-150x150.png"
+JSQR_PATH = "/assets/jsqr.js"
+WMS_SCANNER_TEST_PATH = "/wms/scanner-test"
+WMS_TEST_CELL_QR_PATH = "/wms/test-cell.svg"
+WMS_TEST_PRODUCT_QR_PATH = "/wms/test-product.svg"
+
+_PROJECT_DIR = Path(__file__).resolve().parent
+_JSQR_SOURCE = (_PROJECT_DIR / "vendor" / "jsqr" / "jsQR.js").read_bytes()
+_WMS_TEST_CELL_QR = (_PROJECT_DIR / "assets" / "wms-test" / "cell.svg").read_bytes()
+_WMS_TEST_PRODUCT_QR = (_PROJECT_DIR / "assets" / "wms-test" / "product.svg").read_bytes()
+_WMS_SCANNER_TEST_HTML = f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Тест сканера WMS</title><style>
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f3f6fb;color:#101722}}
+main{{max-width:980px;margin:0 auto;padding:32px 20px 56px}} h1{{font-size:34px;margin:0 0 8px}} p{{color:#5f6978}}
+.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;margin-top:28px}}
+.card{{background:#fff;border:1px solid #dbe4f2;border-radius:24px;padding:24px;box-shadow:0 16px 38px rgba(16,23,34,.10)}}
+.card h2{{margin:0 0 4px}} .code{{font:700 17px ui-monospace,monospace;color:#1959f3;word-break:break-all}}
+img{{display:block;width:min(100%,420px);aspect-ratio:1;object-fit:contain;margin:18px auto 0;background:#fff}}
+@media(max-width:680px){{.grid{{grid-template-columns:1fr}}h1{{font-size:28px}}}}
+</style></head><body><main><h1>Тест сканера склада</h1>
+<p>Откройте приложение на телефоне. На другом экране показывайте коды по очереди: сначала ячейку, затем товар.</p>
+<div class="grid"><section class="card"><h2>1. Ячейка</h2><div class="code">LOC:TEST-PHONE-01</div>
+<img src="{WMS_TEST_CELL_QR_PATH}" alt="QR-код тестовой ячейки"></section>
+<section class="card"><h2>2. Товар</h2><div class="code">TEST-PHONE-PRODUCT-01</div>
+<img src="{WMS_TEST_PRODUCT_QR_PATH}" alt="QR-код тестового товара"></section></div>
+</main></body></html>"""
 
 _ICON_BACKGROUND = (255, 255, 255)
 _ICON_BLUE = (25, 89, 243)
@@ -301,6 +328,9 @@ def _asset_revision() -> str:
     digest.update(APP_ICON_SVG.encode("utf-8"))
     digest.update(BRAND_MARK_SVG.encode("utf-8"))
     digest.update(SAFARI_MASK_ICON_SVG.encode("utf-8"))
+    digest.update(_JSQR_SOURCE)
+    digest.update(_WMS_TEST_CELL_QR)
+    digest.update(_WMS_TEST_PRODUCT_QR)
     for size, body in _ICON_PNGS.items():
         digest.update(str(size).encode("ascii"))
         digest.update(body)
@@ -476,6 +506,7 @@ def build_service_worker(app_shell_revision_token: str | None = None) -> str:
 
     precache_paths = [
         APP_START_URL,
+        JSQR_PATH,
         MANIFEST_PATH,
         ICON_SVG_PATH,
         BRAND_MARK_SVG_PATH,
@@ -483,6 +514,10 @@ def build_service_worker(app_shell_revision_token: str | None = None) -> str:
         ICON_512_PATH,
     ]
     static_paths = [
+        JSQR_PATH,
+        WMS_SCANNER_TEST_PATH,
+        WMS_TEST_CELL_QR_PATH,
+        WMS_TEST_PRODUCT_QR_PATH,
         MANIFEST_PATH,
         BROWSERCONFIG_PATH,
         ICON_SVG_PATH,
@@ -883,6 +918,30 @@ PWA_RESOURCES: Mapping[str, PWAResource] = MappingProxyType(
             _ICON_PNGS[150],
             "image/png",
             _ICON_CACHE,
+        ),
+        JSQR_PATH: _resource(
+            JSQR_PATH,
+            _JSQR_SOURCE,
+            "text/javascript; charset=utf-8",
+            _ICON_CACHE,
+        ),
+        WMS_SCANNER_TEST_PATH: _resource(
+            WMS_SCANNER_TEST_PATH,
+            _WMS_SCANNER_TEST_HTML,
+            "text/html; charset=utf-8",
+            _SHORT_CACHE,
+        ),
+        WMS_TEST_CELL_QR_PATH: _resource(
+            WMS_TEST_CELL_QR_PATH,
+            _WMS_TEST_CELL_QR,
+            "image/svg+xml; charset=utf-8",
+            _SHORT_CACHE,
+        ),
+        WMS_TEST_PRODUCT_QR_PATH: _resource(
+            WMS_TEST_PRODUCT_QR_PATH,
+            _WMS_TEST_PRODUCT_QR,
+            "image/svg+xml; charset=utf-8",
+            _SHORT_CACHE,
         ),
     }
 )

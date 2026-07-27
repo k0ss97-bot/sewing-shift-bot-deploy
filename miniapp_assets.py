@@ -3162,6 +3162,7 @@ MINIAPP_HTML = """<!doctype html>
       font-style: italic;
     }
   </style>
+  <script src="/assets/jsqr.js"></script>
 </head>
 <body>
   <section class="login-view" id="connectionView" hidden aria-labelledby="connectionTitle">
@@ -6667,7 +6668,9 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     async function openWmsScanner() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof window.BarcodeDetector !== "function") {
+      const hasNativeDetector = typeof window.BarcodeDetector === "function";
+      const hasQrFallback = typeof window.jsQR === "function";
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || (!hasNativeDetector && !hasQrFallback)) {
         if (tg && typeof tg.showScanQrPopup === "function") {
           tg.showScanQrPopup({text: qrScannerTitle.textContent || "Сканирование"}, (value) => {
             handleWmsScan(value);
@@ -6687,15 +6690,48 @@ MINIAPP_HTML = """<!doctype html>
         qrScanner.hidden = false;
         qrScannerVideo.srcObject = qrScannerStream;
         await qrScannerVideo.play();
-        const detector = new window.BarcodeDetector({formats: ["qr_code", "code_128", "ean_13", "code_39"]});
+        let detector = null;
+        if (hasNativeDetector) {
+          try {
+            detector = new window.BarcodeDetector({formats: ["qr_code", "code_128", "ean_13", "code_39"]});
+          } catch (_error) {
+            try {
+              detector = new window.BarcodeDetector({formats: ["qr_code"]});
+            } catch (_fallbackError) {
+              detector = null;
+            }
+          }
+        }
+        if (!detector && !hasQrFallback) {
+          stopWebQrScanner();
+          const code = window.prompt("Введите код вручную (LOC:… или штрихкод товара):", "");
+          if (code) handleWmsScan(code);
+          return;
+        }
+        const canvas = detector ? null : document.createElement("canvas");
+        const canvasContext = canvas ? canvas.getContext("2d", {willReadFrequently: true}) : null;
         let detecting = false;
-        const detectFrame = async () => {
+        let lastFallbackScanAt = 0;
+        const detectFrame = async (frameTime = 0) => {
           if (!qrScannerStream || qrScanner.hidden) return;
-          if (!detecting && qrScannerVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          const fallbackDue = detector || frameTime - lastFallbackScanAt >= 140;
+          if (!detecting && fallbackDue && qrScannerVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
             detecting = true;
             try {
-              const codes = await detector.detect(qrScannerVideo);
-              const value = codes && codes[0] ? codes[0].rawValue : "";
+              let value = "";
+              if (detector) {
+                const codes = await detector.detect(qrScannerVideo);
+                value = codes && codes[0] ? codes[0].rawValue : "";
+              } else if (canvasContext && qrScannerVideo.videoWidth && qrScannerVideo.videoHeight) {
+                lastFallbackScanAt = frameTime;
+                const scale = Math.min(1, 960 / qrScannerVideo.videoWidth);
+                canvas.width = Math.max(1, Math.round(qrScannerVideo.videoWidth * scale));
+                canvas.height = Math.max(1, Math.round(qrScannerVideo.videoHeight * scale));
+                canvasContext.drawImage(qrScannerVideo, 0, 0, canvas.width, canvas.height);
+                const image = canvasContext.getImageData(0, 0, canvas.width, canvas.height);
+                const code = window.jsQR(image.data, image.width, image.height);
+                value = code ? code.data : "";
+              }
               if (value) {
                 stopWebQrScanner();
                 handleWmsScan(value);
