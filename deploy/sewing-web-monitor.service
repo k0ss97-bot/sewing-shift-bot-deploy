@@ -1,0 +1,29 @@
+[Unit]
+Description=Shagaem Vmeste production control monitor
+After=sewing-web.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sewing-monitor
+Group=sewing-monitor
+SupplementaryGroups=users
+WorkingDirectory=/opt/sewing-web/current
+EnvironmentFile=/etc/sewing-web/sewing-web.env
+EnvironmentFile=/etc/sewing-web/web-push.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/sewing-web/venv/bin/python /opt/sewing-web/current/scripts/monitor_production.py
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/sewing-web

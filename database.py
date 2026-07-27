@@ -4,6 +4,7 @@ import os
 import sqlite3
 import uuid
 from datetime import date, datetime, timedelta
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 
@@ -2266,6 +2267,48 @@ def init_db():
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_critical_notifications_open ON critical_notifications(status, created_at DESC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notification_deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            notification_id INTEGER NOT NULL,
+            employee_id INTEGER NOT NULL,
+            channel TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            sent_at TEXT,
+            last_attempt_at TEXT,
+            last_error TEXT NOT NULL DEFAULT '',
+            UNIQUE(notification_id, employee_id, channel),
+            FOREIGN KEY (notification_id) REFERENCES critical_notifications (id),
+            FOREIGN KEY (employee_id) REFERENCES employees (id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status "
+        "ON notification_deliveries(status, last_attempt_at DESC)"
+    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id INTEGER NOT NULL,
+            endpoint TEXT NOT NULL UNIQUE,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            user_agent TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_success_at TEXT,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            disabled_at TEXT,
+            last_error TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (employee_id) REFERENCES employees (id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_web_push_subscriptions_active "
+        "ON web_push_subscriptions(employee_id, disabled_at, updated_at DESC)"
+    )
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batch_history (
@@ -7913,6 +7956,368 @@ def acknowledge_critical_notification(notification_id: int, employee_id: int | N
         WHERE id = ? AND status = 'open'
         """,
         (now_text, employee_id, notification_id),
+    )
+    changed = cursor.rowcount == 1
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def get_active_admin_notification_recipients():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, telegram_id, full_name
+        FROM employees
+        WHERE role = 'admin' AND status = 'active' AND telegram_id > 0
+        ORDER BY id ASC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def create_or_refresh_operational_notification(
+    event_key: str,
+    title: str,
+    message: str,
+    *,
+    severity: str = "warning",
+    batch: dict | None = None,
+):
+    event_key = str(event_key or "").strip()[:180]
+    title = str(title or "Внимание").strip()[:180]
+    message = str(message or "Проверьте состояние производства.").strip()[:1200]
+    if not event_key:
+        raise ValueError("notification event key is required")
+    if severity not in {"critical", "warning", "info"}:
+        severity = "warning"
+
+    batch = batch or {}
+    step = _route_batch_step(batch) if batch else {}
+    now_text = local_now().isoformat()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO critical_notifications (
+            event_key, severity, title, message, batch_id, product_name, product_size,
+            product_color, operation_name, position, needed_quantity, available_quantity,
+            missing_quantity, status, created_at, acknowledged_at, acknowledged_by_employee_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'open', ?, NULL, NULL)
+        ON CONFLICT(event_key) DO UPDATE SET
+            severity = excluded.severity,
+            title = excluded.title,
+            message = excluded.message,
+            batch_id = excluded.batch_id,
+            product_name = excluded.product_name,
+            product_size = excluded.product_size,
+            product_color = excluded.product_color,
+            operation_name = excluded.operation_name,
+            position = excluded.position,
+            status = 'open',
+            acknowledged_at = NULL,
+            acknowledged_by_employee_id = NULL
+        """,
+        (
+            event_key,
+            severity,
+            title,
+            message,
+            batch.get("id"),
+            batch.get("product_name") or "",
+            batch.get("product_size") or "",
+            batch.get("product_color") or "",
+            step.get("operation") or "",
+            step.get("position") or "",
+            now_text,
+        ),
+    )
+    cursor.execute("SELECT id FROM critical_notifications WHERE event_key = ?", (event_key,))
+    row = cursor.fetchone()
+    conn.commit()
+    conn.close()
+    return int(row[0]) if row else None
+
+
+def resolve_operational_notification(event_key: str):
+    event_key = str(event_key or "").strip()
+    if not event_key:
+        return False
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE critical_notifications SET status = 'resolved' WHERE event_key = ? AND status = 'open'",
+        (event_key,),
+    )
+    changed = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def refresh_operational_notifications(stalled_after_minutes: int = 240, now: datetime | None = None):
+    threshold = max(30, min(int(stalled_after_minutes or 240), 24 * 60))
+    now_value = now or local_now()
+    created_or_refreshed = []
+
+    for batch in get_active_route_batches():
+        batch_id = int(batch["id"])
+        blocked_key = f"task-blocked:batch:{batch_id}"
+        stalled_key = f"task-stalled:batch:{batch_id}"
+        work_state = str(batch.get("work_state") or "")
+        if work_state == "blocked":
+            created_or_refreshed.append(
+                create_or_refresh_operational_notification(
+                    blocked_key,
+                    f"Задание #{batch_id} заблокировано",
+                    batch.get("blocked_reason") or "Сотрудник указал блокировку. Проверьте причину и помогите снять ограничение.",
+                    severity="warning",
+                    batch=batch,
+                )
+            )
+        else:
+            resolve_operational_notification(blocked_key)
+
+        last_activity_text = str(batch.get("last_activity_at") or batch.get("updated_at") or "")
+        try:
+            last_activity = datetime.fromisoformat(last_activity_text)
+        except ValueError:
+            last_activity = None
+        inactive_minutes = (
+            (now_value - last_activity).total_seconds() / 60
+            if last_activity is not None
+            else 0
+        )
+        is_stalled = (
+            bool(batch.get("assigned_employee_id"))
+            and work_state not in {"blocked", "paused"}
+            and inactive_minutes >= threshold
+        )
+        if is_stalled:
+            created_or_refreshed.append(
+                create_or_refresh_operational_notification(
+                    stalled_key,
+                    f"Нет движения по заданию #{batch_id}",
+                    f"Задание не обновлялось {int(inactive_minutes)} мин. Проверьте сотрудника и этап.",
+                    severity="warning",
+                    batch=batch,
+                )
+            )
+        else:
+            resolve_operational_notification(stalled_key)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE critical_notifications
+        SET status = 'resolved'
+        WHERE status = 'open'
+          AND (event_key LIKE 'task-blocked:batch:%' OR event_key LIKE 'task-stalled:batch:%')
+          AND batch_id NOT IN (SELECT id FROM route_batches WHERE status = 'active')
+        """
+    )
+    conn.commit()
+    conn.close()
+    return [item for item in created_or_refreshed if item]
+
+
+def claim_notification_delivery(notification_id: int, employee_id: int, channel: str):
+    if notification_id <= 0 or employee_id <= 0 or not channel:
+        return False
+    now_text = local_now().isoformat()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            INSERT INTO notification_deliveries (
+                notification_id, employee_id, channel, status, attempts, last_attempt_at
+            ) VALUES (?, ?, ?, 'pending', 1, ?)
+            ON CONFLICT(notification_id, employee_id, channel) DO UPDATE SET
+                status = 'pending',
+                attempts = notification_deliveries.attempts + 1,
+                last_attempt_at = excluded.last_attempt_at,
+                last_error = ''
+            WHERE notification_deliveries.status != 'sent'
+            """,
+            (notification_id, employee_id, channel, now_text),
+        )
+        claimed = cursor.rowcount == 1
+        conn.commit()
+        return claimed
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def finish_notification_delivery(
+    notification_id: int,
+    employee_id: int,
+    channel: str,
+    *,
+    sent: bool,
+    error: str = "",
+):
+    now_text = local_now().isoformat()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE notification_deliveries
+        SET status = ?, sent_at = ?, last_attempt_at = ?, last_error = ?
+        WHERE notification_id = ? AND employee_id = ? AND channel = ?
+        """,
+        (
+            "sent" if sent else "failed",
+            now_text if sent else None,
+            now_text,
+            str(error or "")[:500],
+            notification_id,
+            employee_id,
+            channel,
+        ),
+    )
+    changed = cursor.rowcount == 1
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def _normalize_web_push_subscription(subscription: dict | None) -> tuple[str, str, str]:
+    subscription = subscription if isinstance(subscription, dict) else {}
+    endpoint = str(subscription.get("endpoint") or "").strip()
+    keys = subscription.get("keys") if isinstance(subscription.get("keys"), dict) else {}
+    p256dh = str(keys.get("p256dh") or "").strip()
+    auth = str(keys.get("auth") or "").strip()
+    parsed = urlsplit(endpoint)
+    if (
+        not endpoint
+        or len(endpoint) > 2048
+        or parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or not p256dh
+        or len(p256dh) > 512
+        or not auth
+        or len(auth) > 256
+    ):
+        raise ValueError("invalid web push subscription")
+    return endpoint, p256dh, auth
+
+
+def upsert_web_push_subscription(employee_id: int, subscription: dict | None, user_agent: str = ""):
+    if employee_id <= 0:
+        raise ValueError("employee is required")
+    endpoint, p256dh, auth = _normalize_web_push_subscription(subscription)
+    now_text = local_now().isoformat()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO web_push_subscriptions (
+            employee_id, endpoint, p256dh, auth, user_agent, created_at, updated_at,
+            last_success_at, failure_count, disabled_at, last_error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, '')
+        ON CONFLICT(endpoint) DO UPDATE SET
+            employee_id = excluded.employee_id,
+            p256dh = excluded.p256dh,
+            auth = excluded.auth,
+            user_agent = excluded.user_agent,
+            updated_at = excluded.updated_at,
+            disabled_at = NULL,
+            last_error = ''
+        """,
+        (employee_id, endpoint, p256dh, auth, str(user_agent or "")[:500], now_text, now_text),
+    )
+    cursor.execute("SELECT id FROM web_push_subscriptions WHERE endpoint = ?", (endpoint,))
+    row = cursor.fetchone()
+    conn.commit()
+    conn.close()
+    return int(row[0]) if row else None
+
+
+def disable_web_push_subscription(employee_id: int, endpoint: str, reason: str = ""):
+    endpoint = str(endpoint or "").strip()
+    if employee_id <= 0 or not endpoint:
+        return False
+    now_text = local_now().isoformat()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE web_push_subscriptions
+        SET disabled_at = ?, updated_at = ?, last_error = ?
+        WHERE employee_id = ? AND endpoint = ? AND disabled_at IS NULL
+        """,
+        (now_text, now_text, str(reason or "")[:500], employee_id, endpoint),
+    )
+    changed = cursor.rowcount == 1
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def get_web_push_subscription_status(employee_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM web_push_subscriptions WHERE employee_id = ? AND disabled_at IS NULL",
+        (employee_id,),
+    )
+    active_count = int(cursor.fetchone()[0] or 0)
+    conn.close()
+    return {"active": active_count > 0, "active_count": active_count}
+
+
+def get_active_admin_web_push_subscriptions():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT s.id, s.employee_id, s.endpoint, s.p256dh, s.auth
+        FROM web_push_subscriptions AS s
+        JOIN employees AS e ON e.id = s.employee_id
+        WHERE e.role = 'admin' AND e.status = 'active' AND s.disabled_at IS NULL
+        ORDER BY s.id ASC
+        """
+    )
+    columns = [column[0] for column in cursor.description]
+    rows = [row_to_dict(columns, row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def record_web_push_delivery(subscription_id: int, *, sent: bool, error: str = ""):
+    if subscription_id <= 0:
+        return False
+    now_text = local_now().isoformat()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE web_push_subscriptions
+        SET updated_at = ?,
+            last_success_at = CASE WHEN ? THEN ? ELSE last_success_at END,
+            failure_count = CASE WHEN ? THEN 0 ELSE failure_count + 1 END,
+            last_error = ?
+        WHERE id = ?
+        """,
+        (
+            now_text,
+            1 if sent else 0,
+            now_text,
+            1 if sent else 0,
+            str(error or "")[:500],
+            subscription_id,
+        ),
     )
     changed = cursor.rowcount == 1
     conn.commit()

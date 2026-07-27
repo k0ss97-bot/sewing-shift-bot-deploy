@@ -9,6 +9,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -75,6 +76,75 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(cardigan_options, {"individual", "suit"})
         self.assertEqual(shorts_options, {"individual"})
         self.assertEqual(len({id(step) for step in (tshirt_step, leggings_step, joggers_step, pants_step, cardigan_step, shorts_step)}), 6)
+
+    def test_opening_shift_returns_close_shift_reminder_once(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(4120, "Тест Сотрудник", "Швея")
+        employee = self.database.get_employee_by_telegram_id(4120)
+        self.database.update_employee_status(employee[0], "active")
+
+        opened = miniapp_server.open_shift_for_telegram(4120)
+        repeated = miniapp_server.open_shift_for_telegram(4120)
+
+        self.assertTrue(opened["has_open_shift"])
+        self.assertIn("обязательно закройте", opened["shift_close_reminder"])
+        self.assertNotIn("shift_close_reminder", repeated)
+
+    def test_admin_web_push_subscription_test_and_disable(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(4121, "Тест Администратор Push", "Швея")
+        admin = self.database.get_employee_by_telegram_id(4121)
+        self.database.update_employee_status(admin[0], "active")
+        self.assertTrue(self.database.update_employee_role(admin[0], "admin")["ok"])
+        subscription = {
+            "endpoint": "https://push.example.test/subscription-4121",
+            "keys": {"p256dh": "synthetic-p256dh", "auth": "synthetic-auth"},
+        }
+
+        with patch.object(
+            miniapp_server,
+            "get_public_web_push_config",
+            return_value={"configured": True, "public_key": "synthetic-public-key"},
+        ):
+            enabled = miniapp_server.subscribe_web_push_for_admin(
+                4121, {"subscription": subscription}, "Synthetic Test Browser"
+            )
+            with patch.object(miniapp_server, "send_web_push") as sender:
+                delivered = miniapp_server.send_test_web_push_for_admin(4121)
+
+        self.assertTrue(enabled["ok"], enabled)
+        self.assertTrue(enabled["subscription"]["active"])
+        self.assertTrue(delivered["ok"], delivered)
+        sender.assert_called_once()
+        disabled = miniapp_server.unsubscribe_web_push_for_admin(
+            4121, {"subscription": subscription}
+        )
+        self.assertTrue(disabled["ok"], disabled)
+        self.assertFalse(disabled["subscription"]["active"])
+
+    def test_critical_notification_delivery_is_idempotent(self):
+        self.database.create_employee(4122, "Тест Администратор Alerts", "Швея")
+        admin = self.database.get_employee_by_telegram_id(4122)
+        self.database.update_employee_status(admin[0], "active")
+        self.assertTrue(self.database.update_employee_role(admin[0], "admin")["ok"])
+        notification_id = self.database.create_or_refresh_operational_notification(
+            "synthetic-critical-alert",
+            "Тестовое критичное уведомление",
+            "Только изолированная проверка.",
+            severity="critical",
+        )
+
+        self.assertTrue(
+            self.database.claim_notification_delivery(notification_id, admin[0], "webpush:test")
+        )
+        self.assertTrue(
+            self.database.finish_notification_delivery(
+                notification_id, admin[0], "webpush:test", sent=True
+            )
+        )
+        self.assertFalse(
+            self.database.claim_notification_delivery(notification_id, admin[0], "webpush:test")
+        )
 
     def test_only_selected_active_employee_or_admin_can_access_wms(self):
         miniapp_server = importlib.import_module("miniapp_server")

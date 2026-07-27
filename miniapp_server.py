@@ -35,9 +35,11 @@ from database import (
     create_shift,
     delete_employee_if_unused,
     delete_shift_by_id,
+    disable_web_push_subscription,
     ensure_admin_employee,
     employee_has_wms_access,
     get_active_operations,
+    get_active_admin_web_push_subscriptions,
     get_active_cutting_batch_product_names,
     get_active_production_tasks,
     get_active_production_tasks_for_contours,
@@ -97,12 +99,14 @@ from database import (
     get_shift_report,
     get_warehouse_stock_by_id,
     get_warehouse_stock_rows,
+    get_web_push_subscription_status,
     get_today_shifts,
     hide_operation,
     has_route_completion_request,
     local_now,
     local_today,
     mark_cutting_batch_formed,
+    record_web_push_delivery,
     reject_production_task_fabric_rolls,
     route_steps_from_snapshot,
     restore_operation,
@@ -113,6 +117,7 @@ from database import (
     update_employee_role,
     update_employee_wms_access,
     update_operation_field,
+    upsert_web_push_subscription,
 )
 from catalog import PREPARATION_OPERATION_OPTIONS, format_color_label
 from miniapp_auth import parse_auth_token
@@ -136,6 +141,7 @@ from webapp_auth import (
 from webapp_pwa import app_shell_revision, inject_pwa_markup, send_pwa_resource
 from wms import api as wms_api
 from wms.api import WMS_READ_ROUTES, WMS_ROUTES
+from web_push import WebPushDeliveryError, get_public_web_push_config, send_web_push
 
 
 AUTH_MAX_AGE_SECONDS = 24 * 60 * 60
@@ -384,7 +390,12 @@ def open_shift_for_telegram(telegram_id: int):
         shift["id"],
         f"Дата: {shift['shift_date']}, начало: {shift['start_time']}",
     )
-    return get_shift_state(telegram_id, "Смена открыта.")
+    result = get_shift_state(telegram_id, "Смена открыта.")
+    result["shift_close_reminder"] = (
+        "Смена открыта. В конце рабочего дня обязательно закройте её в приложении. "
+        "Пока смена не закрыта, отработанное время и итоговый отчёт могут отображаться неверно."
+    )
+    return result
 
 
 def close_shift_for_telegram(telegram_id: int):
@@ -3936,6 +3947,7 @@ def get_admin_dashboard(telegram_id: int):
     user_accounts = get_all_user_accounts()
     web_profiles = get_web_account_profiles_by_telegram_ids(employee[3] for employee in user_accounts)
     wms_access = get_employee_wms_access_map(employee[0] for employee in user_accounts)
+    admin_employee = get_employee_for_access(telegram_id)
     employee_rows = [employee_admin_to_dict(employee, web_profiles, wms_access) for employee in employees]
     open_shift_rows = [open_shift_to_dict(shift) for shift in get_open_shifts()]
     month_start, today = month_bounds()
@@ -3971,6 +3983,11 @@ def get_admin_dashboard(telegram_id: int):
         ],
         "production_control": get_production_control_payload(month_start, today),
         "critical_notifications": get_open_critical_notifications(),
+        "web_push_configured": bool(get_public_web_push_config()["configured"]),
+        "web_push_subscription": (
+            get_web_push_subscription_status(admin_employee[0])
+            if admin_employee else {"active": False, "active_count": 0}
+        ),
         "defect_reasons": DEFECT_REASONS,
         "defect_dispositions": DEFECT_DISPOSITIONS,
     }
@@ -3987,6 +4004,108 @@ def acknowledge_critical_notification_for_admin(telegram_id: int, payload: dict)
     if not acknowledge_critical_notification(notification_id, employee[0] if employee else None):
         return {"ok": False, "message": "Уведомление уже обработано или не найдено."}
     return {"ok": True, "message": "Критичное уведомление отмечено просмотренным.", "admin": get_admin_dashboard(telegram_id)}
+
+
+def get_web_push_config_for_admin(telegram_id: int):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+    employee = get_employee_for_access(telegram_id)
+    config = get_public_web_push_config()
+    return {
+        "ok": True,
+        "configured": bool(config["configured"]),
+        "public_key": str(config["public_key"]),
+        "subscription": (
+            get_web_push_subscription_status(employee[0])
+            if employee else {"active": False, "active_count": 0}
+        ),
+    }
+
+
+def subscribe_web_push_for_admin(telegram_id: int, payload: dict, user_agent: str = ""):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+    config = get_public_web_push_config()
+    if not config["configured"]:
+        return {"ok": False, "message": "Уведомления на сервере ещё не настроены."}
+    employee = get_employee_for_access(telegram_id)
+    if employee is None:
+        return {"ok": False, "message": "Не найден профиль администратора."}
+    try:
+        upsert_web_push_subscription(employee[0], payload.get("subscription"), user_agent)
+    except ValueError:
+        return {"ok": False, "message": "Телефон передал некорректную подписку уведомлений."}
+    return {
+        "ok": True,
+        "message": "Критические уведомления на этот телефон включены.",
+        "subscription": get_web_push_subscription_status(employee[0]),
+    }
+
+
+def unsubscribe_web_push_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+    employee = get_employee_for_access(telegram_id)
+    subscription = payload.get("subscription") if isinstance(payload.get("subscription"), dict) else {}
+    endpoint = str(subscription.get("endpoint") or "")
+    if employee is None or not endpoint:
+        return {"ok": False, "message": "Не найдена подписка этого телефона."}
+    disable_web_push_subscription(employee[0], endpoint, "Disabled by administrator")
+    return {
+        "ok": True,
+        "message": "Уведомления на этом телефоне отключены.",
+        "subscription": get_web_push_subscription_status(employee[0]),
+    }
+
+
+def send_test_web_push_for_admin(telegram_id: int):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+    if not get_public_web_push_config()["configured"]:
+        return {"ok": False, "message": "Уведомления на сервере ещё не настроены."}
+    employee = get_employee_for_access(telegram_id)
+    if employee is None:
+        return {"ok": False, "message": "Не найден профиль администратора."}
+
+    subscriptions = [
+        row for row in get_active_admin_web_push_subscriptions()
+        if int(row["employee_id"]) == int(employee[0])
+    ]
+    if not subscriptions:
+        return {"ok": False, "message": "Сначала включите уведомления на этом телефоне."}
+
+    sent = 0
+    for subscription in subscriptions:
+        try:
+            send_web_push(
+                subscription,
+                title="Тестовое уведомление",
+                message=(
+                    "Push-уведомления работают. Критические сообщения производства "
+                    "будут приходить на этот телефон."
+                ),
+                notification_id=0,
+            )
+        except WebPushDeliveryError as error:
+            record_web_push_delivery(int(subscription["id"]), sent=False, error=str(error))
+            if error.invalid_subscription:
+                disable_web_push_subscription(
+                    int(employee[0]), str(subscription["endpoint"]), str(error)
+                )
+        else:
+            record_web_push_delivery(int(subscription["id"]), sent=True)
+            sent += 1
+
+    if not sent:
+        return {
+            "ok": False,
+            "message": "Не удалось доставить тест. Отключите уведомления и включите их заново.",
+        }
+    return {
+        "ok": True,
+        "message": "Тестовое уведомление отправлено на подключённый телефон.",
+        "sent": sent,
+    }
 
 
 def get_admin_report_payload(
@@ -4922,6 +5041,11 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/routes/passport",
                 "/api/routes/lookup",
                 "/api/admin/dashboard",
+                "/api/admin/web-push/config",
+                "/api/admin/web-push/subscribe",
+                "/api/admin/web-push/unsubscribe",
+                "/api/admin/web-push/test",
+                "/api/admin/critical-notification/acknowledge",
                 "/api/admin/report",
                 "/api/admin/report/export",
                 "/api/admin/feedback",
@@ -5165,6 +5289,8 @@ def make_handler(bot_token: str, debug: bool):
             elif path == "/api/shift/open":
                 action_result = open_shift_for_telegram(telegram_id)
                 result = get_app_state(telegram_id, action_result.get("message", ""))
+                if action_result.get("shift_close_reminder"):
+                    result["shift_close_reminder"] = action_result["shift_close_reminder"]
             elif path == "/api/shift/close":
                 action_result = close_shift_for_telegram(telegram_id)
                 result = get_app_state(telegram_id, action_result.get("message", ""))
@@ -5228,6 +5354,16 @@ def make_handler(bot_token: str, debug: bool):
                 result = lookup_route_trace_for_telegram(telegram_id, str(payload.get("trace_code") or ""))
             elif path == "/api/admin/dashboard":
                 result = get_admin_dashboard(telegram_id)
+            elif path == "/api/admin/web-push/config":
+                result = get_web_push_config_for_admin(telegram_id)
+            elif path == "/api/admin/web-push/subscribe":
+                result = subscribe_web_push_for_admin(
+                    telegram_id, payload, self.headers.get("User-Agent", "")
+                )
+            elif path == "/api/admin/web-push/unsubscribe":
+                result = unsubscribe_web_push_for_admin(telegram_id, payload)
+            elif path == "/api/admin/web-push/test":
+                result = send_test_web_push_for_admin(telegram_id)
             elif path == "/api/admin/critical-notification/acknowledge":
                 result = acknowledge_critical_notification_for_admin(telegram_id, payload)
             elif path == "/api/admin/report":

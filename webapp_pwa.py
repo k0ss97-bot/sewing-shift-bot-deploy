@@ -415,6 +415,43 @@ self.addEventListener("fetch", (event) => {
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
 });
+
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (_error) {
+    payload = {body: event.data ? event.data.text() : ""};
+  }
+  const title = String(payload.title || "Критичное уведомление");
+  event.waitUntil(self.registration.showNotification(title, {
+    body: String(payload.body || "Откройте приложение и проверьте ситуацию."),
+    icon: "/pwa/icon-192.png",
+    badge: "/pwa/icon-32.png",
+    tag: String(payload.tag || "production-alert"),
+    renotify: true,
+    data: {url: String(payload.url || "/app")}
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = new URL(
+    String((event.notification.data && event.notification.data.url) || "/app"),
+    self.location.origin
+  ).href;
+  event.waitUntil((async () => {
+    const clients = await self.clients.matchAll({type: "window", includeUncontrolled: true});
+    for (const client of clients) {
+      if (client.url.startsWith(self.location.origin)) {
+        await client.focus();
+        if ("navigate" in client) await client.navigate(targetUrl);
+        return;
+      }
+    }
+    await self.clients.openWindow(targetUrl);
+  })());
+});
 """
 
 

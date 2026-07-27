@@ -1858,6 +1858,48 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 12px;
     }
 
+    .shift-reminder {
+      position: fixed;
+      z-index: 140;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+      background: rgba(14, 20, 37, .58);
+      backdrop-filter: blur(12px);
+    }
+
+    .shift-reminder[hidden] {
+      display: none;
+    }
+
+    .shift-reminder-card {
+      width: min(430px, 100%);
+      display: grid;
+      gap: 15px;
+      padding: 24px;
+      border: 1px solid rgba(25,89,243,.2);
+      border-radius: 24px;
+      background: #fff;
+      box-shadow: 0 24px 70px rgba(11, 29, 71, .28);
+      text-align: center;
+    }
+
+    .shift-reminder-icon {
+      width: 58px;
+      height: 58px;
+      display: grid;
+      place-items: center;
+      margin: 0 auto;
+      border-radius: 18px;
+      background: rgba(25,89,243,.11);
+      color: var(--accent);
+      font-size: 28px;
+    }
+
+    .shift-reminder-card h2 { margin: 0; font-size: 23px; }
+    .shift-reminder-card p { margin: 0; color: var(--muted); line-height: 1.55; }
+
     .qr-scanner {
       position: fixed;
       z-index: 100;
@@ -3170,6 +3212,14 @@ MINIAPP_HTML = """<!doctype html>
   <button class="main-button" id="mainButton" hidden>Загрузка</button>
   <nav class="bottom-nav" id="bottomNav" aria-label="Навигация приложения" hidden></nav>
   <div class="toast" id="toast"><b></b><span></span></div>
+  <section class="shift-reminder" id="shiftReminder" aria-modal="true" role="dialog" hidden>
+    <div class="shift-reminder-card">
+      <div class="shift-reminder-icon">✓</div>
+      <h2>Смена открыта</h2>
+      <p id="shiftReminderText"></p>
+      <button class="small-button" id="shiftReminderClose" type="button">Понятно</button>
+    </div>
+  </section>
   <section class="qr-scanner" id="qrScanner" aria-label="Сканер QR-кода" hidden>
     <div class="qr-scanner-shell">
       <video id="qrScannerVideo" playsinline muted></video>
@@ -3533,6 +3583,8 @@ MINIAPP_HTML = """<!doctype html>
       profileReturnScreen: "shift",
       taskDefectPhotos: {},
       wmsView: "receive",
+      pushDeviceActive: null,
+      pushDeviceSyncing: false,
       wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
       ...persistedUiState,
       data: null,
@@ -3562,6 +3614,9 @@ MINIAPP_HTML = """<!doctype html>
     const topTabs = document.getElementById("topTabs");
     const bottomNav = document.getElementById("bottomNav");
     const toast = document.getElementById("toast");
+    const shiftReminder = document.getElementById("shiftReminder");
+    const shiftReminderText = document.getElementById("shiftReminderText");
+    const shiftReminderClose = document.getElementById("shiftReminderClose");
     const qrScanner = document.getElementById("qrScanner");
     const qrScannerVideo = document.getElementById("qrScannerVideo");
     const pendingActions = new Set();
@@ -3708,6 +3763,16 @@ MINIAPP_HTML = """<!doctype html>
       clearTimeout(window.toastTimer);
       window.toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
     }
+
+    function showShiftCloseReminder(text) {
+      shiftReminderText.textContent = text || "В конце рабочего дня обязательно закройте смену в приложении.";
+      shiftReminder.hidden = false;
+      shiftReminderClose.focus();
+    }
+
+    shiftReminderClose.addEventListener("click", () => {
+      shiftReminder.hidden = true;
+    });
 
     function persistUiState() {
       const payload = {};
@@ -4369,12 +4434,117 @@ MINIAPP_HTML = """<!doctype html>
       state.notifiedCriticalIds = state.notifiedCriticalIds || {};
       const fresh = notifications.filter((item) => !state.notifiedCriticalIds[item.id]);
       if (!fresh.length) return;
-      if (Notification.permission === "default") Notification.requestPermission().catch(() => {});
       if (Notification.permission !== "granted") return;
       fresh.slice(0, 3).forEach((item) => {
         state.notifiedCriticalIds[item.id] = true;
         new Notification(item.title || "Критичное уведомление", {body: item.message || "Проверьте входящую продукцию."});
       });
+    }
+
+    function webPushSupported() {
+      return window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    }
+
+    function webPushApplicationKey(value) {
+      const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+      const decoded = atob(padded);
+      return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+    }
+
+    async function syncWebPushDeviceState() {
+      if (!webPushSupported() || state.pushDeviceSyncing) return;
+      state.pushDeviceSyncing = true;
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+        const active = Boolean(subscription);
+        if (state.pushDeviceActive !== active) {
+          state.pushDeviceActive = active;
+          if (state.data && state.data.is_admin && state.screen === "shift") render();
+        }
+      } catch (error) {
+        state.pushDeviceActive = false;
+      } finally {
+        state.pushDeviceSyncing = false;
+      }
+    }
+
+    async function enableAdminWebPush() {
+      const actionKey = "web-push-enable";
+      if (!beginAction(actionKey)) return;
+      try {
+        if (!webPushSupported()) throw new Error("unsupported");
+        const config = await api("/api/admin/web-push/config");
+        if (!config.ok || !config.configured || !config.public_key) {
+          showToast("Уведомления", config.message || "Сервер уведомлений пока не настроен.");
+          return;
+        }
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+          showToast("Уведомления", "Разрешите уведомления в настройках телефона и попробуйте снова.");
+          return;
+        }
+        const registration = await navigator.serviceWorker.ready;
+        let subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: webPushApplicationKey(config.public_key),
+          });
+        }
+        const data = await api("/api/admin/web-push/subscribe", {subscription: subscription.toJSON()});
+        if (!data.ok) {
+          showToast("Уведомления", data.message || "Не удалось включить уведомления.");
+          return;
+        }
+        state.pushDeviceActive = true;
+        if (state.data && state.data.admin) state.data.admin.web_push_subscription = data.subscription;
+        render();
+        showToast("Уведомления", data.message || "Уведомления включены.");
+      } catch (error) {
+        showToast("Уведомления", error.message === "unsupported" ? "Откройте установленное приложение с экрана «Домой»." : "Не удалось включить уведомления на этом телефоне.");
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function disableAdminWebPush() {
+      const actionKey = "web-push-disable";
+      if (!beginAction(actionKey)) return;
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+          state.pushDeviceActive = false;
+          render();
+          showToast("Уведомления", "На этом телефоне уведомления уже отключены.");
+          return;
+        }
+        const data = await api("/api/admin/web-push/unsubscribe", {subscription: subscription.toJSON()});
+        await subscription.unsubscribe();
+        state.pushDeviceActive = false;
+        if (state.data && state.data.admin && data.subscription) state.data.admin.web_push_subscription = data.subscription;
+        render();
+        showToast("Уведомления", data.message || "Уведомления отключены.");
+      } catch (error) {
+        showToast("Уведомления", "Не удалось отключить уведомления на этом телефоне.");
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
+    async function testAdminWebPush() {
+      const actionKey = "web-push-test";
+      if (!beginAction(actionKey)) return;
+      try {
+        const data = await api("/api/admin/web-push/test");
+        showToast("Уведомления", data.message || (data.ok ? "Тест отправлен." : "Тест не отправлен."));
+      } catch (error) {
+        showToast("Уведомления", error.apiMessage || "Не удалось отправить тестовое уведомление.");
+      } finally {
+        endAction(actionKey);
+      }
     }
 
     function getAdminHomePeriod() {
@@ -4434,6 +4604,25 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderWebPushCard() {
+      const admin = getAdmin() || {};
+      const subscription = admin.web_push_subscription || {};
+      const active = state.pushDeviceActive === null ? Boolean(subscription.active) : state.pushDeviceActive;
+      const configured = Boolean(admin.web_push_configured);
+      const supported = webPushSupported();
+      let description = "Получайте критические уведомления, даже когда приложение закрыто.";
+      if (!supported) description = "Этот браузер не поддерживает push-уведомления. На iPhone откройте приложение с экрана «Домой».";
+      else if (!configured) description = "Сервер уведомлений пока не настроен.";
+      else if (active) description = `Уведомления включены на ${Number(subscription.active_count || 1)} устройстве(ах).`;
+      return `
+        <div class="section-title"><b>Уведомления на телефон</b><span>${active ? "включены" : "выключены"}</span></div>
+        <div class="card field-card">
+          <div class="report-row"><div><b>${active ? "Критические push включены" : "Включить критические push"}</b><span>${escapeHtml(description)}</span></div><span class="status-chip ${active ? "" : "gray"}">${active ? "активно" : "не активно"}</span></div>
+          <div class="button-row">${active ? `<button class="small-button secondary" data-push-action="test">Отправить тест</button>` : ""}<button class="small-button ${active ? "danger" : ""}" data-push-action="${active ? "disable" : "enable"}" ${!supported || !configured ? "disabled" : ""}>${active ? "Отключить на этом телефоне" : "Включить на этом телефоне"}</button></div>
+        </div>
+      `;
+    }
+
     function renderAdminHomeOverview(period) {
       const employees = period.employees || [];
       const title = period.id === "today" ? "Текущая смена" : period.title;
@@ -4448,6 +4637,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card report-row" data-admin-home-view="employees"><div><b>${escapeHtml(homeEmployeeTitle(period))}</b><span>${escapeHtml(employees.length)} сотрудников · план/факт по каждому</span></div><span class="status-chip gray">›</span></div>
           <div class="card report-row" data-admin-home-view="defects"><div><b>Брак</b><span>${escapeHtml(period.defect_count || 0)} записей · изделие, этап, причина</span></div><span class="status-chip gray">›</span></div>
         </div>
+        ${renderWebPushCard()}
         ${renderCriticalNotifications()}
       `;
     }
@@ -7355,6 +7545,7 @@ MINIAPP_HTML = """<!doctype html>
       renderBottomNav();
       renderTopTabs();
       persistUiState();
+      if (state.data.is_admin && state.screen === "shift") window.setTimeout(syncWebPushDeviceState, 0);
     }
 
     function setScreen(screen) {
@@ -7417,6 +7608,9 @@ MINIAPP_HTML = """<!doctype html>
         state.data = shiftData;
         render();
         showToast("Смена", shiftData.message || "Данные обновлены.");
+        if (action === "open" && shiftData.shift_close_reminder) {
+          window.setTimeout(() => showShiftCloseReminder(shiftData.shift_close_reminder), 120);
+        }
       } catch (error) {
         showToast("Ошибка", "Не удалось обновить смену.");
         mainButton.disabled = false;
@@ -7426,6 +7620,14 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     document.addEventListener("click", (event) => {
+      const pushAction = event.target.closest("[data-push-action]");
+      if (pushAction) {
+        if (pushAction.dataset.pushAction === "enable") enableAdminWebPush();
+        if (pushAction.dataset.pushAction === "disable") disableAdminWebPush();
+        if (pushAction.dataset.pushAction === "test") testAdminWebPush();
+        return;
+      }
+
       const criticalNotification = event.target.closest("[data-critical-notification]");
       if (criticalNotification) {
         const notificationId = Number(criticalNotification.dataset.criticalNotification || 0);

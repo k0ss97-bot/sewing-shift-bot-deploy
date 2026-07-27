@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Shagaem Vmeste production control monitor every 10 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/10:00
+Persistent=true
+Unit=sewing-web-monitor.service
+
+[Install]
+WantedBy=timers.target
