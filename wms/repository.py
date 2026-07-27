@@ -17,6 +17,9 @@ from .connection import get_pg_connection
 from .models import Location, Movement, ProductKey, WarehouseStock, Zone
 
 
+_LOCATION_UNSET = object()
+
+
 # ──────────────────────────────────────────────────────────────────────
 # zones / locations
 # ──────────────────────────────────────────────────────────────────────
@@ -98,27 +101,44 @@ def list_locations(conn, *, zone_code: str | None = None) -> list[Location]:
 
 
 def find_stock(
-    conn, product_key: ProductKey, *, item_state: str = "SELLABLE"
+    conn,
+    product_key: ProductKey,
+    *,
+    item_state: str = "SELLABLE",
+    location_id: int | None | object = _LOCATION_UNSET,
+    for_update: bool = False,
 ) -> WarehouseStock | None:
-    """Return the single stock row for a product key + state, or None."""
+    """Return one stock row for a product key, state and optional location.
+
+    When ``location_id`` is omitted this compatibility helper only succeeds if
+    the product exists in at most one location. Callers performing a physical
+    warehouse operation must always pass the location explicitly.
+    """
+    sql = """SELECT * FROM warehouse_stock
+             WHERE item_type=%s AND product_name=%s AND product_size=%s
+               AND product_color=%s AND stage_name=%s AND ready_for_position=%s
+               AND item_state=%s"""
+    params: list[Any] = [
+        product_key.item_type,
+        product_key.product_name,
+        product_key.product_size,
+        product_key.product_color,
+        product_key.stage_name,
+        product_key.ready_for_position,
+        item_state,
+    ]
+    if location_id is not _LOCATION_UNSET:
+        sql += " AND location_id IS NOT DISTINCT FROM %s"
+        params.append(location_id)
+    sql += " ORDER BY id"
+    if for_update:
+        sql += " FOR UPDATE"
     with conn.cursor() as cur:
-        cur.execute(
-            """SELECT * FROM warehouse_stock
-               WHERE item_type=%s AND product_name=%s AND product_size=%s
-                 AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-                 AND item_state=%s""",
-            (
-                product_key.item_type,
-                product_key.product_name,
-                product_key.product_size,
-                product_key.product_color,
-                product_key.stage_name,
-                product_key.ready_for_position,
-                item_state,
-            ),
-        )
-        row = cur.fetchone()
-    return _stock_from_row(row) if row else None
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+    if len(rows) > 1:
+        raise ValueError("Товар находится в нескольких ячейках — укажите исходную ячейку.")
+    return _stock_from_row(rows[0]) if rows else None
 
 
 def upsert_stock(
@@ -142,9 +162,9 @@ def upsert_stock(
                 item_state, location_id, updated_at)
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                ON CONFLICT (item_type, product_name, product_size, product_color,
-                            stage_name, ready_for_position, unit, item_state)
+                            stage_name, ready_for_position, unit, item_state, location_id)
                DO UPDATE SET quantity = warehouse_stock.quantity + EXCLUDED.quantity,
-                             location_id = COALESCE(EXCLUDED.location_id, warehouse_stock.location_id),
+                             legacy_sqlite_id = COALESCE(EXCLUDED.legacy_sqlite_id, warehouse_stock.legacy_sqlite_id),
                              updated_at = now()
                RETURNING id""",
             (

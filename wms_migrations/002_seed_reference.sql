@@ -32,3 +32,11 @@ INSERT INTO wms_item_states (state, name_ru, is_sellable, sort_order) VALUES
     ('DAMAGED',           'Брак',                   FALSE, 80),
     ('SCRAPPED',          'Списан',                 FALSE, 90)
 ON CONFLICT (state) DO NOTHING;
+
+-- Minimal system location required for production receipt before the physical
+-- storage layout is configured by an administrator.
+INSERT INTO wms_locations (zone_id, code, barcode, name_ru, pick_priority, route_order)
+SELECT id, 'RECEIVE-01', 'LOC:RECEIVE-01', 'Приёмка 1', 0, 0
+  FROM wms_zones
+ WHERE code = 'RECEIVE'
+ON CONFLICT (code) DO NOTHING;

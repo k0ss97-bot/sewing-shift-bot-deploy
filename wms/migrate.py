@@ -50,17 +50,22 @@ def pending_migrations(conn) -> list[Path]:
 
 def apply_migration(conn, path: Path) -> bool:
     """Apply one migration file.  Returns True if applied, False if skipped."""
-    with conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM schema_migrations WHERE filename = %s", (path.name,))
-        if cur.fetchone():
-            return False
-        sql = path.read_text(encoding="utf-8")
-        cur.execute(sql)
-        cur.execute(
-            "INSERT INTO schema_migrations (filename) VALUES (%s)", (path.name,)
-        )
-    conn.commit()
-    return True
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM schema_migrations WHERE filename = %s", (path.name,))
+            if cur.fetchone():
+                conn.rollback()
+                return False
+            sql = path.read_text(encoding="utf-8")
+            cur.execute(sql)
+            cur.execute(
+                "INSERT INTO schema_migrations (filename) VALUES (%s)", (path.name,)
+            )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def migrate_all() -> list[str]:

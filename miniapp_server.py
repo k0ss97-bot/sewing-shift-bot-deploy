@@ -131,6 +131,8 @@ from webapp_auth import (
     session_token_from_cookie,
 )
 from webapp_pwa import app_shell_revision, inject_pwa_markup, send_pwa_resource
+from wms import api as wms_api
+from wms.api import WMS_READ_ROUTES, WMS_ROUTES
 
 
 AUTH_MAX_AGE_SECONDS = 24 * 60 * 60
@@ -206,6 +208,15 @@ def get_employee_for_access(telegram_id: int):
     if telegram_id in get_admin_ids():
         return ensure_admin_employee(telegram_id)
     return None
+
+
+def can_access_wms(telegram_id: int) -> bool:
+    employee = get_employee_for_access(telegram_id)
+    return bool(
+        employee
+        and employee[5] == "active"
+        and (employee[3] == "Кладовщик" or is_admin(telegram_id))
+    )
 
 
 def format_minutes(total_minutes: int | None):
@@ -2738,7 +2749,7 @@ ADMIN_MENU = [
     },
 ]
 
-POSITIONS = ["Швея", "Упаковщик", "Раскройщик", "Ремонт"]
+POSITIONS = ["Швея", "Упаковщик", "Раскройщик", "Ремонт", "Кладовщик"]
 
 
 def clean_date(value: str | None, fallback: str):
@@ -4794,6 +4805,30 @@ def make_handler(bot_token: str, debug: bool):
                 self.send_binary_file(buffer.getvalue(), f"party-{batch_id}.png", "image/png", "inline")
                 return
 
+            if path in WMS_READ_ROUTES:
+                query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+                auth_payload = {
+                    "telegram_id": query.get("telegram_id", "") or query.get("debug_tg_id", ""),
+                }
+                user = self.authenticate_request(auth_payload, require_csrf=False)
+                if not user or not user.get("id"):
+                    self.send_json(
+                        {"ok": False, "code": "unauthorized", "message": "Войдите в приложение."},
+                        status=401,
+                    )
+                    return
+                telegram_id = int(user["id"])
+                if not can_access_wms(telegram_id):
+                    self.send_json(
+                        {"ok": False, "code": "forbidden", "message": "Нет доступа к складским операциям."},
+                        status=403,
+                    )
+                    return
+                employee = get_employee_for_access(telegram_id)
+                status, result = wms_api.handle(path, query, employee_id=int(employee[0]))
+                self.send_json(result, status=status)
+                return
+
             self.send_json({"ok": False, "message": "Not found"}, status=404)
 
         def do_HEAD(self):
@@ -4851,6 +4886,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/admin/shift/delete",
                 "/api/admin/operation",
             }
+            allowed_paths.update(WMS_ROUTES)
 
             if path not in allowed_paths:
                 self.send_json({"ok": False, "message": "Not found"}, status=404)
@@ -5045,6 +5081,24 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             telegram_id = int(user["id"])
+
+            if path in WMS_ROUTES:
+                if not can_access_wms(telegram_id):
+                    self.send_json(
+                        {"ok": False, "code": "forbidden", "message": "Нет доступа к складским операциям."},
+                        status=403,
+                    )
+                    return
+                if path in {"/api/wms/barcode/register", "/api/wms/locations/create"} and not is_admin(telegram_id):
+                    self.send_json(
+                        {"ok": False, "code": "forbidden", "message": "Настраивать склад может только администратор."},
+                        status=403,
+                    )
+                    return
+                employee = get_employee_for_access(telegram_id)
+                status, result = wms_api.handle(path, payload, employee_id=int(employee[0]))
+                self.send_json(result, status=status)
+                return
 
             if path == "/api/admin/report/export":
                 export_result = export_admin_report_for_telegram(telegram_id, payload)

@@ -13,18 +13,21 @@ single open connection per URL, matching the project's minimal-dependency style.
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any
 
 try:
     import psycopg2
-    from psycopg2.extras import RealDictCursor
+    from psycopg2.extras import DictCursor
 except ImportError:  # pragma: no cover - psycopg2 is the one approved new dep
     psycopg2 = None
-    RealDictCursor = None
+    DictCursor = None
 
 
 _DEFAULT_URL = "postgresql://wms:wms@localhost:5432/wms"
-_connection_cache: dict[str, Any] = {}
+_thread_connections = threading.local()
+_connection_registry: list[Any] = []
+_connection_registry_lock = threading.Lock()
 
 
 def database_url() -> str:
@@ -48,22 +51,34 @@ def get_pg_connection():
             "psycopg2 is not installed. Install with: pip install psycopg2-binary"
         )
     url = database_url()
-    conn = _connection_cache.get(url)
+    cache = getattr(_thread_connections, "cache", None)
+    if cache is None:
+        cache = {}
+        _thread_connections.cache = cache
+    conn = cache.get(url)
     if conn is None or conn.closed:
-        conn = psycopg2.connect(url)
+        # DictCursor rows support both row[0] and row["column"].  The WMS
+        # repository uses both access styles, and ThreadingHTTPServer requires
+        # a separate connection per worker thread.
+        conn = psycopg2.connect(url, cursor_factory=DictCursor)
         conn.autocommit = False
-        _connection_cache[url] = conn
+        cache[url] = conn
+        with _connection_registry_lock:
+            _connection_registry.append(conn)
     return conn
 
 
 def reset_connection() -> None:
     """Close and forget the cached connection (used by tests)."""
-    url = database_url()
-    conn = _connection_cache.pop(url, None)
-    if conn is not None and not conn.closed:
-        conn.close()
+    with _connection_registry_lock:
+        connections = list(_connection_registry)
+        _connection_registry.clear()
+    for conn in connections:
+        if conn is not None and not conn.closed:
+            conn.close()
+    _thread_connections.cache = {}
 
 
 def dict_cursor(conn):
     """Return a cursor yielding RealDictRows."""
-    return conn.cursor(cursor_factory=RealDictCursor)
+    return conn.cursor(cursor_factory=DictCursor)

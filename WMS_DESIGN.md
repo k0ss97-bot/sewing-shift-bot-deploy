@@ -57,6 +57,7 @@ warehouse_stock │                 wms_containers
 Товар идентифицируется бизнес-ключом **`ProductKey`** — кортеж из 6 полей
 (унаследован от SQLite `warehouse_stock`):
 `(item_type, product_name, product_size, product_color, stage_name, ready_for_position)`.
+Физический остаток дополнительно разделяется по `item_state` и `location_id`.
 
 ### Штрихкоды
 - **`wms_barcodes`** — реестр: barcode → entity (product/location/container).
@@ -92,7 +93,7 @@ warehouse_stock │                 wms_containers
 Все транзакционные: `BEGIN` + `SELECT … FOR UPDATE` + проверки + `COMMIT`/
 `ROLLBACK`. Все идемпотентные по `request_key`.
 
-## API (для интеграции в `miniapp_server.py`)
+## API (интегрировано в `miniapp_server.py`)
 
 Маршруты (добавить в `allowed_paths` + dispatch chain):
 ```
@@ -107,7 +108,9 @@ GET  /api/wms/movements   журнал движений
 ```
 
 `wms/api.py:handle(path, payload)` возвращает `(status_code, body_dict)`.
-`WMS_ROUTES` — множество путей для добавления в `allowed_paths`.
+`WMS_ROUTES` подключено к `allowed_paths`; сервер проверяет сессию, CSRF,
+активный статус и роль администратора/кладовщика. `employee_id` не принимается
+от клиента и назначается сервером.
 
 ## Конфигурация
 
@@ -141,9 +144,9 @@ python -m wms.migrate --status  # список применённых
    копирования SQLite `warehouse_stock` → Postgres.
 3. **Создать ячейки**: `wms_locations` для физических зон склада (коды,
    штрихкоды для печати `LOC:`).
-4. **miniapp_server**: добавить `WMS_ROUTES` в `allowed_paths` + dispatch.
-5. **miniapp_assets (PWA)**: экраны ТСД (приёмка/размещение/перемещение/
-   инвентаризация) — отдельная frontend-задача.
+4. **miniapp_server**: выполнено — маршруты и серверная авторизация подключены.
+5. **miniapp_assets (PWA)**: выполнено — приёмка, размещение, перемещение,
+   инвентаризация, списание, создание ячеек и привязка штрихкодов.
 6. **Маркетплейсы** (Ozon/WB) — Этап 4, отдельный трек.
 
 ## Тесты
@@ -153,8 +156,9 @@ python -m unittest tests.test_wms -v
 ```
 
 - Pure-Python тесты (ProductKey, barcode, OperationResult) — всегда проходят.
-- DB-зависимые тесты (schema, operations, idempotency) — пропускаются, если
-  Postgres недоступен; проходят на сервере с БД.
+- DB-зависимые тесты (schema, operations, idempotency и частичные перемещения)
+  пропускаются, если тестовый Postgres недоступен. Перед production они должны
+  быть обязательно запущены на отдельной тестовой БД.
 
 ## Что НЕ входит в Этапы 0–2
 
@@ -162,4 +166,4 @@ python -m unittest tests.test_wms -v
 - Миграция `fabric_stock` в Postgres — только `warehouse_stock`.
 - LLM-аналитика (DeepSeek/OpenAI) — Этап 5.
 - Авто-распределение остатков по каналам — Этап 3 (резервы).
-- PWA-экраны ТСД — frontend-задача; API готово.
+- Продвинутый offline-режим ТСД и печать этикеток — отдельная следующая итерация.

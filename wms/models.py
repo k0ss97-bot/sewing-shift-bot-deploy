@@ -40,14 +40,22 @@ class ProductKey:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "ProductKey":
-        return cls(
-            item_type=str(d["item_type"]),
-            product_name=str(d["product_name"]),
-            product_size=str(d["product_size"]),
-            product_color=str(d["product_color"]),
-            stage_name=str(d["stage_name"]),
-            ready_for_position=str(d["ready_for_position"]),
-        )
+        values = {
+            field_name: str(d[field_name] if d[field_name] is not None else "").strip()
+            for field_name in (
+                "item_type",
+                "product_name",
+                "product_size",
+                "product_color",
+                "stage_name",
+                "ready_for_position",
+            )
+        }
+        if any(not value for value in values.values()):
+            raise ValueError("all product_key fields must be non-empty")
+        if values["item_type"] not in {"finished", "semifinished"}:
+            raise ValueError("item_type must be finished or semifinished")
+        return cls(**values)
 
 
 @dataclass(frozen=True)

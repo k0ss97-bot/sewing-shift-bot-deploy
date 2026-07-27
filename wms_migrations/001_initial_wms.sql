@@ -102,7 +102,14 @@ CREATE TABLE IF NOT EXISTS warehouse_stock (
     location_id INTEGER REFERENCES wms_locations(id),
     unit TEXT NOT NULL DEFAULT 'шт',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(item_type, product_name, product_size, product_color, stage_name, ready_for_position, unit, item_state)
+    CONSTRAINT warehouse_stock_quantity_nonnegative CHECK (quantity >= 0),
+    CONSTRAINT warehouse_stock_reserved_valid CHECK (
+        reserved_quantity >= 0 AND reserved_quantity <= quantity
+    ),
+    CONSTRAINT warehouse_stock_location_unique UNIQUE NULLS NOT DISTINCT (
+        item_type, product_name, product_size, product_color, stage_name,
+        ready_for_position, unit, item_state, location_id
+    )
 );
 CREATE INDEX IF NOT EXISTS idx_whstock_product ON warehouse_stock(item_type, product_name, product_size, product_color);
 CREATE INDEX IF NOT EXISTS idx_whstock_location ON warehouse_stock(location_id);
@@ -138,6 +145,7 @@ CREATE INDEX IF NOT EXISTS idx_movements_source ON wms_movements(source_type, so
 -- ──────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS wms_inventory_counts (
     id SERIAL PRIMARY KEY,
+    request_key TEXT NOT NULL UNIQUE,
     location_id INTEGER REFERENCES wms_locations(id),
     status TEXT NOT NULL DEFAULT 'open',    -- open/counted/reconciled/closed
     counted_by_employee_id INTEGER,

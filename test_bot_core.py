@@ -76,6 +76,21 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(shorts_options, {"individual"})
         self.assertEqual(len({id(step) for step in (tshirt_step, leggings_step, joggers_step, pants_step, cardigan_step, shorts_step)}), 6)
 
+    def test_only_active_storekeeper_or_admin_can_access_wms(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(4101, "Тест Кладовщик", "Кладовщик")
+        storekeeper = self.database.get_employee_by_telegram_id(4101)
+        self.database.update_employee_status(storekeeper[0], "active")
+
+        self.database.create_employee(4102, "Тест Швея WMS", "Швея")
+        seamstress = self.database.get_employee_by_telegram_id(4102)
+        self.database.update_employee_status(seamstress[0], "active")
+
+        self.assertTrue(miniapp_server.can_access_wms(4101))
+        self.assertFalse(miniapp_server.can_access_wms(4102))
+        self.database.update_employee_status(storekeeper[0], "inactive")
+        self.assertFalse(miniapp_server.can_access_wms(4101))
+
     def route_step_index(self, product_name: str, operation_name: str, position: str | None = None):
         route_maps = importlib.import_module("route_maps")
 

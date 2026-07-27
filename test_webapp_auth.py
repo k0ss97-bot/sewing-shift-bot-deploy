@@ -10,6 +10,7 @@ import time
 import unittest
 from http.cookies import SimpleCookie
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import urlencode
 
 
@@ -441,6 +442,49 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(repeated_logout["ok"])
         self.assertIn("Max-Age=0", repeated_clear_headers["Set-Cookie"])
+
+    def test_wms_route_requires_storekeeper_role(self):
+        status, login, headers = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "web-worker", "password": "web-worker-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        status, result, _ = self.request(
+            "POST",
+            "/api/wms/stock",
+            {},
+            {
+                "Cookie": cookie,
+                "X-CSRF-Token": login["csrf_token"],
+                "Origin": self.origin,
+            },
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(result["code"], "forbidden")
+
+        employee = self.database.get_employee_by_telegram_id(23001)
+        self.database.update_employee_position(employee[0], "Кладовщик")
+        with patch.object(
+            self.server_module.wms_api,
+            "handle",
+            return_value=(200, {"ok": True, "stock": []}),
+        ) as handler:
+            status, result, _ = self.request(
+                "POST",
+                "/api/wms/stock",
+                {},
+                {
+                    "Cookie": cookie,
+                    "X-CSRF-Token": login["csrf_token"],
+                    "Origin": self.origin,
+                },
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertEqual(handler.call_args.kwargs["employee_id"], employee[0])
 
     def test_registration_waits_for_admin_approval_then_allows_phone_login(self):
         payload = {

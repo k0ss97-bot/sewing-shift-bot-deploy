@@ -20,41 +20,55 @@ Routes (to be added to ``allowed_paths`` + dispatch in miniapp_server.py):
 
 from __future__ import annotations
 
-import json
+import logging
+import re
 from typing import Any
 
 from . import operations as ops
 from . import repository as repo
+from .barcode import register_product_barcode, resolve_product_barcode
 from .connection import get_pg_connection
 from .models import ProductKey
 
 
-def handle(path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def handle(
+    path: str,
+    payload: dict[str, Any],
+    *,
+    employee_id: int,
+) -> tuple[int, dict[str, Any]]:
     """Dispatch one WMS request.  Returns (http_status, body)."""
     try:
         if path == "/api/wms/receive":
-            return _receive(payload)
+            return _receive(payload, employee_id)
         if path == "/api/wms/putaway":
-            return _putaway(payload)
+            return _putaway(payload, employee_id)
         if path == "/api/wms/transfer":
-            return _transfer(payload)
+            return _transfer(payload, employee_id)
         if path == "/api/wms/scrap":
-            return _scrap(payload)
+            return _scrap(payload, employee_id)
         if path == "/api/wms/inventory":
-            return _inventory(payload)
+            return _inventory(payload, employee_id)
         if path == "/api/wms/locations":
             return _locations(payload)
         if path == "/api/wms/stock":
             return _stock(payload)
         if path == "/api/wms/movements":
             return _movements(payload)
-        return 404, {"error": f"unknown WMS route: {path}"}
+        if path == "/api/wms/barcode/resolve":
+            return _resolve_barcode(payload)
+        if path == "/api/wms/barcode/register":
+            return _register_barcode(payload)
+        if path == "/api/wms/locations/create":
+            return _create_location(payload)
+        return 404, {"ok": False, "message": "Складской маршрут не найден."}
     except KeyError as exc:
-        return 400, {"error": f"missing field: {exc}"}
+        return 400, {"ok": False, "message": f"Не заполнено обязательное поле: {exc}."}
     except ValueError as exc:
-        return 400, {"error": str(exc)}
-    except Exception as exc:  # pragma: no cover - defensive
-        return 500, {"error": f"internal: {exc}"}
+        return 400, {"ok": False, "message": str(exc)}
+    except Exception:  # pragma: no cover - defensive
+        logging.exception("WMS request failed: %s", path)
+        return 500, {"ok": False, "message": "Внутренняя ошибка складской системы."}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -66,11 +80,11 @@ def _pk(payload: dict[str, Any]) -> ProductKey:
     return ProductKey.from_dict(payload["product_key"])
 
 
-def _receive(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def _receive(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
     result = ops.receive_from_production(
         _pk(payload),
         int(payload["quantity"]),
-        employee_id=payload.get("employee_id"),
+        employee_id=employee_id,
         request_key=payload.get("request_key"),
         reason=payload.get("reason"),
         tsd_device_id=payload.get("tsd_device_id"),
@@ -78,12 +92,12 @@ def _receive(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return _result_response(result)
 
 
-def _putaway(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def _putaway(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
     result = ops.putaway(
         _pk(payload),
         int(payload["quantity"]),
         to_location_code=payload["to_location_code"],
-        employee_id=payload.get("employee_id"),
+        employee_id=employee_id,
         request_key=payload.get("request_key"),
         reason=payload.get("reason"),
         tsd_device_id=payload.get("tsd_device_id"),
@@ -91,13 +105,13 @@ def _putaway(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return _result_response(result)
 
 
-def _transfer(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def _transfer(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
     result = ops.transfer(
         _pk(payload),
         int(payload["quantity"]),
         from_location_code=payload["from_location_code"],
         to_location_code=payload["to_location_code"],
-        employee_id=payload.get("employee_id"),
+        employee_id=employee_id,
         request_key=payload.get("request_key"),
         reason=payload.get("reason"),
         tsd_device_id=payload.get("tsd_device_id"),
@@ -105,24 +119,28 @@ def _transfer(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return _result_response(result)
 
 
-def _scrap(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def _scrap(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise ValueError("Укажите причину списания.")
     result = ops.scrap(
         _pk(payload),
         int(payload["quantity"]),
-        reason=payload.get("reason", ""),
+        reason=reason,
         target_state=payload.get("target_state", "SCRAPPED"),
-        employee_id=payload.get("employee_id"),
+        from_location_code=payload.get("from_location_code"),
+        employee_id=employee_id,
         request_key=payload.get("request_key"),
         tsd_device_id=payload.get("tsd_device_id"),
     )
     return _result_response(result)
 
 
-def _inventory(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def _inventory(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
     result = ops.inventory_count(
         payload["location_code"],
         payload["counted"],
-        employee_id=payload.get("employee_id"),
+        employee_id=employee_id,
         request_key=payload.get("request_key"),
     )
     return _result_response(result)
@@ -151,10 +169,49 @@ def _locations(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     }
 
 
+def _create_location(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    zone_code = str(payload.get("zone_code") or "").strip().upper()
+    code = str(payload.get("code") or "").strip().upper()
+    if code.startswith("LOC:"):
+        code = code[4:].strip()
+    if not zone_code or not code:
+        return 400, {"ok": False, "message": "Укажите зону и код ячейки."}
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9._/-]{0,63}", code):
+        return 400, {"ok": False, "message": "Код ячейки содержит недопустимые символы."}
+    conn = get_pg_connection()
+    try:
+        zone = repo.get_zone_by_code(conn, zone_code)
+        if zone is None:
+            conn.rollback()
+            return 400, {"ok": False, "message": "Неизвестная зона склада."}
+        existing = repo.get_location_by_code(conn, code)
+        if existing is not None:
+            conn.rollback()
+            return 409, {"ok": False, "message": "Ячейка с таким кодом уже существует."}
+        location = repo.create_location(
+            conn,
+            zone_id=zone.id,
+            code=code,
+            name_ru=str(payload.get("name_ru") or "").strip() or None,
+        )
+        conn.commit()
+        return 201, {
+            "ok": True,
+            "message": "Ячейка создана.",
+            "location": {"id": location.id, "code": location.code, "barcode": location.barcode},
+        }
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def _stock(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     conn = get_pg_connection()
+    raw_location_id = payload.get("location_id")
+    location_id = int(raw_location_id) if raw_location_id not in (None, "") else None
     rows = repo.get_stock_rows(
-        location_id=payload.get("location_id"),
+        conn,
+        location_id=location_id,
     )
     return 200, {
         "stock": [
@@ -172,9 +229,31 @@ def _stock(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     }
 
 
+def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    barcode = str(payload.get("barcode") or "").strip()
+    if not barcode:
+        return 400, {"ok": False, "message": "Штрихкод не указан."}
+    if len(barcode) > 128:
+        return 400, {"ok": False, "message": "Штрихкод слишком длинный."}
+    product_key = resolve_product_barcode(barcode)
+    if product_key is None:
+        return 404, {"ok": False, "message": "Штрихкод товара не зарегистрирован."}
+    return 200, {"ok": True, "product_key": product_key.to_dict()}
+
+
+def _register_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    barcode = str(payload.get("barcode") or "").strip()
+    if not barcode:
+        return 400, {"ok": False, "message": "Штрихкод не указан."}
+    if len(barcode) > 128:
+        return 400, {"ok": False, "message": "Штрихкод слишком длинный."}
+    register_product_barcode(barcode, _pk(payload))
+    return 200, {"ok": True, "message": "Штрихкод привязан к товару."}
+
+
 def _movements(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     conn = get_pg_connection()
-    limit = min(int(payload.get("limit", 100)), 1000)
+    limit = max(1, min(int(payload.get("limit", 100)), 1000))
     movements = repo.list_movements(
         conn, limit=limit, movement_type=payload.get("movement_type")
     )
@@ -202,23 +281,32 @@ def _movements(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
 
 
 def _result_response(result) -> tuple[int, dict[str, Any]]:
-    body: dict[str, Any] = {"status": result.status}
+    body: dict[str, Any] = {"ok": result.ok, "status": result.status}
     if result.movement_id is not None:
         body["movement_id"] = result.movement_id
     if result.reason:
         body["reason"] = result.reason
+        body["message"] = result.reason
     if result.skipped_duplicate:
         return 200, body
     return 200 if result.ok else 409, body
 
 
-WMS_ROUTES = {
+WMS_WRITE_ROUTES = {
     "/api/wms/receive",
     "/api/wms/putaway",
     "/api/wms/transfer",
     "/api/wms/scrap",
     "/api/wms/inventory",
+    "/api/wms/barcode/resolve",
+    "/api/wms/barcode/register",
+    "/api/wms/locations/create",
+}
+
+WMS_READ_ROUTES = {
     "/api/wms/locations",
     "/api/wms/stock",
     "/api/wms/movements",
 }
+
+WMS_ROUTES = WMS_WRITE_ROUTES | WMS_READ_ROUTES

@@ -42,6 +42,8 @@ def register_product_barcode(
     barcode: str, product_key: ProductKey
 ) -> None:
     """Link a product barcode to a product key (idempotent)."""
+    if classify_barcode(barcode) != "product":
+        raise ValueError("location/container barcode cannot be registered as a product")
     conn = get_pg_connection()
     try:
         with conn.cursor() as cur:

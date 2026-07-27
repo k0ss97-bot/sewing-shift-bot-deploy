@@ -35,7 +35,9 @@ def _zone_location(conn, zone_code: str):
     """Find the single location in a zone, or raise."""
     locs = repo.list_locations(conn, zone_code=zone_code)
     if not locs:
-        raise ValueError(f"no location in zone '{zone_code}' — create one first")
+        raise ValueError(f"В зоне {zone_code} нет активной ячейки.")
+    if zone_code == "RECEIVE":
+        return next((loc for loc in locs if loc.code == "RECEIVE-01"), locs[0])
     return locs[0]
 
 
@@ -59,7 +61,7 @@ def receive_from_production(
     on ``request_key``.
     """
     if quantity <= 0:
-        return OperationResult(False, reason="quantity must be positive")
+        return OperationResult(False, reason="Количество должно быть больше нуля.")
     request_key = request_key or _new_request_key("receipt")
     conn = get_pg_connection()
     try:
@@ -114,14 +116,17 @@ def putaway(
     RECEIVE stock is insufficient.
     """
     if quantity <= 0:
-        return OperationResult(False, reason="quantity must be positive")
+        return OperationResult(False, reason="Количество должно быть больше нуля.")
     request_key = request_key or _new_request_key("putaway")
     conn = get_pg_connection()
     try:
         target = repo.get_location_by_code(conn, to_location_code)
         if target is None:
             conn.rollback()
-            return OperationResult(False, reason=f"unknown location '{to_location_code}'")
+            return OperationResult(False, reason=f"Ячейка {to_location_code} не найдена.")
+        if target.status != "active":
+            conn.rollback()
+            return OperationResult(False, reason=f"Ячейка {to_location_code} недоступна.")
         receive_loc = _zone_location(conn, "RECEIVE")
 
         if repo.movement_exists(conn, request_key):
@@ -141,7 +146,7 @@ def putaway(
             row = cur.fetchone()
         if row is None or int(row[1]) < quantity:
             conn.rollback()
-            return OperationResult(False, reason="insufficient stock in RECEIVE zone")
+            return OperationResult(False, reason="Недостаточно товара в зоне приёмки.")
         # Move: decrement source, increment target.
         repo.upsert_stock(conn, product_key, delta=-quantity, location_id=receive_loc.id)
         repo.upsert_stock(conn, product_key, delta=quantity, location_id=target.id)
@@ -182,18 +187,23 @@ def transfer(
 ) -> OperationResult:
     """Move goods between two arbitrary locations."""
     if quantity <= 0:
-        return OperationResult(False, reason="quantity must be positive")
+        return OperationResult(False, reason="Количество должно быть больше нуля.")
     if from_location_code == to_location_code:
-        return OperationResult(False, reason="source and destination are the same")
+        return OperationResult(False, reason="Исходная и целевая ячейки совпадают.")
     request_key = request_key or _new_request_key("transfer")
     conn = get_pg_connection()
     try:
         src = repo.get_location_by_code(conn, from_location_code)
         dst = repo.get_location_by_code(conn, to_location_code)
         if src is None:
-            return OperationResult(False, reason=f"unknown source location '{from_location_code}'")
+            conn.rollback()
+            return OperationResult(False, reason=f"Исходная ячейка {from_location_code} не найдена.")
         if dst is None:
-            return OperationResult(False, reason=f"unknown destination location '{to_location_code}'")
+            conn.rollback()
+            return OperationResult(False, reason=f"Целевая ячейка {to_location_code} не найдена.")
+        if src.status != "active" or dst.status != "active":
+            conn.rollback()
+            return OperationResult(False, reason="Исходная или целевая ячейка недоступна.")
         if repo.movement_exists(conn, request_key):
             conn.rollback()
             return OperationResult(True, skipped_duplicate=True)
@@ -210,7 +220,7 @@ def transfer(
             row = cur.fetchone()
         if row is None or int(row[1]) < quantity:
             conn.rollback()
-            return OperationResult(False, reason="insufficient stock at source location")
+            return OperationResult(False, reason="Недостаточно товара в исходной ячейке.")
         repo.upsert_stock(conn, product_key, delta=-quantity, location_id=src.id)
         repo.upsert_stock(conn, product_key, delta=quantity, location_id=dst.id)
         movement_id = repo.insert_movement(
@@ -243,36 +253,63 @@ def scrap(
     *,
     reason: str,
     target_state: str = "SCRAPPED",
+    from_location_code: str | None = None,
     employee_id: int | None = None,
     request_key: str | None = None,
     tsd_device_id: str | None = None,
 ) -> OperationResult:
     """Remove goods from sellable stock and mark them DAMAGED/SCRAPPED."""
     if quantity <= 0:
-        return OperationResult(False, reason="quantity must be positive")
+        return OperationResult(False, reason="Количество должно быть больше нуля.")
     if target_state not in ("DAMAGED", "SCRAPPED", "QUARANTINE"):
-        return OperationResult(False, reason=f"invalid target_state '{target_state}'")
+        return OperationResult(False, reason="Выбрано недопустимое состояние списания.")
     request_key = request_key or _new_request_key("scrap")
     conn = get_pg_connection()
     try:
         if repo.movement_exists(conn, request_key):
             conn.rollback()
             return OperationResult(True, skipped_duplicate=True)
+        location_id = None
+        if from_location_code:
+            location = repo.get_location_by_code(conn, from_location_code)
+            if location is None:
+                conn.rollback()
+                return OperationResult(
+                    False, reason=f"Ячейка {from_location_code} не найдена."
+                )
+            location_id = location.id
+        stock = repo.find_stock(
+            conn,
+            product_key,
+            item_state="SELLABLE",
+            **({"location_id": location_id} if from_location_code else {}),
+        )
+        if stock is None:
+            conn.rollback()
+            return OperationResult(False, reason="Недостаточно доступного товара.")
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT id, quantity FROM warehouse_stock
-                   WHERE item_type=%s AND product_name=%s AND product_size=%s
-                     AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-                     AND item_state='SELLABLE'
-                   FOR UPDATE""",
-                product_key.to_dict().values(),
+                "SELECT id, quantity FROM warehouse_stock WHERE id=%s FOR UPDATE",
+                (stock.id,),
             )
             row = cur.fetchone()
         if row is None or int(row[1]) < quantity:
             conn.rollback()
-            return OperationResult(False, reason="insufficient sellable stock")
-        repo.upsert_stock(conn, product_key, delta=-quantity, item_state="SELLABLE")
-        repo.upsert_stock(conn, product_key, delta=quantity, item_state=target_state)
+            return OperationResult(False, reason="Недостаточно доступного товара.")
+        repo.upsert_stock(
+            conn,
+            product_key,
+            delta=-quantity,
+            item_state="SELLABLE",
+            location_id=stock.location_id,
+        )
+        repo.upsert_stock(
+            conn,
+            product_key,
+            delta=quantity,
+            item_state=target_state,
+            location_id=stock.location_id,
+        )
         movement_id = repo.insert_movement(
             conn,
             request_key=request_key,
@@ -314,26 +351,37 @@ def inventory_count(
     try:
         loc = repo.get_location_by_code(conn, location_code)
         if loc is None:
-            return OperationResult(False, reason=f"unknown location '{location_code}'")
-        if repo.movement_exists(conn, request_key):
             conn.rollback()
-            return OperationResult(True, skipped_duplicate=True)
+            return OperationResult(False, reason=f"Ячейка {location_code} не найдена.")
 
         # Create the inventory-count header.
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO wms_inventory_counts (location_id, counted_by_employee_id, counted_at)
-                   VALUES (%s, %s, now()) RETURNING id""",
-                (loc.id, employee_id),
+                """INSERT INTO wms_inventory_counts
+                   (request_key, location_id, counted_by_employee_id, counted_at)
+                   VALUES (%s, %s, %s, now())
+                   ON CONFLICT (request_key) DO NOTHING
+                   RETURNING id""",
+                (request_key, loc.id, employee_id),
             )
-            count_id = int(cur.fetchone()[0])
+            count_row = cur.fetchone()
+        if count_row is None:
+            conn.rollback()
+            return OperationResult(True, skipped_duplicate=True)
+        count_id = int(count_row[0])
 
         adjustments = 0
-        for entry in counted:
+        seen_product_keys: set[ProductKey] = set()
+        for entry_index, entry in enumerate(counted):
             pk = ProductKey.from_dict(entry["product_key"])
+            if pk in seen_product_keys:
+                raise ValueError("duplicate product in inventory count")
+            seen_product_keys.add(pk)
             counted_qty = int(entry["counted_quantity"])
-            stock = repo.find_stock(conn, pk)
-            expected = stock.quantity if stock and stock.location_id == loc.id else 0
+            if counted_qty < 0:
+                raise ValueError("counted_quantity must be non-negative")
+            stock = repo.find_stock(conn, pk, location_id=loc.id, for_update=True)
+            expected = stock.quantity if stock else 0
             diff = counted_qty - expected
             # Record the line (blind: expected is captured but not shown to the counter).
             with conn.cursor() as cur:
@@ -359,7 +407,7 @@ def inventory_count(
                 )
                 repo.insert_movement(
                     conn,
-                    request_key=f"{request_key}:{pk.product_name}:{pk.product_size}:{pk.product_color}",
+                    request_key=f"{request_key}:line:{entry_index}",
                     movement_type="count",
                     product_key=pk,
                     quantity=diff,

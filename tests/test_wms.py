@@ -9,8 +9,10 @@ project's "isolated, never touch working DB" convention.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 # Ensure tests never touch a working DB.
 os.environ.setdefault("WMS_DATABASE_URL", "postgresql://wms:wms@127.0.0.1:5432/wms_test")
@@ -77,6 +79,51 @@ class OperationResultTests(unittest.TestCase):
     def test_status_error(self):
         r = OperationResult(ok=False, reason="bad")
         self.assertEqual(r.status, "error")
+
+
+class WmsContractTests(unittest.TestCase):
+    def _payload(self):
+        return {
+            "product_key": ProductKey(
+                "finished", "Брюки", "128", "Черный", "Готово", "Склад"
+            ).to_dict(),
+            "quantity": 2,
+            "employee_id": 999999,
+        }
+
+    def test_api_uses_authenticated_employee_not_payload_employee(self):
+        from wms import api
+
+        with patch("wms.api.ops.receive_from_production") as receive:
+            receive.return_value = OperationResult(ok=True, movement_id=10)
+            status, body = api.handle(
+                "/api/wms/receive", self._payload(), employee_id=17
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(receive.call_args.kwargs["employee_id"], 17)
+
+    def test_stock_api_passes_postgres_connection_to_repository(self):
+        from wms import api
+
+        sentinel = object()
+        with patch("wms.api.get_pg_connection", return_value=sentinel), patch(
+            "wms.api.repo.get_stock_rows", return_value=[]
+        ) as get_rows:
+            status, body = api.handle("/api/wms/stock", {}, employee_id=17)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["stock"], [])
+        get_rows.assert_called_once_with(sentinel, location_id=None)
+
+    def test_schema_keys_stock_by_location_and_enforces_balances(self):
+        root = Path(__file__).resolve().parents[1]
+        schema = (root / "wms_migrations" / "001_initial_wms.sql").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("UNIQUE NULLS NOT DISTINCT", schema)
+        self.assertIn("item_state, location_id", schema)
+        self.assertIn("CHECK (quantity >= 0)", schema)
+        self.assertIn("reserved_quantity <= quantity", schema)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -185,7 +232,55 @@ class WmsDbTests(unittest.TestCase):
             request_key="test:transfer:fail",
         )
         self.assertFalse(result.ok)
-        self.assertIn("insufficient", result.reason)
+        self.assertIn("Недостаточно", result.reason)
+
+    def test_partial_putaway_and_transfer_keep_separate_location_balances(self):
+        from wms import operations as ops
+        from wms import repository as repo
+
+        receive_zone = repo.get_zone_by_code(self.conn, "RECEIVE")
+        receive_locations = repo.list_locations(self.conn, zone_code="RECEIVE")
+        if receive_locations:
+            receive = receive_locations[0]
+        else:
+            receive = repo.create_location(
+                self.conn, zone_id=receive_zone.id, code="RCV-PARTIAL"
+            )
+        storage = repo.get_zone_by_code(self.conn, "STORAGE")
+        locations = []
+        for code in ("ST-PARTIAL-A", "ST-PARTIAL-B"):
+            location = repo.get_location_by_code(self.conn, code)
+            if location is None:
+                location = repo.create_location(self.conn, zone_id=storage.id, code=code)
+            locations.append(location)
+        self.conn.commit()
+
+        pk = self._pk(product_name="Тест-Частичное-Перемещение")
+        self.assertTrue(
+            ops.receive_from_production(pk, 10, request_key="test:partial:receive").ok
+        )
+        self.assertTrue(
+            ops.putaway(
+                pk,
+                4,
+                to_location_code=locations[0].code,
+                request_key="test:partial:putaway",
+            ).ok
+        )
+        self.assertEqual(repo.find_stock(self.conn, pk, location_id=receive.id).quantity, 6)
+        self.assertEqual(repo.find_stock(self.conn, pk, location_id=locations[0].id).quantity, 4)
+
+        self.assertTrue(
+            ops.transfer(
+                pk,
+                2,
+                from_location_code=locations[0].code,
+                to_location_code=locations[1].code,
+                request_key="test:partial:transfer",
+            ).ok
+        )
+        self.assertEqual(repo.find_stock(self.conn, pk, location_id=locations[0].id).quantity, 2)
+        self.assertEqual(repo.find_stock(self.conn, pk, location_id=locations[1].id).quantity, 2)
 
     def test_scrap_changes_state(self):
         from wms import operations as ops
