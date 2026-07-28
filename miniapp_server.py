@@ -2282,7 +2282,14 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     if not is_admin(telegram_id):
         return {"ok": False, "message": "Нет прав администратора."}
 
+    raw_product_names = payload.get("product_names")
+    if isinstance(raw_product_names, (list, tuple)):
+        product_names = [str(name).strip() for name in raw_product_names if str(name).strip()]
+    else:
+        product_names = []
     product_name = (payload.get("product_name") or "").strip()
+    if product_name and product_name not in product_names:
+        product_names.insert(0, product_name)
     task_type = (payload.get("task_type") or "cutting").strip()
     material_name = (payload.get("material_name") or "").strip()
     sizes = [str(size).strip() for size in payload.get("sizes", []) if str(size).strip()]
@@ -2293,8 +2300,14 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     if planning_error:
         return {"ok": False, "message": planning_error}
 
-    if product_name not in PRODUCT_ROUTE_MAPS:
-        return {"ok": False, "message": "Выберите изделие."}
+    if not product_names:
+        return {"ok": False, "message": "Выберите хотя бы одно изделие."}
+    if len(product_names) > 8:
+        return {"ok": False, "message": "В одном настиле можно выбрать не более 8 изделий."}
+    invalid_products = [name for name in product_names if name not in PRODUCT_ROUTE_MAPS]
+    if invalid_products:
+        return {"ok": False, "message": "В списке есть неизвестное изделие."}
+    product_name = product_names[0]
 
     if task_type != "cutting":
         return {
@@ -2306,8 +2319,18 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
     employee_id = employee[0] if employee else None
 
     if task_type == "cutting":
-        allowed_sizes = set(get_product_sizes(product_name))
-        allowed_colors = set(get_order_color_options())
+        common_sizes = set(get_product_sizes(product_names[0]))
+        for selected_product in product_names[1:]:
+            common_sizes.intersection_update(get_product_sizes(selected_product))
+        allowed_sizes = common_sizes
+        if len(product_names) == 1:
+            allowed_colors = set(get_order_color_options())
+        else:
+            allowed_colors = set(get_product_colors(product_names[0]))
+            for selected_product in product_names[1:]:
+                allowed_colors.intersection_update(get_product_colors(selected_product))
+            if not allowed_colors:
+                allowed_colors = set(get_order_color_options())
 
         if not sizes or any(size not in allowed_sizes for size in sizes):
             return {"ok": False, "message": "Выберите размеры из списка."}
@@ -2335,21 +2358,33 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
         if attachment and attachment.get("error"):
             return {"ok": False, "message": attachment["error"]}
 
-        task = create_production_task(
-            product_name,
-            sizes,
-            colors,
-            employee_id,
-            f"Материал: {material_name}; рулоны: " + ", ".join(f"{format_color_label(color)} — {rolls} рул." for color, rolls in fabric_rolls.items()),
-            fabric_rolls=fabric_rolls,
-            material_name=material_name,
-            attachment=attachment,
-            priority=priority,
-            due_date=due_date,
-        )
+        shared_nastil = len(product_names) > 1
+        product_label = " + ".join(product_names)
+        created_tasks = []
+        for index, selected_product in enumerate(product_names):
+            task = create_production_task(
+                selected_product,
+                sizes,
+                colors,
+                employee_id,
+                (f"Общий настил: {product_label}; " if shared_nastil else "")
+                + f"Материал: {material_name}; рулоны: "
+                + ", ".join(f"{format_color_label(color)} — {rolls} рул." for color, rolls in fabric_rolls.items()),
+                # Rolls are reserved once for a shared physical nastil. The
+                # following product tasks use the same reserved material.
+                fabric_rolls=fabric_rolls if index == 0 else {},
+                material_name=material_name,
+                attachment=attachment,
+                priority=priority,
+                due_date=due_date,
+            )
+            if task is None:
+                for created_task in created_tasks:
+                    cancel_production_task(created_task["id"], employee_id)
+                return {"ok": False, "message": "Не удалось создать общий настил. Проверьте остатки рулонов на складе."}
+            created_tasks.append(task)
 
-        if task is None:
-            return {"ok": False, "message": "Не удалось создать задание на раскрой. Проверьте остатки рулонов на складе."}
+        task = created_tasks[0]
 
         add_edit_log(
             telegram_id,
@@ -2357,12 +2392,13 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
             "Создал задание на раскрой из миниаппа",
             "production_task",
             task["id"],
-            f"{task['product_name']}; материал: {material_name}; размеры: {', '.join(sizes)}; рулоны: {fabric_rolls}",
+            f"{product_label}; материал: {material_name}; размеры: {', '.join(sizes)}; рулоны: {fabric_rolls}",
         )
 
         return {
             "ok": True,
-            "message": f"Задание на раскрой #{task['id']} создано.",
+            "message": (f"Общий настил создан: {len(created_tasks)} задания ({product_label})."
+                        if shared_nastil else f"Задание на раскрой #{task['id']} создано."),
             "production": get_production_state_for_telegram(telegram_id),
             "routes": get_routes_payload(telegram_id),
         }

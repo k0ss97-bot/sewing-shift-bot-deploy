@@ -982,6 +982,37 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("Администратор создаёт только задание на раскрой", route_result["message"])
         self.assertEqual(self.database.get_active_route_batches(), [])
 
+    def test_miniapp_admin_creates_shared_nastil_for_multiple_products(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.add_fabric_receipt("Ткань", "Черный", 4, None)
+
+        result = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Брюки со стрелками детские",
+                "product_names": ["Брюки со стрелками детские", "Жакет для девочек"],
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["98"],
+                "colors": ["Черный"],
+                "fabric_rolls": {"Черный": "1"},
+            },
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertIn("Общий настил", result["message"])
+        tasks = self.database.get_active_production_tasks()
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual({task[1] for task in tasks}, {"Брюки со стрелками детские", "Жакет для девочек"})
+        roll_counts = {
+            task[1]: self.database.get_production_task_fabric_rolls(task[0])
+            for task in tasks
+        }
+        self.assertEqual(len(roll_counts["Брюки со стрелками детские"]), 1)
+        self.assertEqual(roll_counts["Жакет для девочек"], [])
+        self.assertEqual(self.database.get_fabric_stock_rows()[0][2], 3)
+
     def test_elastic_preparation_completion_creates_sewing_task(self):
         miniapp_server = importlib.import_module("miniapp_server")
         self.database.create_employee(9003, "Тест Упаковщик", "Упаковщик")

@@ -3736,6 +3736,7 @@ MINIAPP_HTML = """<!doctype html>
       "orderCategory",
       "orderMode",
       "orderProduct",
+      "orderProducts",
       "orderTaskType",
       "orderRouteStep",
       "orderMaterial",
@@ -3812,6 +3813,7 @@ MINIAPP_HTML = """<!doctype html>
       reportSection: "work",
       orderMode: "list",
       orderProduct: "",
+      orderProducts: [],
       orderTaskType: "cutting",
       orderRouteStep: "",
       orderMaterial: "Ткань",
@@ -3880,6 +3882,7 @@ MINIAPP_HTML = """<!doctype html>
     if (!Array.isArray(state.orderColors)) state.orderColors = [];
     if (!state.orderStockQuantities || typeof state.orderStockQuantities !== "object") state.orderStockQuantities = {};
     if (!state.orderFabricRolls || typeof state.orderFabricRolls !== "object") state.orderFabricRolls = {};
+    if (!Array.isArray(state.orderProducts)) state.orderProducts = state.orderProduct ? [state.orderProduct] : [];
     if (!state.taskDefectPhotos || typeof state.taskDefectPhotos !== "object") state.taskDefectPhotos = {};
     if (!state.wmsMaterialReceipt || typeof state.wmsMaterialReceipt !== "object") state.wmsMaterialReceipt = {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""};
 
@@ -5624,6 +5627,7 @@ MINIAPP_HTML = """<!doctype html>
       const firstProduct = getRouteCatalog()[0];
       state.orderMode = "create";
       state.orderProduct = firstProduct ? firstProduct.product_name : "";
+      state.orderProducts = firstProduct ? [firstProduct.product_name] : [];
       state.orderTaskType = "cutting";
       state.orderMaterial = "Ткань";
       state.orderSizes = [];
@@ -5639,14 +5643,22 @@ MINIAPP_HTML = """<!doctype html>
       const catalog = getRouteCatalog();
       if (!catalog.length) return null;
 
-      let product = routeProduct(state.orderProduct);
-      if (!product) {
-        product = catalog[0];
-        state.orderProduct = product.product_name;
-      }
+      state.orderProducts = state.orderProducts.filter((name) => catalog.some((item) => item.product_name === name));
+      if (!state.orderProducts.length) state.orderProducts = [state.orderProduct || catalog[0].product_name];
+      state.orderProducts = state.orderProducts.filter((name) => catalog.some((item) => item.product_name === name));
+      if (!state.orderProducts.length) state.orderProducts = [catalog[0].product_name];
+      state.orderProduct = state.orderProducts[0];
+      const selectedProducts = state.orderProducts.map((name) => routeProduct(name)).filter(Boolean);
+      const product = selectedProducts[0] || catalog[0];
 
-      const availableSizes = product.sizes || [];
-      const availableColors = getOrderColors();
+      const availableSizes = selectedProducts.slice(1).reduce(
+        (common, selected) => common.filter((size) => (selected.sizes || []).includes(size)),
+        [...(selectedProducts[0] ? selectedProducts[0].sizes || [] : product.sizes || [])],
+      );
+      const availableColors = selectedProducts.length > 1 ? selectedProducts.slice(1).reduce(
+        (common, selected) => common.filter((color) => (selected.raw_colors || []).includes(color)),
+        [...(selectedProducts[0] && selectedProducts[0].raw_colors && selectedProducts[0].raw_colors.length ? selectedProducts[0].raw_colors : getOrderColors())],
+      ) : getOrderColors();
       state.orderSizes = state.orderSizes.filter((size) => availableSizes.includes(size));
       state.orderColors = state.orderColors.filter((color) => availableColors.includes(color));
       Object.keys(state.orderFabricRolls).forEach((color) => {
@@ -5684,10 +5696,22 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function toggleOrderValue(kind, value) {
-      const key = kind === "size" ? "orderSizes" : "orderColors";
+      const key = kind === "size" ? "orderSizes" : (kind === "color" ? "orderColors" : "orderProducts");
       const values = state[key];
       const isSelected = values.includes(value);
+      if (kind === "product" && isSelected && values.length === 1) {
+        showToast("Изделия", "Оставьте хотя бы одно изделие в настиле.");
+        return;
+      }
       state[key] = isSelected ? values.filter((item) => item !== value) : [...values, value];
+
+      if (kind === "product") {
+        state.orderProduct = state.orderProducts[0] || "";
+        state.orderSizes = [];
+        state.orderColors = [];
+        state.orderFabricRolls = {};
+        ensureOrderDraftDefaults();
+      }
 
       if (kind === "color") {
         if (isSelected) {
@@ -5702,7 +5726,7 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderChoiceChips(kind, values, selectedValues) {
       return `<div class="choice-grid">${values.map((value) => `
-        <button class="choice-chip ${selectedValues.includes(value) ? "active" : ""}" data-order-${kind}="${escapeHtml(value)}">${escapeHtml(value)}</button>
+        <button type="button" class="choice-chip ${selectedValues.includes(value) ? "active" : ""}" data-order-${kind}="${escapeHtml(value)}">${escapeHtml(value)}</button>
       `).join("")}</div>`;
     }
 
@@ -5768,6 +5792,7 @@ MINIAPP_HTML = """<!doctype html>
       try {
         const data = await api("/api/production/create-order-task", {
           product_name: state.orderProduct,
+          product_names: state.orderProducts,
           task_type: "cutting",
           material_name: state.orderMaterial,
           sizes: state.orderSizes,
@@ -7243,7 +7268,13 @@ MINIAPP_HTML = """<!doctype html>
       const product = ensureOrderDraftDefaults();
       const catalog = getRouteCatalog();
       const sizes = product ? product.sizes || [] : [];
-      const colors = getOrderColors();
+      const selectedProducts = state.orderProducts.map((name) => routeProduct(name)).filter(Boolean);
+      const colors = selectedProducts.length > 1
+        ? selectedProducts.slice(1).reduce(
+          (common, selected) => common.filter((color) => (selected.raw_colors || []).includes(color)),
+          [...(selectedProducts[0].raw_colors && selectedProducts[0].raw_colors.length ? selectedProducts[0].raw_colors : getOrderColors())],
+        )
+        : getOrderColors();
       const rollInputs = state.orderColors.length ? `
         <div class="card field-card">
           <label>Рулоны по цветам</label>
@@ -7263,7 +7294,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="screen-head"><div><h2>Создать задание на раскрой</h2><p>Дальнейшие операции система создаст по маршруту автоматически.</p></div><div class="date">админ</div></div>
         <div class="card field-card">
           <div class="form-grid">
-            <div class="field full"><label>Изделие</label><select id="orderProduct">${catalog.map((item) => `<option value="${escapeHtml(item.product_name)}" ${item.product_name === state.orderProduct ? "selected" : ""}>${escapeHtml(item.product_name)}</option>`).join("")}</select></div>
+            <div class="field full"><label>Изделия в одном настиле</label>${renderChoiceChips("product", catalog.map((item) => item.product_name), state.orderProducts)}<p class="empty">Выберите одно или несколько изделий. Для выбранных изделий применяются общие размеры, цвета и настил.</p></div>
             <div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>
           </div>
         </div>
@@ -8818,6 +8849,13 @@ MINIAPP_HTML = """<!doctype html>
       if (orderSize) {
         syncOrderDraft();
         toggleOrderValue("size", orderSize.dataset.orderSize);
+        return;
+      }
+
+      const orderProduct = event.target.closest("[data-order-product]");
+      if (orderProduct) {
+        syncOrderDraft();
+        toggleOrderValue("product", orderProduct.dataset.orderProduct);
         return;
       }
 
