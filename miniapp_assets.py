@@ -1106,12 +1106,45 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     @media (max-width: 600px) {
+      /* На телефоне карта не должна разъезжаться в горизонтальный скролл.
+         Две колонки дают ячейке достаточно места для полного имени. */
+      .wms-map-scroll {
+        overflow-x: visible;
+        padding-right: 0;
+      }
+
       .wms-zone-map {
-        min-width: 660px;
+        min-width: 0;
+        width: 100%;
+      }
+
+      .wms-map-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 8px;
+        padding: 8px;
       }
 
       .wms-cell {
-        min-height: 58px;
+        min-width: 0;
+        min-height: 72px;
+        padding: 8px 9px;
+      }
+
+      .wms-cell strong {
+        overflow: visible;
+        font-size: 12px;
+        line-height: 1.18;
+        text-overflow: clip;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+
+      .wms-cell small {
+        font-size: 11px;
+      }
+
+      .wms-cell-section-start {
+        margin-left: 0;
       }
     }
 
@@ -2078,9 +2111,13 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .qr-scanner video {
+      display: block;
       width: 100%;
       height: 100%;
+      min-width: 100%;
+      min-height: 100%;
       object-fit: cover;
+      background: #090807;
     }
 
     .qr-scanner-head,
@@ -2104,6 +2141,21 @@ MINIAPP_HTML = """<!doctype html>
     .qr-scanner-actions {
       bottom: 14px;
       justify-content: center;
+    }
+
+    .qr-scanner-status {
+      position: absolute;
+      z-index: 2;
+      left: 18px;
+      right: 18px;
+      bottom: 72px;
+      padding: 9px 12px;
+      border-radius: 12px;
+      background: rgba(0,0,0,.58);
+      color: rgba(255,255,255,.92);
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
     }
 
     .qr-scanner .small-button {
@@ -3421,9 +3473,10 @@ MINIAPP_HTML = """<!doctype html>
   </section>
   <section class="qr-scanner" id="qrScanner" aria-label="Сканер QR-кода" hidden>
     <div class="qr-scanner-shell">
-      <video id="qrScannerVideo" playsinline muted></video>
+      <video id="qrScannerVideo" autoplay playsinline webkit-playsinline muted></video>
       <div class="qr-scanner-frame"></div>
       <div class="qr-scanner-head"><span id="qrScannerTitle">QR-код партии</span><button class="qr-scanner-close" id="qrScannerClose" type="button" aria-label="Закрыть">×</button></div>
+      <div class="qr-scanner-status" id="qrScannerStatus" role="status" aria-live="polite">Запускаем камеру…</div>
       <div class="qr-scanner-actions"><button class="small-button" id="qrScannerManual" type="button">Ввести код</button></div>
     </div>
   </section>
@@ -3826,6 +3879,7 @@ MINIAPP_HTML = """<!doctype html>
     const qrScanner = document.getElementById("qrScanner");
     const qrScannerVideo = document.getElementById("qrScannerVideo");
     const qrScannerTitle = document.getElementById("qrScannerTitle");
+    const qrScannerStatus = document.getElementById("qrScannerStatus");
     const pendingActions = new Set();
     const webSessionRetryDelaysMs = [2_000, 5_000, 10_000, 20_000, 30_000];
     const webSessionRequestTimeoutMs = 8_000;
@@ -6680,6 +6734,39 @@ MINIAPP_HTML = """<!doctype html>
       qrScannerStream = null;
       qrScannerVideo.srcObject = null;
       qrScanner.hidden = true;
+      qrScannerStatus.textContent = "Запускаем камеру…";
+    }
+
+    async function getWmsCameraStream() {
+      const constraints = [
+        {audio: false, video: {facingMode: {exact: "environment"}, width: {ideal: 1280}, height: {ideal: 720}}},
+        {audio: false, video: {facingMode: {ideal: "environment"}, width: {ideal: 1280}, height: {ideal: 720}}},
+        {audio: false, video: true},
+      ];
+      let lastError = null;
+      for (const constraint of constraints) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraint);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError || new Error("Camera unavailable");
+    }
+
+    async function attachScannerStream(stream) {
+      qrScannerStream = stream;
+      qrScannerVideo.autoplay = true;
+      qrScannerVideo.muted = true;
+      qrScannerVideo.playsInline = true;
+      qrScanner.hidden = false;
+      qrScannerVideo.srcObject = stream;
+      qrScannerStatus.textContent = "Камера включена. Наведите её на код.";
+      try {
+        await qrScannerVideo.play();
+      } catch (_error) {
+        qrScannerStatus.textContent = "Нажмите по экрану, чтобы запустить камеру.";
+      }
     }
 
     async function openWebQrScanner() {
@@ -6690,13 +6777,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       try {
-        qrScannerStream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {facingMode: {ideal: "environment"}},
-        });
-        qrScanner.hidden = false;
-        qrScannerVideo.srcObject = qrScannerStream;
-        await qrScannerVideo.play();
+        await attachScannerStream(await getWmsCameraStream());
         const detector = new window.BarcodeDetector({formats: ["qr_code"]});
         let detecting = false;
         const detectFrame = async () => {
@@ -6973,13 +7054,7 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       try {
-        qrScannerStream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {facingMode: {ideal: "environment"}},
-        });
-        qrScanner.hidden = false;
-        qrScannerVideo.srcObject = qrScannerStream;
-        await qrScannerVideo.play();
+        await attachScannerStream(await getWmsCameraStream());
         let detector = null;
         if (hasNativeDetector) {
           try {
