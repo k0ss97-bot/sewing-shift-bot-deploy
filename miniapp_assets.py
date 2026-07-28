@@ -3880,6 +3880,11 @@ MINIAPP_HTML = """<!doctype html>
     if (!state.feedbackDraft || typeof state.feedbackDraft !== "object") state.feedbackDraft = {category: "Производство", message: ""};
     if (!Array.isArray(state.orderSizes)) state.orderSizes = [];
     if (!Array.isArray(state.orderColors)) state.orderColors = [];
+    // Values restored from older browser sessions may be numeric.  Keep the
+    // draft representation identical to the string values coming from the
+    // HTML data attributes and the API catalog.
+    state.orderSizes = state.orderSizes.map((value) => String(value));
+    state.orderColors = state.orderColors.map((value) => String(value));
     if (!state.orderStockQuantities || typeof state.orderStockQuantities !== "object") state.orderStockQuantities = {};
     if (!state.orderFabricRolls || typeof state.orderFabricRolls !== "object") state.orderFabricRolls = {};
     if (!Array.isArray(state.orderProducts)) state.orderProducts = state.orderProduct ? [state.orderProduct] : [];
@@ -5659,6 +5664,7 @@ MINIAPP_HTML = """<!doctype html>
         (common, selected) => common.filter((color) => (selected.raw_colors || []).includes(color)),
         [...(selectedProducts[0] && selectedProducts[0].raw_colors && selectedProducts[0].raw_colors.length ? selectedProducts[0].raw_colors : getOrderColors())],
       ) : getOrderColors();
+      state.orderAvailableSizes = availableSizes.map((size) => String(size));
       state.orderSizes = state.orderSizes.filter((size) => availableSizes.includes(size));
       state.orderColors = state.orderColors.filter((color) => availableColors.includes(color));
       Object.keys(state.orderFabricRolls).forEach((color) => {
@@ -5703,7 +5709,10 @@ MINIAPP_HTML = """<!doctype html>
         showToast("Изделия", "Оставьте хотя бы одно изделие в настиле.");
         return;
       }
-      state[key] = isSelected ? values.filter((item) => item !== value) : [...values, value];
+      const normalizedValue = String(value);
+      state[key] = isSelected
+        ? values.filter((item) => String(item) !== normalizedValue)
+        : [...values, normalizedValue];
 
       if (kind === "product") {
         state.orderProduct = state.orderProducts[0] || "";
@@ -7267,7 +7276,11 @@ MINIAPP_HTML = """<!doctype html>
     function renderOrderCreate() {
       const product = ensureOrderDraftDefaults();
       const catalog = getRouteCatalog();
-      const sizes = product ? product.sizes || [] : [];
+      // For a shared lay, only sizes present in every selected product are
+      // valid.  Rendering the first product's full list made unavailable
+      // sizes (notably 86 and 128) look clickable before being discarded by
+      // the draft validation.
+      const sizes = state.orderAvailableSizes || (product ? product.sizes || [] : []);
       const selectedProducts = state.orderProducts.map((name) => routeProduct(name)).filter(Boolean);
       const colors = selectedProducts.length > 1
         ? selectedProducts.slice(1).reduce(
