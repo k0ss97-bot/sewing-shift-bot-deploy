@@ -963,6 +963,20 @@ MINIAPP_HTML = """<!doctype html>
       gap: 14px;
     }
 
+    .wms-stock-filter-tabs {
+      --tab-count: 3;
+      margin: 0 0 12px;
+    }
+
+    .wms-stock-filter-tabs .tab {
+      min-height: 44px;
+      font-size: 11px;
+    }
+
+    .wms-stock-filter-card {
+      margin-bottom: 14px;
+    }
+
     .wms-map-scroll {
       overflow-x: auto;
       padding: 2px 2px 10px;
@@ -3741,6 +3755,10 @@ MINIAPP_HTML = """<!doctype html>
       "warehouseSizeFilter",
       "warehouseColorFilter",
       "wmsView",
+      "wmsStockFilter",
+      "wmsStockProductFilter",
+      "wmsStockSizeFilter",
+      "wmsStockColorFilter",
       "wmsSelectedLocationId",
       "adminSection",
       "employeePositionFilter",
@@ -3841,6 +3859,10 @@ MINIAPP_HTML = """<!doctype html>
       profileReturnScreen: "shift",
       taskDefectPhotos: {},
       wmsView: "overview",
+      wmsStockFilter: "finished",
+      wmsStockProductFilter: "",
+      wmsStockSizeFilter: "",
+      wmsStockColorFilter: "",
       wmsSelectedLocationId: "",
       wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: []},
       pushDeviceActive: null,
@@ -7708,6 +7730,86 @@ MINIAPP_HTML = """<!doctype html>
       );
     }
 
+    function wmsStockFilterDefinitions() {
+      return [
+        {id: "finished", label: "Готовая продукция", shortLabel: "Готовая продукция", itemType: "finished", unit: "шт."},
+        {id: "semifinished", label: "Полуфабрикаты", shortLabel: "Полуфабрикаты", itemType: "semifinished", unit: "шт."},
+        {id: "material", label: "Материалы", shortLabel: "Материалы", itemType: "material", unit: "рул."},
+      ];
+    }
+
+    function wmsCurrentStockFilter() {
+      const definitions = wmsStockFilterDefinitions();
+      return definitions.find((definition) => definition.id === state.wmsStockFilter) || definitions[0];
+    }
+
+    function wmsFilteredStockByType() {
+      const definition = wmsCurrentStockFilter();
+      return (state.wmsData.stock || []).filter((row) => row.product_key && row.product_key.item_type === definition.itemType);
+    }
+
+    function wmsStockFilterOptions(rows, field) {
+      return [...new Set(rows.map((row) => String((row.product_key || {})[field] || "")).filter(Boolean))]
+        .sort((first, second) => first.localeCompare(second, "ru"));
+    }
+
+    function wmsFilteredStock() {
+      const typeRows = wmsFilteredStockByType();
+      const productValues = wmsStockFilterOptions(typeRows, "product_name");
+      if (state.wmsStockProductFilter && !productValues.includes(state.wmsStockProductFilter)) state.wmsStockProductFilter = "";
+      const productRows = typeRows.filter((row) => !state.wmsStockProductFilter || row.product_key.product_name === state.wmsStockProductFilter);
+      const sizeValues = wmsCurrentStockFilter().itemType === "material" ? [] : wmsStockFilterOptions(productRows, "product_size");
+      if (state.wmsStockSizeFilter && !sizeValues.includes(state.wmsStockSizeFilter)) state.wmsStockSizeFilter = "";
+      const sizeRows = productRows.filter((row) => wmsCurrentStockFilter().itemType === "material" || !state.wmsStockSizeFilter || row.product_key.product_size === state.wmsStockSizeFilter);
+      const colorValues = wmsStockFilterOptions(sizeRows, "product_color");
+      if (state.wmsStockColorFilter && !colorValues.includes(state.wmsStockColorFilter)) state.wmsStockColorFilter = "";
+      return sizeRows.filter((row) => !state.wmsStockColorFilter || row.product_key.product_color === state.wmsStockColorFilter);
+    }
+
+    function wmsFilteredStockAtLocation(code, stockRows = wmsFilteredStock()) {
+      const location = wmsLocationByCode(code);
+      if (!location) return [];
+      return stockRows.filter((row) =>
+        Number(row.location_id) === Number(location.id)
+        && row.item_state === "SELLABLE"
+        && Number(row.quantity || 0) > 0
+      );
+    }
+
+    function wmsStockFilterValues() {
+      const typeRows = wmsFilteredStockByType();
+      const productRows = typeRows.filter((row) => !state.wmsStockProductFilter || row.product_key.product_name === state.wmsStockProductFilter);
+      const sizeValues = wmsCurrentStockFilter().itemType === "material" ? [] : wmsStockFilterOptions(productRows, "product_size");
+      const sizeRows = productRows.filter((row) => wmsCurrentStockFilter().itemType === "material" || !state.wmsStockSizeFilter || row.product_key.product_size === state.wmsStockSizeFilter);
+      return {
+        productValues: wmsStockFilterOptions(typeRows, "product_name"),
+        sizeValues,
+        colorValues: wmsStockFilterOptions(sizeRows, "product_color"),
+      };
+    }
+
+    function wmsFilterOptionHtml(values, selected, allLabel, labelForValue = (value) => value) {
+      return `<option value="">${escapeHtml(allLabel)}</option>${values.map((value) => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(labelForValue(value))}</option>`).join("")}`;
+    }
+
+    function syncWmsStockFilters() {
+      const filter = document.getElementById("wmsStockFilter");
+      const product = document.getElementById("wmsStockProductFilter");
+      const size = document.getElementById("wmsStockSizeFilter");
+      const color = document.getElementById("wmsStockColorFilter");
+      if (filter) state.wmsStockFilter = filter.value;
+      if (product) state.wmsStockProductFilter = product.value;
+      if (size) state.wmsStockSizeFilter = size.value;
+      if (color) state.wmsStockColorFilter = color.value;
+    }
+
+    function resetWmsStockFilters() {
+      state.wmsStockProductFilter = "";
+      state.wmsStockSizeFilter = "";
+      state.wmsStockColorFilter = "";
+      state.wmsSelectedLocationId = "";
+    }
+
     function wmsReceivingStock() {
       return wmsStockAtLocation("RECEIVE-01");
     }
@@ -7859,29 +7961,29 @@ MINIAPP_HTML = """<!doctype html>
       return {zone: Number(match[1]), section: Number(match[2]), level: Number(match[3]), position: Number(match[4])};
     }
 
-    function wmsLocationSummary(location) {
-      const rows = location ? wmsStockAtLocation(location.code) : [];
+    function wmsLocationSummary(location, stockRows = wmsFilteredStock()) {
+      const rows = location ? wmsFilteredStockAtLocation(location.code, stockRows) : [];
       const quantity = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
       const reserved = rows.reduce((sum, row) => sum + Number(row.reserved_quantity || 0), 0);
       const status = location && location.status !== "active" ? "blocked" : (reserved > 0 ? "reserved" : (quantity > 0 ? "occupied" : "empty"));
       return {rows, quantity, reserved, available: Math.max(0, quantity - reserved), status};
     }
 
-    function renderWmsMapCell(location, parts, sectionStart) {
+    function renderWmsMapCell(location, parts, sectionStart, stockRows) {
       if (!location) {
         return `<div class="wms-cell wms-cell-empty ${sectionStart ? "wms-cell-section-start" : ""}" aria-hidden="true"><small>Нет ячейки</small></div>`;
       }
-      const summary = wmsLocationSummary(location);
+      const summary = wmsLocationSummary(location, stockRows);
       const selected = Number(state.wmsSelectedLocationId || 0) === Number(location.id);
-      const statusText = summary.status === "blocked" ? "Заблокирована" : (summary.quantity ? `${summary.quantity} шт.` : "Свободна");
+      const statusText = summary.status === "blocked" ? "Заблокирована" : (summary.quantity ? `${summary.quantity} ${wmsCurrentStockFilter().unit}` : "Свободна");
       return `<button type="button" class="wms-cell wms-cell-${summary.status} ${sectionStart ? "wms-cell-section-start" : ""}" data-wms-cell-id="${escapeHtml(location.id)}" aria-label="Ячейка ${escapeHtml(location.code)}${selected ? ", выбрана" : ""}"><strong>${escapeHtml(location.code)}</strong><small>${escapeHtml(statusText)}</small></button>`;
     }
 
-    function renderWmsLocationDetail() {
+    function renderWmsLocationDetail(stockRows = wmsFilteredStock()) {
       const location = (state.wmsData.locations || []).find((row) => Number(row.id) === Number(state.wmsSelectedLocationId || 0));
       if (!location) return `<div class="card field-card">${itemEmpty("Нажмите на ячейку, чтобы увидеть её содержимое и операции.")}</div>`;
       const parts = wmsPhysicalLocationParts(location);
-      const summary = wmsLocationSummary(location);
+      const summary = wmsLocationSummary(location, stockRows);
       const movements = (state.wmsData.movements || []).filter((movement) => Number(movement.from_location_id) === Number(location.id) || Number(movement.to_location_id) === Number(location.id)).slice(0, 6);
       const statusLabel = summary.status === "blocked" ? "Заблокирована" : (summary.status === "empty" ? "Свободна" : "Занята");
       return `<div class="card field-card wms-location-detail">
@@ -7889,7 +7991,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="detail-grid">
           <div class="detail-box"><span>Зона</span><strong>${escapeHtml(parts ? `Зона №${parts.zone}` : (location.name_ru || "-"))}</strong></div>
           <div class="detail-box"><span>Штрихкод</span><strong>${escapeHtml(location.barcode || location.code)}</strong></div>
-          <div class="detail-box"><span>Всего</span><strong>${escapeHtml(summary.quantity)} шт.</strong></div>
+          <div class="detail-box"><span>Всего</span><strong>${escapeHtml(summary.quantity)} ${escapeHtml(wmsCurrentStockFilter().unit)}</strong></div>
           <div class="detail-box"><span>Доступно / резерв</span><strong>${escapeHtml(summary.available)} / ${escapeHtml(summary.reserved)}</strong></div>
         </div>
         <div class="button-row"><button type="button" class="small-button" data-wms-cell-action="putaway" data-wms-cell-code="${escapeHtml(location.code)}">Разместить сюда</button><button type="button" class="small-button secondary" data-wms-cell-action="pick" data-wms-cell-code="${escapeHtml(location.code)}">Выдать из ячейки</button></div>
@@ -7901,6 +8003,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderWmsWarehouseMap() {
+      const stockRows = arguments.length ? arguments[0] : wmsFilteredStock();
       const locations = (state.wmsData.locations || []).map((location) => ({location, parts: wmsPhysicalLocationParts(location)})).filter((row) => row.parts);
       if (!locations.length) return `<div class="card field-card">${itemEmpty("Физические ячейки ещё не загружены.")}</div>`;
       const zones = [...new Set(locations.map((row) => row.parts.zone))].sort((a, b) => a - b);
@@ -7913,35 +8016,52 @@ MINIAPP_HTML = """<!doctype html>
           const maxSection = Math.max(...zoneRows.map((row) => row.parts.section));
           const maxLevel = Math.max(...zoneRows.map((row) => row.parts.level));
           const maxPosition = Math.max(...zoneRows.map((row) => row.parts.position));
-          const zoneQuantity = zoneRows.reduce((sum, row) => sum + wmsLocationSummary(row.location).quantity, 0);
+          const zoneQuantity = zoneRows.reduce((sum, row) => sum + wmsLocationSummary(row.location, stockRows).quantity, 0);
           const cells = [];
           for (let level = maxLevel; level >= 1; level -= 1) {
             for (let section = 1; section <= maxSection; section += 1) {
               for (let position = 1; position <= maxPosition; position += 1) {
                 const code = `Z${zone}-S${section}-P${level}-${position}`;
-                cells.push(renderWmsMapCell(byCode.get(code), {zone, section, level, position}, section > 1 && position === 1));
+                cells.push(renderWmsMapCell(byCode.get(code), {zone, section, level, position}, section > 1 && position === 1, stockRows));
               }
             }
           }
-          return `<section class="wms-zone-map"><div class="wms-zone-map-head"><b>Зона №${zone}</b><span>${zoneRows.length} ячеек · ${zoneQuantity} шт.</span></div><div class="wms-map-grid" style="grid-template-columns:repeat(${maxSection * maxPosition},minmax(62px,1fr))">${cells.join("")}</div></section>`;
+          return `<section class="wms-zone-map"><div class="wms-zone-map-head"><b>Зона №${zone}</b><span>${zoneRows.length} ячеек · ${zoneQuantity} ${escapeHtml(wmsCurrentStockFilter().unit)}</span></div><div class="wms-map-grid" style="grid-template-columns:repeat(${maxSection * maxPosition},minmax(62px,1fr))">${cells.join("")}</div></section>`;
         }).join("")}</div>
-        ${renderWmsLocationDetail()}
+        ${renderWmsLocationDetail(stockRows)}
       </div>`;
     }
 
     function renderWmsStock() {
-      const stock = state.wmsData.stock || [];
+      const definition = wmsCurrentStockFilter();
+      const stock = wmsFilteredStock();
+      const filterValues = wmsStockFilterValues();
+      const colorLabel = (value) => {
+        const row = (state.wmsData.stock || []).find((item) => item.product_key && item.product_key.product_color === value);
+        return row && row.product_key.product_color_label ? row.product_key.product_color_label : value;
+      };
       mainButton.textContent = "Обновить остатки";
       mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Адресные остатки</h2><p>Продукция по складским ячейкам.</p></div><div class="date">${stock.length} поз.</div></div>
+        <div class="screen-head"><div><h2>Адресные остатки</h2><p>Отдельное хранение по категориям склада.</p></div><div class="date">${stock.length} поз.</div></div>
         ${renderWmsDataNotice()}
-        ${renderWmsWarehouseMap()}
+        <div class="tabs wms-stock-filter-tabs" role="tablist" aria-label="Раздел склада">
+          ${wmsStockFilterDefinitions().map((item) => `<button type="button" class="tab ${item.id === definition.id ? "active" : ""}" role="tab" aria-selected="${item.id === definition.id ? "true" : "false"}" data-wms-stock-filter="${item.id}">${escapeHtml(item.label)}</button>`).join("")}
+        </div>
+        <div class="card field-card wms-stock-filter-card">
+          <div class="form-grid">
+            <div class="field ${definition.itemType === "material" ? "" : "full"}"><label>${definition.itemType === "material" ? "Материал" : "Номенклатура изделия"}</label><select id="wmsStockProductFilter">${wmsFilterOptionHtml(filterValues.productValues, state.wmsStockProductFilter, definition.itemType === "material" ? "Все материалы" : "Все изделия")}</select></div>
+            ${definition.itemType === "material" ? "" : `<div class="field"><label>Размер</label><select id="wmsStockSizeFilter">${wmsFilterOptionHtml(filterValues.sizeValues, state.wmsStockSizeFilter, "Все размеры")}</select></div>`}
+            <div class="field"><label>Цвет</label><select id="wmsStockColorFilter">${wmsFilterOptionHtml(filterValues.colorValues, state.wmsStockColorFilter, "Все цвета", colorLabel)}</select></div>
+          </div>
+          <div class="button-row"><button type="button" class="small-button secondary" data-wms-stock-action="reset-filters">Сбросить фильтры</button><span class="status-chip">${escapeHtml(definition.label)}</span></div>
+        </div>
+        ${renderWmsWarehouseMap(stock)}
         <div class="op-list">${stock.length ? stock.map((row) => {
           const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
-          const itemLabel = row.product_key && row.product_key.item_type === "material" ? "материал" : (row.product_key && row.product_key.item_type === "semifinished" ? "полуфабрикат" : "готовая продукция");
-          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${escapeHtml(wmsLocationLabel(row.location_id))} · ${itemLabel}<br>Доступно ${escapeHtml(available)}, резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>`;
-        }).join("") : itemEmpty("В адресном складе пока нет остатков.")}</div>
+          const itemLabel = definition.itemType === "material" ? "Материал" : (definition.itemType === "semifinished" ? "Полуфабрикат" : "Готовая продукция");
+          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${escapeHtml(wmsLocationLabel(row.location_id))} · ${itemLabel}<br>Доступно ${escapeHtml(available)}, резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || definition.unit)}</span></div>`;
+        }).join("") : itemEmpty("В выбранном разделе нет остатков.")}</div>
       `;
     }
 
@@ -8769,6 +8889,21 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const wmsStockFilter = event.target.closest("[data-wms-stock-filter]");
+      if (wmsStockFilter) {
+        state.wmsStockFilter = wmsStockFilter.dataset.wmsStockFilter || "finished";
+        resetWmsStockFilters();
+        render();
+        return;
+      }
+
+      const wmsStockAction = event.target.closest("[data-wms-stock-action]");
+      if (wmsStockAction && wmsStockAction.dataset.wmsStockAction === "reset-filters") {
+        resetWmsStockFilters();
+        render();
+        return;
+      }
+
       const wmsCell = event.target.closest("[data-wms-cell-id]");
       if (wmsCell) {
         state.wmsSelectedLocationId = wmsCell.dataset.wmsCellId || "";
@@ -9310,6 +9445,13 @@ MINIAPP_HTML = """<!doctype html>
       }
       if (event.target.closest("#wmsMaterialName, #wmsMaterialColor, #wmsMaterialUnit, #wmsMaterialQuantity, #wmsMaterialComment")) {
         syncWmsMaterialReceiptForm();
+        return;
+      }
+
+      if (event.target.closest("#wmsStockFilter, #wmsStockProductFilter, #wmsStockSizeFilter, #wmsStockColorFilter")) {
+        syncWmsStockFilters();
+        if (event.target.id === "wmsStockFilter") resetWmsStockFilters();
+        render();
         return;
       }
 
