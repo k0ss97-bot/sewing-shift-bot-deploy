@@ -301,6 +301,10 @@ def run_smoke() -> None:
                 'api("/api/wms/pick"',
                 'src="/assets/jsqr.js"',
                 'const hasQrFallback = typeof window.jsQR === "function"',
+                'function renderWmsWarehouseMap()',
+                'data-wms-cell-id',
+                'wmsSelectedLocationId',
+                'decodeCode128Image',
                 '+ Кладовщик',
                 'Товар появляется здесь автоматически после завершения упаковки.',
             ):

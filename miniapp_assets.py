@@ -958,6 +958,163 @@ MINIAPP_HTML = """<!doctype html>
       font-size: 11px;
     }
 
+    .wms-map-shell {
+      display: grid;
+      gap: 14px;
+    }
+
+    .wms-map-scroll {
+      overflow-x: auto;
+      padding: 2px 2px 10px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .wms-zone-map {
+      min-width: 700px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .wms-zone-map-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 4px;
+    }
+
+    .wms-zone-map-head b {
+      font-size: 18px;
+    }
+
+    .wms-zone-map-head span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .wms-map-grid {
+      display: grid;
+      gap: 4px;
+      padding: 8px;
+      border: 1px solid rgba(25, 89, 243, .18);
+      border-radius: 18px;
+      background: linear-gradient(145deg, rgba(255,255,255,.94), rgba(235,241,255,.84));
+      box-shadow: var(--shadow-soft);
+    }
+
+    .wms-cell {
+      min-height: 64px;
+      padding: 7px 5px;
+      display: grid;
+      align-content: center;
+      gap: 3px;
+      border: 1px solid rgba(25, 89, 243, .20);
+      border-radius: 10px;
+      color: var(--text);
+      background: rgba(255,255,255,.82);
+      text-align: left;
+      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+    }
+
+    .wms-cell:hover,
+    .wms-cell:focus-visible {
+      border-color: var(--accent);
+      box-shadow: 0 8px 18px rgba(25,89,243,.18);
+      transform: translateY(-1px);
+      outline: none;
+    }
+
+    .wms-cell strong {
+      overflow: hidden;
+      font-size: 11px;
+      line-height: 1.1;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .wms-cell small {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .wms-cell-empty {
+      border-color: rgba(49,168,107,.30);
+      background: linear-gradient(145deg, rgba(238,251,245,.96), rgba(255,255,255,.90));
+    }
+
+    .wms-cell-occupied {
+      border-color: rgba(25,89,243,.44);
+      background: linear-gradient(145deg, rgba(225,235,255,.98), rgba(255,255,255,.92));
+    }
+
+    .wms-cell-reserved {
+      border-color: rgba(242,162,58,.62);
+      background: linear-gradient(145deg, rgba(255,244,220,.98), rgba(255,255,255,.92));
+    }
+
+    .wms-cell-blocked {
+      border-color: rgba(221,79,93,.50);
+      background: rgba(255,238,240,.94);
+    }
+
+    .wms-cell-section-start {
+      margin-left: 8px;
+    }
+
+    .wms-map-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .wms-map-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .wms-map-legend i {
+      width: 12px;
+      height: 12px;
+      display: inline-block;
+      border: 1px solid rgba(25,89,243,.24);
+      border-radius: 4px;
+      background: rgba(255,255,255,.9);
+    }
+
+    .wms-map-legend .occupied i { background: #dfe9ff; }
+    .wms-map-legend .reserved i { background: #fff0cc; border-color: #f2a23a; }
+    .wms-map-legend .blocked i { background: #ffe6e9; border-color: #dd4f5d; }
+
+    .wms-location-detail {
+      display: grid;
+      gap: 14px;
+    }
+
+    .wms-location-detail .detail-grid {
+      margin-top: 0;
+    }
+
+    .wms-location-products {
+      display: grid;
+      gap: 8px;
+    }
+
+    @media (max-width: 600px) {
+      .wms-zone-map {
+        min-width: 660px;
+      }
+
+      .wms-cell {
+        min-height: 58px;
+      }
+    }
+
     .op-icon {
       width: 44px;
       height: 44px;
@@ -3531,6 +3688,7 @@ MINIAPP_HTML = """<!doctype html>
       "warehouseSizeFilter",
       "warehouseColorFilter",
       "wmsView",
+      "wmsSelectedLocationId",
       "adminSection",
       "employeePositionFilter",
       "employeeStatusFilter",
@@ -3629,6 +3787,7 @@ MINIAPP_HTML = """<!doctype html>
       profileReturnScreen: "shift",
       taskDefectPhotos: {},
       wmsView: "overview",
+      wmsSelectedLocationId: "",
       wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: []},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
@@ -7520,6 +7679,7 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="section-title"><b>Быстрые действия</b><span>сканер</span></div>
         <div class="kpi-grid">
+          <button type="button" class="card summary-card clickable" data-wms-view="stock"><span>Карта ячеек</span><strong>▦</strong><small>Открыть адресное хранение</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="receive"><span>Зона приёмки</span><strong>↓</strong><small>Поступает после упаковки</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="putaway"><span>Размещение</span><strong>→</strong><small>Положить в ячейку</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="pick"><span>Выдача</span><strong>↑</strong><small>Забрать из ячейки</small></button>
@@ -7548,6 +7708,82 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function wmsPhysicalLocationParts(location) {
+      const match = String((location || {}).code || "").toUpperCase().match(/^Z(\\d+)-S(\\d+)-P(\\d+)-(\\d+)$/);
+      if (!match) return null;
+      return {zone: Number(match[1]), section: Number(match[2]), level: Number(match[3]), position: Number(match[4])};
+    }
+
+    function wmsLocationSummary(location) {
+      const rows = location ? wmsStockAtLocation(location.code) : [];
+      const quantity = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+      const reserved = rows.reduce((sum, row) => sum + Number(row.reserved_quantity || 0), 0);
+      const status = location && location.status !== "active" ? "blocked" : (reserved > 0 ? "reserved" : (quantity > 0 ? "occupied" : "empty"));
+      return {rows, quantity, reserved, available: Math.max(0, quantity - reserved), status};
+    }
+
+    function renderWmsMapCell(location, parts, sectionStart) {
+      if (!location) {
+        return `<div class="wms-cell wms-cell-empty ${sectionStart ? "wms-cell-section-start" : ""}" aria-hidden="true"><small>Нет ячейки</small></div>`;
+      }
+      const summary = wmsLocationSummary(location);
+      const selected = Number(state.wmsSelectedLocationId || 0) === Number(location.id);
+      const statusText = summary.status === "blocked" ? "Заблокирована" : (summary.quantity ? `${summary.quantity} шт.` : "Свободна");
+      return `<button type="button" class="wms-cell wms-cell-${summary.status} ${sectionStart ? "wms-cell-section-start" : ""}" data-wms-cell-id="${escapeHtml(location.id)}" aria-label="Ячейка ${escapeHtml(location.code)}${selected ? ", выбрана" : ""}"><strong>${escapeHtml(location.code)}</strong><small>${escapeHtml(statusText)}</small></button>`;
+    }
+
+    function renderWmsLocationDetail() {
+      const location = (state.wmsData.locations || []).find((row) => Number(row.id) === Number(state.wmsSelectedLocationId || 0));
+      if (!location) return `<div class="card field-card">${itemEmpty("Нажмите на ячейку, чтобы увидеть её содержимое и операции.")}</div>`;
+      const parts = wmsPhysicalLocationParts(location);
+      const summary = wmsLocationSummary(location);
+      const movements = (state.wmsData.movements || []).filter((movement) => Number(movement.from_location_id) === Number(location.id) || Number(movement.to_location_id) === Number(location.id)).slice(0, 6);
+      const statusLabel = summary.status === "blocked" ? "Заблокирована" : (summary.status === "empty" ? "Свободна" : "Занята");
+      return `<div class="card field-card wms-location-detail">
+        <div class="section-title"><b>${escapeHtml(location.code)}</b><span>${escapeHtml(statusLabel)}</span></div>
+        <div class="detail-grid">
+          <div class="detail-box"><span>Зона</span><strong>${escapeHtml(parts ? `Зона №${parts.zone}` : (location.name_ru || "-"))}</strong></div>
+          <div class="detail-box"><span>Штрихкод</span><strong>${escapeHtml(location.barcode || location.code)}</strong></div>
+          <div class="detail-box"><span>Всего</span><strong>${escapeHtml(summary.quantity)} шт.</strong></div>
+          <div class="detail-box"><span>Доступно / резерв</span><strong>${escapeHtml(summary.available)} / ${escapeHtml(summary.reserved)}</strong></div>
+        </div>
+        <div class="button-row"><button type="button" class="small-button" data-wms-cell-action="putaway" data-wms-cell-code="${escapeHtml(location.code)}">Разместить сюда</button><button type="button" class="small-button secondary" data-wms-cell-action="pick" data-wms-cell-code="${escapeHtml(location.code)}">Выдать из ячейки</button></div>
+        <div class="section-title"><b>Содержимое</b><span>${summary.rows.length} поз.</span></div>
+        <div class="wms-location-products">${summary.rows.length ? summary.rows.map((row) => `<div class="report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>Доступно ${escapeHtml(Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)))} · резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>`).join("") : itemEmpty("Ячейка свободна.")}</div>
+        <div class="section-title"><b>История ячейки</b><span>${movements.length}</span></div>
+        <div class="wms-location-products">${movements.length ? movements.map((movement) => `<div class="report-row"><div><b>${escapeHtml(wmsMovementLabel(movement.movement_type))}</b><span>${escapeHtml(wmsProductLabel(movement.product_key))}<br>${escapeHtml(wmsMovementTime(movement.occurred_at))}</span></div><span class="status-chip gray">${escapeHtml(movement.quantity)} шт.</span></div>`).join("") : itemEmpty("Движений по ячейке пока нет.")}</div>
+      </div>`;
+    }
+
+    function renderWmsWarehouseMap() {
+      const locations = (state.wmsData.locations || []).map((location) => ({location, parts: wmsPhysicalLocationParts(location)})).filter((row) => row.parts);
+      if (!locations.length) return `<div class="card field-card">${itemEmpty("Физические ячейки ещё не загружены.")}</div>`;
+      const zones = [...new Set(locations.map((row) => row.parts.zone))].sort((a, b) => a - b);
+      const byCode = new Map(locations.map((row) => [row.location.code.toUpperCase(), row.location]));
+      return `<div class="wms-map-shell">
+        <div class="section-title"><b>Карта адресного хранения</b><span>${locations.length} яч.</span></div>
+        <div class="wms-map-legend"><span><i></i> свободна</span><span class="occupied"><i></i> занята</span><span class="reserved"><i></i> есть резерв</span><span class="blocked"><i></i> заблокирована</span></div>
+        <div class="wms-map-scroll">${zones.map((zone) => {
+          const zoneRows = locations.filter((row) => row.parts.zone === zone);
+          const maxSection = Math.max(...zoneRows.map((row) => row.parts.section));
+          const maxLevel = Math.max(...zoneRows.map((row) => row.parts.level));
+          const maxPosition = Math.max(...zoneRows.map((row) => row.parts.position));
+          const zoneQuantity = zoneRows.reduce((sum, row) => sum + wmsLocationSummary(row.location).quantity, 0);
+          const cells = [];
+          for (let level = maxLevel; level >= 1; level -= 1) {
+            for (let section = 1; section <= maxSection; section += 1) {
+              for (let position = 1; position <= maxPosition; position += 1) {
+                const code = `Z${zone}-S${section}-P${level}-${position}`;
+                cells.push(renderWmsMapCell(byCode.get(code), {zone, section, level, position}, section > 1 && position === 1));
+              }
+            }
+          }
+          return `<section class="wms-zone-map"><div class="wms-zone-map-head"><b>Зона №${zone}</b><span>${zoneRows.length} ячеек · ${zoneQuantity} шт.</span></div><div class="wms-map-grid" style="grid-template-columns:repeat(${maxSection * maxPosition},minmax(62px,1fr))">${cells.join("")}</div></section>`;
+        }).join("")}</div>
+        ${renderWmsLocationDetail()}
+      </div>`;
+    }
+
     function renderWmsStock() {
       const stock = state.wmsData.stock || [];
       mainButton.textContent = "Обновить остатки";
@@ -7555,6 +7791,7 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Адресные остатки</h2><p>Продукция по складским ячейкам.</p></div><div class="date">${stock.length} поз.</div></div>
         ${renderWmsDataNotice()}
+        ${renderWmsWarehouseMap()}
         <div class="op-list">${stock.length ? stock.map((row) => {
           const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
           return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${escapeHtml(wmsLocationLabel(row.location_id))} · ${row.product_key && row.product_key.item_type === "semifinished" ? "полуфабрикат" : "готовая продукция"}<br>Доступно ${escapeHtml(available)}, резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>`;
@@ -8364,6 +8601,33 @@ MINIAPP_HTML = """<!doctype html>
       if (warehouseView) {
         state.warehouseView = warehouseView.dataset.warehouseView;
         resetWarehouseFilters();
+        render();
+        return;
+      }
+
+      const wmsCell = event.target.closest("[data-wms-cell-id]");
+      if (wmsCell) {
+        state.wmsSelectedLocationId = wmsCell.dataset.wmsCellId || "";
+        state.workspace = "warehouse";
+        state.screen = "warehouse";
+        state.wmsView = "stock";
+        render();
+        return;
+      }
+
+      const wmsCellAction = event.target.closest("[data-wms-cell-action]");
+      if (wmsCellAction) {
+        const code = String(wmsCellAction.dataset.wmsCellCode || "").trim();
+        const action = wmsCellAction.dataset.wmsCellAction;
+        state.wmsView = action === "pick" ? "pick" : "putaway";
+        state.wmsDraft.fromLocation = action === "pick" ? code : "";
+        state.wmsDraft.toLocation = action === "putaway" ? code : "";
+        state.wmsDraft.fromLocationScanned = action === "pick";
+        state.wmsDraft.toLocationScanned = action === "putaway";
+        state.wmsDraft.productScanned = false;
+        state.wmsDraft.quantity = "";
+        state.workspace = "warehouse";
+        state.screen = "warehouse";
         render();
         return;
       }
