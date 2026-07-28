@@ -21,7 +21,7 @@ class ProductKey:
     ``warehouse_stock`` table; WMS reuses it so stock rows map 1:1.
     """
 
-    item_type: str            # 'semifinished' | 'finished'
+    item_type: str            # 'semifinished' | 'finished' | 'material'
     product_name: str
     product_size: str
     product_color: str
@@ -53,8 +53,8 @@ class ProductKey:
         }
         if any(not value for value in values.values()):
             raise ValueError("all product_key fields must be non-empty")
-        if values["item_type"] not in {"finished", "semifinished"}:
-            raise ValueError("item_type must be finished or semifinished")
+        if values["item_type"] not in {"finished", "semifinished", "material"}:
+            raise ValueError("item_type must be finished, semifinished or material")
         return cls(**values)
 
 

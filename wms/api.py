@@ -46,6 +46,8 @@ def handle(
     try:
         if path == "/api/wms/receive":
             return _receive(payload, employee_id)
+        if path == "/api/wms/material-receive":
+            return _material_receive(payload, employee_id)
         if path == "/api/wms/putaway":
             return _putaway(payload, employee_id)
         if path == "/api/wms/transfer":
@@ -99,11 +101,44 @@ def _receive(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, 
     return _result_response(result)
 
 
+def _material_receive(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
+    material_name = str(payload.get("material_name") or "").strip()
+    product_color = str(payload.get("product_color") or "").strip()
+    unit = str(payload.get("unit") or "рул").strip()
+    if not material_name:
+        raise ValueError("Введите название материала.")
+    if not product_color:
+        raise ValueError("Введите цвет материала.")
+    if len(material_name) > 120 or len(product_color) > 120:
+        raise ValueError("Название материала и цвет должны быть не длиннее 120 символов.")
+    if unit != "рул":
+        raise ValueError("Пока ручная приёмка материалов поддерживает только рулоны.")
+    product_key = ProductKey(
+        item_type="material",
+        product_name=material_name,
+        product_size="—",
+        product_color=product_color,
+        stage_name="Материал",
+        ready_for_position="Склад",
+    )
+    result = ops.receive_material(
+        product_key,
+        int(payload["quantity"]),
+        unit=unit,
+        employee_id=employee_id,
+        request_key=payload.get("request_key"),
+        reason=payload.get("reason") or "Ручная приёмка материала",
+        tsd_device_id=payload.get("tsd_device_id"),
+    )
+    return _result_response(result)
+
+
 def _putaway(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
     result = ops.putaway(
         _pk(payload),
         int(payload["quantity"]),
         to_location_code=payload["to_location_code"],
+        unit=str(payload.get("unit") or "шт").strip(),
         employee_id=employee_id,
         request_key=payload.get("request_key"),
         reason=payload.get("reason"),
@@ -118,6 +153,7 @@ def _transfer(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str,
         int(payload["quantity"]),
         from_location_code=payload["from_location_code"],
         to_location_code=payload["to_location_code"],
+        unit=str(payload.get("unit") or "шт").strip(),
         employee_id=employee_id,
         request_key=payload.get("request_key"),
         reason=payload.get("reason"),
@@ -131,6 +167,7 @@ def _pick(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any
         _pk(payload),
         int(payload["quantity"]),
         from_location_code=payload["from_location_code"],
+        unit=str(payload.get("unit") or "шт").strip(),
         employee_id=employee_id,
         request_key=payload.get("request_key"),
         reason=payload.get("reason"),
@@ -319,6 +356,7 @@ def _result_response(result) -> tuple[int, dict[str, Any]]:
 
 WMS_WRITE_ROUTES = {
     "/api/wms/receive",
+    "/api/wms/material-receive",
     "/api/wms/putaway",
     "/api/wms/transfer",
     "/api/wms/pick",

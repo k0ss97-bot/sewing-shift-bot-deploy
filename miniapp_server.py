@@ -311,6 +311,67 @@ def flush_pending_wms_receipts(limit: int = 50):
     return summary
 
 
+def receive_material_for_telegram(telegram_id: int, payload: dict):
+    """Receive a material into WMS and mirror the roll balance to SQLite.
+
+    WMS owns the addressable receipt and its idempotency key. The legacy
+    ``fabric_stock`` balance is mirrored after a new WMS movement so existing
+    cutting reservations continue to see manually received rolls.
+    """
+    employee = get_employee_for_access(telegram_id)
+    if employee is None:
+        return {"ok": False, "status": "error", "message": "Сотрудник не найден."}
+    status, result = wms_api.handle(
+        "/api/wms/material-receive", payload, employee_id=int(employee[0])
+    )
+    if status != 200 or not result.get("ok"):
+        return result
+    if result.get("status") == "duplicate":
+        return result
+
+    material_name = str(payload.get("material_name") or "").strip()
+    product_color = str(payload.get("product_color") or "").strip()
+    unit = str(payload.get("unit") or "рул").strip()
+    quantity = int(payload.get("quantity") or 0)
+    try:
+        row = add_fabric_receipt(
+            material_name,
+            product_color,
+            quantity,
+            int(employee[0]),
+            unit=unit,
+            comment=str(payload.get("comment") or "").strip(),
+        )
+    except Exception:
+        LOGGER.exception(
+            "WMS material receipt could not mirror legacy stock: material=%s color=%s",
+            material_name,
+            product_color,
+        )
+        row = None
+    if row is None:
+        LOGGER.error(
+            "WMS material receipt mirrored incompletely: material=%s color=%s movement=%s",
+            material_name,
+            product_color,
+            result.get("movement_id"),
+        )
+        result["message"] = "Материал принят в WMS, но старый остаток ткани не обновился. Сообщите администратору."
+        return result
+
+    stock_id, stock_material, stock_color, total_quantity, stock_unit, _updated_at = row
+    add_edit_log(
+        telegram_id,
+        "wms",
+        "Принял материал в адресный склад",
+        "fabric_stock",
+        stock_id,
+        f"{stock_material}, {stock_color}: +{format_number(quantity)} {stock_unit}, остаток {format_number(total_quantity)} {stock_unit}",
+    )
+    result["message"] = f"Материал принят: {format_number(quantity)} {stock_unit}."
+    return result
+
+
 def format_minutes(total_minutes: int | None):
     if total_minutes is None:
         return ""
@@ -5379,6 +5440,10 @@ def make_handler(bot_token: str, debug: bool):
                     )
                     return
                 employee = get_employee_for_access(telegram_id)
+                if path == "/api/wms/material-receive":
+                    result = receive_material_for_telegram(telegram_id, payload)
+                    self.send_json(result, status=200 if result.get("ok") else 400)
+                    return
                 if path != "/api/wms/receive":
                     flush_pending_wms_receipts()
                 status, result = wms_api.handle(path, payload, employee_id=int(employee[0]))

@@ -105,6 +105,7 @@ def find_stock(
     product_key: ProductKey,
     *,
     item_state: str = "SELLABLE",
+    unit: str = "шт",
     location_id: int | None | object = _LOCATION_UNSET,
     for_update: bool = False,
 ) -> WarehouseStock | None:
@@ -117,7 +118,7 @@ def find_stock(
     sql = """SELECT * FROM warehouse_stock
              WHERE item_type=%s AND product_name=%s AND product_size=%s
                AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-               AND item_state=%s"""
+               AND item_state=%s AND unit=%s"""
     params: list[Any] = [
         product_key.item_type,
         product_key.product_name,
@@ -126,6 +127,7 @@ def find_stock(
         product_key.stage_name,
         product_key.ready_for_position,
         item_state,
+        unit,
     ]
     if location_id is not _LOCATION_UNSET:
         sql += " AND location_id IS NOT DISTINCT FROM %s"
@@ -148,6 +150,7 @@ def upsert_stock(
     delta: int,
     item_state: str = "SELLABLE",
     location_id: int | None = None,
+    unit: str = "шт",
     legacy_sqlite_id: int | None = None,
 ) -> int:
     """Insert or adjust a stock row.  Returns the stock id.
@@ -164,7 +167,7 @@ def upsert_stock(
                           updated_at = now()
                     WHERE item_type=%s AND product_name=%s AND product_size=%s
                       AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-                      AND unit='шт' AND item_state=%s
+                      AND unit=%s AND item_state=%s
                       AND location_id IS NOT DISTINCT FROM %s
                       AND quantity + %s >= 0
                 RETURNING id""",
@@ -176,6 +179,7 @@ def upsert_stock(
                     product_key.product_color,
                     product_key.stage_name,
                     product_key.ready_for_position,
+                    unit,
                     item_state,
                     location_id,
                     delta,
@@ -190,8 +194,8 @@ def upsert_stock(
             """INSERT INTO warehouse_stock
                (legacy_sqlite_id, item_type, product_name, product_size,
                 product_color, stage_name, ready_for_position, quantity,
-                item_state, location_id, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                item_state, location_id, unit, updated_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                ON CONFLICT (item_type, product_name, product_size, product_color,
                             stage_name, ready_for_position, unit, item_state, location_id)
                DO UPDATE SET quantity = warehouse_stock.quantity + EXCLUDED.quantity,
@@ -209,6 +213,7 @@ def upsert_stock(
                 delta,
                 item_state,
                 location_id,
+                unit,
             ),
         )
         row = cur.fetchone()

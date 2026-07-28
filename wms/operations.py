@@ -97,6 +97,55 @@ def receive_from_production(
         raise
 
 
+def receive_material(
+    product_key: ProductKey,
+    quantity: int,
+    *,
+    unit: str = "рул",
+    employee_id: int | None = None,
+    request_key: str | None = None,
+    reason: str | None = None,
+    tsd_device_id: str | None = None,
+) -> OperationResult:
+    """Accept a manually entered material receipt into the RECEIVE zone."""
+    if product_key.item_type != "material":
+        return OperationResult(False, reason="Для приёмки материалов нужен item_type=material.")
+    if quantity <= 0:
+        return OperationResult(False, reason="Количество должно быть больше нуля.")
+    unit = str(unit or "рул").strip()
+    if unit not in {"рул", "м", "шт"}:
+        return OperationResult(False, reason="Единица материала: рул, м или шт.")
+    request_key = request_key or _new_request_key("material-receipt")
+    conn = get_pg_connection()
+    try:
+        receive_loc = _zone_location(conn, "RECEIVE")
+        if repo.movement_exists(conn, request_key):
+            conn.rollback()
+            return OperationResult(True, skipped_duplicate=True, reason="duplicate request_key")
+        repo.upsert_stock(
+            conn, product_key, delta=quantity, item_state="SELLABLE",
+            location_id=receive_loc.id, unit=unit,
+        )
+        movement_id = repo.insert_movement(
+            conn,
+            request_key=request_key,
+            movement_type="material_receipt",
+            product_key=product_key,
+            quantity=quantity,
+            to_location_id=receive_loc.id,
+            to_state="SELLABLE",
+            source_type="manual",
+            reason=reason,
+            actor_employee_id=employee_id,
+            tsd_device_id=tsd_device_id,
+        )
+        conn.commit()
+        return OperationResult(True, movement_id=movement_id)
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # ──────────────────────────────────────────────────────────────────────
 # putaway (Размещение: Приёмка → ячейка хранения)
 # ──────────────────────────────────────────────────────────────────────
@@ -107,6 +156,7 @@ def putaway(
     quantity: int,
     *,
     to_location_code: str,
+    unit: str = "шт",
     employee_id: int | None = None,
     request_key: str | None = None,
     reason: str | None = None,
@@ -141,17 +191,17 @@ def putaway(
                 """SELECT id, quantity FROM warehouse_stock
                    WHERE item_type=%s AND product_name=%s AND product_size=%s
                      AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-                     AND item_state='SELLABLE' AND location_id=%s
+                     AND item_state='SELLABLE' AND location_id=%s AND unit=%s
                    FOR UPDATE""",
-                (*product_key.to_dict().values(), receive_loc.id),
+                (*product_key.to_dict().values(), receive_loc.id, unit),
             )
             row = cur.fetchone()
         if row is None or int(row[1]) < quantity:
             conn.rollback()
             return OperationResult(False, reason="Недостаточно товара в зоне приёмки.")
         # Move: decrement source, increment target.
-        repo.upsert_stock(conn, product_key, delta=-quantity, location_id=receive_loc.id)
-        repo.upsert_stock(conn, product_key, delta=quantity, location_id=target.id)
+        repo.upsert_stock(conn, product_key, delta=-quantity, location_id=receive_loc.id, unit=unit)
+        repo.upsert_stock(conn, product_key, delta=quantity, location_id=target.id, unit=unit)
         movement_id = repo.insert_movement(
             conn,
             request_key=request_key,
@@ -182,6 +232,7 @@ def transfer(
     *,
     from_location_code: str,
     to_location_code: str,
+    unit: str = "шт",
     employee_id: int | None = None,
     request_key: str | None = None,
     reason: str | None = None,
@@ -215,16 +266,16 @@ def transfer(
                 """SELECT id, quantity FROM warehouse_stock
                    WHERE item_type=%s AND product_name=%s AND product_size=%s
                      AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-                     AND item_state='SELLABLE' AND location_id=%s
+                     AND item_state='SELLABLE' AND location_id=%s AND unit=%s
                    FOR UPDATE""",
-                (*product_key.to_dict().values(), src.id),
+                (*product_key.to_dict().values(), src.id, unit),
             )
             row = cur.fetchone()
         if row is None or int(row[1]) < quantity:
             conn.rollback()
             return OperationResult(False, reason="Недостаточно товара в исходной ячейке.")
-        repo.upsert_stock(conn, product_key, delta=-quantity, location_id=src.id)
-        repo.upsert_stock(conn, product_key, delta=quantity, location_id=dst.id)
+        repo.upsert_stock(conn, product_key, delta=-quantity, location_id=src.id, unit=unit)
+        repo.upsert_stock(conn, product_key, delta=quantity, location_id=dst.id, unit=unit)
         movement_id = repo.insert_movement(
             conn,
             request_key=request_key,
@@ -254,6 +305,7 @@ def pick(
     quantity: int,
     *,
     from_location_code: str,
+    unit: str = "шт",
     employee_id: int | None = None,
     request_key: str | None = None,
     reason: str | None = None,
@@ -285,6 +337,7 @@ def pick(
             conn,
             product_key,
             item_state="SELLABLE",
+            unit=unit,
             location_id=source.id,
             for_update=True,
         )
@@ -296,13 +349,14 @@ def pick(
                 reason=f"В ячейке доступно только {max(available, 0)} шт.",
             )
 
-        repo.upsert_stock(
-            conn,
-            product_key,
-            delta=-quantity,
-            item_state="SELLABLE",
-            location_id=source.id,
-        )
+        stock_update = {
+            "delta": -quantity,
+            "item_state": "SELLABLE",
+            "location_id": source.id,
+        }
+        if unit != "шт":
+            stock_update["unit"] = unit
+        repo.upsert_stock(conn, product_key, **stock_update)
         movement_id = repo.insert_movement(
             conn,
             request_key=request_key,

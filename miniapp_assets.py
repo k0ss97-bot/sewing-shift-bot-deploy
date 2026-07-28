@@ -3766,6 +3766,7 @@ MINIAPP_HTML = """<!doctype html>
       "feedbackDraft",
       "passportBatchId",
       "passportReturnScreen",
+      "wmsMaterialReceipt",
     ];
     let persistedUiState = {};
 
@@ -3844,7 +3845,8 @@ MINIAPP_HTML = """<!doctype html>
       wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: []},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
-      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, stageName: "Готово", readyForPosition: "Склад", quantity: "", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
+      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
+      wmsMaterialReceipt: {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""},
       ...persistedUiState,
       data: null,
     };
@@ -3857,6 +3859,7 @@ MINIAPP_HTML = """<!doctype html>
     if (!state.orderStockQuantities || typeof state.orderStockQuantities !== "object") state.orderStockQuantities = {};
     if (!state.orderFabricRolls || typeof state.orderFabricRolls !== "object") state.orderFabricRolls = {};
     if (!state.taskDefectPhotos || typeof state.taskDefectPhotos !== "object") state.taskDefectPhotos = {};
+    if (!state.wmsMaterialReceipt || typeof state.wmsMaterialReceipt !== "object") state.wmsMaterialReceipt = {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""};
 
     const mount = document.getElementById("mount");
     const appRoot = document.getElementById("appRoot");
@@ -5816,6 +5819,20 @@ MINIAPP_HTML = """<!doctype html>
       if (quantity) state.fabricReceiptQuantity = quantity.value;
     }
 
+    function syncWmsMaterialReceiptForm() {
+      const draft = state.wmsMaterialReceipt;
+      const name = document.getElementById("wmsMaterialName");
+      const color = document.getElementById("wmsMaterialColor");
+      const unit = document.getElementById("wmsMaterialUnit");
+      const quantity = document.getElementById("wmsMaterialQuantity");
+      const comment = document.getElementById("wmsMaterialComment");
+      if (name) draft.name = name.value;
+      if (color) draft.color = color.value;
+      if (unit) draft.unit = unit.value;
+      if (quantity) draft.quantity = quantity.value;
+      if (comment) draft.comment = comment.value;
+    }
+
     function syncWarehouseFilters() {
       const product = document.getElementById("warehouseProductFilter");
       const size = document.getElementById("warehouseSizeFilter");
@@ -6051,14 +6068,56 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function wmsMaterialReceive() {
+      const draft = state.wmsMaterialReceipt;
+      syncWmsMaterialReceiptForm();
+      const quantity = parseInt(draft.quantity, 10);
+      if (!String(draft.name || "").trim() || !String(draft.color || "").trim() || !quantity || quantity < 1) {
+        showToast("Материалы", "Введите материал, цвет и количество больше нуля.");
+        return;
+      }
+      const actionKey = `wms:material-receive:${draft.name}:${draft.color}:${draft.unit}:${quantity}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/wms/material-receive", {
+          material_name: String(draft.name).trim(),
+          product_color: String(draft.color).trim(),
+          quantity,
+          unit: draft.unit || "рул",
+          comment: String(draft.comment || "").trim(),
+          request_key: `wms:material-receive:${createRequestId()}`,
+          reason: "Ручная приёмка материала",
+          tsd_device_id: navigator.userAgent.slice(0, 40),
+        });
+        const ok = data.status === "ok" || data.status === "duplicate";
+        showToast("Материалы", ok ? (data.message || `Принято: ${quantity} ${draft.unit}.`) : (data.reason || data.message || "Ошибка приёмки."));
+        if (ok) {
+          draft.quantity = "";
+          draft.comment = "";
+          render();
+          refreshWmsWorkspace({silent: true});
+        } else {
+          mainButton.disabled = false;
+        }
+      } catch (error) {
+        showToast("Ошибка", error.apiMessage || "Не удалось принять материал.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
     async function wmsPutaway() {
       const d = readWmsDraftFromForm();
       const qty = parseInt(d.quantity, 10);
+      const materialMode = d.itemType === "material";
+      if (materialMode && d.toLocation) d.toLocationScanned = true;
       if (!d.toLocationScanned) {
         showToast("Склад", "Сначала отсканируйте ячейку размещения.");
         return;
       }
-      if (!d.productScanned) {
+      if (!materialMode && !d.productScanned) {
         showToast("Склад", "Отсканируйте штрихкод товара.");
         return;
       }
@@ -6079,19 +6138,22 @@ MINIAPP_HTML = """<!doctype html>
         const data = await api("/api/wms/putaway", {
           product_key: wmsProductKey(d),
           quantity: qty,
+          unit: materialMode ? (d.materialUnit || "рул") : "шт",
           request_key: requestKey,
           to_location_code: toLoc,
-          reason: "Размещение (ТСД)",
+          reason: materialMode ? "Размещение материала (вручную)" : "Размещение (ТСД)",
           tsd_device_id: navigator.userAgent.slice(0, 40),
         });
         const ok = data.status === "ok" || data.status === "duplicate";
-        showToast("ТСД", ok ? `Размещено: ${qty} шт. → ${toLoc}` : (data.reason || "Ошибка размещения."));
+        showToast("Склад", ok ? `Размещено: ${qty} ${materialMode ? (d.materialUnit || "рул") : "шт"} → ${toLoc}` : (data.reason || "Ошибка размещения."));
         if (ok) {
           state.wmsDraft.quantity = "";
           state.wmsDraft.toLocation = "";
           state.wmsDraft.productName = "";
           state.wmsDraft.productSize = "";
           state.wmsDraft.productColor = "";
+          state.wmsDraft.itemType = "finished";
+          state.wmsDraft.materialUnit = "рул";
           state.wmsDraft.productScanned = false;
           state.wmsDraft.toLocationScanned = false;
           render();
@@ -7650,6 +7712,10 @@ MINIAPP_HTML = """<!doctype html>
       return wmsStockAtLocation("RECEIVE-01");
     }
 
+    function wmsReceivingMaterials() {
+      return wmsReceivingStock().filter((row) => row.product_key && row.product_key.item_type === "material");
+    }
+
     function wmsProductKeysEqual(first, second) {
       const keys = ["item_type", "product_name", "product_size", "product_color", "stage_name", "ready_for_position"];
       return keys.every((key) => String((first || {})[key] || "") === String((second || {})[key] || ""));
@@ -7700,6 +7766,9 @@ MINIAPP_HTML = """<!doctype html>
 
     function wmsProductLabel(productKey) {
       const product = productKey || {};
+      if (product.item_type === "material") {
+        return [product.product_name, product.product_color].filter(Boolean).join(" · ") || "Материал";
+      }
       return [product.product_name, product.product_size, product.product_color].filter(Boolean).join(" · ") || "Товар";
     }
 
@@ -7707,6 +7776,7 @@ MINIAPP_HTML = """<!doctype html>
       return ({
         receive: "Приёмка",
         production_receipt: "Приёмка",
+        material_receipt: "Приёмка материалов",
         putaway: "Размещение",
         transfer: "Перемещение",
         pick: "Выдача из ячейки",
@@ -7869,7 +7939,8 @@ MINIAPP_HTML = """<!doctype html>
         ${renderWmsWarehouseMap()}
         <div class="op-list">${stock.length ? stock.map((row) => {
           const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
-          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${escapeHtml(wmsLocationLabel(row.location_id))} · ${row.product_key && row.product_key.item_type === "semifinished" ? "полуфабрикат" : "готовая продукция"}<br>Доступно ${escapeHtml(available)}, резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>`;
+          const itemLabel = row.product_key && row.product_key.item_type === "material" ? "материал" : (row.product_key && row.product_key.item_type === "semifinished" ? "полуфабрикат" : "готовая продукция");
+          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${escapeHtml(wmsLocationLabel(row.location_id))} · ${itemLabel}<br>Доступно ${escapeHtml(available)}, резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>`;
         }).join("") : itemEmpty("В адресном складе пока нет остатков.")}</div>
       `;
     }
@@ -7965,19 +8036,34 @@ MINIAPP_HTML = """<!doctype html>
     function renderWmsReceive() {
       const d = state.wmsDraft;
       const receiving = wmsReceivingStock();
+      const materials = wmsReceivingMaterials();
+      const materialDraft = state.wmsMaterialReceipt;
       const total = receiving.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
       const selectedProduct = receiving.find((row) => wmsProductKeysEqual(row.product_key, wmsProductKey(d)));
       mainButton.textContent = state.wmsData.loading ? "Обновляем…" : "Обновить приёмку";
       mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Зона приёмки</h2><p>Товар появляется здесь автоматически после завершения упаковки.</p></div><div class="date">${escapeHtml(total)} шт.</div></div>
+        <div class="screen-head"><div><h2>Зона приёмки</h2><p>Товар появляется здесь автоматически после завершения упаковки. Материалы принимаются вручную.</p></div><div class="date">${escapeHtml(total)} ед.</div></div>
         ${renderWmsDataNotice()}
         <div class="card field-card"><div class="task-note"><b>Как работать</b><br>Проверьте поступление, откройте «Размещение», отсканируйте ячейку, затем штрихкод товара и укажите количество.</div></div>
         <div class="section-title"><b>Ожидает размещения</b><span>${receiving.length} поз.</span></div>
         <div class="op-list">${receiving.length ? receiving.map((row, index) => {
           const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
-          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${row.product_key && row.product_key.item_type === "semifinished" ? "Полуфабрикат" : "Готовая продукция"} · доступно ${escapeHtml(available)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span>${state.data && state.data.is_admin ? `<button type="button" class="link-button" data-wms-receipt-product="${index}">штрихкод</button>` : ""}</div></div>`;
+          const isMaterial = row.product_key && row.product_key.item_type === "material";
+          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${isMaterial ? "Материал" : (row.product_key && row.product_key.item_type === "semifinished" ? "Полуфабрикат" : "Готовая продукция")} · доступно ${escapeHtml(available)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span>${isMaterial ? `<button type="button" class="link-button" data-wms-material-putaway="${materials.indexOf(row)}">Разместить</button>` : (state.data && state.data.is_admin ? `<button type="button" class="link-button" data-wms-receipt-product="${index}">штрихкод</button>` : "")}</div></div>`;
         }).join("") : itemEmpty("После завершения упаковки товар появится здесь автоматически.")}</div>
+        <div class="section-title"><b>Ручная приёмка материалов</b><span>без штрихкода</span></div>
+        <div class="card field-card">
+          <div class="task-note"><b>Материал принимается в зону приёмки.</b><br>После сохранения выберите его в списке и вручную укажите ячейку размещения.</div>
+          <div class="form-grid">
+            <div class="field"><label>Материал</label><input id="wmsMaterialName" value="${escapeHtml(materialDraft.name || "")}" placeholder="Ткань, дублерин…"></div>
+            <div class="field"><label>Цвет</label><input id="wmsMaterialColor" value="${escapeHtml(materialDraft.color || "")}" placeholder="Черный, бежевый…"></div>
+            <div class="field"><label>Единица</label><select id="wmsMaterialUnit"><option value="рул" selected>рулонов</option></select></div>
+            <div class="field"><label>Количество</label><input id="wmsMaterialQuantity" type="number" inputmode="numeric" min="1" step="1" value="${escapeHtml(materialDraft.quantity || "")}" placeholder="0"></div>
+            <div class="field full"><label>Комментарий</label><input id="wmsMaterialComment" value="${escapeHtml(materialDraft.comment || "")}" placeholder="Партия или примечание (необязательно)"></div>
+          </div>
+          <div class="button-row"><button class="small-button" data-wms-action="material_receive">Принять материал</button></div>
+        </div>
         ${state.data && state.data.is_admin && selectedProduct ? `
           <div class="card field-card">
             <label>Штрихкод выбранного товара</label>
@@ -7992,16 +8078,19 @@ MINIAPP_HTML = """<!doctype html>
     function renderWmsPutaway() {
       const d = state.wmsDraft;
       const locationCode = (d.toLocation || "").replace(/^LOC:/i, "").trim();
-      const productDetected = Boolean(d.productScanned && d.productName && d.productSize && d.productColor);
+      const materialMode = d.itemType === "material";
+      const materialRow = materialMode ? wmsReceivingMaterials().find((row) => wmsProductKeysEqual(row.product_key, wmsProductKey(d))) : null;
+      const materialAvailable = materialRow ? Math.max(0, Number(materialRow.quantity || 0) - Number(materialRow.reserved_quantity || 0)) : 0;
+      const productDetected = !materialMode && Boolean(d.productScanned && d.productName && d.productSize && d.productColor);
       mainButton.textContent = "Разместить";
       mainButton.disabled = false;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Размещение</h2><p>Сначала ячейка, затем товар и количество.</p></div></div>
-        ${renderWmsGuidedScanner("to_location", locationCode, productDetected, "Ячейка размещения")}
+        <div class="screen-head"><div><h2>Размещение</h2><p>${materialMode ? "Материал выбран из приёмки. Ячейку и количество введите вручную." : "Сначала ячейка, затем товар и количество."}</p></div></div>
+        ${materialMode ? `<div class="card field-card"><div class="task-note"><b>Материал</b><br>${escapeHtml(wmsProductLabel(wmsProductKey(d)))} · доступно в приёмке: ${escapeHtml(materialAvailable)} ${escapeHtml(d.materialUnit || "рул")}</div></div>` : renderWmsGuidedScanner("to_location", locationCode, productDetected, "Ячейка размещения")}
         <div class="card field-card">
           <label>Данные размещения</label>
           <div class="form-grid">
-            <div class="field full"><label>Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="Сначала отсканируйте ячейку" readonly></div>
+            <div class="field full"><label>Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="${materialMode ? "Например Z1-S1-P1-1" : "Сначала отсканируйте ячейку"}" ${materialMode ? "" : "readonly"}></div>
             ${productDetected ? `<div class="field full"><label>Товар</label><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(wmsProductKey(d)))}</b><span>Штрихкод распознан</span></div><span class="status-chip">✓</span></div></div>` : ""}
             ${state.data && state.data.is_admin ? `<div class="field full"><label>Код новой ячейки</label><input id="wmsNewLocation" placeholder="Например A-03-02"></div><div class="field"><label>Зона новой ячейки</label><select id="wmsLocationZone">
               <option value="STORAGE" ${d.locationZone === "STORAGE" ? "selected" : ""}>Хранение</option>
@@ -8010,7 +8099,7 @@ MINIAPP_HTML = """<!doctype html>
               <option value="RECEIVE" ${d.locationZone === "RECEIVE" ? "selected" : ""}>Приёмка</option>
               <option value="QUARANTINE" ${d.locationZone === "QUARANTINE" ? "selected" : ""}>Карантин</option>
             </select></div><div class="field"><label>Название ячейки</label><input id="wmsLocationName" value="${escapeHtml(d.locationName || "")}" placeholder="Стеллаж A"></div>` : ""}
-            ${productDetected ? `<div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>` : ""}
+            ${materialMode || productDetected ? `<div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" ${materialMode ? `max="${escapeHtml(materialAvailable)}"` : ""} step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>` : ""}
           </div>
         </div>
         ${renderWmsLocationContents(locationCode)}
@@ -8690,6 +8779,31 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const wmsMaterialPutaway = event.target.closest("[data-wms-material-putaway]");
+      if (wmsMaterialPutaway) {
+        const materialRows = wmsReceivingMaterials();
+        const row = materialRows[Number(wmsMaterialPutaway.dataset.wmsMaterialPutaway || -1)];
+        if (row && row.product_key) {
+          const product = row.product_key;
+          state.wmsDraft.itemType = "material";
+          state.wmsDraft.productName = product.product_name || "";
+          state.wmsDraft.productSize = product.product_size || "—";
+          state.wmsDraft.productColor = product.product_color || "";
+          state.wmsDraft.stageName = product.stage_name || "Материал";
+          state.wmsDraft.readyForPosition = product.ready_for_position || "Склад";
+          state.wmsDraft.materialUnit = row.unit || "рул";
+          state.wmsDraft.quantity = "";
+          state.wmsDraft.toLocation = "";
+          state.wmsDraft.toLocationScanned = false;
+          state.wmsDraft.productScanned = true;
+          state.workspace = "warehouse";
+          state.screen = "warehouse";
+          state.wmsView = "putaway";
+          render();
+        }
+        return;
+      }
+
       const wmsCellAction = event.target.closest("[data-wms-cell-action]");
       if (wmsCellAction) {
         const code = String(wmsCellAction.dataset.wmsCellCode || "").trim();
@@ -8760,6 +8874,7 @@ MINIAPP_HTML = """<!doctype html>
         const action = wmsAction.dataset.wmsAction;
         if (action === "refresh") refreshWmsWorkspace();
         else if (action === "receive") wmsReceive();
+        else if (action === "material_receive") wmsMaterialReceive();
         else if (action === "putaway") wmsPutaway();
         else if (action === "transfer") wmsTransfer();
         else if (action === "pick") wmsPick();
@@ -9109,6 +9224,9 @@ MINIAPP_HTML = """<!doctype html>
       if (event.target.closest("#fabricReceiptMaterial, #fabricReceiptColor, #fabricReceiptQuantity")) {
         syncWarehouseReceiptForm();
       }
+      if (event.target.closest("#wmsMaterialName, #wmsMaterialColor, #wmsMaterialUnit, #wmsMaterialQuantity, #wmsMaterialComment")) {
+        syncWmsMaterialReceiptForm();
+      }
 
       const routeTask = getDisplayedRouteTask();
 
@@ -9188,6 +9306,10 @@ MINIAPP_HTML = """<!doctype html>
 
       if (event.target.closest("#fabricReceiptMaterial") || event.target.closest("#fabricReceiptColor") || event.target.closest("#fabricReceiptQuantity")) {
         syncWarehouseReceiptForm();
+        return;
+      }
+      if (event.target.closest("#wmsMaterialName, #wmsMaterialColor, #wmsMaterialUnit, #wmsMaterialQuantity, #wmsMaterialComment")) {
+        syncWmsMaterialReceiptForm();
         return;
       }
 

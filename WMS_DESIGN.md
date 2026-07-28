@@ -59,6 +59,8 @@ warehouse_stock │                 wms_containers
 Товар идентифицируется бизнес-ключом **`ProductKey`** — кортеж из 6 полей
 (унаследован от SQLite `warehouse_stock`):
 `(item_type, product_name, product_size, product_color, stage_name, ready_for_position)`.
+Для материалов используется `item_type=material`, размер-заглушка `—`,
+этап `Материал`, единица хранения сейчас — рулоны.
 Физический остаток дополнительно разделяется по `item_state` и `location_id`.
 
 ### Штрихкоды
@@ -87,6 +89,7 @@ warehouse_stock │                 wms_containers
 | Операция | Функция | Движение |
 |---|---|---|
 | Приёмка от производства | `receive_from_production()` | `production_receipt`, stock+ в RECEIVE |
+| Ручная приёмка материала | `receive_material()` | `material_receipt`, stock+ в RECEIVE |
 | Размещение | `putaway()` | RECEIVE → ячейка хранения |
 | Перемещение | `transfer()` | ячейка → ячейка |
 | Подбор / выдача | `pick()` | ячейка → отобрано |

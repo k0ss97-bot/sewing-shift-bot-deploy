@@ -49,6 +49,10 @@ class ProductKeyTests(unittest.TestCase):
         pk = ProductKey("semifinished", "A", "S", "C", "ST", "P")
         self.assertEqual(len(pk.to_dict()), 6)
 
+    def test_material_roundtrip(self):
+        pk = ProductKey("material", "Ткань", "—", "Бежевый", "Материал", "Склад")
+        self.assertEqual(ProductKey.from_dict(pk.to_dict()), pk)
+
 
 class BarcodeClassifyTests(unittest.TestCase):
     def test_location(self):
@@ -111,6 +115,29 @@ class WmsContractTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(body["ok"])
         self.assertEqual(receive.call_args.kwargs["employee_id"], 17)
+
+    def test_material_receive_api_builds_material_key_and_uses_authenticated_employee(self):
+        from wms import api
+
+        with patch("wms.api.ops.receive_material") as receive:
+            receive.return_value = OperationResult(ok=True, movement_id=12)
+            status, body = api.handle(
+                "/api/wms/material-receive",
+                {
+                    "material_name": "Ткань",
+                    "product_color": "Бежевый",
+                    "quantity": 3,
+                    "unit": "рул",
+                    "request_key": "test:material:receipt",
+                },
+                employee_id=19,
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(receive.call_args.args[0].item_type, "material")
+        self.assertEqual(receive.call_args.args[0].product_name, "Ткань")
+        self.assertEqual(receive.call_args.kwargs["employee_id"], 19)
+        self.assertEqual(receive.call_args.kwargs["unit"], "рул")
 
     def test_pick_api_uses_authenticated_employee_and_location(self):
         from wms import api
