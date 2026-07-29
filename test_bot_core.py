@@ -914,8 +914,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
             {
                 "task_id": task_id,
                 "quantities": {
-                    "80|Бежевый": "4",
-                    "92|Бежевый": "6",
+                    "Шорты|80|Бежевый": "4",
+                    "Шорты|92|Бежевый": "6",
                 },
             },
         )

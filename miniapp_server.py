@@ -2678,9 +2678,17 @@ def submit_production_contours_for_telegram(telegram_id: int, payload: dict):
 
     for color in task["colors"]:
         for product_size in task["sizes"]:
-            key = f"{product_size}|{color}"
+            # New clients qualify the matrix key with the product name so a
+            # shared lay can report different quantities for each product.
+            # Keep the old key as a fallback for already-open forms and older
+            # mobile clients.
+            key = f"{task['product_name']}|{product_size}|{color}"
+            legacy_key = f"{product_size}|{color}"
             try:
-                quantity = int(raw_quantities.get(key) or 0)
+                raw_quantity = raw_quantities.get(key)
+                if raw_quantity is None:
+                    raw_quantity = raw_quantities.get(legacy_key)
+                quantity = int(raw_quantity or 0)
             except (TypeError, ValueError):
                 return {"ok": False, "message": "Количество должно быть целым числом."}
 

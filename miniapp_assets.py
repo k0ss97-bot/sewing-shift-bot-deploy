@@ -6489,8 +6489,8 @@ MINIAPP_HTML = """<!doctype html>
       if (current.stage === "contours") {
         const rows = (current.colors || []).map((color) => (current.sizes || []).map((size) => `
           <div class="card cutting-input-row">
-            <div><b>${escapeHtml(size)} · ${escapeHtml(color)}</b><span>Количество деталей</span></div>
-            <input data-contour-key="${escapeHtml(`${size}|${color}`)}" type="number" inputmode="numeric" min="0" step="1" placeholder="0" value="${escapeHtml((draft.quantities || {})[`${size}|${color}`] || "")}">
+            <div><b>${escapeHtml(current.product_name || "Изделие")} · ${escapeHtml(size)} · ${escapeHtml(color)}</b><span>Количество деталей именно этого изделия</span></div>
+            <input data-contour-key="${escapeHtml(`${current.product_name || "Изделие"}|${size}|${color}`)}" type="number" inputmode="numeric" min="0" step="1" placeholder="шт для этого изделия" value="${escapeHtml((draft.quantities || {})[`${current.product_name || "Изделие"}|${size}|${color}`] ?? (draft.quantities || {})[`${size}|${color}`] ?? "")}" aria-label="Количество ${escapeHtml(current.product_name || "изделия")} размер ${escapeHtml(size)} цвет ${escapeHtml(color)}">
           </div>
         `).join("")).join("");
 
