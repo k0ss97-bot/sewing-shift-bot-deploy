@@ -3323,6 +3323,14 @@ MINIAPP_HTML = """<!doctype html>
       body.web-mode.warehouse-workspace .bottom-nav {
         border-color: rgba(25,89,243,.16);
       }
+
+      body.web-mode.marketplace-workspace .bottom-nav::before {
+        content: "УПРАВЛЕНИЕ МАРКЕТПЛЕЙСАМИ";
+      }
+
+      body.web-mode.marketplace-workspace .bottom-nav {
+        border-color: rgba(25,89,243,.16);
+      }
     }
 
     /* ── Searchable select ── */
@@ -4566,7 +4574,6 @@ MINIAPP_HTML = """<!doctype html>
           { id: "shift", label: "Главная", icon: "⌂" },
           { id: "analytics", label: "Аналитика", icon: "▥" },
           { id: "orders", label: "Заказы", icon: "▣" },
-          { id: "marketplaces", label: "Маркетплейсы", icon: "◎" },
           { id: "admin", label: "Админ", icon: "◎" },
         ];
       }
@@ -4594,6 +4601,21 @@ MINIAPP_HTML = """<!doctype html>
         bottomNav.style.setProperty("--nav-count", wmsItems.length);
         bottomNav.innerHTML = wmsItems.map((item) => `
           <button class="nav-btn ${(item.id === "more" ? warehouseMoreViews.has(state.wmsView) : state.wmsView === item.id) ? "active" : ""}" data-wms-view="${item.id}">
+            <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
+          </button>
+        `).join("");
+        return;
+      }
+
+      if (state.workspace === "marketplaces") {
+        const marketplaceItems = [
+          {id: "overview", label: "Маркетплейсы", icon: "◎"},
+          {id: "orders", label: "Отгрузки", icon: "↑"},
+          {id: "sync", label: "Синхронизация", icon: "↻"},
+        ];
+        bottomNav.style.setProperty("--nav-count", marketplaceItems.length);
+        bottomNav.innerHTML = marketplaceItems.map((item) => `
+          <button class="nav-btn ${state.marketplaceView === item.id ? "active" : ""}" data-marketplace-view="${item.id}">
             <span class="nav-ico">${item.icon}</span><span>${item.label}</span>
           </button>
         `).join("");
