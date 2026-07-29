@@ -870,6 +870,31 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ],
         )
 
+    def test_cardigan_layout_creates_dublerin_and_dubling_from_cut_quantity(self):
+        expected = []
+        for product_name, size in (("Кардиган", "98"), ("Кардиган детский и подростковый", "134")):
+            task = self.database.create_production_task(product_name, [size], ["Черный"], None)
+            batch_id = self.database.create_cutting_contour_batch_for_task(
+                task["id"], product_name, 1, 1, 1, {(size, "Черный"): 5}
+            )
+            self.assertTrue(self.database.add_cutting_layout(batch_id, 1, 1, 1, {"Черный": 2}))
+            dublerin_index = self.route_step_index(product_name, "Кардиганы — дублерин 25 мм", "Упаковщик")
+            dubling_index = self.route_step_index(product_name, next(
+                step["operation"]
+                for step in importlib.import_module("route_maps").PRODUCT_ROUTE_MAPS[product_name]
+                if step["operation"].endswith("Дублирование")
+            ), "Упаковщик")
+            expected.extend([
+                (product_name, dublerin_index, f"{size} (100 см)", "Черный", 10),
+                (product_name, dubling_index, size, "Черный", 10),
+            ])
+
+        actual = sorted(
+            (batch["product_name"], batch["route_step_index"], batch["product_size"], batch["product_color"], batch["quantity"])
+            for batch in self.database.get_active_route_batches()
+        )
+        self.assertEqual(actual, sorted(expected))
+
     def test_miniapp_production_creates_task_and_submits_contours(self):
         os.environ["ADMIN_IDS"] = "9001"
         miniapp_server = importlib.import_module("miniapp_server")
