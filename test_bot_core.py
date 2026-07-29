@@ -273,6 +273,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("idx_route_batch_inputs_stock", indexes)
         self.assertIn("idx_cutting_batches_task", indexes)
         self.assertIn("idx_cutting_batch_matrix_batch", indexes)
+        self.assertIn("idx_cutting_batch_arbitrary_batch", indexes)
         self.assertIn("idx_fabric_stock_color", indexes)
         self.assertIn("idx_production_tasks_status", indexes)
         self.assertIn("idx_production_task_items_task", indexes)
@@ -831,6 +832,76 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ],
         )
         conn.close()
+
+    def test_arbitrary_cutting_operation_adds_layers_to_common_output(self):
+        task = self.database.create_production_task(
+            "Шорты",
+            ["80", "92"],
+            ["Бежевый", "Синий"],
+            None,
+        )
+        operations = self.database.get_active_operations("Раскройщик", "Шорты", "Раскрой изделий")
+        operation_ids = {row[2]: row[0] for row in operations}
+        self.assertIn("Нанесение контуров лекал на ткань", operation_ids)
+        self.assertIn("Формирование настила", operation_ids)
+        self.assertIn("Произвольная операция", operation_ids)
+
+        batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"],
+            "Шорты",
+            1,
+            1,
+            operation_ids["Нанесение контуров лекал на ткань"],
+            {
+                ("80", "Бежевый"): 2,
+                ("92", "Бежевый"): 3,
+                ("80", "Синий"): 1,
+            },
+        )
+
+        self.assertTrue(self.database.add_cutting_layout(
+            batch_id,
+            1,
+            1,
+            operation_ids["Формирование настила"],
+            {"Бежевый": 3, "Синий": 2},
+            arbitrary_operations=[{
+                "product_size": "92",
+                "product_color": "Бежевый",
+                "layers": 5,
+                "parts_count": 2,
+            }],
+            arbitrary_operation_id=operation_ids["Произвольная операция"],
+        ))
+
+        arbitrary_rows = self.database.get_cutting_batch_arbitrary_operations(batch_id)
+        self.assertEqual(len(arbitrary_rows), 1)
+        self.assertEqual(
+            {key: arbitrary_rows[0][key] for key in ("product_size", "product_color", "layers", "parts_count", "quantity")},
+            {"product_size": "92", "product_color": "Бежевый", "layers": 5, "parts_count": 2, "quantity": 5},
+        )
+        self.assertEqual(
+            self.database.get_cutting_batch_result_rows(batch_id),
+            [("80", "Бежевый", 6), ("80", "Синий", 2), ("92", "Бежевый", 14)],
+        )
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        arbitrary_shift_quantity = conn.execute(
+            "SELECT quantity FROM shift_operations WHERE operation_id = ?",
+            (operation_ids["Произвольная операция"],),
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(arbitrary_shift_quantity, 5)
+
+        self.assertTrue(self.database.update_cutting_batch_progress(batch_id, 1, 1, 1, 100))
+        self.assertTrue(self.database.mark_cutting_batch_formed(batch_id, 1, 1, 1))
+        conn = sqlite3.connect(self.database.DB_NAME)
+        formed = conn.execute(
+            "SELECT formed_quantity FROM production_task_items WHERE task_id = ? AND product_size = '92' AND product_color = 'Бежевый'",
+            (task["id"],),
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(formed, 14)
 
     def test_layout_creates_dublerin_and_dubling_preparation_tasks(self):
         task = self.database.create_production_task(

@@ -15,9 +15,12 @@ CUTTING_PRODUCTS = [
     "Юбка-шорты",
 ]
 
+CUTTING_ARBITRARY_OPERATION = "Произвольная операция"
+
 CUTTING_OPERATIONS = [
     "Нанесение контуров лекал на ткань",
     "Формирование настила",
+    CUTTING_ARBITRARY_OPERATION,
     "Раскрой",
     "Формирование готового кроя",
 ]

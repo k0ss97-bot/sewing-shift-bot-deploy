@@ -54,6 +54,7 @@ from database import (
     get_cutting_batches_for_formation,
     get_cutting_batches_for_layout,
     get_cutting_batch_contour_matrix,
+    get_cutting_batch_arbitrary_operations,
     get_cutting_batch_result_rows,
     get_cutting_batch_owner,
     get_employee_by_telegram_id,
@@ -127,7 +128,7 @@ from database import (
     update_operation_field,
     upsert_web_push_subscription,
 )
-from catalog import PREPARATION_OPERATION_OPTIONS, format_color_label
+from catalog import CUTTING_ARBITRARY_OPERATION, PREPARATION_OPERATION_OPTIONS, format_color_label
 from miniapp_auth import parse_auth_token
 from miniapp_assets import MINIAPP_HTML
 from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
@@ -1913,6 +1914,7 @@ def cutting_stage_task_to_dict(stage: str, row, viewer_employee=None):
             "employee": employee_name or "",
             "sizes_text": sizes_text or "",
             "contour_matrix": get_cutting_batch_contour_matrix(batch_id),
+            "arbitrary_operations": get_cutting_batch_arbitrary_operations(batch_id),
             "colors": colors,
             "color_labels": [format_color_label(color) for color in colors],
             "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
@@ -2878,7 +2880,53 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
         if not color_layers:
             return {"ok": False, "message": "Укажите слои хотя бы по одному цвету."}
 
-        if not add_cutting_layout(batch_id, shift[0], employee[0], operation["id"], color_layers):
+        raw_arbitrary_operations = payload.get("arbitrary_operations") or []
+        if not isinstance(raw_arbitrary_operations, list):
+            return {"ok": False, "message": "Произвольные операции переданы в неверном формате."}
+
+        arbitrary_operations = []
+        allowed_sizes = set(get_product_sizes(batch_row[1]))
+        for item in raw_arbitrary_operations:
+            if not isinstance(item, dict):
+                return {"ok": False, "message": "Проверьте произвольные операции."}
+            product_size = str(item.get("product_size") or "").strip()
+            product_color = str(item.get("product_color") or "").strip()
+            try:
+                layers = int(item.get("layers") or 0)
+                parts_count = int(item.get("parts_count") or 0)
+            except (TypeError, ValueError):
+                return {"ok": False, "message": "Слои и количество частей должны быть целыми числами."}
+
+            if product_size not in allowed_sizes:
+                return {"ok": False, "message": f"Размер {product_size or 'не указан'} недоступен для изделия."}
+            if product_color not in color_layers:
+                return {"ok": False, "message": "Цвет произвольной операции должен входить в этот настил."}
+            if layers <= 0:
+                return {"ok": False, "message": "Количество слоёв произвольной операции должно быть больше нуля."}
+            if parts_count not in {2, 3, 4}:
+                return {"ok": False, "message": "Укажите деление настила на 2, 3 или 4 части."}
+            arbitrary_operations.append({
+                "product_size": product_size,
+                "product_color": product_color,
+                "layers": layers,
+                "parts_count": parts_count,
+            })
+
+        arbitrary_operation = None
+        if arbitrary_operations:
+            arbitrary_operation = get_cutting_operation(batch_row[1], CUTTING_ARBITRARY_OPERATION)
+            if arbitrary_operation is None:
+                return {"ok": False, "message": "Для изделия не найдена операция произвольного кроя."}
+
+        if not add_cutting_layout(
+            batch_id,
+            shift[0],
+            employee[0],
+            operation["id"],
+            color_layers,
+            arbitrary_operations=arbitrary_operations,
+            arbitrary_operation_id=arbitrary_operation["id"] if arbitrary_operation else None,
+        ):
             return {"ok": False, "message": "Настил уже недоступен."}
 
         added_count = len(parse_cutting_sizes_text(batch_row[5])) * len(color_layers)
@@ -2889,12 +2937,12 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
             "Выполнил формирование настила из миниаппа",
             "cutting_batch",
             batch_id,
-            f"Цветов: {len(color_layers)}, строк отчёта: {added_count}",
+            f"Цветов: {len(color_layers)}, строк отчёта: {added_count}; произвольных операций: {len(arbitrary_operations)}",
         )
 
         return {
             "ok": True,
-            "message": "Настил сохранён. Следующий этап: раскрой.",
+            "message": "Настил сохранён. Произвольные операции добавлены в общий выпуск. Следующий этап: раскрой.",
             "production": get_production_state_for_telegram(telegram_id),
         }
 

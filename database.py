@@ -1907,6 +1907,20 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cutting_batch_arbitrary_operations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            product_size TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            layers INTEGER NOT NULL,
+            parts_count INTEGER NOT NULL DEFAULT 2,
+            quantity INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (batch_id) REFERENCES cutting_batches (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS fabric_stock (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             material_name TEXT NOT NULL,
@@ -2461,6 +2475,7 @@ def init_db():
         "WHERE production_task_id IS NOT NULL AND status != 'cancelled'"
     )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batch_matrix_batch ON cutting_batch_matrix (batch_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batch_arbitrary_batch ON cutting_batch_arbitrary_operations (batch_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_date ON feedback_entries (feedback_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_employee_date ON feedback_entries (employee_id, feedback_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batches_status_step ON route_batches (status, route_step_index)")
@@ -6446,6 +6461,34 @@ def get_active_cutting_batch_product_names():
     return rows
 
 
+def get_cutting_batch_arbitrary_operations(batch_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, product_size, product_color, layers, parts_count, quantity, created_at
+        FROM cutting_batch_arbitrary_operations
+        WHERE batch_id = ?
+        ORDER BY id ASC
+        """,
+        (batch_id,),
+    )
+    rows = [
+        {
+            "id": row[0],
+            "product_size": row[1],
+            "product_color": row[2],
+            "layers": row[3],
+            "parts_count": row[4],
+            "quantity": row[5],
+            "created_at": row[6],
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return rows
+
+
 def get_preparation_folder(operation_name: str):
     return PREPARATION_OPERATION_OPTIONS.get(operation_name, {}).get("folder", "")
 
@@ -6539,28 +6582,53 @@ def _get_cutting_batch_result_rows(cursor, batch_id: int):
             (batch_id,),
         )
 
-        return cursor.fetchall()
+        result_rows = cursor.fetchall()
+    else:
+        cursor.execute(
+            """
+            SELECT
+                cutting_batch_sizes.product_size,
+                cutting_batch_colors.product_color,
+                cutting_batch_sizes.quantity * cutting_batch_colors.layers AS quantity
+            FROM cutting_batch_sizes
+            CROSS JOIN cutting_batch_colors
+            WHERE cutting_batch_sizes.batch_id = ?
+              AND cutting_batch_colors.batch_id = ?
+              AND cutting_batch_sizes.quantity > 0
+              AND cutting_batch_colors.layers > 0
+            ORDER BY
+                CAST(cutting_batch_sizes.product_size AS INTEGER),
+                cutting_batch_colors.product_color
+            """,
+            (batch_id, batch_id),
+        )
+        result_rows = cursor.fetchall()
 
     cursor.execute(
         """
-        SELECT
-            cutting_batch_sizes.product_size,
-            cutting_batch_colors.product_color,
-            cutting_batch_sizes.quantity * cutting_batch_colors.layers AS quantity
-        FROM cutting_batch_sizes
-        CROSS JOIN cutting_batch_colors
-        WHERE cutting_batch_sizes.batch_id = ?
-          AND cutting_batch_colors.batch_id = ?
-          AND cutting_batch_sizes.quantity > 0
-          AND cutting_batch_colors.layers > 0
-        ORDER BY
-            CAST(cutting_batch_sizes.product_size AS INTEGER),
-            cutting_batch_colors.product_color
+        SELECT product_size, product_color, quantity
+        FROM cutting_batch_arbitrary_operations
+        WHERE batch_id = ?
+          AND quantity > 0
+        ORDER BY CAST(product_size AS INTEGER), product_color, id
         """,
-        (batch_id, batch_id),
+        (batch_id,),
     )
 
-    return cursor.fetchall()
+    arbitrary_rows = cursor.fetchall()
+    totals = {}
+    for product_size, product_color, quantity in [*result_rows, *arbitrary_rows]:
+        key = (product_size, product_color)
+        totals[key] = totals.get(key, 0) + int(quantity or 0)
+
+    return [
+        (product_size, product_color, quantity)
+        for (product_size, product_color), quantity in sorted(
+            totals.items(),
+            key=lambda row: (int(row[0][0]) if str(row[0][0]).isdigit() else 9999, str(row[0][0]), str(row[0][1])),
+        )
+        if quantity > 0
+    ]
 
 
 def _create_preparation_route_batches_for_layout(cursor, batch_id: int, employee_id: int | None, now_text: str):
@@ -6680,12 +6748,40 @@ def add_cutting_layout(
     employee_id: int,
     operation_id: int,
     color_layers: dict[str, int],
+    arbitrary_operations: list[dict] | None = None,
+    arbitrary_operation_id: int | None = None,
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now()
     now_text = now.isoformat()
+    arbitrary_operations = arbitrary_operations or []
+
+    normalized_arbitrary_operations = []
+    for item in arbitrary_operations:
+        product_size = str(item.get("product_size") or "").strip()
+        product_color = str(item.get("product_color") or "").strip()
+        try:
+            layers = int(item.get("layers") or 0)
+            parts_count = int(item.get("parts_count") or 0)
+        except (TypeError, ValueError):
+            conn.close()
+            return False
+        if not product_size or not product_color or layers <= 0 or parts_count not in {2, 3, 4}:
+            conn.close()
+            return False
+        if product_color not in color_layers:
+            conn.close()
+            return False
+        normalized_arbitrary_operations.append({
+            "product_size": product_size,
+            "product_color": product_color,
+            "layers": layers,
+            "parts_count": parts_count,
+            # One complete item is produced per layer of the divided lay.
+            "quantity": layers,
+        })
 
     cursor.execute(
         """
@@ -6748,6 +6844,56 @@ def add_cutting_layout(
         ],
     )
 
+    if normalized_arbitrary_operations:
+        cursor.executemany(
+            """
+            INSERT INTO cutting_batch_arbitrary_operations (
+                batch_id, product_size, product_color, layers, parts_count, quantity, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    batch_id,
+                    item["product_size"],
+                    item["product_color"],
+                    item["layers"],
+                    item["parts_count"],
+                    item["quantity"],
+                    now_text,
+                )
+                for item in normalized_arbitrary_operations
+            ],
+        )
+
+        if arbitrary_operation_id:
+            cursor.executemany(
+                """
+                INSERT INTO shift_operations (
+                    shift_id, employee_id, operation_id,
+                    product_size, product_color, quantity, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shift_id, operation_id, product_size, product_color)
+                DO UPDATE SET
+                    employee_id = excluded.employee_id,
+                    quantity = shift_operations.quantity + excluded.quantity,
+                    updated_at = excluded.updated_at
+                """,
+                [
+                    (
+                        shift_id,
+                        employee_id,
+                        arbitrary_operation_id,
+                        item["product_size"],
+                        item["product_color"],
+                        item["quantity"],
+                        now_text,
+                        now_text,
+                    )
+                    for item in normalized_arbitrary_operations
+                ],
+            )
+
     preparation_batch_ids = _create_preparation_route_batches_for_layout(cursor, batch_id, employee_id, now_text)
 
     cursor.execute("SELECT production_task_id FROM cutting_batches WHERE id = ?", (batch_id,))
@@ -6774,7 +6920,11 @@ def add_cutting_layout(
         shift_id=shift_id,
         operation_name="Формирование настила",
         quantity=sum(int(value or 0) for value in color_layers.values()),
-        details={"color_layers": color_layers, "preparation_batch_ids": preparation_batch_ids},
+        details={
+            "color_layers": color_layers,
+            "arbitrary_operations": normalized_arbitrary_operations,
+            "preparation_batch_ids": preparation_batch_ids,
+        },
         request_key=f"cutting-batch:{batch_id}:layout",
         created_at=now_text,
     )
@@ -7027,40 +7177,7 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
         task_due_date = task_row[5] if task_row and task_row[5] else ""
 
         if task_id is not None:
-            cursor.execute("SELECT COUNT(*) FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
-            has_matrix = cursor.fetchone()[0] > 0
-
-            if has_matrix:
-                cursor.execute(
-                    """
-                    SELECT
-                        cutting_batch_matrix.product_size,
-                        cutting_batch_matrix.product_color,
-                        cutting_batch_matrix.quantity * cutting_batch_colors.layers AS quantity
-                    FROM cutting_batch_matrix
-                    JOIN cutting_batch_colors
-                        ON cutting_batch_colors.batch_id = cutting_batch_matrix.batch_id
-                       AND cutting_batch_colors.product_color = cutting_batch_matrix.product_color
-                    WHERE cutting_batch_matrix.batch_id = ?
-                    """,
-                    (batch_id,),
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT
-                        cutting_batch_sizes.product_size,
-                        cutting_batch_colors.product_color,
-                        cutting_batch_sizes.quantity * cutting_batch_colors.layers AS quantity
-                    FROM cutting_batch_sizes
-                    CROSS JOIN cutting_batch_colors
-                    WHERE cutting_batch_sizes.batch_id = ?
-                      AND cutting_batch_colors.batch_id = ?
-                    """,
-                    (batch_id, batch_id),
-                )
-
-            result_rows = cursor.fetchall()
+            result_rows = _get_cutting_batch_result_rows(cursor, batch_id)
             ready_for_position = get_first_production_position(batch_product_name)
             stage_name = "Раскроенные"
 

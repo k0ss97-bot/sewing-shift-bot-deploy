@@ -1910,6 +1910,86 @@ MINIAPP_HTML = """<!doctype html>
       box-shadow: 0 0 0 3px rgba(25,89,243,.12);
     }
 
+    .arbitrary-operation-card {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid rgba(25,89,243,.16);
+      border-radius: 18px;
+      background: rgba(244,248,255,.78);
+    }
+
+    .arbitrary-operation-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .arbitrary-operation-head b {
+      display: block;
+      font-size: 15px;
+      line-height: 1.25;
+    }
+
+    .arbitrary-operation-head span,
+    .arbitrary-operation-help {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .arbitrary-operation-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, .8fr) minmax(0, .8fr) auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .arbitrary-operation-grid label {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .arbitrary-operation-grid select,
+    .arbitrary-operation-grid input {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid rgba(109,124,158,.16);
+      border-radius: 12px;
+      background: rgba(255,255,255,.9);
+      padding: 0 9px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      outline: none;
+    }
+
+    .arbitrary-operation-grid select:focus,
+    .arbitrary-operation-grid input:focus {
+      border-color: rgba(25,89,243,.48);
+      box-shadow: 0 0 0 3px rgba(25,89,243,.12);
+    }
+
+    .arbitrary-operation-remove {
+      min-height: 42px;
+      padding: 0 11px;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 680px) {
+      .arbitrary-operation-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .arbitrary-operation-grid .arbitrary-operation-remove {
+        width: 100%;
+      }
+    }
+
     .stock-pick-qty input:focus {
       border-color: rgba(25,89,243,.48);
       box-shadow: 0 0 0 3px rgba(25,89,243,.12);
@@ -6451,6 +6531,30 @@ MINIAPP_HTML = """<!doctype html>
       return formatCuttingSizeQuantities(fallback || "Размеры задания");
     }
 
+    function cuttingArbitrarySizes(current) {
+      const sizes = Array.isArray(current && current.sizes) ? current.sizes : [];
+      if (sizes.length) return sizes;
+      const matrix = Array.isArray(current && current.contour_matrix) ? current.contour_matrix : [];
+      return [...new Set(matrix.map((row) => String(row.size || "").trim()).filter(Boolean))];
+    }
+
+    function readCuttingArbitraryRowsFromDom() {
+      return [...document.querySelectorAll("[data-arbitrary-row]")].map((row) => ({
+        product_size: row.querySelector("[data-arbitrary-size]")?.value || "",
+        product_color: row.querySelector("[data-arbitrary-color]")?.value || "",
+        parts_count: row.querySelector("[data-arbitrary-parts]")?.value || "2",
+        layers: row.querySelector("[data-arbitrary-layers]")?.value || "",
+      }));
+    }
+
+    function syncCuttingArbitraryDraftFromDom(current) {
+      const key = cuttingDraftKey(current);
+      if (!key || !current || current.stage !== "layout") return;
+      const draft = state.cuttingStageDrafts[key] || {};
+      draft.arbitrary_operations = readCuttingArbitraryRowsFromDom();
+      state.cuttingStageDrafts[key] = draft;
+    }
+
     async function addFabricReceipt() {
       if (!state.data || !state.data.is_admin) return;
       const actionKey = "add-fabric-receipt";
@@ -7033,11 +7137,41 @@ MINIAPP_HTML = """<!doctype html>
             <input data-layer-color="${escapeHtml(color)}" type="number" inputmode="numeric" min="0" step="1" placeholder="слои" value="${escapeHtml((draft.color_layers || {})[color] || "")}">
           </div>
         `).join("");
+        const arbitrarySizes = cuttingArbitrarySizes(current);
+        const arbitraryRows = Array.isArray(draft.arbitrary_operations) ? draft.arbitrary_operations : [];
+        const arbitraryMarkup = arbitraryRows.map((item, index) => `
+          <div class="arbitrary-operation-grid" data-arbitrary-row="${index}">
+            <label>Размер
+              <select data-arbitrary-size>
+                ${arbitrarySizes.map((size) => `<option value="${escapeHtml(size)}" ${String(item.product_size || arbitrarySizes[0] || "") === String(size) ? "selected" : ""}>${escapeHtml(size)}</option>`).join("")}
+              </select>
+            </label>
+            <label>Цвет настила
+              <select data-arbitrary-color>
+                ${(current.colors || []).map((color) => `<option value="${escapeHtml(color)}" ${String(item.product_color || current.colors[0] || "") === String(color) ? "selected" : ""}>${escapeHtml(color)}</option>`).join("")}
+              </select>
+            </label>
+            <label>Частей
+              <select data-arbitrary-parts>
+                ${[2, 3, 4].map((parts) => `<option value="${parts}" ${Number(item.parts_count || 2) === parts ? "selected" : ""}>${parts}</option>`).join("")}
+              </select>
+            </label>
+            <label>Слоёв
+              <input data-arbitrary-layers type="number" inputmode="numeric" min="1" step="1" placeholder="например, 5" value="${escapeHtml(item.layers || "")}">
+            </label>
+            <button type="button" class="small-button secondary arbitrary-operation-remove" data-arbitrary-remove="${index}">Удалить</button>
+          </div>
+        `).join("");
 
         return `
           <div class="card order-detail">
             <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">2 этап</span></div>
             <div class="op-list">${rows || itemEmpty("Нет цветов для настила.")}</div>
+            <div class="arbitrary-operation-card">
+              <div class="arbitrary-operation-head"><div><b>Произвольная операция</b><span>Отдельно в отчёте, но количество добавится к общему выпуску.</span></div><button type="button" class="small-button secondary" data-arbitrary-add>Добавить строку</button></div>
+              <div class="arbitrary-operation-help">Выберите размер и цвет этого настила, укажите деление настила на 2, 3 или 4 части и фактическое число слоёв. Количество изделий система посчитает как число слоёв.</div>
+              ${arbitraryMarkup || `<div class="empty">Если остатка настила нет, оставьте раздел пустым.</div>`}
+            </div>
             ${current.is_assigned_to_me ? `<div class="button-row"><button type="button" class="small-button secondary" data-cutting-action="release" data-cutting-task-id="${escapeHtml(current.id)}">Отменить и вернуть задание</button></div>` : ""}
           </div>
           ${renderTaskFabricRolls(current)}
@@ -7108,6 +7242,7 @@ MINIAPP_HTML = """<!doctype html>
         document.querySelectorAll("[data-layer-color]").forEach((input) => {
           payload.color_layers[input.dataset.layerColor] = input.value;
         });
+        payload.arbitrary_operations = readCuttingArbitraryRowsFromDom();
       }
 
       if (current.stage === "cutting") {
@@ -9574,6 +9709,39 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const cuttingTaskForArbitrary = getMyCuttingTasks()[state.selectedCuttingReportTask] || getMyCuttingTasks()[0];
+      const arbitraryAdd = event.target.closest("[data-arbitrary-add]");
+      if (arbitraryAdd && cuttingTaskForArbitrary && cuttingTaskForArbitrary.stage === "layout") {
+        syncCuttingArbitraryDraftFromDom(cuttingTaskForArbitrary);
+        const key = cuttingDraftKey(cuttingTaskForArbitrary);
+        const draft = state.cuttingStageDrafts[key] || {};
+        const sizes = cuttingArbitrarySizes(cuttingTaskForArbitrary);
+        draft.arbitrary_operations = Array.isArray(draft.arbitrary_operations) ? draft.arbitrary_operations : [];
+        draft.arbitrary_operations.push({
+          product_size: sizes[0] || "",
+          product_color: (cuttingTaskForArbitrary.colors || [])[0] || "",
+          parts_count: 2,
+          layers: "",
+        });
+        state.cuttingStageDrafts[key] = draft;
+        persistUiState();
+        render();
+        return;
+      }
+
+      const arbitraryRemove = event.target.closest("[data-arbitrary-remove]");
+      if (arbitraryRemove && cuttingTaskForArbitrary && cuttingTaskForArbitrary.stage === "layout") {
+        syncCuttingArbitraryDraftFromDom(cuttingTaskForArbitrary);
+        const key = cuttingDraftKey(cuttingTaskForArbitrary);
+        const draft = state.cuttingStageDrafts[key] || {};
+        const index = Number(arbitraryRemove.dataset.arbitraryRemove || -1);
+        if (Array.isArray(draft.arbitrary_operations) && index >= 0) draft.arbitrary_operations.splice(index, 1);
+        state.cuttingStageDrafts[key] = draft;
+        persistUiState();
+        render();
+        return;
+      }
+
       const taskAction = event.target.closest("[data-task-action]");
       if (taskAction) {
         const action = taskAction.dataset.taskAction;
@@ -10308,7 +10476,7 @@ MINIAPP_HTML = """<!doctype html>
       const cuttingTasks = getMyCuttingTasks();
       const cuttingTask = cuttingTasks[state.selectedCuttingReportTask] || cuttingTasks[0];
 
-      if (cuttingTask && (event.target.matches("[data-contour-key]") || event.target.matches("[data-layer-color]") || event.target.id === "cuttingProgress")) {
+      if (cuttingTask && (event.target.matches("[data-contour-key]") || event.target.matches("[data-layer-color]") || event.target.matches("[data-arbitrary-size], [data-arbitrary-color], [data-arbitrary-parts], [data-arbitrary-layers]") || event.target.id === "cuttingProgress")) {
         const key = cuttingDraftKey(cuttingTask);
         const draft = state.cuttingStageDrafts[key] || {};
         if (event.target.dataset.contourKey) {
@@ -10318,6 +10486,9 @@ MINIAPP_HTML = """<!doctype html>
         if (event.target.dataset.layerColor) {
           draft.color_layers = draft.color_layers || {};
           draft.color_layers[event.target.dataset.layerColor] = event.target.value;
+        }
+        if (event.target.closest("[data-arbitrary-row]")) {
+          draft.arbitrary_operations = readCuttingArbitraryRowsFromDom();
         }
         if (event.target.id === "cuttingProgress") draft.progress = event.target.value;
         state.cuttingStageDrafts[key] = draft;
