@@ -3734,6 +3734,7 @@ MINIAPP_HTML = """<!doctype html>
       "selectedCuttingReportTask",
       "selectedCuttingReportTaskKey",
       "orderCategory",
+      "adminTaskStatus",
       "orderMode",
       "orderProduct",
       "orderProducts",
@@ -3810,6 +3811,7 @@ MINIAPP_HTML = """<!doctype html>
       selectedCuttingReportTask: 0,
       selectedCuttingReportTaskKey: "",
       orderCategory: "",
+      adminTaskStatus: "all",
       reportSection: "work",
       orderMode: "list",
       orderProduct: "",
@@ -4426,12 +4428,32 @@ MINIAPP_HTML = """<!doctype html>
       return "";
     }
 
+    function adminTaskStatusForRow(task) {
+      if (!task) return "unknown";
+      if (task.task_kind === "route") return task.work_state || (task.assigned_employee_id ? "in_work" : "free");
+      if (task.assigned_employee_id) return "in_work";
+      return task.status === "active" ? "free" : (task.status || "unknown");
+    }
+
+    function adminTaskStatusLabel(status) {
+      return {
+        all: "Все",
+        free: "Свободные",
+        in_work: "В работе",
+        paused: "Пауза",
+        blocked: "Заблокировано",
+      }[status] || status;
+    }
+
     function visibleOrderRows() {
       const rows = currentOrderRows();
 
       if (state.data && state.data.is_admin) {
         ensureOrderCategory();
-        return rows.filter((task) => adminOrderCategoryForTask(task) === state.orderCategory);
+        return rows.filter((task) => {
+          if (adminOrderCategoryForTask(task) !== state.orderCategory) return false;
+          return state.adminTaskStatus === "all" || adminTaskStatusForRow(task) === state.adminTaskStatus;
+        });
       }
 
       const categories = employeeOrderCategories();
@@ -7425,6 +7447,9 @@ MINIAPP_HTML = """<!doctype html>
       const statusClass = task.work_status === "free" ? "gray" : (task.work_status === "done" ? "" : "warn");
       const deleteButton = state.data && state.data.is_admin ? `
         <div class="order-card-actions">
+          ${task.work_state === "in_work" ? `<button type="button" class="small-button secondary" data-task-action="pause" data-task-id="${escapeHtml(task.id)}">Пауза</button><button type="button" class="small-button danger" data-task-action="block" data-task-id="${escapeHtml(task.id)}">Блокировать</button>` : ""}
+          ${["paused", "blocked"].includes(task.work_state) ? `<button type="button" class="small-button" data-task-action="resume" data-task-id="${escapeHtml(task.id)}">Продолжить</button>` : ""}
+          ${task.work_state && task.work_state !== "free" ? `<button type="button" class="small-button secondary" data-task-action="release" data-task-id="${escapeHtml(task.id)}">Освободить</button>` : ""}
           <button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind || "route")}" data-task-id="${escapeHtml(task.id)}">Удалить</button>
         </div>
       ` : "";
@@ -7485,6 +7510,7 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>${state.data && state.data.is_admin ? "Заказы в работе" : "Задания"}</h2><p>${state.data && state.data.is_admin ? "Создание и контроль заданий." : "Выберите свободное задание, чтобы взять его в работу."}</p></div><div class="date">${allTasks.length} активных</div></div>
         <div class="scan-row"><button type="button" class="small-button secondary" data-task-action="scan">Сканировать QR</button></div>
+        ${state.data && state.data.is_admin ? `<div class="tabs admin-task-status-tabs" role="tablist" aria-label="Статус заданий">${["all", "free", "in_work", "paused", "blocked"].map((status) => `<button type="button" class="tab ${state.adminTaskStatus === status ? "active" : ""}" data-admin-task-status="${status}" role="tab" aria-selected="${state.adminTaskStatus === status ? "true" : "false"}">${adminTaskStatusLabel(status)}</button>`).join("")}</div>` : ""}
         ${state.data && state.data.is_admin ? `<div class="card shift-card" data-order-action="new"><div><b>Создать задание</b><span>Раскрой и следующие операции из складского остатка.</span></div><span class="status-chip">+</span></div>` : ""}
         <div class="op-list">
           ${allTasks.length ? `
@@ -8934,6 +8960,16 @@ MINIAPP_HTML = """<!doctype html>
           updateRouteTaskState(task, action);
           return;
         }
+      }
+
+      const adminTaskStatus = event.target.closest("[data-admin-task-status]");
+      if (adminTaskStatus && state.data && state.data.is_admin) {
+        state.adminTaskStatus = adminTaskStatus.dataset.adminTaskStatus || "all";
+        state.selectedOrder = 0;
+        state.selectedOrderKey = "";
+        persistUiState();
+        render();
+        return;
       }
 
       const orderAction = event.target.closest("[data-order-action]");

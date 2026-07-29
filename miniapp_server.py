@@ -5289,6 +5289,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/production/create-order-task",
                 "/api/production/delete-order-task",
                 "/api/production/start-cutting-task",
+                "/api/production/release-cutting-task",
                 "/api/production/submit-contours",
                 "/api/production/submit-cutting-stage",
                 "/api/routes/create-batch",
