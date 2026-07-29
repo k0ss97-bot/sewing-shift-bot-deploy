@@ -8513,8 +8513,9 @@ MINIAPP_HTML = """<!doctype html>
           <div class="section-title"><b>Товары группы</b><span>${groupRows.length}</span></div>
           <div class="op-list">${groupRows.length ? groupRows.map((row) => `
             <button type="button" class="card report-row marketplace-clickable marketplace-product-card" data-marketplace-product-id="${escapeHtml(row.id)}">
-              <div class="product-title"><b>${escapeHtml(row.name || row.offer_id || row.sku || "Товар")}</b><span class="status-chip">›</span></div>
-              <div class="marketplace-product-meta"><span>Артикул: ${escapeHtml(row.offer_id || "—")}</span><span>SKU: ${escapeHtml(row.sku || "—")}</span><span>${escapeHtml(row.size || "Размер не указан")} · ${escapeHtml(row.color || "Цвет не указан")}</span></div>
+              <div class="product-title"><b>${escapeHtml(row.name || "Товар Ozon")}</b><span class="status-chip">›</span></div>
+              <div class="marketplace-product-meta"><span>Название: ${escapeHtml(row.name || "—")}</span><span>Артикул: ${escapeHtml(row.offer_id || "—")}</span><span>SKU: ${escapeHtml(row.sku || "—")}</span></div>
+              <div class="marketplace-product-meta"><span>${escapeHtml(row.size || "Размер не указан")} · ${escapeHtml(row.color || "Цвет не указан")}</span></div>
               <div class="marketplace-product-meta"><span>Остаток: ${escapeHtml(row.available == null ? "—" : row.available)} шт.</span><span>Цена: ${marketplaceMoney(row.current_price)}</span></div>
             </button>`).join("") : itemEmpty("В этой группе пока нет товаров.")}</div>
         `;

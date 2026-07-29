@@ -35,6 +35,10 @@ class MarketplaceTests(unittest.TestCase):
             marketplaces.product_group_for("Кардиган детский", "CARD-122-BLUE"),
             ("cardigans-children", "Кардиганы детские"),
         )
+        self.assertEqual(
+            marketplaces.product_group_for("Кбшв-", "кбшв-", "1073896068"),
+            ("other", "Прочие товары"),
+        )
 
     def test_dashboard_without_credentials_does_not_call_network(self):
         with tempfile.TemporaryDirectory() as directory:

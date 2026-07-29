@@ -212,9 +212,24 @@ def product_group_for(*values: object) -> tuple[str, str]:
     if "брюк" in text:
         return "trousers", "Брюки"
 
-    fallback = re.sub(r"\b(?:\d{2,3}|черн\w*|син\w*|бел\w*|красн\w*|син\w*)\b", " ", text)
+    # Не превращаем техническую связку «название / offer_id / SKU» в имя
+    # группы.  У Ozon встречаются карточки, где название равно артикулу
+    # (например, «Кбшв-»); раньше в таком случае в интерфейс попадала вся
+    # склеенная строка с SKU и каждая позиция становилась отдельной группой.
+    name = _text(values[0]) if values else ""
+    name_normalized = re.sub(r"[^a-zа-я0-9]+", "", name.lower().replace("ё", "е"))
+    other_normalized = {
+        re.sub(r"[^a-zа-я0-9]+", "", _text(value).lower().replace("ё", "е"))
+        for value in values[1:]
+        if _text(value)
+    }
+    fallback = re.sub(
+        r"\b(?:\d{2,3}|черн\w*|син\w*|бел\w*|красн\w*|зелен\w*|сер\w*)\b",
+        " ",
+        name.lower().replace("ё", "е"),
+    )
     fallback = " ".join(fallback.split())
-    if fallback:
+    if fallback and name_normalized and name_normalized not in other_normalized:
         slug = re.sub(r"[^a-zа-я0-9]+", "-", fallback).strip("-")[:48] or "other"
         return f"other-{slug}", fallback.capitalize()
     return "other", "Прочие товары"
