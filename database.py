@@ -201,10 +201,21 @@ def production_task_from_row(row):
     return row_to_dict(PRODUCTION_TASK_COLUMNS, row)
 
 
+ROUTE_PRODUCT_ALIASES = {
+    # Keep tasks created before the cardigan split on a valid current route.
+    "Кардиган детский": "Кардиган детский и подростковый",
+    "Кардиган подростковый": "Кардиган детский и подростковый",
+}
+
+
+def canonical_route_product_name(product_name: str):
+    return ROUTE_PRODUCT_ALIASES.get(str(product_name or "").strip(), str(product_name or "").strip())
+
+
 def current_route_snapshot(product_name: str):
     from route_maps import PRODUCT_ROUTE_MAPS
 
-    steps = PRODUCT_ROUTE_MAPS.get(product_name, [])
+    steps = PRODUCT_ROUTE_MAPS.get(canonical_route_product_name(product_name), [])
     return json.dumps(steps, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
@@ -224,7 +235,7 @@ def route_steps_from_snapshot(snapshot: str, product_name: str = ""):
     if product_name:
         from route_maps import PRODUCT_ROUTE_MAPS
 
-        return PRODUCT_ROUTE_MAPS.get(product_name, [])
+        return PRODUCT_ROUTE_MAPS.get(canonical_route_product_name(product_name), [])
 
     return []
 

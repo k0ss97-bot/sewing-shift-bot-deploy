@@ -2285,6 +2285,13 @@ class IsolatedDatabaseTest(unittest.TestCase):
         finally:
             route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][step_index]["operation"] = saved_operation
 
+    def test_legacy_cardigan_product_alias_uses_current_dublerin_route(self):
+        snapshot = self.database.current_route_snapshot("Кардиган детский")
+        steps = self.database.route_steps_from_snapshot(snapshot, "Кардиган детский")
+        operations = [step["operation"] for step in steps]
+        self.assertIn("Кардиганы — дублерин 25 мм", operations)
+        self.assertIn("Кардиган детский и подростковый — Дублирование", operations)
+
     def test_route_task_pause_block_and_handover_persist(self):
         self.database.create_employee(1302, "Тест Передача", "Швея")
         employee = self.database.get_employee_by_telegram_id(1302)
