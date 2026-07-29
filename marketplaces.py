@@ -208,7 +208,10 @@ class OzonClient:
                 raw = response.read(8 * 1024 * 1024)
         except HTTPError as error:
             detail = error.read(2048).decode("utf-8", "replace")
-            raise MarketplaceError(f"Ozon API HTTP {error.code}: {detail[:500]}", code="api_error") from error
+            raise MarketplaceError(
+                f"Ozon API {path} HTTP {error.code}: {detail[:500]}",
+                code="api_error",
+            ) from error
         except URLError as error:
             raise MarketplaceError(f"Ozon API недоступен: {error.reason}", code="network_error") from error
         try:
@@ -219,6 +222,36 @@ class OzonClient:
             raise MarketplaceError("Ozon API вернул неожиданный формат ответа.", code="invalid_response")
         return data
 
+    @staticmethod
+    def _response_nodes(response: dict):
+        stack = [response]
+        while stack:
+            node = stack.pop(0)
+            if not isinstance(node, dict):
+                continue
+            yield node
+            for key in ("result", "data"):
+                child = node.get(key)
+                if isinstance(child, dict):
+                    stack.append(child)
+
+    @classmethod
+    def _response_items(cls, response: dict) -> list[dict]:
+        for node in cls._response_nodes(response):
+            for key in ("items", "products", "postings"):
+                value = node.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+        return []
+
+    @classmethod
+    def _response_cursor(cls, response: dict) -> str:
+        for node in cls._response_nodes(response):
+            value = _text(node.get("cursor") or node.get("last_id"))
+            if value:
+                return value
+        return ""
+
     def _paged(self, path: str, *, limit: int = 1000, max_pages: int = 20) -> list[dict]:
         rows: list[dict] = []
         cursor = ""
@@ -228,29 +261,32 @@ class OzonClient:
                 payload["cursor"] = cursor
                 payload["last_id"] = cursor
             response = self.post_readonly(path, payload)
-            items = response.get("items") or response.get("result") or response.get("products") or []
-            if isinstance(items, dict):
-                items = items.get("items") or []
-            if not isinstance(items, list):
-                break
-            rows.extend(item for item in items if isinstance(item, dict))
-            next_cursor = _text(response.get("cursor") or response.get("last_id"))
+            items = self._response_items(response)
+            rows.extend(items)
+            next_cursor = self._response_cursor(response)
             if not next_cursor or next_cursor == cursor or len(items) < limit:
                 break
             cursor = next_cursor
         return rows
 
+    def _paged_with_fallback(self, paths: tuple[str, ...]) -> list[dict]:
+        last_error: MarketplaceError | None = None
+        for path in paths:
+            try:
+                return self._paged(path)
+            except MarketplaceError as error:
+                last_error = error
+        assert last_error is not None
+        raise last_error
+
     def products(self) -> list[dict]:
-        try:
-            return self._paged("/v3/product/info/list")
-        except MarketplaceError:
-            return self._paged("/v3/product/list")
+        return self._paged_with_fallback(("/v3/product/list", "/v2/product/list"))
 
     def prices(self) -> list[dict]:
-        return self._paged("/v5/product/info/prices")
+        return self._paged_with_fallback(("/v5/product/info/prices", "/v4/product/info/prices"))
 
     def stocks(self) -> list[dict]:
-        return self._paged("/v3/product/info/stocks")
+        return self._paged_with_fallback(("/v4/product/info/stocks", "/v3/product/info/stocks"))
 
     def fbs_postings(self) -> list[dict]:
         now = datetime.now(timezone.utc)
@@ -266,8 +302,7 @@ class OzonClient:
                 "with": {"analytics_data": True, "financial_data": True},
             },
         )
-        items = response.get("result") or response.get("items") or []
-        return items if isinstance(items, list) else []
+        return self._response_items(response)
 
 
 def _account(conn: sqlite3.Connection, marketplace: str, account_name: str, seller_id: str = "") -> int:
