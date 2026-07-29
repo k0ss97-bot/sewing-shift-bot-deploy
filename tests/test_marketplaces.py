@@ -22,6 +22,20 @@ class FakeOzonClient:
 
 
 class MarketplaceTests(unittest.TestCase):
+    def test_product_group_uses_article_and_name_without_variant_split(self):
+        self.assertEqual(
+            marketplaces.product_group_for("Брюки со стрелками детские", "BR-122-СИНИЕ"),
+            ("trousers-arrows", "Брюки со стрелками"),
+        )
+        self.assertEqual(
+            marketplaces.product_group_for("Кардиган подростковый", "CARD-146-BLACK"),
+            ("cardigans-teens", "Кардиганы подростковые"),
+        )
+        self.assertEqual(
+            marketplaces.product_group_for("Кардиган детский", "CARD-122-BLUE"),
+            ("cardigans-children", "Кардиганы детские"),
+        )
+
     def test_dashboard_without_credentials_does_not_call_network(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "bot.db")
@@ -53,6 +67,7 @@ class MarketplaceTests(unittest.TestCase):
             self.assertEqual(result["orders"], 1)
             self.assertEqual(payload["summary"]["products"], 1)
             self.assertEqual(payload["products_rows"][0]["available"], 6)
+            self.assertEqual(payload["product_groups"][0]["name"], "Кардиганы детские")
             self.assertEqual(payload["orders_rows"][0]["posting_number"], "700-1")
             with sqlite3.connect(path) as conn:
                 item_count = conn.execute("SELECT COUNT(*) FROM marketplace_order_items").fetchone()[0]

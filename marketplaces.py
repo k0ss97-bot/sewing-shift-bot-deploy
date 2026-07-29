@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError, URLError
@@ -158,6 +159,65 @@ def _int(value, default: int = 0) -> int:
 
 def _text(value) -> str:
     return "" if value is None else str(value).strip()
+
+
+def product_group_for(*values: object) -> tuple[str, str]:
+    """Return a stable product group from the article/name/variant text.
+
+    Ozon exposes product variants as separate rows.  Grouping therefore uses
+    both the seller article (offer id/SKU) and the human-readable name, while
+    ignoring size and colour differences.  Explicit product words win over
+    the size fallback so a renamed article remains in the expected family.
+    """
+
+    text = " ".join(_text(value) for value in values if _text(value)).lower().replace("ё", "е")
+    sizes = [int(value) for value in re.findall(r"(?<!\d)(?:8[6-9]|9\d|1[0-7]\d|18\d)(?!\d)", text)]
+
+    if "кардиган" in text:
+        has_child = any(token in text for token in ("детск", "дет.", "kids", "child"))
+        has_teen = any(token in text for token in ("подрост", "подр.", "teen", "junior"))
+        if has_child and not has_teen:
+            return "cardigans-children", "Кардиганы детские"
+        if has_teen and not has_child:
+            return "cardigans-teens", "Кардиганы подростковые"
+        if sizes and max(sizes) > 128 and min(sizes) >= 134:
+            return "cardigans-teens", "Кардиганы подростковые"
+        if sizes and max(sizes) <= 128:
+            return "cardigans-children", "Кардиганы детские"
+        return "cardigans", "Кардиганы"
+    if "брюк" in text and "стрел" in text:
+        return "trousers-arrows", "Брюки со стрелками"
+    if "джог" in text:
+        return "trousers-joggers", "Брюки-джоггеры"
+    if "ползун" in text:
+        return "trousers-pullers", "Брюки-ползунки"
+    if "легин" in text:
+        return "leggings", "Легинсы"
+    if "шорт" in text:
+        return "shorts", "Шорты"
+    if "футбол" in text:
+        return "tshirts", "Футболки"
+    if "свитшот" in text:
+        return "sweatshirts", "Свитшоты"
+    if "бомбер" in text:
+        return "bombers", "Бомберы"
+    if "юбк" in text and "шорт" in text:
+        return "skirt-shorts", "Юбка-шорты"
+    if "юбк" in text and "жакет" in text:
+        return "skirts-jackets", "Юбки и жакеты"
+    if "жакет" in text:
+        return "jackets", "Жакеты"
+    if "юбк" in text:
+        return "skirts", "Юбки"
+    if "брюк" in text:
+        return "trousers", "Брюки"
+
+    fallback = re.sub(r"\b(?:\d{2,3}|черн\w*|син\w*|бел\w*|красн\w*|син\w*)\b", " ", text)
+    fallback = " ".join(fallback.split())
+    if fallback:
+        slug = re.sub(r"[^a-zа-я0-9]+", "-", fallback).strip("-")[:48] or "other"
+        return f"other-{slug}", fallback.capitalize()
+    return "other", "Прочие товары"
 
 
 def _find_nested_text(value, keys: tuple[str, ...]) -> str:
@@ -392,14 +452,22 @@ def sync_ozon() -> dict:
         for item in products:
             product_ids[(_text(item.get("id") or item.get("product_id")), _text(item.get("offer_id")))] = _product(conn, account_id, item)
         for item in prices:
-            pid = _product(conn, account_id, item)
+            key = (_text(item.get("id") or item.get("product_id")), _text(item.get("offer_id")))
+            pid = product_ids.get(key)
+            if pid is None:
+                pid = _product(conn, account_id, item)
+                product_ids[key] = pid
             current, old, marketing, currency = _price_values(item)
             conn.execute(
                 "INSERT INTO marketplace_prices (product_id,current_price,old_price,marketing_price,currency,payload_json,observed_at) VALUES (?,?,?,?,?,?,?)",
                 (pid, current, old, marketing, currency, _json(item), _now()),
             )
         for item in stocks:
-            pid = _product(conn, account_id, item)
+            key = (_text(item.get("id") or item.get("product_id")), _text(item.get("offer_id")))
+            pid = product_ids.get(key)
+            if pid is None:
+                pid = _product(conn, account_id, item)
+                product_ids[key] = pid
             for stock in _stock_rows(item):
                 stock_qty = _int(stock.get("present") or stock.get("stock") or stock.get("available"))
                 reserved = _int(stock.get("reserved"))
@@ -465,11 +533,47 @@ def dashboard() -> dict:
            FROM marketplace_products p WHERE p.account_id=? ORDER BY p.updated_at DESC LIMIT 100""",
         (account_id,),
     ).fetchall()
+    products_payload = []
+    groups = {}
+    for row in product_rows:
+        item = dict(row)
+        group_key, group_name = product_group_for(
+            item.get("name"), item.get("offer_id"), item.get("sku"), item.get("barcode"),
+        )
+        item["group_key"] = group_key
+        item["group_name"] = group_name
+        products_payload.append(item)
+        group = groups.setdefault(
+            group_key,
+            {
+                "key": group_key,
+                "name": group_name,
+                "products": 0,
+                "articles": set(),
+                "available": 0,
+                "prices": [],
+            },
+        )
+        group["products"] += 1
+        article = _text(item.get("offer_id") or item.get("sku"))
+        if article:
+            group["articles"].add(article)
+        group["available"] += int(item.get("available") or 0)
+        if item.get("current_price") is not None:
+            group["prices"].append(float(item["current_price"]))
+    group_payload = []
+    for group in groups.values():
+        prices = group.pop("prices")
+        group["articles"] = len(group.pop("articles"))
+        group["price_min"] = min(prices) if prices else None
+        group["price_max"] = max(prices) if prices else None
+        group_payload.append(group)
+    group_payload.sort(key=lambda item: (item["name"].lower(), item["key"]))
     order_rows = conn.execute(
         "SELECT id,external_order_id,posting_number,status,shipment_date,updated_at FROM marketplace_orders WHERE account_id=? ORDER BY updated_at DESC LIMIT 100",
         (account_id,),
     ).fetchall()
-    recent = conn.execute("SELECT status,products_count,prices_count,stocks_count,orders_count,error_message,started_at,finished_at FROM marketplace_sync_runs WHERE account_id=? ORDER BY id DESC LIMIT 5", (account_id,)).fetchall()
+    recent = conn.execute("SELECT id,status,products_count,prices_count,stocks_count,orders_count,error_message,started_at,finished_at FROM marketplace_sync_runs WHERE account_id=? ORDER BY id DESC LIMIT 5", (account_id,)).fetchall()
     configured = bool(os.getenv("OZON_CLIENT_ID", "").strip() and os.getenv("OZON_API_KEY", "").strip())
     wildberries_configured = bool(os.getenv("WB_API_TOKEN", "").strip())
     conn.close()
@@ -483,7 +587,8 @@ def dashboard() -> dict:
         ],
         "accounts": [dict(row) for row in rows],
         "summary": {"products": products, "stock_rows": stocks, "open_orders": orders},
-        "products_rows": [dict(row) for row in product_rows],
+        "product_groups": group_payload,
+        "products_rows": products_payload,
         "orders_rows": [dict(row) for row in order_rows],
         "sync_runs": [dict(row) for row in recent],
     }

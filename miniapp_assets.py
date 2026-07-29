@@ -1388,6 +1388,135 @@ MINIAPP_HTML = """<!doctype html>
       transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
 
+    .marketplace-clickable {
+      width: 100%;
+      padding: 0;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      border-color: rgba(25,89,243,.24);
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    }
+
+    .marketplace-clickable.kpi {
+      padding: 13px;
+    }
+
+    .marketplace-clickable.field-card {
+      padding: 13px;
+    }
+
+    .marketplace-clickable:hover,
+    .marketplace-clickable:focus-visible {
+      transform: translateY(-1px);
+      border-color: rgba(25,89,243,.52);
+      background: rgba(255,255,255,.82);
+      box-shadow: 0 14px 28px rgba(25,89,243,.16);
+      outline: none;
+    }
+
+    .marketplace-clickable:active {
+      transform: translateY(0);
+      box-shadow: 0 7px 16px rgba(25,89,243,.12);
+    }
+
+    .marketplace-group-card {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .marketplace-group-card .group-title,
+    .marketplace-product-card .product-title {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .marketplace-group-card .group-title b,
+    .marketplace-product-card .product-title b {
+      font-size: 15px;
+      line-height: 1.2;
+    }
+
+    .marketplace-group-meta,
+    .marketplace-product-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .marketplace-detail-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 8px 0 12px;
+    }
+
+    .marketplace-detail-head .small-button {
+      flex: 0 0 auto;
+      min-width: 94px;
+      padding: 9px 12px;
+    }
+
+    .marketplace-detail-head > div {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .marketplace-detail-head h3 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.15;
+    }
+
+    .marketplace-detail-head p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .marketplace-detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .marketplace-detail-field {
+      min-width: 0;
+      padding: 11px 12px;
+      border: 1px solid rgba(109,124,158,.12);
+      border-radius: 14px;
+      background: rgba(255,255,255,.58);
+    }
+
+    .marketplace-detail-field span {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .marketplace-detail-field b {
+      display: block;
+      overflow-wrap: anywhere;
+      font-size: 13px;
+    }
+
+    @media (min-width: 900px) {
+      body.web-mode .marketplace-group-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+    }
+
     .card[data-go]:hover,
     .card[data-order-action]:hover,
     .card[data-admin-home-view]:hover,
@@ -3885,6 +4014,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
       wmsMaterialReceipt: {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""},
       marketplaceData: {loading: false, loaded: false, error: "", payload: null},
+      marketplaceDetail: null,
       ...persistedUiState,
       data: null,
     };
@@ -5191,6 +5321,7 @@ MINIAPP_HTML = """<!doctype html>
 
     async function refreshMarketplaces({silent = false} = {}) {
       if (!canAccessMarketplaces() || state.marketplaceData.loading) return;
+      state.marketplaceDetail = null;
       state.marketplaceData.loading = true;
       state.marketplaceData.error = "";
       if (!silent) render();
@@ -5209,6 +5340,7 @@ MINIAPP_HTML = """<!doctype html>
 
     async function syncMarketplaces() {
       if (!canAccessMarketplaces() || state.marketplaceData.loading) return;
+      state.marketplaceDetail = null;
       state.marketplaceData.loading = true;
       state.marketplaceData.error = "";
       render();
@@ -8337,6 +8469,105 @@ MINIAPP_HTML = """<!doctype html>
       return `${Number(value).toLocaleString("ru-RU", {maximumFractionDigits: 2})} ₽`;
     }
 
+    function marketplaceGroups(payload, products) {
+      const groups = Array.isArray(payload.product_groups) ? payload.product_groups : [];
+      if (groups.length) return groups;
+      const fallback = new Map();
+      products.forEach((row) => {
+        const key = row.group_key || "other";
+        const group = fallback.get(key) || {key, name: row.group_name || "Прочие товары", products: 0, articles: 0, available: 0, price_min: null, price_max: null};
+        group.products += 1;
+        group.available += Number(row.available || 0);
+        const price = row.current_price == null ? null : Number(row.current_price);
+        if (price != null && !Number.isNaN(price)) {
+          group.price_min = group.price_min == null ? price : Math.min(group.price_min, price);
+          group.price_max = group.price_max == null ? price : Math.max(group.price_max, price);
+        }
+        fallback.set(key, group);
+      });
+      return [...fallback.values()].sort((a, b) => String(a.name).localeCompare(String(b.name), "ru"));
+    }
+
+    function marketplaceDetailField(label, value) {
+      return `<div class="marketplace-detail-field"><span>${escapeHtml(label)}</span><b>${escapeHtml(value == null || value === "" ? "—" : value)}</b></div>`;
+    }
+
+    function marketplaceBackButton(label = "Назад") {
+      return `<button type="button" class="small-button secondary" data-marketplace-action="back">‹ ${escapeHtml(label)}</button>`;
+    }
+
+    function renderMarketplaceDetail(products, orders, runs) {
+      const detail = state.marketplaceDetail || {};
+      if (detail.kind === "group") {
+        const groupRows = products.filter((row) => String(row.group_key || "other") === String(detail.key));
+        const group = marketplaceGroups(state.marketplaceData.payload || {}, products).find((row) => String(row.key) === String(detail.key));
+        if (!group) return "";
+        return `
+          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К группам")}</div><div><h3>${escapeHtml(group.name)}</h3><p>${groupRows.length} позиций · ${group.articles || groupRows.length} артикулов · остаток ${escapeHtml(group.available || 0)} шт.</p></div></div>
+          <div class="marketplace-detail-grid">
+            ${marketplaceDetailField("Товаров в группе", group.products || groupRows.length)}
+            ${marketplaceDetailField("Артикулов", group.articles || groupRows.length)}
+            ${marketplaceDetailField("Цена от", marketplaceMoney(group.price_min))}
+            ${marketplaceDetailField("Цена до", marketplaceMoney(group.price_max))}
+          </div>
+          <div class="section-title"><b>Товары группы</b><span>${groupRows.length}</span></div>
+          <div class="op-list">${groupRows.length ? groupRows.map((row) => `
+            <button type="button" class="card report-row marketplace-clickable marketplace-product-card" data-marketplace-product-id="${escapeHtml(row.id)}">
+              <div class="product-title"><b>${escapeHtml(row.name || row.offer_id || row.sku || "Товар")}</b><span class="status-chip">›</span></div>
+              <div class="marketplace-product-meta"><span>Артикул: ${escapeHtml(row.offer_id || "—")}</span><span>SKU: ${escapeHtml(row.sku || "—")}</span><span>${escapeHtml(row.size || "Размер не указан")} · ${escapeHtml(row.color || "Цвет не указан")}</span></div>
+              <div class="marketplace-product-meta"><span>Остаток: ${escapeHtml(row.available == null ? "—" : row.available)} шт.</span><span>Цена: ${marketplaceMoney(row.current_price)}</span></div>
+            </button>`).join("") : itemEmpty("В этой группе пока нет товаров.")}</div>
+        `;
+      }
+      if (detail.kind === "product") {
+        const product = products.find((row) => String(row.id) === String(detail.id));
+        if (!product) return "";
+        return `
+          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К группе")}</div><div><h3>${escapeHtml(product.name || product.offer_id || product.sku || "Товар")}</h3><p>${escapeHtml(product.group_name || "Товар маркетплейса")}</p></div></div>
+          <div class="marketplace-detail-grid">
+            ${marketplaceDetailField("Артикул", product.offer_id)}
+            ${marketplaceDetailField("SKU", product.sku)}
+            ${marketplaceDetailField("Штрихкод", product.barcode)}
+            ${marketplaceDetailField("Размер", product.size)}
+            ${marketplaceDetailField("Цвет", product.color)}
+            ${marketplaceDetailField("Остаток", `${product.available == null ? "—" : product.available} шт.`)}
+            ${marketplaceDetailField("Текущая цена", marketplaceMoney(product.current_price))}
+            ${marketplaceDetailField("Старая цена", marketplaceMoney(product.old_price))}
+            ${marketplaceDetailField("Обновлено", product.updated_at)}
+          </div>
+        `;
+      }
+      if (detail.kind === "order") {
+        const order = orders.find((row) => String(row.id) === String(detail.id));
+        if (!order) return "";
+        return `
+          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К отгрузкам")}</div><div><h3>${escapeHtml(order.posting_number || order.external_order_id || "Отгрузка")}</h3><p>Отгрузка Ozon · подробности доступны только для чтения</p></div></div>
+          <div class="marketplace-detail-grid">
+            ${marketplaceDetailField("Номер заказа", order.external_order_id)}
+            ${marketplaceDetailField("Статус", order.status)}
+            ${marketplaceDetailField("Срок отгрузки", order.shipment_date)}
+            ${marketplaceDetailField("Обновлено", order.updated_at)}
+          </div>
+        `;
+      }
+      if (detail.kind === "sync") {
+        const run = runs.find((row) => String(row.id) === String(detail.id));
+        if (!run) return "";
+        return `
+          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К синхронизации")}</div><div><h3>Синхронизация ${escapeHtml(run.started_at || "")}</h3><p>Результат обращения к Ozon Seller API</p></div></div>
+          <div class="marketplace-detail-grid">
+            ${marketplaceDetailField("Статус", run.status)}
+            ${marketplaceDetailField("Товары", run.products_count)}
+            ${marketplaceDetailField("Цены", run.prices_count)}
+            ${marketplaceDetailField("Остатки", run.stocks_count)}
+            ${marketplaceDetailField("Отгрузки", run.orders_count)}
+            ${marketplaceDetailField("Ошибка", run.error_message)}
+          </div>
+        `;
+      }
+      return "";
+    }
+
     function renderMarketplaces() {
       if (!canAccessMarketplaces()) {
         mainButton.textContent = "Обновить";
@@ -8352,28 +8583,30 @@ MINIAPP_HTML = """<!doctype html>
       const accounts = payload.accounts || [];
       const account = accounts[0] || {};
       const wildberries = (payload.connectors || []).find((item) => item.marketplace === "wildberries") || {};
+      const groups = marketplaceGroups(payload, products);
       mainButton.textContent = state.marketplaceData.loading ? "Синхронизация…" : "Синхронизировать";
       mainButton.disabled = state.marketplaceData.loading;
       const errorNotice = state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
       const notConfigured = !payload.configured ? `<div class="card field-card"><div class="task-note"><b>Ozon пока не подключён</b><br>Добавьте на сервере <code>OZON_CLIENT_ID</code> и <code>OZON_API_KEY</code> в <code>/etc/sewing-web/sewing-web.env</code>, затем перезапустите сервис.</div></div>` : "";
-      const productsBlock = products.length ? `<div class="op-list">${products.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.name || row.offer_id || row.sku || "Товар")}</b><span>Артикул: ${escapeHtml(row.offer_id || "—")} · SKU: ${escapeHtml(row.sku || "—")}<br>${escapeHtml(row.size || "Размер не указан")} · ${escapeHtml(row.color || "Цвет не указан")}</span></div><div><span class="status-chip">${marketplaceMoney(row.current_price)}</span><small>Остаток: ${escapeHtml(row.available == null ? "—" : row.available)}</small></div></div>`).join("")}</div>` : itemEmpty("Товары ещё не загружены.");
-      const ordersBlock = orders.length ? `<div class="op-list">${orders.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>Заказ: ${escapeHtml(row.external_order_id)}<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")}</span></div>`).join("")}</div>` : itemEmpty("Отгрузки ещё не загружены.");
-      const runsBlock = runs.length ? `<div class="op-list">${runs.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.started_at || "Синхронизация")}</b><span>Товары ${escapeHtml(row.products_count)} · цены ${escapeHtml(row.prices_count)} · остатки ${escapeHtml(row.stocks_count)} · отгрузки ${escapeHtml(row.orders_count)}${row.error_message ? `<br>${escapeHtml(row.error_message)}` : ""}</span></div><span class="status-chip ${row.status === "success" ? "" : "warn"}">${escapeHtml(row.status)}</span></div>`).join("")}</div>` : itemEmpty("Синхронизаций ещё не было.");
+      const productsBlock = groups.length ? `<div class="op-list marketplace-group-grid">${groups.map((group) => `<button type="button" class="card marketplace-clickable marketplace-group-card" data-marketplace-group="${escapeHtml(group.key)}"><div class="group-title"><b>${escapeHtml(group.name)}</b><span class="status-chip">›</span></div><div class="marketplace-group-meta"><span>${escapeHtml(group.products || 0)} поз.</span><span>${escapeHtml(group.articles || group.products || 0)} артикулов</span><span>Остаток: ${escapeHtml(group.available || 0)} шт.</span></div><div class="marketplace-group-meta"><span>Цена: ${marketplaceMoney(group.price_min)}${group.price_max != null && group.price_max !== group.price_min ? ` — ${marketplaceMoney(group.price_max)}` : ""}</span><span>Открыть группу ›</span></div></button>`).join("")}</div>` : itemEmpty("Товары ещё не загружены.");
+      const ordersBlock = orders.length ? `<div class="op-list">${orders.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-order-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>Заказ: ${escapeHtml(row.external_order_id)}<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")} ›</span></button>`).join("")}</div>` : itemEmpty("Отгрузки ещё не загружены.");
+      const runsBlock = runs.length ? `<div class="op-list">${runs.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-sync-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.started_at || "Синхронизация")}</b><span>Товары ${escapeHtml(row.products_count)} · цены ${escapeHtml(row.prices_count)} · остатки ${escapeHtml(row.stocks_count)} · отгрузки ${escapeHtml(row.orders_count)}${row.error_message ? `<br>${escapeHtml(row.error_message)}` : ""}</span></div><span class="status-chip ${row.status === "success" ? "" : "warn"}">${escapeHtml(row.status)} ›</span></button>`).join("")}</div>` : itemEmpty("Синхронизаций ещё не было.");
       const content = state.marketplaceView === "orders" ? ordersBlock : state.marketplaceView === "sync" ? runsBlock : productsBlock;
       const title = state.marketplaceView === "orders" ? "Отгрузки" : state.marketplaceView === "sync" ? "Журнал синхронизации" : "Товары и остатки";
+      const detail = renderMarketplaceDetail(products, orders, runs);
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Управление маркетплейсами</h2><p>Только чтение данных Ozon и Wildberries. Изменения на площадки не отправляются.</p></div><div class="date">${escapeHtml(account.last_sync_at || "не синхронизировано")}</div></div>
         ${errorNotice}${notConfigured}
         <div class="kpi-grid">
-          <div class="card kpi"><div class="kpi-top"><span>Товары</span><span class="kpi-ico">▤</span></div><strong>${escapeHtml(summary.products || 0)}<small> поз.</small></strong><span>Каталог Ozon</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Остатки</span><span class="kpi-ico">▦</span></div><strong>${escapeHtml(summary.stock_rows || 0)}<small> строк</small></strong><span>FBO и FBS</span></div>
-          <div class="card kpi"><div class="kpi-top"><span>Отгрузки</span><span class="kpi-ico">↑</span></div><strong>${escapeHtml(summary.open_orders || 0)}<small> открыто</small></strong><span>Данные Ozon</span></div>
+          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="overview"><div class="kpi-top"><span>Товары</span><span class="kpi-ico">▤</span></div><strong>${escapeHtml(summary.products || 0)}<small> поз.</small></strong><span>Каталог Ozon · открыть группы ›</span></button>
+          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="overview"><div class="kpi-top"><span>Остатки</span><span class="kpi-ico">▦</span></div><strong>${escapeHtml(summary.stock_rows || 0)}<small> строк</small></strong><span>FBO и FBS · открыть товары ›</span></button>
+          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="orders"><div class="kpi-top"><span>Отгрузки</span><span class="kpi-ico">↑</span></div><strong>${escapeHtml(summary.open_orders || 0)}<small> открыто</small></strong><span>Данные Ozon · открыть список ›</span></button>
         </div>
-        <div class="card field-card"><div class="report-row"><div><b>Ozon · ${escapeHtml(account.account_name || "Основной аккаунт")}</b><span>${payload.configured ? "Подключён" : "Не настроен"} · режим только чтение</span></div><span class="status-chip ${payload.configured ? "" : "warn"}">${payload.configured ? "готов" : "ожидает ключи"}</span></div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="sync">Синхронизировать Ozon</button></div></div>
-        <div class="card field-card"><div class="report-row"><div><b>Wildberries</b><span>${wildberries.configured ? "Токен задан, адаптер готовится" : "Токен пока не задан"} · только чтение</span></div><span class="status-chip warn">следующий этап</span></div><div class="task-note">После получения WB-токена подключим каталог, остатки и заказы отдельным синхронизатором.</div></div>
+        <button type="button" class="card field-card marketplace-clickable" data-marketplace-view="sync"><div class="report-row"><div><b>Ozon · ${escapeHtml(account.account_name || "Основной аккаунт")}</b><span>${payload.configured ? "Подключён" : "Не настроен"} · режим только чтение</span></div><span class="status-chip ${payload.configured ? "" : "warn"}">${payload.configured ? "готов" : "ожидает ключи"} ›</span></div></button>
+        <div class="button-row"><button type="button" class="small-button" data-marketplace-action="sync">Синхронизировать Ozon</button></div>
+        <button type="button" class="card field-card marketplace-clickable" data-marketplace-view="sync"><div class="report-row"><div><b>Wildberries</b><span>${wildberries.configured ? "Токен задан, адаптер готовится" : "Токен пока не задан"} · только чтение</span></div><span class="status-chip warn">следующий этап ›</span></div><div class="task-note">После получения WB-токена подключим каталог, остатки и заказы отдельным синхронизатором.</div></button>
         <div class="tabs marketplace-tabs" role="tablist" aria-label="Маркетплейсы"><button type="button" class="tab ${state.marketplaceView === "overview" ? "active" : ""}" data-marketplace-view="overview">Товары и остатки</button><button type="button" class="tab ${state.marketplaceView === "orders" ? "active" : ""}" data-marketplace-view="orders">Отгрузки</button><button type="button" class="tab ${state.marketplaceView === "sync" ? "active" : ""}" data-marketplace-view="sync">Синхронизация</button></div>
-        <div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? orders.length : state.marketplaceView === "sync" ? runs.length : products.length}</span></div>
-        ${content}
+        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? orders.length : state.marketplaceView === "sync" ? runs.length : groups.length}</span></div>${content}`}
       `;
     }
 
@@ -9357,12 +9590,49 @@ MINIAPP_HTML = """<!doctype html>
       const marketplaceView = event.target.closest("[data-marketplace-view]");
       if (marketplaceView) {
         state.marketplaceView = marketplaceView.dataset.marketplaceView || "overview";
+        state.marketplaceDetail = null;
+        render();
+        return;
+      }
+
+      const marketplaceGroup = event.target.closest("[data-marketplace-group]");
+      if (marketplaceGroup) {
+        state.marketplaceView = "overview";
+        state.marketplaceDetail = {kind: "group", key: marketplaceGroup.dataset.marketplaceGroup || ""};
+        render();
+        return;
+      }
+
+      const marketplaceProduct = event.target.closest("[data-marketplace-product-id]");
+      if (marketplaceProduct) {
+        state.marketplaceDetail = {kind: "product", id: marketplaceProduct.dataset.marketplaceProductId || ""};
+        render();
+        return;
+      }
+
+      const marketplaceOrder = event.target.closest("[data-marketplace-order-id]");
+      if (marketplaceOrder) {
+        state.marketplaceView = "orders";
+        state.marketplaceDetail = {kind: "order", id: marketplaceOrder.dataset.marketplaceOrderId || ""};
+        render();
+        return;
+      }
+
+      const marketplaceSync = event.target.closest("[data-marketplace-sync-id]");
+      if (marketplaceSync) {
+        state.marketplaceView = "sync";
+        state.marketplaceDetail = {kind: "sync", id: marketplaceSync.dataset.marketplaceSyncId || ""};
         render();
         return;
       }
 
       const marketplaceAction = event.target.closest("[data-marketplace-action]");
       if (marketplaceAction) {
+        if (marketplaceAction.dataset.marketplaceAction === "back") {
+          state.marketplaceDetail = null;
+          render();
+          return;
+        }
         if (marketplaceAction.dataset.marketplaceAction === "refresh") refreshMarketplaces();
         if (marketplaceAction.dataset.marketplaceAction === "sync") syncMarketplaces();
         return;
