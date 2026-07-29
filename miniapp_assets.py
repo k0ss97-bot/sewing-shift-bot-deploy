@@ -9229,6 +9229,7 @@ MINIAPP_HTML = """<!doctype html>
       document.getElementById("roleLabel").textContent = roleLabel();
       const isWarehouseWorkspace = state.workspace === "warehouse";
       const isMarketplaceWorkspace = state.workspace === "marketplaces";
+      if (!isMarketplaceWorkspace) mainButton.hidden = false;
       document.body.classList.toggle("warehouse-workspace", isWarehouseWorkspace);
       document.body.classList.toggle("marketplace-workspace", isMarketplaceWorkspace);
       document.body.classList.toggle("has-wms-access", canAccessWms());
