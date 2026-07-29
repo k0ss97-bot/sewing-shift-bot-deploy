@@ -202,9 +202,10 @@ def production_task_from_row(row):
 
 
 ROUTE_PRODUCT_ALIASES = {
-    # Keep tasks created before the cardigan split on a valid current route.
-    "Кардиган детский": "Кардиган детский и подростковый",
-    "Кардиган подростковый": "Кардиган детский и подростковый",
+    # Keep tasks created before the cardigan merge on the single current route.
+    "Кардиган детский": "Кардиган",
+    "Кардиган подростковый": "Кардиган",
+    "Кардиган детский и подростковый": "Кардиган",
 }
 
 
@@ -1145,13 +1146,24 @@ def seed_production_operations(cursor):
         UPDATE operations
         SET is_active = 0
         WHERE position = 'Упаковщик'
-          AND name = 'Дублирование'
+          AND (name = 'Дублирование' OR name LIKE 'Кардиган детский и подростковый%')
           AND folder IN (
               'Кардиган',
               'Кардиган детский и подростковый',
               'Бомбер',
               'Жакет для девочек'
           )
+        """
+    )
+
+    # The cardigan nomenclature is now unified. Hide the obsolete split
+    # folder/operation so it cannot be selected for new tasks.
+    cursor.execute(
+        """
+        UPDATE operations
+        SET is_active = 0
+        WHERE folder = 'Кардиган детский и подростковый'
+           OR name LIKE 'Кардиган детский и подростковый%'
         """
     )
 

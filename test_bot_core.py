@@ -387,6 +387,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 "110 (100 см)",
                 "116 (100 см)",
                 "122 (100 см)",
+                "128 (100 см)",
                 "134 (100 см)",
                 "140 (100 см)",
                 "146 (100 см)",
@@ -943,7 +944,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
 
     def test_cardigan_layout_creates_dublerin_and_dubling_from_cut_quantity(self):
         expected = []
-        for product_name, size in (("Кардиган", "98"), ("Кардиган детский и подростковый", "134")):
+        for product_name, size in (("Кардиган", "98"), ("Кардиган", "134")):
             task = self.database.create_production_task(product_name, [size], ["Черный"], None)
             batch_id = self.database.create_cutting_contour_batch_for_task(
                 task["id"], product_name, 1, 1, 1, {(size, "Черный"): 5}
@@ -2315,7 +2316,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         steps = self.database.route_steps_from_snapshot(snapshot, "Кардиган детский")
         operations = [step["operation"] for step in steps]
         self.assertIn("Кардиганы — дублерин 25 мм", operations)
-        self.assertIn("Кардиган детский и подростковый — Дублирование", operations)
+        self.assertIn("Кардиган — Дублирование", operations)
 
     def test_route_task_pause_block_and_handover_persist(self):
         self.database.create_employee(1302, "Тест Передача", "Швея")
