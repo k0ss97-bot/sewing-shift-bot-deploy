@@ -20,10 +20,14 @@
 `/etc/sewing-web/sewing-web.env` задаются:
 
 ```text
-OZON_ACCOUNT_NAME=Основной Ozon
 OZON_CLIENT_ID=...
 OZON_API_KEY=...
+# необязательно: OZON_ACCOUNT_NAME=Основной Ozon
 ```
+
+Ozon Seller API требует два значения авторизации: `Client-Id` и `Api-Key`.
+`OZON_ACCOUNT_NAME` — только подпись аккаунта внутри нашего приложения и может
+быть пропущен.
 
 После изменения переменных перезапустить `sewing-web.service` и открыть раздел
 администратора. Пока ключи не заданы, экран показывает «ожидает ключи» и не
