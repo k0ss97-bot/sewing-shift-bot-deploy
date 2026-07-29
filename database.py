@@ -6367,6 +6367,50 @@ def get_cutting_batches_for_layout(product_name: str):
     return rows
 
 
+def get_cutting_batch_contour_matrix(batch_id: int):
+    """Return the exact contour quantities entered for each size and color.
+
+    ``cutting_batch_sizes`` is a legacy summary: it intentionally totals the
+    same size across all colors.  The layout screen must use the matrix table
+    so that a value entered for one size/color is never presented as a larger
+    cross-color total.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT product_size, product_color, quantity
+        FROM cutting_batch_matrix
+        WHERE batch_id = ?
+        ORDER BY CAST(product_size AS INTEGER), product_size, product_color
+        """,
+        (batch_id,),
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        # Legacy contour batches pre-date the matrix table. Keep them visible
+        # while making it explicit that the color dimension is unavailable.
+        cursor.execute(
+            """
+            SELECT product_size, '', quantity
+            FROM cutting_batch_sizes
+            WHERE batch_id = ?
+            ORDER BY CAST(product_size AS INTEGER), product_size
+            """,
+            (batch_id,),
+        )
+        rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "size": str(product_size or ""),
+            "color": str(product_color or ""),
+            "quantity": int(quantity or 0),
+        }
+        for product_size, product_color, quantity in rows
+    ]
+
+
 def get_active_cutting_batch_product_names():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -8736,6 +8780,60 @@ def assign_production_task(task_id: int, employee_id: int):
 
     conn.close()
     return get_production_task_by_id(task_id) if changed else None
+
+
+def release_production_task(task_id: int, employee_id: int, reason: str = ""):
+    """Return a cutting task taken by the current employee to the free pool."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            """
+            SELECT product_name, status, assigned_employee_id
+            FROM production_tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        )
+        task_row = cursor.fetchone()
+        if task_row is None or task_row[1] not in {"active", "contours_done", "in_cutting"}:
+            raise ValueError("task unavailable")
+        if task_row[2] != employee_id:
+            raise ValueError("not task owner")
+
+        cursor.execute(
+            """
+            UPDATE production_tasks
+            SET assigned_employee_id = NULL,
+                assigned_at = NULL,
+                updated_at = ?
+            WHERE id = ? AND assigned_employee_id = ?
+            """,
+            (now, task_id, employee_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("task changed")
+
+        _record_production_event(
+            cursor,
+            "task_released",
+            production_task_id=task_id,
+            actor_employee_id=employee_id,
+            details={"reason": (reason or "").strip()},
+            request_key=f"production-task:{task_id}:released:{employee_id}:{now}",
+            created_at=now,
+        )
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+
+    conn.close()
+    return get_production_task_by_id(task_id)
 
 
 def get_production_task_fabric_rolls(task_id: int):

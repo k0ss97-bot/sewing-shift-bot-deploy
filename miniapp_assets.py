@@ -4471,6 +4471,38 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function releaseCuttingTask(task) {
+      if (!task || !task.is_assigned_to_me) return;
+      const reason = window.prompt("Почему возвращаете задание?", "Нужно передать другому сотруднику") || "";
+      if (!reason.trim()) return;
+      const productionTaskId = task.production_task_id || task.source_id || task.id;
+      const actionKey = `release-cutting-task:${productionTaskId}`;
+      if (!beginAction(actionKey)) return;
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/production/release-cutting-task", {
+          task_id: productionTaskId,
+          reason: reason.trim(),
+        });
+        if (!data.ok) {
+          showToast("Задание", data.message || "Не удалось вернуть задание.");
+          mainButton.disabled = false;
+          return;
+        }
+        state.data.production = data.production || state.data.production;
+        state.selectedCuttingReportTask = 0;
+        state.selectedCuttingReportTaskKey = "";
+        state.reportSection = "work";
+        render();
+        showToast("Задание", data.message || "Задание возвращено в свободные.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось вернуть задание.");
+        mainButton.disabled = false;
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
     function shiftText() {
       const shift = state.data && state.data.shift;
       if (!shift) return "Смена не открыта";
@@ -5930,6 +5962,32 @@ MINIAPP_HTML = """<!doctype html>
       return key ? (state.cuttingStageDrafts[key] || {}) : {};
     }
 
+    function formatCuttingSizeQuantities(value) {
+      return String(value || "").split(",").map((item) => {
+        const parts = item.split(" - ");
+        if (parts.length < 2) return item.trim();
+        return `${parts[0].trim()} — ${parts.slice(1).join(" - ").trim()} шт`;
+      }).filter(Boolean).join(" · ");
+    }
+
+    function formatCuttingContourMatrix(matrix, color, fallback) {
+      const rows = Array.isArray(matrix)
+        ? matrix.filter((row) => !color || String(row.color || "") === String(color))
+        : [];
+      if (rows.length) {
+        return rows.map((row) => `${String(row.size || "").trim()} — ${Number(row.quantity || 0)} шт`).filter(Boolean).join(" · ");
+      }
+      return formatCuttingSizeQuantities(fallback || "Размеры задания");
+    }
+
+    function formatCuttingContourSummary(matrix, fallback) {
+      const rows = Array.isArray(matrix) ? matrix : [];
+      if (rows.length) {
+        return rows.map((row) => `${String(row.size || "").trim()} · ${String(row.color || "без цвета").trim()} — ${Number(row.quantity || 0)} шт`).filter(Boolean).join(" · ");
+      }
+      return formatCuttingSizeQuantities(fallback || "Размеры задания");
+    }
+
     async function addFabricReceipt() {
       if (!state.data || !state.data.is_admin) return;
       const actionKey = "add-fabric-receipt";
@@ -6498,6 +6556,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card order-detail">
             <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">1 этап</span></div>
             <div class="op-list">${rows || itemEmpty("Нет размеров или цветов.")}</div>
+            ${current.is_assigned_to_me ? `<div class="button-row"><button type="button" class="small-button secondary" data-cutting-action="release" data-cutting-task-id="${escapeHtml(current.id)}">Вернуть задание в свободные</button></div>` : ""}
           </div>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
@@ -6507,7 +6566,7 @@ MINIAPP_HTML = """<!doctype html>
       if (current.stage === "layout") {
         const rows = (current.colors || []).map((color) => `
           <div class="card cutting-input-row">
-            <div><b>${escapeHtml(color)}</b><span>${escapeHtml(current.sizes_text || "Размеры задания")}</span></div>
+            <div><b>${escapeHtml(color)}</b><span>Нанесено контуров: ${escapeHtml(formatCuttingContourMatrix(current.contour_matrix, color, current.sizes_text || "Размеры задания"))}</span></div>
             <input data-layer-color="${escapeHtml(color)}" type="number" inputmode="numeric" min="0" step="1" placeholder="слои" value="${escapeHtml((draft.color_layers || {})[color] || "")}">
           </div>
         `).join("");
@@ -7404,7 +7463,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
               <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${task.work_status === "free" ? "gray" : "warn"}">${escapeHtml(task.status_text || task.status)}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
-              <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
+              <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || (task.contour_matrix ? formatCuttingContourSummary(task.contour_matrix, task.sizes_text) : (task.sizes_text ? formatCuttingSizeQuantities(task.sizes_text) : task.colors_text || "-")))}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
               ${state.data && state.data.is_admin ? `<div class="order-card-actions"><button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button></div>` : ""}
             </div>
           `).join("")}
@@ -8802,6 +8861,16 @@ MINIAPP_HTML = """<!doctype html>
         api("/api/admin/critical-notification/acknowledge", {notification_id: notificationId})
           .then((data) => replaceAdminDashboard(data, data.message || "Уведомление обработано."))
           .catch(() => showToast("Критично", "Не удалось обновить уведомление."));
+        return;
+      }
+
+      const cuttingAction = event.target.closest("[data-cutting-action]");
+      if (cuttingAction) {
+        if (cuttingAction.dataset.cuttingAction === "release") {
+          const taskId = Number(cuttingAction.dataset.cuttingTaskId || 0);
+          const task = getMyCuttingTasks().find((row) => Number(row.id) === taskId);
+          releaseCuttingTask(task);
+        }
         return;
       }
 

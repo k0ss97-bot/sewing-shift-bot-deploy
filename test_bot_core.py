@@ -736,6 +736,14 @@ class IsolatedDatabaseTest(unittest.TestCase):
             self.database.get_cutting_batch_task_options(batch_id),
             (["80", "92"], ["Бежевый", "Синий"]),
         )
+        self.assertEqual(
+            self.database.get_cutting_batch_contour_matrix(batch_id),
+            [
+                {"size": "80", "color": "Бежевый", "quantity": 2},
+                {"size": "80", "color": "Синий", "quantity": 4},
+                {"size": "92", "color": "Бежевый", "quantity": 3},
+            ],
+        )
         self.assertEqual(len(self.database.get_cutting_batches_for_layout("Шорты")[0]), 7)
 
         self.assertTrue(
@@ -1307,6 +1315,15 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(cutting_task["ok"], cutting_task)
         self.assertEqual(cutting_task["production"]["fabric_stock"][0]["quantity"], 2)
         task_id = self.database.get_active_production_tasks()[0][0]
+        started_cutting = miniapp_server.start_cutting_task_for_telegram(9002, task_id)
+        self.assertTrue(started_cutting["ok"], started_cutting)
+        released_cutting = miniapp_server.release_cutting_task_for_telegram(
+            9002,
+            task_id,
+            "Проверка возврата задания",
+        )
+        self.assertTrue(released_cutting["ok"], released_cutting)
+        self.assertIsNone(self.database.get_production_task_by_id(task_id)["assigned_employee_id"])
         started_cutting = miniapp_server.start_cutting_task_for_telegram(9002, task_id)
         self.assertTrue(started_cutting["ok"], started_cutting)
 

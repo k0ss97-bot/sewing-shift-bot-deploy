@@ -51,6 +51,7 @@ from database import (
     get_cutting_batches_for_cutting,
     get_cutting_batches_for_formation,
     get_cutting_batches_for_layout,
+    get_cutting_batch_contour_matrix,
     get_cutting_batch_result_rows,
     get_cutting_batch_owner,
     get_employee_by_telegram_id,
@@ -112,6 +113,7 @@ from database import (
     mark_wms_receipt_outbox_sent,
     record_web_push_delivery,
     reject_production_task_fabric_rolls,
+    release_production_task,
     route_steps_from_snapshot,
     restore_operation,
     set_route_batch_work_state,
@@ -1889,6 +1891,7 @@ def cutting_stage_task_to_dict(stage: str, row, viewer_employee=None):
             "created_at": contour_date,
             "employee": employee_name or "",
             "sizes_text": sizes_text or "",
+            "contour_matrix": get_cutting_batch_contour_matrix(batch_id),
             "colors": colors,
             "color_labels": [format_color_label(color) for color in colors],
             "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
@@ -1997,6 +2000,37 @@ def start_cutting_task_for_telegram(telegram_id: int, task_id: int):
     return {
         "ok": True,
         "message": "Задание взято в работу.",
+        "production": get_production_state_for_telegram(telegram_id),
+    }
+
+
+def release_cutting_task_for_telegram(telegram_id: int, task_id: int, reason: str = ""):
+    employee = get_employee_for_access(telegram_id)
+
+    if employee is None or employee[5] != "active":
+        return {"ok": False, "message": "Нет активного профиля."}
+
+    if employee[3] != "Раскройщик":
+        return {"ok": False, "message": "Возвращать задания раскроя может только раскройщик."}
+
+    if task_id <= 0:
+        return {"ok": False, "message": "Выберите задание."}
+
+    released_task = release_production_task(task_id, employee[0], reason)
+    if released_task is None:
+        return {"ok": False, "message": "Задание нельзя вернуть: оно уже изменилось или взято другим сотрудником."}
+
+    add_edit_log(
+        telegram_id,
+        "employee",
+        "Вернул задание раскроя в свободные",
+        "production_task",
+        task_id,
+        f"{released_task['product_name']}; {reason.strip() if reason else 'причина не указана'}",
+    )
+    return {
+        "ok": True,
+        "message": "Задание возвращено в свободные.",
         "production": get_production_state_for_telegram(telegram_id),
     }
 
@@ -5540,6 +5574,12 @@ def make_handler(bot_token: str, debug: bool):
                 except (TypeError, ValueError):
                     task_id = 0
                 result = start_cutting_task_for_telegram(telegram_id, task_id)
+            elif path == "/api/production/release-cutting-task":
+                try:
+                    task_id = int(payload.get("task_id") or 0)
+                except (TypeError, ValueError):
+                    task_id = 0
+                result = release_cutting_task_for_telegram(telegram_id, task_id, str(payload.get("reason") or ""))
             elif path == "/api/production/submit-contours":
                 result = submit_production_contours_for_telegram(telegram_id, payload)
             elif path == "/api/production/submit-cutting-stage":
