@@ -1474,6 +1474,66 @@ MINIAPP_HTML = """<!doctype html>
       box-shadow: 0 8px 18px rgba(25,89,243,.12);
     }
 
+    .marketplace-provider-inline {
+      width: min(480px, 100%);
+      display: grid;
+      gap: 6px;
+      flex: 0 1 480px;
+    }
+
+    .marketplace-provider-inline .marketplace-provider-switch {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .marketplace-provider-inline .marketplace-provider-button {
+      padding: 9px 10px;
+      text-align: center;
+    }
+
+    .marketplace-provider-inline .marketplace-provider-button b {
+      font-size: 12px;
+    }
+
+    .marketplace-provider-inline .marketplace-provider-button span {
+      margin-top: 2px;
+      font-size: 9px;
+      white-space: nowrap;
+    }
+
+    .marketplace-provider-inline .marketplace-provider-button.active b,
+    .marketplace-provider-inline .marketplace-provider-button.active span {
+      color: #fff;
+    }
+
+    .marketplace-provider-inline .marketplace-provider-all.active {
+      border-color: #14233b;
+      background: #14233b;
+      box-shadow: 0 8px 18px rgba(20,35,59,.18);
+    }
+
+    .marketplace-provider-inline .marketplace-provider-ozon.active {
+      border-color: #005bff;
+      background: linear-gradient(135deg, #005bff, #0046c7);
+      box-shadow: 0 8px 18px rgba(0,91,255,.24);
+    }
+
+    .marketplace-provider-inline .marketplace-provider-wb.active {
+      border-color: #cb11ab;
+      background: linear-gradient(135deg, #cb11ab, #8d0b99);
+      box-shadow: 0 8px 18px rgba(203,17,171,.24);
+    }
+
+    .marketplace-provider-inline .marketplace-provider-status {
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 0 2px;
+      font-size: 10px;
+    }
+
+    .marketplace-provider-inline .marketplace-provider-status b {
+      color: var(--text);
+    }
+
     .marketplace-provider-status {
       display: flex;
       align-items: center;
@@ -4015,7 +4075,7 @@ MINIAPP_HTML = """<!doctype html>
     const state = {
       workspace: "production",
       marketplaceView: "overview",
-      marketplaceProvider: "ozon",
+      marketplaceProvider: "all",
       screen: "shift",
       productionScreen: "shift",
       selectedOperation: 0,
@@ -8655,26 +8715,33 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       const payload = state.marketplaceData.payload || {};
-      const selectedProvider = state.marketplaceProvider === "wildberries" ? "wildberries" : "ozon";
+      const selectedProvider = ["all", "ozon", "wildberries"].includes(state.marketplaceProvider) ? state.marketplaceProvider : "all";
       const isOzon = selectedProvider === "ozon";
-      const summary = isOzon ? (payload.summary || {}) : {};
-      const products = isOzon ? (payload.products_rows || []) : [];
-      const orders = isOzon ? (payload.orders_rows || []) : [];
-      const runs = isOzon ? (payload.sync_runs || []) : [];
+      const isWildberries = selectedProvider === "wildberries";
+      const isAll = selectedProvider === "all";
+      const summary = isWildberries ? {} : (payload.summary || {});
+      const products = isWildberries ? [] : (payload.products_rows || []);
+      const orders = isWildberries ? [] : (payload.orders_rows || []);
+      const runs = isWildberries ? [] : (payload.sync_runs || []);
       const accounts = payload.accounts || [];
       const account = accounts[0] || {};
       const wildberries = (payload.connectors || []).find((item) => item.marketplace === "wildberries") || {};
-      const providerName = isOzon ? "Ozon" : "Wildberries";
-      const providerConfigured = isOzon ? Boolean(payload.configured) : Boolean(wildberries.configured);
-      const providerStatus = isOzon
-        ? (providerConfigured ? `Подключён · ${account.account_name || "Основной аккаунт"}` : "Не настроен · добавьте ключи")
-        : (providerConfigured ? "Токен задан · синхронизатор готовится" : "Токен пока не задан");
+      const providerName = isAll ? "маркетплейсов" : (isOzon ? "Ozon" : "Wildberries");
+      const providerConfigured = isAll
+        ? Boolean(payload.configured || wildberries.configured)
+        : (isOzon ? Boolean(payload.configured) : Boolean(wildberries.configured));
+      const providerStatus = isAll
+        ? `Ozon: ${payload.configured ? "подключён" : "не подключён"} · Wildberries: ${wildberries.configured ? "подключён" : "не подключён"}`
+        : (isOzon
+          ? (providerConfigured ? `Подключён · ${account.account_name || "Основной аккаунт"}` : "Не настроен · добавьте ключи")
+          : (providerConfigured ? "Токен задан · синхронизатор готовится" : "Токен пока не задан"));
+      const providerTitle = isAll ? "маркетплейсами" : providerName;
       const groups = marketplaceGroups(payload, products);
-      mainButton.hidden = !isOzon;
+      mainButton.hidden = isWildberries;
       mainButton.textContent = state.marketplaceData.loading ? "Синхронизация…" : "Синхронизировать Ozon";
-      mainButton.disabled = !isOzon || state.marketplaceData.loading;
-      const errorNotice = isOzon && state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
-      const notConfigured = !providerConfigured ? `<div class="card field-card"><div class="task-note"><b>${providerName} пока не подключён</b><br>${isOzon ? "Добавьте на сервере OZON_CLIENT_ID и OZON_API_KEY в /etc/sewing-web/sewing-web.env, затем перезапустите сервис." : "Добавьте токен Wildberries, чтобы загрузить товары, остатки и отгрузки."}</div></div>` : "";
+      mainButton.disabled = isWildberries || state.marketplaceData.loading;
+      const errorNotice = !isWildberries && state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
+      const notConfigured = !providerConfigured ? `<div class="card field-card"><div class="task-note"><b>${isAll ? "Маркетплейсы пока не подключены" : `${providerName} пока не подключён`}</b><br>${isAll ? "Подключите хотя бы одну площадку, чтобы загрузить товары и остатки." : (isOzon ? "Добавьте на сервере OZON_CLIENT_ID и OZON_API_KEY в /etc/sewing-web/sewing-web.env, затем перезапустите сервис." : "Добавьте токен Wildberries, чтобы загрузить товары, остатки и отгрузки.")}</div></div>` : "";
       const productsBlock = groups.length ? `<div class="op-list marketplace-group-grid">${groups.map((group) => `<button type="button" class="card marketplace-clickable marketplace-group-card" data-marketplace-group="${escapeHtml(group.key)}"><div class="group-title"><b>${escapeHtml(group.name)}</b><span class="status-chip">›</span></div><div class="marketplace-group-meta"><span>${escapeHtml(group.products || 0)} поз.</span><span>${escapeHtml(group.articles || group.products || 0)} артикулов</span><span>Остаток: ${escapeHtml(group.available || 0)} шт.</span></div><div class="marketplace-group-meta"><span>Цена: ${marketplaceMoney(group.price_min)}${group.price_max != null && group.price_max !== group.price_min ? ` — ${marketplaceMoney(group.price_max)}` : ""}</span><span>Открыть группу ›</span></div></button>`).join("")}</div>` : itemEmpty("Товары ещё не загружены.");
       const stocksBlock = products.length ? `<div class="op-list">${products.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-product-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.name || "Товар Ozon")}</b><span>${escapeHtml(row.group_name || "Прочие товары")} · Артикул: ${escapeHtml(row.offer_id || "—")}</span></div><span class="status-chip ${Number(row.available || 0) > 0 ? "" : "gray"}">${escapeHtml(row.available == null ? "—" : row.available)} шт. ›</span></button>`).join("")}</div>` : itemEmpty("Остатки ещё не загружены.");
       const analyticsBlock = `
@@ -8698,14 +8765,7 @@ MINIAPP_HTML = """<!doctype html>
       const title = state.marketplaceView === "overview" ? "Обзор" : state.marketplaceView === "orders" ? "Отгрузки" : state.marketplaceView === "sync" ? "Журнал синхронизации" : state.marketplaceView === "stocks" ? "Остатки" : state.marketplaceView === "analytics" ? "Аналитика" : "Товары";
       const detail = renderMarketplaceDetail(products, orders, runs);
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Управление ${providerName}</h2><p>Выберите маркетплейс — содержимое разделов изменится под выбранную площадку.</p></div><div class="date">${escapeHtml(isOzon ? (account.last_sync_at || "не синхронизировано") : "токен не задан")}</div></div>
-        <div class="marketplace-provider-panel">
-          <div class="marketplace-provider-switch" role="tablist" aria-label="Выбор маркетплейса">
-            <button type="button" class="marketplace-provider-button ${isOzon ? "active" : ""}" data-marketplace-provider="ozon" role="tab" aria-selected="${isOzon}"><b>Ozon</b><span>${escapeHtml(payload.configured ? (account.account_name || "Основной аккаунт") : "Не подключён")}</span></button>
-            <button type="button" class="marketplace-provider-button ${!isOzon ? "active" : ""}" data-marketplace-provider="wildberries" role="tab" aria-selected="${!isOzon}"><b>Wildberries</b><span>${escapeHtml(wildberries.configured ? "Подключён" : "Токен пока не задан")}</span></button>
-          </div>
-          <div class="marketplace-provider-status"><div><b>${providerName}</b><span>${escapeHtml(providerStatus)}</span></div>${isOzon ? `<button type="button" class="small-button" data-marketplace-action="sync">Синхронизировать</button>` : ""}</div>
-        </div>
+        <div class="screen-head"><div><h2>Управление ${providerTitle}</h2><p>Выберите площадку — содержимое разделов изменится под выбранный маркетплейс.</p></div><div class="marketplace-provider-inline"><div class="marketplace-provider-switch" role="tablist" aria-label="Выбор маркетплейса"><button type="button" class="marketplace-provider-button marketplace-provider-all ${isAll ? "active" : ""}" data-marketplace-provider="all" role="tab" aria-selected="${isAll}"><b>Общая</b><span>Все площадки</span></button><button type="button" class="marketplace-provider-button marketplace-provider-ozon ${isOzon ? "active" : ""}" data-marketplace-provider="ozon" role="tab" aria-selected="${isOzon}"><b>Ozon</b><span>${escapeHtml(payload.configured ? (account.account_name || "Подключён") : "Не подключён")}</span></button><button type="button" class="marketplace-provider-button marketplace-provider-wb ${isWildberries ? "active" : ""}" data-marketplace-provider="wildberries" role="tab" aria-selected="${isWildberries}"><b>Wildberries</b><span>${escapeHtml(wildberries.configured ? "Подключён" : "Не подключён")}</span></button></div><div class="marketplace-provider-status"><b>${isAll ? "Общий обзор" : providerName}</b><span>${escapeHtml(providerStatus)}</span></div></div></div>
         ${errorNotice}${notConfigured}
         ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? orders.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? products.length : state.marketplaceView === "analytics" ? "" : groups.length}</span></div>${content}`}
       `;
@@ -9699,7 +9759,9 @@ MINIAPP_HTML = """<!doctype html>
 
       const marketplaceProvider = event.target.closest("[data-marketplace-provider]");
       if (marketplaceProvider) {
-        state.marketplaceProvider = marketplaceProvider.dataset.marketplaceProvider === "wildberries" ? "wildberries" : "ozon";
+        state.marketplaceProvider = ["all", "ozon", "wildberries"].includes(marketplaceProvider.dataset.marketplaceProvider)
+          ? marketplaceProvider.dataset.marketplaceProvider
+          : "all";
         state.marketplaceView = "overview";
         state.marketplaceDetail = null;
         render();
