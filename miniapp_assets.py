@@ -3452,7 +3452,7 @@ MINIAPP_HTML = """<!doctype html>
       <nav class="workspace-nav" aria-label="Разделы системы">
         <button class="active" type="button" data-workspace="production" aria-current="page">Управление производством</button>
         <button type="button" data-workspace="warehouse">Управление складом</button>
-        <button type="button" disabled title="Раздел готовится">Управление маркетплейсами</button>
+        <button type="button" data-workspace="marketplaces" hidden>Управление маркетплейсами</button>
         <button type="button" disabled title="Раздел готовится">Отчёт</button>
       </nav>
       <div class="appbar-profile"><span>Должность на проекте</span><small id="roleLabel">Загрузка</small></div>
@@ -3465,6 +3465,7 @@ MINIAPP_HTML = """<!doctype html>
     <nav class="mobile-workspace-nav" id="mobileWorkspaceNav" aria-label="Рабочая среда" hidden>
       <button class="active" type="button" data-workspace="production" aria-current="page">Производство</button>
       <button type="button" data-workspace="warehouse">Склад</button>
+      <button type="button" data-workspace="marketplaces" hidden>Маркетплейсы</button>
     </nav>
 
     <div class="body">
@@ -3725,6 +3726,7 @@ MINIAPP_HTML = """<!doctype html>
     const completionQueueKey = `miniapp_completion_queue_${authIdentity}`;
     const persistedUiStateKeys = [
       "workspace",
+      "marketplaceView",
       "screen",
       "productionScreen",
       "selectedOrder",
@@ -3801,6 +3803,7 @@ MINIAPP_HTML = """<!doctype html>
 
     const state = {
       workspace: "production",
+      marketplaceView: "overview",
       screen: "shift",
       productionScreen: "shift",
       selectedOperation: 0,
@@ -3873,6 +3876,7 @@ MINIAPP_HTML = """<!doctype html>
       pushDeviceSyncing: false,
       wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
       wmsMaterialReceipt: {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""},
+      marketplaceData: {loading: false, loaded: false, error: "", payload: null},
       ...persistedUiState,
       data: null,
     };
@@ -4562,6 +4566,7 @@ MINIAPP_HTML = """<!doctype html>
           { id: "shift", label: "Главная", icon: "⌂" },
           { id: "analytics", label: "Аналитика", icon: "▥" },
           { id: "orders", label: "Заказы", icon: "▣" },
+          { id: "marketplaces", label: "Маркетплейсы", icon: "◎" },
           { id: "admin", label: "Админ", icon: "◎" },
         ];
       }
@@ -4571,6 +4576,10 @@ MINIAPP_HTML = """<!doctype html>
     function canAccessWms() {
       if (!state.data) return false;
       return Boolean(state.data.features && state.data.features.can_wms);
+    }
+
+    function canAccessMarketplaces() {
+      return Boolean(state.data && state.data.is_admin);
     }
 
     function renderBottomNav() {
@@ -5155,6 +5164,48 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Ошибка", "Не удалось обновить админ-раздел.");
         mainButton.disabled = false;
+      }
+    }
+
+    async function refreshMarketplaces({silent = false} = {}) {
+      if (!canAccessMarketplaces() || state.marketplaceData.loading) return;
+      state.marketplaceData.loading = true;
+      state.marketplaceData.error = "";
+      if (!silent) render();
+      try {
+        const data = await api("/api/marketplaces/dashboard");
+        if (!data.ok) throw new Error(data.message || "Не удалось загрузить маркетплейсы.");
+        state.marketplaceData.payload = data;
+        state.marketplaceData.loaded = true;
+      } catch (error) {
+        state.marketplaceData.error = error.apiMessage || error.message || "Не удалось загрузить маркетплейсы.";
+      } finally {
+        state.marketplaceData.loading = false;
+        if (state.workspace === "marketplaces") render();
+      }
+    }
+
+    async function syncMarketplaces() {
+      if (!canAccessMarketplaces() || state.marketplaceData.loading) return;
+      state.marketplaceData.loading = true;
+      state.marketplaceData.error = "";
+      render();
+      try {
+        const result = await api("/api/marketplaces/sync");
+        if (!result.ok) {
+          showToast("Маркетплейсы", result.message || "Синхронизация не выполнена.");
+        } else {
+          showToast("Маркетплейсы", result.message || "Данные синхронизированы.");
+        }
+        const data = await api("/api/marketplaces/dashboard");
+        state.marketplaceData.payload = data;
+        state.marketplaceData.loaded = true;
+      } catch (error) {
+        state.marketplaceData.error = error.apiMessage || error.message || "Не удалось синхронизировать маркетплейс.";
+        showToast("Ошибка", state.marketplaceData.error);
+      } finally {
+        state.marketplaceData.loading = false;
+        render();
       }
     }
 
@@ -8259,6 +8310,51 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    function marketplaceMoney(value) {
+      if (value === null || value === undefined || value === "") return "—";
+      return `${Number(value).toLocaleString("ru-RU", {maximumFractionDigits: 2})} ₽`;
+    }
+
+    function renderMarketplaces() {
+      if (!canAccessMarketplaces()) {
+        mainButton.textContent = "Обновить";
+        mainButton.disabled = false;
+        mount.innerHTML = `<div class="screen-head"><div><h2>Маркетплейсы</h2><p>Раздел доступен администратору.</p></div></div><div class="card field-card">${itemEmpty("Нет прав администратора.")}</div>`;
+        return;
+      }
+      const payload = state.marketplaceData.payload || {};
+      const summary = payload.summary || {};
+      const products = payload.products_rows || [];
+      const orders = payload.orders_rows || [];
+      const runs = payload.sync_runs || [];
+      const accounts = payload.accounts || [];
+      const account = accounts[0] || {};
+      const wildberries = (payload.connectors || []).find((item) => item.marketplace === "wildberries") || {};
+      mainButton.textContent = state.marketplaceData.loading ? "Синхронизация…" : "Синхронизировать";
+      mainButton.disabled = state.marketplaceData.loading;
+      const errorNotice = state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
+      const notConfigured = !payload.configured ? `<div class="card field-card"><div class="task-note"><b>Ozon пока не подключён</b><br>Добавьте на сервере <code>OZON_CLIENT_ID</code> и <code>OZON_API_KEY</code> в <code>/etc/sewing-web/sewing-web.env</code>, затем перезапустите сервис.</div></div>` : "";
+      const productsBlock = products.length ? `<div class="op-list">${products.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.name || row.offer_id || row.sku || "Товар")}</b><span>Артикул: ${escapeHtml(row.offer_id || "—")} · SKU: ${escapeHtml(row.sku || "—")}<br>${escapeHtml(row.size || "Размер не указан")} · ${escapeHtml(row.color || "Цвет не указан")}</span></div><div><span class="status-chip">${marketplaceMoney(row.current_price)}</span><small>Остаток: ${escapeHtml(row.available == null ? "—" : row.available)}</small></div></div>`).join("")}</div>` : itemEmpty("Товары ещё не загружены.");
+      const ordersBlock = orders.length ? `<div class="op-list">${orders.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>Заказ: ${escapeHtml(row.external_order_id)}<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")}</span></div>`).join("")}</div>` : itemEmpty("Отгрузки ещё не загружены.");
+      const runsBlock = runs.length ? `<div class="op-list">${runs.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.started_at || "Синхронизация")}</b><span>Товары ${escapeHtml(row.products_count)} · цены ${escapeHtml(row.prices_count)} · остатки ${escapeHtml(row.stocks_count)} · отгрузки ${escapeHtml(row.orders_count)}${row.error_message ? `<br>${escapeHtml(row.error_message)}` : ""}</span></div><span class="status-chip ${row.status === "success" ? "" : "warn"}">${escapeHtml(row.status)}</span></div>`).join("")}</div>` : itemEmpty("Синхронизаций ещё не было.");
+      const content = state.marketplaceView === "orders" ? ordersBlock : state.marketplaceView === "sync" ? runsBlock : productsBlock;
+      const title = state.marketplaceView === "orders" ? "Отгрузки" : state.marketplaceView === "sync" ? "Журнал синхронизации" : "Товары и остатки";
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Управление маркетплейсами</h2><p>Только чтение данных Ozon и Wildberries. Изменения на площадки не отправляются.</p></div><div class="date">${escapeHtml(account.last_sync_at || "не синхронизировано")}</div></div>
+        ${errorNotice}${notConfigured}
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>Товары</span><span class="kpi-ico">▤</span></div><strong>${escapeHtml(summary.products || 0)}<small> поз.</small></strong><span>Каталог Ozon</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Остатки</span><span class="kpi-ico">▦</span></div><strong>${escapeHtml(summary.stock_rows || 0)}<small> строк</small></strong><span>FBO и FBS</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Отгрузки</span><span class="kpi-ico">↑</span></div><strong>${escapeHtml(summary.open_orders || 0)}<small> открыто</small></strong><span>Данные Ozon</span></div>
+        </div>
+        <div class="card field-card"><div class="report-row"><div><b>Ozon · ${escapeHtml(account.account_name || "Основной аккаунт")}</b><span>${payload.configured ? "Подключён" : "Не настроен"} · режим только чтение</span></div><span class="status-chip ${payload.configured ? "" : "warn"}">${payload.configured ? "готов" : "ожидает ключи"}</span></div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="sync">Синхронизировать Ozon</button></div></div>
+        <div class="card field-card"><div class="report-row"><div><b>Wildberries</b><span>${wildberries.configured ? "Токен задан, адаптер готовится" : "Токен пока не задан"} · только чтение</span></div><span class="status-chip warn">следующий этап</span></div><div class="task-note">После получения WB-токена подключим каталог, остатки и заказы отдельным синхронизатором.</div></div>
+        <div class="tabs marketplace-tabs" role="tablist" aria-label="Маркетплейсы"><button type="button" class="tab ${state.marketplaceView === "overview" ? "active" : ""}" data-marketplace-view="overview">Товары и остатки</button><button type="button" class="tab ${state.marketplaceView === "orders" ? "active" : ""}" data-marketplace-view="orders">Отгрузки</button><button type="button" class="tab ${state.marketplaceView === "sync" ? "active" : ""}" data-marketplace-view="sync">Синхронизация</button></div>
+        <div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? orders.length : state.marketplaceView === "sync" ? runs.length : products.length}</span></div>
+        ${content}
+      `;
+    }
+
     function renderWarehouse() {
       if (!canAccessWms()) {
         switchWorkspace("production");
@@ -8756,12 +8852,17 @@ MINIAPP_HTML = """<!doctype html>
         state.workspace = "production";
         state.screen = "shift";
       }
-      if (!['production', 'warehouse'].includes(state.workspace)) {
+      if (!canAccessMarketplaces() && state.workspace === "marketplaces") {
+        state.workspace = "production";
+        state.screen = "shift";
+      }
+      if (!['production', 'warehouse', 'marketplaces'].includes(state.workspace)) {
         state.workspace = state.screen === "warehouse" ? "warehouse" : "production";
       }
       if (state.workspace === "warehouse" && !["warehouse", "profile"].includes(state.screen)) {
         state.screen = "warehouse";
       }
+      if (state.workspace === "marketplaces") state.screen = "marketplaces";
 
       const allowedProductionScreens = state.data.is_admin
         ? ["shift", "analytics", "orders", "admin", "passport", "profile"]
@@ -8771,13 +8872,16 @@ MINIAPP_HTML = """<!doctype html>
       }
       document.getElementById("roleLabel").textContent = roleLabel();
       const isWarehouseWorkspace = state.workspace === "warehouse";
+      const isMarketplaceWorkspace = state.workspace === "marketplaces";
       document.body.classList.toggle("warehouse-workspace", isWarehouseWorkspace);
+      document.body.classList.toggle("marketplace-workspace", isMarketplaceWorkspace);
       document.body.classList.toggle("has-wms-access", canAccessWms());
       const mobileWorkspaceNav = document.getElementById("mobileWorkspaceNav");
       mobileWorkspaceNav.hidden = !canAccessWms();
       document.querySelectorAll("[data-workspace]").forEach((button) => {
         if (button.dataset.workspace === "warehouse") button.hidden = !canAccessWms();
-        const isActive = button.dataset.workspace === "warehouse" ? isWarehouseWorkspace : !isWarehouseWorkspace;
+        if (button.dataset.workspace === "marketplaces") button.hidden = !canAccessMarketplaces();
+        const isActive = button.dataset.workspace === "warehouse" ? isWarehouseWorkspace : button.dataset.workspace === "marketplaces" ? isMarketplaceWorkspace : !isWarehouseWorkspace && !isMarketplaceWorkspace;
         button.classList.toggle("active", isActive);
         if (isActive) button.setAttribute("aria-current", "page");
         else button.removeAttribute("aria-current");
@@ -8786,6 +8890,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "operations") renderOperations();
       if (state.screen === "report") renderReport();
       if (state.screen === "warehouse") renderWarehouse();
+      if (state.screen === "marketplaces") renderMarketplaces();
       if (state.screen === "wms") renderWms();
       if (state.screen === "analytics") renderAnalytics();
       if (state.screen === "orders") renderOrders();
@@ -8798,12 +8903,19 @@ MINIAPP_HTML = """<!doctype html>
       if (isWarehouseWorkspace && !state.wmsData.loaded && !state.wmsData.loading && !state.wmsData.error) {
         window.setTimeout(() => refreshWmsWorkspace({silent: true}), 0);
       }
+      if (isMarketplaceWorkspace && !state.marketplaceData.loaded && !state.marketplaceData.loading && !state.marketplaceData.error) {
+        window.setTimeout(() => refreshMarketplaces({silent: true}), 0);
+      }
       if (state.data.is_admin && state.workspace === "production" && state.screen === "shift") window.setTimeout(syncWebPushDeviceState, 0);
     }
 
     function setScreen(screen) {
       if (screen === "warehouse" || screen === "wms") {
         switchWorkspace("warehouse");
+        return;
+      }
+      if (screen === "marketplaces") {
+        switchWorkspace("marketplaces");
         return;
       }
       if (state.workspace === "warehouse" && screen !== "profile") state.workspace = "production";
@@ -8825,6 +8937,16 @@ MINIAPP_HTML = """<!doctype html>
         }
         state.workspace = "warehouse";
         state.screen = "warehouse";
+      } else if (workspace === "marketplaces") {
+        if (!canAccessMarketplaces()) {
+          showToast("Маркетплейсы", "Раздел доступен только администратору.");
+          return;
+        }
+        if (state.workspace === "production" && !["profile", "passport"].includes(state.screen) && productionScreens.has(state.screen)) {
+          state.productionScreen = state.screen;
+        }
+        state.workspace = "marketplaces";
+        state.screen = "marketplaces";
       } else {
         state.workspace = "production";
         const allowed = state.data && state.data.is_admin
@@ -9210,6 +9332,20 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const marketplaceView = event.target.closest("[data-marketplace-view]");
+      if (marketplaceView) {
+        state.marketplaceView = marketplaceView.dataset.marketplaceView || "overview";
+        render();
+        return;
+      }
+
+      const marketplaceAction = event.target.closest("[data-marketplace-action]");
+      if (marketplaceAction) {
+        if (marketplaceAction.dataset.marketplaceAction === "refresh") refreshMarketplaces();
+        if (marketplaceAction.dataset.marketplaceAction === "sync") syncMarketplaces();
+        return;
+      }
+
       const adminHomePeriod = event.target.closest("[data-admin-home-period]");
       if (adminHomePeriod) {
         state.adminHomePeriod = adminHomePeriod.dataset.adminHomePeriod;
@@ -9491,6 +9627,10 @@ MINIAPP_HTML = """<!doctype html>
         else refreshWmsWorkspace();
         return;
       }
+      if (state.screen === "marketplaces") {
+        syncMarketplaces();
+        return;
+      }
       if (state.screen === "analytics") {
         if (state.data && state.data.is_admin) { refreshAdminDashboard("Контроль производства обновлён."); return; }
         setScreen("orders");
@@ -9739,6 +9879,11 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      if (state.workspace === "marketplaces" && state.screen === "marketplaces") {
+        switchWorkspace("production");
+        return;
+      }
+
       if (state.screen === "shift" && state.data && state.data.is_admin && state.adminHomeView !== "overview") {
         state.adminHomeView = state.adminHomeView === "employee" ? "employees" : "overview";
         state.adminHomeEmployee = "";
@@ -9759,7 +9904,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       const flow = state.data && state.data.is_admin
-        ? ["shift", "warehouse", "analytics", "orders", "admin"]
+        ? ["shift", "warehouse", "marketplaces", "analytics", "orders", "admin"]
         : ["shift", "report", "analytics", "orders", "admin"];
       const index = flow.indexOf(state.screen);
       setScreen(flow[Math.max(0, index - 1)]);

@@ -149,6 +149,8 @@ from wms import api as wms_api
 from wms import operations as wms_operations
 from wms.api import WMS_READ_ROUTES, WMS_ROUTES
 from wms.models import ProductKey
+from marketplaces import dashboard as marketplace_dashboard
+from marketplaces import sync_for_admin as sync_marketplace_for_admin
 from web_push import WebPushDeliveryError, get_public_web_push_config, send_web_push
 
 
@@ -217,6 +219,18 @@ def is_admin(telegram_id: int):
     if employee is not None:
         return employee[4] == "admin" and employee[5] == "active"
     return telegram_id in get_admin_ids()
+
+
+def get_marketplace_dashboard_for_admin(telegram_id: int):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    return marketplace_dashboard()
+
+
+def sync_marketplace_for_telegram(telegram_id: int):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Синхронизацию маркетплейсов может запускать только администратор."}
+    return sync_marketplace_for_admin()
 
 
 def get_employee_for_access(telegram_id: int):
@@ -5292,6 +5306,8 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/production/release-cutting-task",
                 "/api/production/submit-contours",
                 "/api/production/submit-cutting-stage",
+                "/api/marketplaces/dashboard",
+                "/api/marketplaces/sync",
                 "/api/routes/create-batch",
                 "/api/routes/start",
                 "/api/routes/complete",
@@ -5592,6 +5608,10 @@ def make_handler(bot_token: str, debug: bool):
                 result = submit_production_contours_for_telegram(telegram_id, payload)
             elif path == "/api/production/submit-cutting-stage":
                 result = submit_cutting_stage_for_telegram(telegram_id, payload)
+            elif path == "/api/marketplaces/dashboard":
+                result = get_marketplace_dashboard_for_admin(telegram_id)
+            elif path == "/api/marketplaces/sync":
+                result = sync_marketplace_for_telegram(telegram_id)
             elif path == "/api/routes/create-batch":
                 result = create_route_batch_for_telegram(telegram_id, payload)
             elif path == "/api/routes/start":
