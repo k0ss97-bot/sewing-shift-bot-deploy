@@ -4025,6 +4025,24 @@ def get_active_route_batches():
     return batches
 
 
+def get_completed_route_batches():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        f"""
+        SELECT {ROUTE_BATCH_SELECT}
+        FROM route_batches
+        WHERE status = 'done'
+        ORDER BY updated_at DESC, id DESC
+        """
+    )
+
+    batches = [route_batch_from_row(row) for row in cursor.fetchall()]
+    conn.close()
+    return batches
+
+
 def get_employee_route_batches(employee_id: int, status: str):
     if status not in {"active", "done"}:
         return []
@@ -9280,6 +9298,45 @@ def get_active_production_tasks():
             production_tasks.assigned_employee_id,
             production_tasks.assigned_at
         ORDER BY production_tasks.created_at ASC, production_tasks.id ASC
+        """
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_completed_production_tasks():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            production_tasks.id,
+            production_tasks.product_name,
+            production_tasks.status,
+            production_tasks.created_at,
+            COALESCE(GROUP_CONCAT(DISTINCT production_task_sizes.product_size), '') AS sizes_text,
+            COALESCE(GROUP_CONCAT(DISTINCT production_task_colors.product_color), '') AS colors_text,
+            production_tasks.priority,
+            production_tasks.due_date,
+            production_tasks.assigned_employee_id,
+            production_tasks.assigned_at
+        FROM production_tasks
+        LEFT JOIN production_task_sizes ON production_task_sizes.task_id = production_tasks.id
+        LEFT JOIN production_task_colors ON production_task_colors.task_id = production_tasks.id
+        WHERE production_tasks.status IN ('formed', 'cancelled')
+        GROUP BY
+            production_tasks.id,
+            production_tasks.product_name,
+            production_tasks.status,
+            production_tasks.created_at,
+            production_tasks.priority,
+            production_tasks.due_date,
+            production_tasks.assigned_employee_id,
+            production_tasks.assigned_at
+        ORDER BY production_tasks.created_at DESC, production_tasks.id DESC
         """
     )
 

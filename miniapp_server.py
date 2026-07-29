@@ -44,6 +44,8 @@ from database import (
     get_active_production_tasks,
     get_active_production_tasks_for_contours,
     get_active_route_batches,
+    get_completed_production_tasks,
+    get_completed_route_batches,
     get_all_product_colors,
     get_all_employees,
     get_all_user_accounts,
@@ -1036,8 +1038,9 @@ def get_completed_route_tasks_for_telegram(telegram_id: int):
         return []
 
     tasks = []
+    batches = get_completed_route_batches() if is_admin(telegram_id) else get_employee_route_batches(employee[0], "done")
 
-    for batch in get_employee_route_batches(employee[0], "done"):
+    for batch in batches:
         step_index = max(0, batch["route_step_index"] - 1)
         completed_step = get_route_step_for_batch(batch, step_index)
 
@@ -1764,12 +1767,16 @@ def production_task_to_dict(row, viewer_employee=None):
         "formed": "готовый крой сформирован",
         "cancelled": "отменено",
     }.get(status, status)
+    status_text = {
+        "formed": "Завершено",
+        "cancelled": "Отменено",
+    }.get(status, "Свободно" if is_free else "В работе")
 
     return {
         "id": task_id,
         "product_name": product_name,
         "status": status,
-        "status_text": "Свободно" if is_free else "В работе",
+        "status_text": status_text,
         "process_status_text": process_status_text,
         "work_status": "free" if is_free else "in_work",
         "created_at": created_at,
@@ -2098,6 +2105,7 @@ def get_production_state_for_telegram(telegram_id: int):
         "fabric_stock": [fabric_stock_to_dict(row) for row in get_fabric_stock_rows_with_ids()] if is_admin_user else [],
         "warehouse_stock": warehouse_rows if is_admin_user else [],
         "tasks": [production_task_to_dict(row, employee) for row in get_active_production_tasks()] if is_admin_user else [],
+        "completed_tasks": [production_task_to_dict(row, employee) for row in get_completed_production_tasks()] if is_admin_user else [],
         "cutting_tasks": get_cutting_stage_tasks(employee),
         "contour_tasks": [
             production_task_to_dict(row, employee)

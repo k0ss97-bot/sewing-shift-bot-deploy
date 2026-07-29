@@ -508,6 +508,9 @@ MINIAPP_HTML = """<!doctype html>
       border-radius: 17px;
     }
 
+    .order-mode-tabs { --tab-count: 2; }
+    .admin-task-status-tabs { --tab-count: 4; }
+
     .tabs[hidden] {
       display: none;
     }
@@ -3095,7 +3098,7 @@ MINIAPP_HTML = """<!doctype html>
 
       body.web-mode .tabs {
         display: grid;
-        grid-template-columns: repeat(3, minmax(160px, 1fr));
+        grid-template-columns: repeat(var(--tab-count, 3), minmax(160px, 1fr));
         width: min(760px, 100%);
         margin: 0 0 24px;
         padding: 5px;
@@ -4009,6 +4012,9 @@ MINIAPP_HTML = """<!doctype html>
       "orderCategory",
       "adminTaskStatus",
       "orderMode",
+      "orderProductFilter",
+      "orderSizeFilter",
+      "orderColorFilter",
       "orderProduct",
       "orderProducts",
       "orderTaskType",
@@ -4089,6 +4095,9 @@ MINIAPP_HTML = """<!doctype html>
       adminTaskStatus: "all",
       reportSection: "work",
       orderMode: "list",
+      orderProductFilter: "",
+      orderSizeFilter: "",
+      orderColorFilter: "",
       orderProduct: "",
       orderProducts: [],
       orderTaskType: "cutting",
@@ -4168,6 +4177,7 @@ MINIAPP_HTML = """<!doctype html>
     if (!state.orderFabricRolls || typeof state.orderFabricRolls !== "object") state.orderFabricRolls = {};
     if (!Array.isArray(state.orderProducts)) state.orderProducts = state.orderProduct ? [state.orderProduct] : [];
     if (!state.taskDefectPhotos || typeof state.taskDefectPhotos !== "object") state.taskDefectPhotos = {};
+    if (!["all", "free", "in_work", "done"].includes(state.adminTaskStatus)) state.adminTaskStatus = "all";
     if (!state.wmsMaterialReceipt || typeof state.wmsMaterialReceipt !== "object") state.wmsMaterialReceipt = {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""};
 
     const mount = document.getElementById("mount");
@@ -4549,6 +4559,20 @@ MINIAPP_HTML = """<!doctype html>
       return state.data && state.data.routes && state.data.routes.tasks ? state.data.routes.tasks : [];
     }
 
+    function getCompletedProductionTasks() {
+      return state.data && state.data.production && state.data.production.completed_tasks
+        ? state.data.production.completed_tasks
+        : [];
+    }
+
+    function getCompletedOrderRows() {
+      const productionTasks = state.data && state.data.is_admin ? getCompletedProductionTasks() : [];
+      const routeTasks = getCompletedRouteTasks();
+      const tasks = productionTasks.map((task) => ({...task, task_kind: "production"}));
+      const routeRows = routeTasks.map((task) => ({...task, task_kind: "route"}));
+      return [...tasks, ...routeRows];
+    }
+
     function taskIdentity(task) {
       if (!task) return "";
       const kind = task.task_kind || (task.stage ? "cutting_stage" : "route");
@@ -4712,32 +4736,81 @@ MINIAPP_HTML = """<!doctype html>
       return task.status === "active" ? "free" : (task.status || "unknown");
     }
 
+    function orderTaskStatusBucket(task) {
+      const status = adminTaskStatusForRow(task);
+      if (status === "done" || ["formed", "cancelled", "cutting_done"].includes(task && task.status)) return "done";
+      if (status === "free") return "free";
+      return "in_work";
+    }
+
     function adminTaskStatusLabel(status) {
       return {
         all: "Все",
         free: "Свободные",
         in_work: "В работе",
-        paused: "Пауза",
-        blocked: "Заблокировано",
+        done: "Завершённые",
       }[status] || status;
     }
 
+    function orderTaskFilterValues(task) {
+      if (!task) return {product: "", sizes: [], colors: []};
+      const sizes = task.task_kind === "route"
+        ? [task.product_size || task.size || ""]
+        : (task.sizes || task.size || []);
+      const colors = task.task_kind === "route"
+        ? [task.product_color || task.color || ""]
+        : (task.color_labels || task.colors || task.color || []);
+      const asList = (value) => (Array.isArray(value) ? value : [value]).map((item) => String(item || "").trim()).filter(Boolean);
+      return {
+        product: String(task.product_name || task.product || "").trim(),
+        sizes: asList(sizes),
+        colors: asList(colors),
+      };
+    }
+
+    function orderTaskMatchesFilters(task) {
+      const values = orderTaskFilterValues(task);
+      return (!state.orderProductFilter || values.product === state.orderProductFilter)
+        && (!state.orderSizeFilter || values.sizes.includes(state.orderSizeFilter))
+        && (!state.orderColorFilter || values.colors.includes(state.orderColorFilter));
+    }
+
+    function orderFilterOptions(rows, field) {
+      const values = new Set();
+      rows.forEach((task) => {
+        const taskValues = orderTaskFilterValues(task);
+        if (field === "product") {
+          if (taskValues.product) values.add(taskValues.product);
+        } else {
+          (taskValues[field === "size" ? "sizes" : "colors"] || []).forEach((value) => values.add(value));
+        }
+      });
+      return [...values].sort((left, right) => String(left).localeCompare(String(right), "ru", {numeric: true}));
+    }
+
     function visibleOrderRows() {
-      const rows = currentOrderRows();
+      const rows = state.adminTaskStatus === "done" ? getCompletedOrderRows() : currentOrderRows();
 
       if (state.data && state.data.is_admin) {
         ensureOrderCategory();
         return rows.filter((task) => {
           if (adminOrderCategoryForTask(task) !== state.orderCategory) return false;
-          return state.adminTaskStatus === "all" || adminTaskStatusForRow(task) === state.adminTaskStatus;
+          if (state.adminTaskStatus !== "all" && orderTaskStatusBucket(task) !== state.adminTaskStatus) return false;
+          return orderTaskMatchesFilters(task);
         });
       }
 
       const categories = employeeOrderCategories();
-      if (!categories.length) return rows;
-
-      ensureOrderCategory();
-      return rows.filter((task) => (task.category || "") === state.orderCategory);
+      const filtered = categories.length
+        ? (() => {
+          ensureOrderCategory();
+          return rows.filter((task) => (task.category || "") === state.orderCategory);
+        })()
+        : rows;
+      return filtered.filter((task) => {
+        if (state.adminTaskStatus !== "all" && orderTaskStatusBucket(task) !== state.adminTaskStatus) return false;
+        return orderTaskMatchesFilters(task);
+      });
     }
 
     async function selectCuttingTaskForReport(task) {
@@ -7758,6 +7831,7 @@ MINIAPP_HTML = """<!doctype html>
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Создать задание на раскрой</h2><p>Дальнейшие операции система создаст по маршруту автоматически.</p></div><div class="date">админ</div></div>
+        <div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="list" role="tab" aria-selected="false">Текущие задания</button><button type="button" class="tab active" data-order-mode="create" role="tab" aria-selected="true">Создать задание</button></div>
         <div class="card field-card">
           <div class="form-grid">
             <div class="field full"><label>Изделия в одном настиле</label>${renderChoiceChips("product", catalog.map((item) => item.product_name), state.orderProducts)}<p class="empty">Выберите одно или несколько изделий. Для выбранных изделий применяются общие размеры, цвета и настил.</p></div>
@@ -7831,6 +7905,32 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function orderTaskStatusText(task) {
+      const bucket = orderTaskStatusBucket(task);
+      if (bucket === "done") return task && task.status === "cancelled" ? "Отменено" : "Завершено";
+      if (bucket === "free") return "Свободно";
+      return task && task.status_text ? task.status_text : "В работе";
+    }
+
+    function renderOrderFilters(filterRows) {
+      const products = orderFilterOptions(filterRows, "product");
+      const sizes = orderFilterOptions(filterRows, "size");
+      const colors = orderFilterOptions(filterRows, "color");
+      const optionList = (values, selected, emptyLabel) => `<option value="">${emptyLabel}</option>${values.map((value) => `<option value="${escapeHtml(value)}" ${selected === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}`;
+
+      return `
+        <div class="card field-card order-filters">
+          <div class="section-title"><b>Фильтры заданий</b><span>Изделие · размер · цвет</span></div>
+          <div class="form-grid">
+            <div class="field"><label>Наименование изделия</label><select data-order-filter="product">${optionList(products, state.orderProductFilter, "Все изделия")}</select></div>
+            <div class="field"><label>Размер</label><select data-order-filter="size">${optionList(sizes, state.orderSizeFilter, "Все размеры")}</select></div>
+            <div class="field"><label>Цвет</label><select data-order-filter="color">${optionList(colors, state.orderColorFilter, "Все цвета")}</select></div>
+          </div>
+          <div class="button-row"><button type="button" class="small-button secondary" data-order-action="clear-filters">Сбросить фильтры</button></div>
+        </div>
+      `;
+    }
+
     function renderOrders() {
       if (state.data && state.data.is_admin && state.orderMode === "create") {
         renderOrderCreate();
@@ -7838,33 +7938,39 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       const allTasks = visibleOrderRows();
+      const filterRows = [...currentOrderRows(), ...getCompletedOrderRows()];
       state.selectedOrder = selectedTaskIndex(allTasks, state.selectedOrderKey, state.selectedOrder);
       const tasks = allTasks.filter((task) => task.task_kind !== "route");
       const routeRows = allTasks.filter((task) => task.task_kind === "route");
       const current = allTasks[state.selectedOrder] || allTasks[0];
       state.selectedOrderKey = taskIdentity(current);
       mainButton.textContent = state.data && state.data.is_admin
-        ? "Создать задание"
+        ? "Обновить список"
         : (current && current.task_kind === "route" && current.is_assigned_to_me
           ? (current.can_complete ? "Выполнить задание" : "Продолжить задание")
           : (current && current.is_assigned_to_me ? "Открыть отчёт" : (current ? "Выбрать задание" : "Обновить статус")));
       mainButton.disabled = false;
 
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>${state.data && state.data.is_admin ? "Заказы в работе" : "Задания"}</h2><p>${state.data && state.data.is_admin ? "Создание и контроль заданий." : "Выберите свободное задание, чтобы взять его в работу."}</p></div><div class="date">${allTasks.length} активных</div></div>
+        <div class="screen-head"><div><h2>${state.data && state.data.is_admin ? "Заказы" : "Задания"}</h2><p>${state.data && state.data.is_admin ? "Создавайте задания на раскрой и контролируйте маршрут производства." : "Выберите свободное задание, чтобы взять его в работу."}</p></div><div class="date">${allTasks.length} заданий</div></div>
         <div class="scan-row"><button type="button" class="small-button secondary" data-task-action="scan">Сканировать QR</button></div>
-        ${state.data && state.data.is_admin ? `<div class="tabs admin-task-status-tabs" role="tablist" aria-label="Статус заданий">${["all", "free", "in_work", "paused", "blocked"].map((status) => `<button type="button" class="tab ${state.adminTaskStatus === status ? "active" : ""}" data-admin-task-status="${status}" role="tab" aria-selected="${state.adminTaskStatus === status ? "true" : "false"}">${adminTaskStatusLabel(status)}</button>`).join("")}</div>` : ""}
-        ${state.data && state.data.is_admin ? `<div class="card shift-card" data-order-action="new"><div><b>Создать задание</b><span>Раскрой и следующие операции из складского остатка.</span></div><span class="status-chip">+</span></div>` : ""}
+        ${state.data && state.data.is_admin ? `<div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab ${state.orderMode === "list" ? "active" : ""}" data-order-mode="list" role="tab" aria-selected="${state.orderMode === "list" ? "true" : "false"}">Текущие задания</button><button type="button" class="tab ${state.orderMode === "create" ? "active" : ""}" data-order-mode="create" role="tab" aria-selected="${state.orderMode === "create" ? "true" : "false"}">Создать задание</button></div>` : ""}
+        <div class="tabs admin-task-status-tabs" role="tablist" aria-label="Статус заданий">${["all", "free", "in_work", "done"].map((status) => `<button type="button" class="tab ${state.adminTaskStatus === status ? "active" : ""}" data-admin-task-status="${status}" role="tab" aria-selected="${state.adminTaskStatus === status ? "true" : "false"}">${adminTaskStatusLabel(status)}</button>`).join("")}</div>
+        ${renderOrderFilters(filterRows)}
         <div class="op-list">
           ${allTasks.length ? `
-          ${tasks.map((task, index) => `
+          ${tasks.map((task, index) => {
+            const filterValues = orderTaskFilterValues(task);
+            const statusBucket = orderTaskStatusBucket(task);
+            return `
             <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
-              <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${task.work_status === "free" ? "gray" : "warn"}">${escapeHtml(task.status_text || task.status)}</span></div>
+              <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(filterValues.product || "Изделие не указано")}${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${statusBucket === "free" ? "gray" : (statusBucket === "done" ? "" : "warn")}">${escapeHtml(orderTaskStatusText(task))}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
-              <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || (task.contour_matrix ? formatCuttingContourSummary(task.contour_matrix, task.sizes_text) : (task.sizes_text ? formatCuttingSizeQuantities(task.sizes_text) : task.colors_text || "-")))}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
-              ${state.data && state.data.is_admin ? `<div class="order-card-actions">${task.task_kind === "production" && task.assigned_employee_id ? `<button type="button" class="small-button secondary" data-order-action="release-cutting" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Освободить</button>` : ""}<button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button></div>` : ""}
+              <div class="order-foot"><span>Размер: ${escapeHtml(filterValues.sizes.join(", ") || "-")} · Цвет: ${escapeHtml(filterValues.colors.join(", ") || "-")}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
+              ${state.data && state.data.is_admin ? `<div class="order-card-actions">${task.task_kind === "production" && task.assigned_employee_id && statusBucket !== "done" ? `<button type="button" class="small-button secondary" data-order-action="release-cutting" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Освободить</button>` : ""}${statusBucket !== "done" ? `<button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button>` : ""}</div>` : ""}
             </div>
-          `).join("")}
+          `;
+          }).join("")}
           ${routeRows.map((task, routeIndex) => {
             const index = tasks.length + routeIndex;
             return routeTaskCard(task, index, {selectedIndex: state.selectedOrder});
@@ -7873,7 +7979,7 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="section-title"><b>Детали выбранного</b><span>${current ? progressForTask(current) : 0}%</span></div>
         ${current && current.task_kind === "cutting_stage" ? renderCuttingStageSummary(current) : current && current.task_kind === "production" ? `
-          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(current.status_text || current.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Приоритет</span><strong>${escapeHtml(priorityLabel(current.priority))}</strong></div><div class="detail-box"><span>Срок</span><strong>${escapeHtml(current.due_date || "Не задан")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || current.status)}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
+          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">${escapeHtml(orderTaskStatusText(current))}</span></div><div class="detail-grid"><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Приоритет</span><strong>${escapeHtml(priorityLabel(current.priority))}</strong></div><div class="detail-box"><span>Срок</span><strong>${escapeHtml(current.due_date || "Не задан")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(orderTaskStatusText(current))}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
         ` : current ? `
@@ -9501,8 +9607,19 @@ MINIAPP_HTML = """<!doctype html>
         }
       }
 
+      const orderMode = event.target.closest("[data-order-mode]");
+      if (orderMode && state.data && state.data.is_admin) {
+        if (orderMode.dataset.orderMode === "create") {
+          resetOrderDraft();
+        } else {
+          state.orderMode = "list";
+        }
+        render();
+        return;
+      }
+
       const adminTaskStatus = event.target.closest("[data-admin-task-status]");
-      if (adminTaskStatus && state.data && state.data.is_admin) {
+      if (adminTaskStatus && state.data) {
         state.adminTaskStatus = adminTaskStatus.dataset.adminTaskStatus || "all";
         state.selectedOrder = 0;
         state.selectedOrderKey = "";
@@ -9513,6 +9630,16 @@ MINIAPP_HTML = """<!doctype html>
 
       const orderAction = event.target.closest("[data-order-action]");
       if (orderAction) {
+        if (orderAction.dataset.orderAction === "clear-filters") {
+          state.orderProductFilter = "";
+          state.orderSizeFilter = "";
+          state.orderColorFilter = "";
+          state.selectedOrder = 0;
+          state.selectedOrderKey = "";
+          persistUiState();
+          render();
+          return;
+        }
         syncOrderDraft();
         if (orderAction.dataset.orderAction === "new") {
           resetOrderDraft();
@@ -10019,6 +10146,10 @@ MINIAPP_HTML = """<!doctype html>
         const rows = visibleOrderRows();
         const current = rows[state.selectedOrder] || rows[0];
         state.selectedOrderKey = taskIdentity(current);
+        if (current && orderTaskStatusBucket(current) === "done") {
+          setScreen("orders");
+          return;
+        }
         if (current && current.task_kind === "route" && !state.data.is_admin) {
           startOperationTask(current);
           return;
@@ -10103,8 +10234,7 @@ MINIAPP_HTML = """<!doctype html>
       }
       if (state.screen === "orders" && state.data && state.data.is_admin) {
         if (state.orderMode === "create") { createOrderTask(); return; }
-        resetOrderDraft();
-        render();
+        refreshState("Список заданий обновлён.");
         return;
       }
       if (state.screen === "orders") {
@@ -10225,6 +10355,19 @@ MINIAPP_HTML = """<!doctype html>
         readDefectPhoto(defectPhotoInput.files && defectPhotoInput.files[0], task).catch(() => {
           showToast("Фото брака", "Не удалось прочитать фотографию.");
         });
+        return;
+      }
+
+      const orderFilter = event.target.closest("[data-order-filter]");
+      if (orderFilter) {
+        const filterName = orderFilter.dataset.orderFilter;
+        if (filterName === "product") state.orderProductFilter = orderFilter.value;
+        if (filterName === "size") state.orderSizeFilter = orderFilter.value;
+        if (filterName === "color") state.orderColorFilter = orderFilter.value;
+        state.selectedOrder = 0;
+        state.selectedOrderKey = "";
+        persistUiState();
+        render();
         return;
       }
 
