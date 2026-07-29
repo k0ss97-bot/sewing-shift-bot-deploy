@@ -410,7 +410,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             self.assertTrue(self.database.is_preparation_operation_folder(operation_name))
             self.assertEqual(
                 self.database.get_preparation_operation_sizes(operation_name),
-                ["92", "98", "104", "110", "116", "122", "134", "140", "146", "152", "158", "164"],
+                ["92", "98", "104", "110", "116", "122", "128", "134", "140", "146", "152", "158", "164"],
             )
             self.assertEqual(
                 self.database.get_preparation_operation_colors(operation_name),
