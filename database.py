@@ -6562,7 +6562,10 @@ def preparation_batch_size_label(operation_name: str, sizes, group_label: str):
 
 
 def preparation_material_color(operation_name: str, product_color: str):
-    if is_elastic_preparation_operation(operation_name):
+    # Material preparation is grouped by the material roll color, not by the
+    # garment color. Automatic cutting output uses the standard black roll;
+    # a separate white-roll task can still be created explicitly.
+    if is_material_preparation_operation(operation_name) or get_preparation_folder(operation_name) == "Дублирование":
         return "Черный"
 
     return product_color

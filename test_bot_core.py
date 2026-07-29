@@ -966,6 +966,31 @@ class IsolatedDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(actual, sorted(expected))
 
+    def test_dublerin_tasks_group_garment_colors_by_material_color(self):
+        task = self.database.create_production_task(
+            "Кардиган",
+            ["98"],
+            ["Брауни", "Черный"],
+            None,
+        )
+        batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"],
+            "Кардиган",
+            1,
+            1,
+            1,
+            {("98", "Брауни"): 2, ("98", "Черный"): 2},
+        )
+        self.assertTrue(self.database.add_cutting_layout(batch_id, 1, 1, 1, {"Брауни": 2, "Черный": 2}))
+
+        dublerin_index = self.route_step_index("Кардиган", "Кардиганы — дублерин 25 мм", "Упаковщик")
+        dubling_index = self.route_step_index("Кардиган", "Кардиган — Дублирование", "Упаковщик")
+        batches = self.database.get_active_route_batches()
+        dublerin_rows = [row for row in batches if row["route_step_index"] == dublerin_index]
+        dubling_rows = [row for row in batches if row["route_step_index"] == dubling_index]
+        self.assertEqual([(row["product_size"], row["product_color"], row["quantity"]) for row in dublerin_rows], [("98 (100 см)", "Черный", 8)])
+        self.assertEqual([(row["product_size"], row["product_color"], row["quantity"]) for row in dubling_rows], [("98", "Черный", 8)])
+
     def test_miniapp_production_creates_task_and_submits_contours(self):
         os.environ["ADMIN_IDS"] = "9001"
         miniapp_server = importlib.import_module("miniapp_server")
