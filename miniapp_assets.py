@@ -4216,6 +4216,24 @@ MINIAPP_HTML = """<!doctype html>
       return 12;
     }
 
+    function confirmTaskTake(task) {
+      if (!task) return false;
+      const product = task.product_name || task.product || "Изделие не указано";
+      const stage = task.stage_title || task.operation || task.stage || "Производственная операция";
+      const sizes = (task.sizes || task.product_size || task.size || "-");
+      const colors = (task.color_labels || task.colors || task.product_color || task.color || "-");
+      const quantity = task.quantity ? `${task.quantity} шт` : "по размерам и цветам";
+      const details = [
+        `Изделие: ${product}`,
+        `Этап: ${stage}`,
+        `Размеры: ${Array.isArray(sizes) ? sizes.join(", ") : sizes}`,
+        `Цвета: ${Array.isArray(colors) ? colors.join(", ") : colors}`,
+        `Количество: ${quantity}`,
+        "\\nПосле подтверждения задание закрепится за вами.",
+      ].join("\\n");
+      return window.confirm(`Взять это задание?\\n\\n${details}`);
+    }
+
     function getReportOperations() {
       return state.data && state.data.report && state.data.report.operations ? state.data.report.operations : [];
     }
@@ -4441,6 +4459,8 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      if (!confirmTaskTake(task)) return;
+
       const productionTaskId = task.production_task_id || task.source_id || task.id;
       const actionKey = `start-cutting-task:${productionTaskId}`;
       if (!beginAction(actionKey)) return;
@@ -4472,8 +4492,12 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     async function releaseCuttingTask(task) {
-      if (!task || !task.is_assigned_to_me) return;
-      const reason = window.prompt("Почему возвращаете задание?", "Нужно передать другому сотруднику") || "";
+      const adminRelease = Boolean(state.data && state.data.is_admin);
+      if (!task || (!task.is_assigned_to_me && !adminRelease)) return;
+      const reason = window.prompt(
+        adminRelease ? "Почему освобождаете задание?" : "Почему возвращаете задание?",
+        adminRelease ? "Передать другому сотруднику" : "Нужно передать другому сотруднику",
+      ) || "";
       if (!reason.trim()) return;
       const productionTaskId = task.production_task_id || task.source_id || task.id;
       const actionKey = `release-cutting-task:${productionTaskId}`;
@@ -4490,6 +4514,7 @@ MINIAPP_HTML = """<!doctype html>
           return;
         }
         state.data.production = data.production || state.data.production;
+        if (data.routes) state.data.routes = data.routes;
         state.selectedCuttingReportTask = 0;
         state.selectedCuttingReportTaskKey = "";
         state.reportSection = "work";
@@ -6770,6 +6795,8 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      if (!confirmTaskTake(current)) return;
+
       const actionKey = `start-operation-task:${current.id}`;
       if (!beginAction(actionKey)) return;
 
@@ -7466,7 +7493,7 @@ MINIAPP_HTML = """<!doctype html>
               <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(task.product_name)}${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${task.work_status === "free" ? "gray" : "warn"}">${escapeHtml(task.status_text || task.status)}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
               <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || (task.contour_matrix ? formatCuttingContourSummary(task.contour_matrix, task.sizes_text) : (task.sizes_text ? formatCuttingSizeQuantities(task.sizes_text) : task.colors_text || "-")))}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
-              ${state.data && state.data.is_admin ? `<div class="order-card-actions"><button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button></div>` : ""}
+              ${state.data && state.data.is_admin ? `<div class="order-card-actions">${task.task_kind === "production" && task.assigned_employee_id ? `<button type="button" class="small-button secondary" data-order-action="release-cutting" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Освободить</button>` : ""}<button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button></div>` : ""}
             </div>
           `).join("")}
           ${routeRows.map((task, routeIndex) => {
@@ -7484,7 +7511,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card order-detail"><div class="order-head route-order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}</span>${current.assigned_employee_name ? `<span class="route-assignee">В работе: ${escapeHtml(current.assigned_employee_name)}</span>` : ""}<span class="trace-code">${escapeHtml(current.trace_code || `RB-${current.id}`)}</span></div><span class="status-chip ${current.work_state === "free" ? "gray" : "warn"}">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}${current.blocked_reason ? `<div class="task-note">${escapeHtml(current.blocked_reason)}</div>` : ""}<div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(current.id)}">Паспорт / QR</button></div></div>
           ${!state.data.is_admin && current.is_assigned_to_me ? renderTaskCompletionForm(current) : ""}
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
-        ${state.data && state.data.is_admin && current ? `<div class="button-row"><button class="small-button danger" data-order-action="delete" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Удалить задание</button></div>` : ""}
+        ${state.data && state.data.is_admin && current ? `<div class="button-row">${current.task_kind === "production" && current.assigned_employee_id ? `<button class="small-button secondary" data-order-action="release-cutting" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Освободить задание</button>` : ""}<button class="small-button danger" data-order-action="delete" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Удалить задание</button></div>` : ""}
       `;
     }
 
@@ -8922,6 +8949,11 @@ MINIAPP_HTML = """<!doctype html>
         }
         if (orderAction.dataset.orderAction === "create") {
           createOrderTask();
+        }
+        if (orderAction.dataset.orderAction === "release-cutting") {
+          const rows = currentOrderRows();
+          const current = rows.find((task) => task.task_kind === orderAction.dataset.taskKind && String(task.id) === String(orderAction.dataset.taskId));
+          releaseCuttingTask(current);
         }
         if (orderAction.dataset.orderAction === "delete") {
           deleteOrderTask(orderAction.dataset.taskKind, orderAction.dataset.taskId);

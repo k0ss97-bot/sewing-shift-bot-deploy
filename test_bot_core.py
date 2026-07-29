@@ -1317,6 +1317,15 @@ class IsolatedDatabaseTest(unittest.TestCase):
         task_id = self.database.get_active_production_tasks()[0][0]
         started_cutting = miniapp_server.start_cutting_task_for_telegram(9002, task_id)
         self.assertTrue(started_cutting["ok"], started_cutting)
+        admin_released_cutting = miniapp_server.release_cutting_task_for_telegram(
+            9001,
+            task_id,
+            "Администратор передаёт задание",
+        )
+        self.assertTrue(admin_released_cutting["ok"], admin_released_cutting)
+        self.assertIsNone(self.database.get_production_task_by_id(task_id)["assigned_employee_id"])
+        started_cutting = miniapp_server.start_cutting_task_for_telegram(9002, task_id)
+        self.assertTrue(started_cutting["ok"], started_cutting)
         released_cutting = miniapp_server.release_cutting_task_for_telegram(
             9002,
             task_id,

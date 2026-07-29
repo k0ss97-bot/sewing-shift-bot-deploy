@@ -2006,32 +2006,39 @@ def start_cutting_task_for_telegram(telegram_id: int, task_id: int):
 
 def release_cutting_task_for_telegram(telegram_id: int, task_id: int, reason: str = ""):
     employee = get_employee_for_access(telegram_id)
+    admin_user = is_admin(telegram_id)
 
     if employee is None or employee[5] != "active":
         return {"ok": False, "message": "Нет активного профиля."}
 
-    if employee[3] != "Раскройщик":
+    if not admin_user and employee[3] != "Раскройщик":
         return {"ok": False, "message": "Возвращать задания раскроя может только раскройщик."}
 
     if task_id <= 0:
         return {"ok": False, "message": "Выберите задание."}
 
-    released_task = release_production_task(task_id, employee[0], reason)
+    task = get_production_task_by_id(task_id)
+    if task is None or not task.get("assigned_employee_id"):
+        return {"ok": False, "message": "Задание уже свободно или недоступно."}
+
+    owner_id = task["assigned_employee_id"] if admin_user else employee[0]
+    released_task = release_production_task(task_id, owner_id, reason)
     if released_task is None:
         return {"ok": False, "message": "Задание нельзя вернуть: оно уже изменилось или взято другим сотрудником."}
 
     add_edit_log(
         telegram_id,
-        "employee",
-        "Вернул задание раскроя в свободные",
+        "admin" if admin_user else "employee",
+        "Освободил задание раскроя" if admin_user else "Вернул задание раскроя в свободные",
         "production_task",
         task_id,
         f"{released_task['product_name']}; {reason.strip() if reason else 'причина не указана'}",
     )
     return {
         "ok": True,
-        "message": "Задание возвращено в свободные.",
+        "message": "Задание освобождено и возвращено в свободные.",
         "production": get_production_state_for_telegram(telegram_id),
+        "routes": get_routes_payload(telegram_id),
     }
 
 
