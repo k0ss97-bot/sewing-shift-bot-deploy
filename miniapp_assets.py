@@ -6556,7 +6556,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card order-detail">
             <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">1 этап</span></div>
             <div class="op-list">${rows || itemEmpty("Нет размеров или цветов.")}</div>
-            ${current.is_assigned_to_me ? `<div class="button-row"><button type="button" class="small-button secondary" data-cutting-action="release" data-cutting-task-id="${escapeHtml(current.id)}">Вернуть задание в свободные</button></div>` : ""}
+            ${current.is_assigned_to_me ? `<div class="button-row"><button type="button" class="small-button secondary" data-cutting-action="release" data-cutting-task-id="${escapeHtml(current.id)}">Отменить и вернуть задание</button></div>` : ""}
           </div>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
@@ -6575,6 +6575,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card order-detail">
             <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">2 этап</span></div>
             <div class="op-list">${rows || itemEmpty("Нет цветов для настила.")}</div>
+            ${current.is_assigned_to_me ? `<div class="button-row"><button type="button" class="small-button secondary" data-cutting-action="release" data-cutting-task-id="${escapeHtml(current.id)}">Отменить и вернуть задание</button></div>` : ""}
           </div>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
@@ -6586,6 +6587,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card order-detail">
             <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">3 этап</span></div>
             <div class="form-grid"><div class="field full"><label>Готовность</label><select id="cuttingProgress">${[25, 50, 75, 100].map((value) => `<option value="${value}" ${String(draft.progress || 100) === String(value) ? "selected" : ""}>${value}%</option>`).join("")}</select></div></div>
+            ${current.is_assigned_to_me ? `<div class="button-row"><button type="button" class="small-button secondary" data-cutting-action="release" data-cutting-task-id="${escapeHtml(current.id)}">Отменить и вернуть задание</button></div>` : ""}
           </div>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
