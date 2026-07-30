@@ -2056,6 +2056,23 @@ def init_db():
     if "reserved_quantity" not in warehouse_stock_lot_columns:
         cursor.execute("ALTER TABLE warehouse_stock_lots ADD COLUMN reserved_quantity INTEGER NOT NULL DEFAULT 0")
 
+    # Administrative size-marker preparation tasks.  The current first
+    # version is intentionally grouped by product type and colour; size-level
+    # splitting can be added later without changing the production route.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS admin_size_marker_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_name TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            planned_quantity INTEGER NOT NULL DEFAULT 0,
+            completed_quantity INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(product_name, product_color)
+        )
+    """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS production_tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2525,6 +2542,7 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_type_position ON warehouse_stock (item_type, ready_for_position)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_product ON warehouse_stock (product_name, product_size, product_color)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_warehouse_stock_lots_stock ON warehouse_stock_lots (stock_id, quantity_available)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_admin_size_marker_status ON admin_size_marker_tasks (status, updated_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trace_events_batch ON production_trace_events (batch_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trace_events_cutting ON production_trace_events (cutting_batch_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trace_events_task ON production_trace_events (production_task_id, created_at)")
@@ -8332,6 +8350,130 @@ def get_warehouse_stock_rows():
     rows = [warehouse_stock_from_row(row) for row in cursor.fetchall()]
     conn.close()
     return rows
+
+
+def sync_admin_size_marker_tasks():
+    """Refresh admin size-marker tasks from finished-goods stock.
+
+    One finished garment currently requires one size marker.  We keep the
+    completion state in its own table so the administrator can close a task;
+    if stock grows later, the task automatically reopens for the difference.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+    cursor.execute(
+        """
+        SELECT product_name, product_color, COALESCE(SUM(quantity), 0) AS quantity
+        FROM warehouse_stock
+        WHERE item_type = 'finished' AND quantity > 0
+        GROUP BY product_name, product_color
+        ORDER BY product_name COLLATE NOCASE, product_color COLLATE NOCASE
+        """
+    )
+    aggregates = [
+        (str(row[0] or "").strip(), str(row[1] or "").strip(), int(row[2] or 0))
+        for row in cursor.fetchall()
+        if str(row[0] or "").strip() and str(row[1] or "").strip() and int(row[2] or 0) > 0
+    ]
+
+    active_keys = {(product_name, product_color) for product_name, product_color, _ in aggregates}
+    if active_keys:
+        params = [value for key in sorted(active_keys) for value in key]
+        cursor.execute(
+            f"DELETE FROM admin_size_marker_tasks WHERE (product_name, product_color) NOT IN ({','.join('(?, ?)' for _ in active_keys)})",
+            params,
+        )
+    else:
+        cursor.execute("DELETE FROM admin_size_marker_tasks")
+
+    for product_name, product_color, quantity in aggregates:
+        cursor.execute(
+            """
+            SELECT completed_quantity, status
+            FROM admin_size_marker_tasks
+            WHERE product_name = ? AND product_color = ?
+            """,
+            (product_name, product_color),
+        )
+        existing = cursor.fetchone()
+        if existing is None:
+            cursor.execute(
+                """
+                INSERT INTO admin_size_marker_tasks (
+                    product_name, product_color, planned_quantity,
+                    completed_quantity, status, created_at, updated_at
+                ) VALUES (?, ?, ?, 0, 'open', ?, ?)
+                """,
+                (product_name, product_color, quantity, now, now),
+            )
+            continue
+
+        completed_quantity = min(int(existing[0] or 0), quantity)
+        status = "done" if completed_quantity >= quantity and existing[1] == "done" else "open"
+        cursor.execute(
+            """
+            UPDATE admin_size_marker_tasks
+            SET planned_quantity = ?, completed_quantity = ?, status = ?, updated_at = ?
+            WHERE product_name = ? AND product_color = ?
+            """,
+            (quantity, completed_quantity, status, now, product_name, product_color),
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def get_admin_size_marker_tasks():
+    sync_admin_size_marker_tasks()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, product_name, product_color, planned_quantity,
+               completed_quantity, status, created_at, updated_at
+        FROM admin_size_marker_tasks
+        ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END,
+                 product_name COLLATE NOCASE, product_color COLLATE NOCASE, id
+        """
+    )
+    columns = [column[0] for column in cursor.description]
+    rows = [row_to_dict(columns, row) for row in cursor.fetchall()]
+    conn.close()
+    for row in rows:
+        row["remaining_quantity"] = max(
+            0, int(row.get("planned_quantity") or 0) - int(row.get("completed_quantity") or 0)
+        )
+    return rows
+
+
+def set_admin_size_marker_task_status(task_id: int, status: str):
+    if status not in {"open", "done"}:
+        return None
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT planned_quantity FROM admin_size_marker_tasks WHERE id = ?",
+        (int(task_id),),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        conn.close()
+        return None
+    now = local_now().isoformat()
+    if status == "done":
+        cursor.execute(
+            "UPDATE admin_size_marker_tasks SET completed_quantity = planned_quantity, status = 'done', updated_at = ? WHERE id = ?",
+            (now, int(task_id)),
+        )
+    else:
+        cursor.execute(
+            "UPDATE admin_size_marker_tasks SET completed_quantity = 0, status = 'open', updated_at = ? WHERE id = ?",
+            (now, int(task_id)),
+        )
+    conn.commit()
+    conn.close()
+    return get_admin_size_marker_tasks()
 
 
 def get_open_critical_notifications(limit: int = 50):

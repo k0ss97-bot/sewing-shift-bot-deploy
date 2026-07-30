@@ -88,6 +88,7 @@ from database import (
     get_product_colors,
     get_product_sizes,
     get_recent_shifts,
+    get_admin_size_marker_tasks,
     get_production_task_attachment,
     get_route_batch_by_id,
     get_route_batch_by_trace_code,
@@ -120,6 +121,7 @@ from database import (
     route_steps_from_snapshot,
     restore_operation,
     set_route_batch_work_state,
+    set_admin_size_marker_task_status,
     update_cutting_batch_progress,
     update_employee_access_status,
     update_employee_position,
@@ -3073,6 +3075,11 @@ ADMIN_MENU = [
         ],
     },
     {
+        "id": "size_markers",
+        "title": "Размерники",
+        "buttons": ["Задания на размерники", "Отметить выполнение"],
+    },
+    {
         "id": "shifts",
         "title": "Смены",
         "buttons": ["Открытые смены", "Последние смены", "Удалить смену"],
@@ -4314,6 +4321,7 @@ def get_admin_dashboard(telegram_id: int):
             operation_admin_to_dict(operation) for operation in get_all_operations()
         ],
         "reports": get_admin_report_payload("period", month_start, today),
+        "size_markers": get_admin_size_marker_tasks(),
         "home": get_admin_home_payload(employee_rows, open_shift_rows),
         "feedback": [
             feedback_row_to_dict(row)
@@ -4329,6 +4337,25 @@ def get_admin_dashboard(telegram_id: int):
         "defect_reasons": DEFECT_REASONS,
         "defect_dispositions": DEFECT_DISPOSITIONS,
     }
+
+
+def set_admin_size_marker_task_status_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+    try:
+        task_id = int(payload.get("task_id") or 0)
+    except (TypeError, ValueError):
+        task_id = 0
+    status = str(payload.get("status") or "").strip().lower()
+    if task_id <= 0 or status not in {"open", "done"}:
+        return {"ok": False, "message": "Некорректное задание размерников."}
+    rows = set_admin_size_marker_task_status(task_id, status)
+    if rows is None:
+        return {"ok": False, "message": "Задание размерников не найдено."}
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["size_markers"] = rows
+    dashboard["message"] = "Задание отмечено выполненным." if status == "done" else "Задание возвращено в работу."
+    return dashboard
 
 
 def acknowledge_critical_notification_for_admin(telegram_id: int, payload: dict):
@@ -5727,6 +5754,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = acknowledge_critical_notification_for_admin(telegram_id, payload)
             elif path == "/api/admin/report":
                 result = get_admin_report_for_telegram(telegram_id, payload)
+            elif path == "/api/admin/size-markers/status":
+                result = set_admin_size_marker_task_status_for_telegram(telegram_id, payload)
             elif path == "/api/admin/feedback":
                 result = get_admin_feedback_for_telegram(telegram_id, payload)
             elif path == "/api/admin/employee/status":

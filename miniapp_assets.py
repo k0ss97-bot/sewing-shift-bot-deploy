@@ -2017,6 +2017,27 @@ MINIAPP_HTML = """<!doctype html>
       line-height: 1.35;
     }
 
+    .report-row-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 7px;
+      min-width: 130px;
+    }
+
+    .report-row-actions .small-button {
+      margin-top: 0;
+      padding: 8px 10px;
+      border-radius: 11px;
+      font-size: 11px;
+    }
+
+    .report-row-actions .status-chip,
+    .report-row-actions .muted {
+      margin-top: 0;
+    }
+
     .select-row {
       display: grid;
       grid-template-columns: 42px minmax(0, 1fr) auto;
@@ -5670,6 +5691,21 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function adminSizeMarkerStatus(taskId, status) {
+      mainButton.disabled = true;
+      try {
+        const data = await api("/api/admin/size-markers/status", {
+          task_id: taskId,
+          status,
+        });
+        if (!data.ok) throw new Error(data.message || "Не удалось изменить задание размерников.");
+        replaceAdminDashboard(data, data.message || "Задание размерников обновлено.");
+      } catch (error) {
+        showToast("Размерники", error.message || "Не удалось изменить задание.");
+        mainButton.disabled = false;
+      }
+    }
+
     async function adminEmployeePosition(employeeId) {
       const select = document.getElementById(`employeePosition${employeeId}`);
       mainButton.disabled = true;
@@ -8331,6 +8367,7 @@ MINIAPP_HTML = """<!doctype html>
     function renderAdminTabs() {
       const sections = [
         ["reports", "Отчёты"],
+        ["size_markers", "Размерники"],
         ["employees", "Сотрудники"],
         ["shifts", "Смены"],
         ["feedback", "Связь"],
@@ -8339,6 +8376,47 @@ MINIAPP_HTML = """<!doctype html>
       return `<div class="segment-row">${sections.map(([id, label]) => `
         <button class="segment-button ${state.adminSection === id ? "active" : ""}" data-admin-section="${id}">${label}</button>
       `).join("")}</div>`;
+    }
+
+    function renderAdminSizeMarkers(admin) {
+      const rows = admin && Array.isArray(admin.size_markers) ? admin.size_markers : [];
+      const openRows = rows.filter((row) => row.status === "open");
+      const totalRequired = rows.reduce((sum, row) => sum + Number(row.planned_quantity || 0), 0);
+      const totalRemaining = rows.reduce((sum, row) => sum + Number(row.remaining_quantity || 0), 0);
+      mainButton.textContent = "Обновить размерники";
+      mainButton.disabled = false;
+
+      const rowsHtml = rows.length ? rows.map((row) => {
+        const done = Number(row.completed_quantity || 0);
+        const planned = Number(row.planned_quantity || 0);
+        const remaining = Number(row.remaining_quantity || 0);
+        const isDone = row.status === "done";
+        return `
+          <div class="card report-row">
+            <div>
+              <b>${escapeHtml(row.product_name)}</b>
+              <span>Цвет: ${escapeHtml(row.product_color)}<br>Норма: 1 размерник на 1 изделие</span>
+            </div>
+            <div class="report-row-actions">
+              <span class="status-chip ${isDone ? "" : "warn"}">${isDone ? "готово" : `${remaining} шт.`}</span>
+              <span class="muted">${done} / ${planned}</span>
+              <button type="button" class="small-button ${isDone ? "secondary" : ""}" data-admin-action="${isDone ? "reopen-size-marker" : "complete-size-marker"}" data-size-marker-id="${escapeHtml(row.id)}">${isDone ? "Вернуть" : "Выполнено"}</button>
+            </div>
+          </div>
+        `;
+      }).join("") : itemEmpty("Готовой продукции пока нет — задания на размерники появятся автоматически.");
+
+      return `
+        <div class="screen-head"><div><h2>Размерники</h2><p>Административное задание: 1 размерник на 1 готовое изделие. Сейчас группировка по изделию и цвету; размеры добавим следующим этапом.</p></div><div class="date">${openRows.length} открыто</div></div>
+        ${renderAdminTabs()}
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="kpi-top"><span>Группы</span><div class="kpi-ico">▦</div></div><strong>${rows.length}<small> шт</small></strong><span>Изделие + цвет</span></div>
+          <div class="card kpi"><div class="kpi-top"><span>Всего размерников</span><div class="kpi-ico">✓</div></div><strong>${totalRequired}<small> шт</small></strong><span>По готовой продукции</span></div>
+          <div class="card kpi warn"><div class="kpi-top"><span>Осталось сделать</span><div class="kpi-ico">!</div></div><strong>${totalRemaining}<small> шт</small></strong><span>Открытые задания</span></div>
+        </div>
+        <div class="section-title"><b>Задания</b><button type="button" data-admin-action="refresh">обновить</button></div>
+        <div class="op-list">${rowsHtml}</div>
+      `;
     }
 
     function renderAdminWarehouse(includeTabs = false) {
@@ -9458,6 +9536,10 @@ MINIAPP_HTML = """<!doctype html>
         mount.innerHTML = renderAdminEmployees(admin);
         return;
       }
+      if (state.adminSection === "size_markers") {
+        mount.innerHTML = renderAdminSizeMarkers(admin);
+        return;
+      }
       if (state.adminSection === "shifts") {
         mount.innerHTML = renderAdminShifts(admin);
         return;
@@ -10259,6 +10341,8 @@ MINIAPP_HTML = """<!doctype html>
         if (adminAction.dataset.adminAction === "role-admin") adminEmployeeRole(adminAction.dataset.employeeId, "admin");
         if (adminAction.dataset.adminAction === "role-employee") adminEmployeeRole(adminAction.dataset.employeeId, "employee");
         if (adminAction.dataset.adminAction === "delete-employee") adminDeleteEmployee(adminAction.dataset.employeeId, adminAction.dataset.employeeName);
+        if (adminAction.dataset.adminAction === "complete-size-marker") adminSizeMarkerStatus(adminAction.dataset.sizeMarkerId, "done");
+        if (adminAction.dataset.adminAction === "reopen-size-marker") adminSizeMarkerStatus(adminAction.dataset.sizeMarkerId, "open");
         if (adminAction.dataset.adminAction === "close-shift") adminCloseShift(adminAction.dataset.shiftId);
         if (adminAction.dataset.adminAction === "delete-shift") adminDeleteShift(adminAction.dataset.shiftId);
         return;
