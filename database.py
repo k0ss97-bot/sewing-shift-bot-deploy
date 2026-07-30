@@ -969,6 +969,7 @@ from catalog import (
     PACKING_PRODUCTS,
     PREPARATION_MATERIAL_COLORS,
     PREPARATION_OPERATION_OPTIONS,
+    PREPARATION_OPERATION_QUANTITY_MULTIPLIERS,
     PRODUCT_OPTIONS,
     PRODUCTION_OPERATIONS,
     SIMPLE_PREPARATION_OPERATIONS,
@@ -6583,6 +6584,10 @@ def preparation_material_color(operation_name: str, product_color: str):
     return product_color
 
 
+def preparation_operation_quantity_multiplier(operation_name: str):
+    return max(1, int(PREPARATION_OPERATION_QUANTITY_MULTIPLIERS.get(operation_name, 1)))
+
+
 def _get_cutting_batch_result_rows(cursor, batch_id: int):
     cursor.execute("SELECT COUNT(*) FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
     has_matrix = cursor.fetchone()[0] > 0
@@ -6691,6 +6696,18 @@ def _create_preparation_route_batches_for_layout(cursor, batch_id: int, employee
         if not is_auto_preparation_operation(operation_name):
             continue
 
+        # Dubling can only start after the material-preparation operation has
+        # produced the dublerin. Operations without a preceding material
+        # preparation (for example a direct bomber dubling step) still start
+        # from the formed cut as before.
+        previous_step = route_steps[step_index - 1] if step_index > len(CUTTING_ROUTE) else None
+        if (
+            get_preparation_folder(operation_name) == "Дублирование"
+            and previous_step
+            and is_material_preparation_operation(previous_step.get("operation", ""))
+        ):
+            continue
+
         for product_size, product_color, quantity in result_rows:
             if quantity <= 0:
                 continue
@@ -6712,7 +6729,7 @@ def _create_preparation_route_batches_for_layout(cursor, batch_id: int, employee
                 },
             )
             group["sizes"].add(str(product_size))
-            group["quantity"] += int(quantity)
+            group["quantity"] += int(quantity) * preparation_operation_quantity_multiplier(operation_name)
 
     created_ids = []
 

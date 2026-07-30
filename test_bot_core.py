@@ -904,7 +904,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         conn.close()
         self.assertEqual(formed, 14)
 
-    def test_layout_creates_dublerin_and_dubling_preparation_tasks(self):
+    def test_layout_creates_only_dublerin_before_dubling(self):
         task = self.database.create_production_task(
             "Жакет для девочек",
             ["98"],
@@ -938,11 +938,10 @@ class IsolatedDatabaseTest(unittest.TestCase):
             sorted((batch["route_step_index"], batch["product_size"], batch["product_color"], batch["quantity"]) for batch in preparation_batches),
             [
                 (dublerin_index, "98 (28,5 см)", "Черный", 10),
-                (dubling_index, "98", "Черный", 10),
             ],
         )
 
-    def test_cardigan_layout_creates_dublerin_and_dubling_from_cut_quantity(self):
+    def test_cardigan_layout_creates_two_dublerin_pieces_per_garment(self):
         expected = []
         for product_name, size in (("Кардиган", "98"), ("Кардиган", "134")):
             task = self.database.create_production_task(product_name, [size], ["Черный"], None)
@@ -951,14 +950,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
             )
             self.assertTrue(self.database.add_cutting_layout(batch_id, 1, 1, 1, {"Черный": 2}))
             dublerin_index = self.route_step_index(product_name, "Кардиганы — дублерин 25 мм", "Упаковщик")
-            dubling_index = self.route_step_index(product_name, next(
-                step["operation"]
-                for step in importlib.import_module("route_maps").PRODUCT_ROUTE_MAPS[product_name]
-                if step["operation"].endswith("Дублирование")
-            ), "Упаковщик")
             expected.extend([
-                (product_name, dublerin_index, f"{size} (100 см)", "Черный", 10),
-                (product_name, dubling_index, size, "Черный", 10),
+                (product_name, dublerin_index, f"{size} (100 см)", "Черный", 20),
             ])
 
         actual = sorted(
@@ -985,12 +978,10 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(self.database.add_cutting_layout(batch_id, 1, 1, 1, {"Брауни": 2, "Черный": 2}))
 
         dublerin_index = self.route_step_index("Кардиган", "Кардиганы — дублерин 25 мм", "Упаковщик")
-        dubling_index = self.route_step_index("Кардиган", "Кардиган — Дублирование", "Упаковщик")
         batches = self.database.get_active_route_batches()
         dublerin_rows = [row for row in batches if row["route_step_index"] == dublerin_index]
-        dubling_rows = [row for row in batches if row["route_step_index"] == dubling_index]
-        self.assertEqual([(row["product_size"], row["product_color"], row["quantity"]) for row in dublerin_rows], [("98 (100 см)", "Черный", 8)])
-        self.assertEqual([(row["product_size"], row["product_color"], row["quantity"]) for row in dubling_rows], [("98", "Черный", 8)])
+        self.assertEqual([(row["product_size"], row["product_color"], row["quantity"]) for row in dublerin_rows], [("98 (100 см)", "Черный", 16)])
+        self.assertFalse(any(row["route_step_index"] == dublerin_index + 1 for row in batches))
 
     def test_miniapp_production_creates_task_and_submits_contours(self):
         os.environ["ADMIN_IDS"] = "9001"

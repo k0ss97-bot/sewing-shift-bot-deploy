@@ -32,6 +32,11 @@ PACKING_OPERATIONS = [
 ]
 
 PREPARATION_MATERIAL_COLORS = ["Черный", "Белый"]
+PREPARATION_OPERATION_QUANTITY_MULTIPLIERS = {
+    # One cardigan requires two separate dublerin pieces.
+    "Кардиганы — дублерин 25 мм": 2,
+    "Кардиган — Дублирование": 2,
+}
 SIMPLE_PREPARATION_OPERATIONS = [
     "Помощь с настилом ткани",
     "Стирка",
