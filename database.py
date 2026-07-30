@@ -5586,6 +5586,26 @@ def complete_route_batch_step_atomic(
         if good_quantity < 0 or defect_quantity < 0 or good_quantity + defect_quantity != batch["quantity"]:
             raise ValueError("invalid quantities")
 
+        current_route_steps = route_steps_from_snapshot(
+            batch.get("route_snapshot") or "",
+            batch.get("product_name") or "",
+        )
+        current_route_step = (
+            current_route_steps[expected_step_index]
+            if 0 <= expected_step_index < len(current_route_steps)
+            else {}
+        )
+        next_quantity_divisor = max(
+            1,
+            int(
+                current_route_step.get("next_quantity_divisor")
+                or (2 if operation_name == "Кардиган — Дублирование" else 1)
+            ),
+        )
+        if next_quantity_divisor > 1 and good_quantity % next_quantity_divisor:
+            raise ValueError("quantity is not divisible for the next route step")
+        next_batch_quantity = good_quantity // next_quantity_divisor
+
         # Input batches are reserved when the downstream task appears and are
         # physically issued only once this operation is completed.
         _consume_reserved_route_batch_inputs(cursor, batch, employee_id, now)
@@ -5768,7 +5788,7 @@ def complete_route_batch_step_atomic(
                     cursor,
                     batch,
                     next_step_index,
-                    good_quantity,
+                    next_batch_quantity,
                     employee_id,
                     now,
                     batch_id,

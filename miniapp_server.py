@@ -1252,6 +1252,19 @@ def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: d
     if good_quantity + defect_quantity != batch["quantity"]:
         return {"ok": False, "message": "Распределите всё количество задания между годным и браком."}
 
+    next_quantity_divisor = max(
+        1,
+        int(
+            current_step.get("next_quantity_divisor")
+            or (2 if current_step.get("operation") == "Кардиган — Дублирование" else 1)
+        ),
+    )
+    if next_quantity_divisor > 1 and good_quantity % next_quantity_divisor:
+        return {
+            "ok": False,
+            "message": f"Для следующего этапа годное количество должно делиться на {next_quantity_divisor}.",
+        }
+
     defect_reason = str(payload.get("defect_reason") or "").strip()
     defect_disposition = str(payload.get("defect_disposition") or "").strip()
     defect_comment = str(payload.get("defect_comment") or "").strip()
