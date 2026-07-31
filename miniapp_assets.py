@@ -8904,6 +8904,7 @@ MINIAPP_HTML = """<!doctype html>
         putaway: "Размещение",
         transfer: "Перемещение",
         pick: "Выдача из ячейки",
+        ship: "Отгрузка",
         inventory: "Инвентаризация",
         count: "Инвентаризация",
         inventory_adjustment: "Корректировка",
