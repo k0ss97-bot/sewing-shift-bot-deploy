@@ -8908,6 +8908,8 @@ MINIAPP_HTML = """<!doctype html>
         count: "Инвентаризация",
         inventory_adjustment: "Корректировка",
         scrap: "Списание",
+        test_receipt: "Тестовая приёмка",
+        test_putaway: "Тестовое размещение",
       })[type] || type || "Операция";
     }
 
@@ -9085,6 +9087,7 @@ MINIAPP_HTML = """<!doctype html>
       return `<div class="wms-map-shell">
         <div class="section-title"><b>Карта адресного хранения</b><span>${locations.length} яч.</span></div>
         <div class="wms-map-legend"><span><i></i> свободна</span><span class="occupied"><i></i> занята</span><span class="reserved"><i></i> есть резерв</span><span class="blocked"><i></i> заблокирована</span></div>
+        ${state.wmsSelectedLocationId ? `<div id="wms-location-detail" tabindex="-1">${renderWmsLocationDetail(stockRows)}</div>` : ""}
         <div class="wms-map-scroll">${zones.map((zone) => {
           const zoneRows = locations.filter((row) => row.parts.zone === zone);
           const maxSection = Math.max(...zoneRows.map((row) => row.parts.section));
@@ -9100,7 +9103,6 @@ MINIAPP_HTML = """<!doctype html>
           });
           return `<section class="wms-zone-map"><div class="wms-zone-map-head"><b>Зона №${zone}</b><span>${zoneRows.length} ячеек · ${zoneQuantity} ${escapeHtml(wmsCurrentStockFilter().unit)}</span></div><div class="wms-map-grid" style="grid-template-columns:repeat(${maxSection * maxPosition},minmax(62px,1fr));grid-template-rows:repeat(${maxLevel},minmax(64px,auto))">${cells.join("")}</div></section>`;
         }).join("")}</div>
-        ${renderWmsLocationDetail(stockRows)}
       </div>`;
     }
 
@@ -10473,6 +10475,11 @@ MINIAPP_HTML = """<!doctype html>
         state.screen = "warehouse";
         state.wmsView = state.wmsView === "map" ? "map" : "stock";
         render();
+        // On a phone the map can be several screens high.  The detail card is
+        // rendered above it, so deliberately bring it into view after a tap.
+        window.setTimeout(() => {
+          document.getElementById("wms-location-detail")?.scrollIntoView({behavior: "smooth", block: "start"});
+        }, 0);
         return;
       }
 
