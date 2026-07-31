@@ -1531,11 +1531,12 @@ MINIAPP_HTML = """<!doctype html>
     .marketplace-dashboard-kpi span,.marketplace-dashboard-kpi small { display:block; color:var(--muted); font-size:10px; }
     .marketplace-dashboard-kpi strong { display:block; margin-top:5px; color:var(--text); font-size:20px; }
     .marketplace-dashboard-lower { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr); gap:14px; margin-top:14px; }
-    .marketplace-chart { min-height:145px; display:flex; align-items:flex-end; gap:7px; padding:14px 10px 8px; border-radius:13px; background:linear-gradient(180deg,rgba(238,243,255,.82),rgba(255,255,255,.4)); }
+    .marketplace-chart { height:145px; min-height:145px; display:flex; align-items:flex-end; gap:7px; padding:14px 10px 8px; border-radius:13px; overflow:hidden; background:linear-gradient(180deg,rgba(238,243,255,.82),rgba(255,255,255,.4)); }
     .marketplace-chart-bar { flex:1; min-width:8px; height:var(--bar-height); border-radius:7px 7px 2px 2px; background:linear-gradient(180deg,#2a69ff,#1647ca); }
     .marketplace-chart-bar.wb { background:linear-gradient(180deg,#d72ac2,#9712a2); }
-    .marketplace-mini-list { display:grid; gap:8px; }
-    .marketplace-mini-row { display:flex; justify-content:space-between; gap:8px; padding:10px 0; border-bottom:1px solid rgba(111,128,159,.12); font-size:12px; }
+    .marketplace-dashboard-lower > div { min-width:0; }
+    .marketplace-mini-list { display:grid; gap:8px; min-width:0; }
+    .marketplace-mini-row { display:flex; justify-content:space-between; gap:8px; min-width:0; padding:10px 0; border-bottom:1px solid rgba(111,128,159,.12); font-size:12px; }
     .marketplace-mini-row:last-child { border-bottom:0; }
     .marketplace-mini-row span { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .marketplace-wide-grid { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr); gap:16px; margin-top:16px; }
@@ -1547,6 +1548,7 @@ MINIAPP_HTML = """<!doctype html>
     .marketplace-notice b { display:block; margin-bottom:3px; }
     .marketplace-notice span { color:var(--muted); }
     .marketplace-notice-dot { width:8px; height:8px; margin-top:4px; flex:0 0 auto; border-radius:50%; background:#ff9f1c; }
+    .marketplace-dashboard-grid.single { grid-template-columns:1fr; }
     @media (max-width: 800px) { .marketplace-dashboard-grid,.marketplace-wide-grid,.marketplace-dashboard-lower { grid-template-columns:1fr; } .marketplace-dashboard-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 
     .marketplace-provider-panel {
@@ -9597,7 +9599,7 @@ MINIAPP_HTML = """<!doctype html>
       const topProductsBlock = topProducts.length ? `<div class="marketplace-mini-list">${topProducts.map((row) => `<div class="marketplace-mini-row"><span>${escapeHtml(row.name || row.offer_id || "Товар")}</span><b>${escapeHtml(row.available == null ? 0 : row.available)} шт.</b></div>`).join("")}</div>` : itemEmpty("После синхронизации здесь появятся товары-лидеры.");
       const recentOrdersBlock = orders.length ? `<table class="marketplace-table"><thead><tr><th>Заказ</th><th>Товар</th><th>Статус</th></tr></thead><tbody>${orders.slice(0, 5).map((row) => `<tr><td>${escapeHtml(row.posting_number || row.external_order_id || "—")}</td><td>${escapeHtml(row.external_order_id || "—")}</td><td>${escapeHtml(row.status || "—")}</td></tr>`).join("")}</tbody></table>` : itemEmpty("Заказы появятся после синхронизации.");
       const notificationsBlock = (payload.sync_events || []).slice(0, 4).map((row) => `<div class="marketplace-notice"><i class="marketplace-notice-dot"></i><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.event_type || "Событие")}</b><span>${escapeHtml(row.message || "Обновление данных")}</span></div></div>`).join("") || `<div class="marketplace-notice"><i class="marketplace-notice-dot"></i><div><b>Система готова</b><span>Уведомления о синхронизации и поставках появятся здесь.</span></div></div>`;
-      const chartBars = (values, wb = false) => values.map((value) => `<i class="marketplace-chart-bar ${wb ? "wb" : ""}" style="--bar-height:${Math.max(12, Math.min(100, Number(value || 0)))}%"></i>`).join("");
+      const chartBars = (values, wb = false) => { const max = Math.max(1, ...values.map((value) => Number(value || 0))); return values.map((value) => `<i class="marketplace-chart-bar ${wb ? "wb" : ""}" style="--bar-height:${Math.max(8, (Number(value || 0) / max) * 100)}%" title="${escapeHtml(value || 0)}"></i>`).join(""); };
       const providerDashboard = (key, label, configured, wb = false) => {
         const providerProducts = wb ? [] : products;
         const providerOrders = wb ? [] : orders;
@@ -9613,7 +9615,7 @@ MINIAPP_HTML = """<!doctype html>
           <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="orders"><div class="kpi-top"><span>Отгрузки</span><span class="kpi-ico">↑</span></div><strong>${escapeHtml(summary.open_orders || 0)}<small> открыто</small></strong><span>Данные ${providerName} · открыть список ›</span></button>
           <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="supplies"><div class="kpi-top"><span>Поставки МП</span><span class="kpi-ico">⇢</span></div><strong>${escapeHtml(supplies.length)}<small> поставок</small></strong><span>Внутренние задания для склада ›</span></button>
         </div>
-        <div class="marketplace-dashboard-grid">${isAll ? providerDashboard("ozon", "Ozon", Boolean(payload.configured)) + providerDashboard("wildberries", "Wildberries", Boolean(wildberries.configured), true) : providerDashboard(selectedProvider, providerName, providerConfigured, isWildberries)}</div>
+        <div class="marketplace-dashboard-grid ${isAll ? "" : "single"}">${isAll ? providerDashboard("ozon", "Ozon", Boolean(payload.configured)) + providerDashboard("wildberries", "Wildberries", Boolean(wildberries.configured), true) : providerDashboard(selectedProvider, providerName, providerConfigured, isWildberries)}</div>
         <div class="marketplace-overview-grid"><div class="card field-card"><div class="section-title"><b>Поставки маркетплейсов</b><button type="button" class="small-button secondary" data-marketplace-view="supplies">Открыть ›</button></div>${suppliesBlock}</div><div class="card field-card"><div class="section-title"><b>Задания складу</b><button type="button" class="small-button secondary" data-marketplace-view="warehouse-shipments">Открыть ›</button></div>${warehouseShipmentsBlock}</div></div>
         <div class="marketplace-wide-grid"><div class="card field-card"><div class="section-title"><b>Последние заказы</b><button type="button" class="small-button secondary" data-marketplace-view="orders">Все заказы ›</button></div>${recentOrdersBlock}</div><div class="card field-card"><div class="section-title"><b>Уведомления</b><span>${(payload.sync_events || []).length}</span></div>${notificationsBlock}</div></div>
       `;
