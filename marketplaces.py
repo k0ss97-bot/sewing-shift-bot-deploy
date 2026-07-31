@@ -200,6 +200,16 @@ def product_group_for(*values: object) -> tuple[str, str]:
     if "свитшот" in text:
         return "sweatshirts", "Свитшоты"
     if "бомбер" in text:
+        has_child = any(token in text for token in ("детск", "дет.", "kids", "child"))
+        has_teen = any(token in text for token in ("подрост", "подр.", "teen", "junior"))
+        if has_child and not has_teen:
+            return "bombers-children", "Бомбер детский"
+        if has_teen and not has_child:
+            return "bombers-teens", "Бомбер подростковый"
+        if sizes and max(sizes) <= 128:
+            return "bombers-children", "Бомбер детский"
+        if sizes and min(sizes) >= 134:
+            return "bombers-teens", "Бомбер подростковый"
         return "bombers", "Бомберы"
     if "юбк" in text and "шорт" in text:
         return "skirt-shorts", "Юбка-шорты"
@@ -714,13 +724,22 @@ def warehouse_catalog() -> dict:
              ORDER BY p.name COLLATE NOCASE, p.offer_id COLLATE NOCASE, p.size, p.color, p.id""",
         (account_id,),
     ).fetchall()
+    product_payload = []
+    for row in rows:
+        item = dict(row)
+        group_key, group_name = product_group_for(
+            item.get("name"), item.get("offer_id"), item.get("sku"), item.get("barcode"),
+        )
+        item["group_key"] = group_key
+        item["group_name"] = group_name
+        product_payload.append(item)
     conn.close()
     return {
         "ok": True,
         "marketplace": "ozon",
         "account_name": account["account_name"] if account else account_name,
         "last_sync_at": account["last_sync_at"] if account else None,
-        "products": [dict(row) for row in rows],
+        "products": product_payload,
     }
 
 

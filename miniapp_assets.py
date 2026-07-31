@@ -4233,6 +4233,7 @@ MINIAPP_HTML = """<!doctype html>
       "wmsMapSearch",
       "wmsMapStatusFilter",
       "wmsCatalogSearch",
+      "wmsCatalogGroup",
       "adminSection",
       "employeePositionFilter",
       "employeeStatusFilter",
@@ -4348,6 +4349,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsSelectedLocationId: "",
       wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: []},
       wmsCatalogSearch: "",
+      wmsCatalogGroup: "",
       wmsCatalog: {loading: false, loaded: false, error: "", products: [], lastSyncAt: ""},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
@@ -9088,27 +9090,47 @@ MINIAPP_HTML = """<!doctype html>
     function renderWmsProducts() {
       const catalog = state.wmsCatalog || {loading: false, loaded: false, error: "", products: [], lastSyncAt: ""};
       const search = String(state.wmsCatalogSearch || "").trim().toLocaleLowerCase("ru");
-      const products = (catalog.products || []).filter((product) => {
+      const searchedProducts = (catalog.products || []).filter((product) => {
         if (!search) return true;
         return [product.offer_id, product.name, product.color, product.size, product.barcode, product.sku]
           .some((value) => String(value || "").toLocaleLowerCase("ru").includes(search));
       });
+      const groupMap = new Map();
+      searchedProducts.forEach((product) => {
+        const key = String(product.group_key || "other");
+        const group = groupMap.get(key) || {key, name: product.group_name || "Прочие товары", products: []};
+        group.products.push(product);
+        groupMap.set(key, group);
+      });
+      const groups = [...groupMap.values()].sort((first, second) => first.name.localeCompare(second.name, "ru"));
+      if (state.wmsCatalogGroup && !groupMap.has(state.wmsCatalogGroup)) state.wmsCatalogGroup = "";
+      const selectedGroup = state.wmsCatalogGroup ? groupMap.get(state.wmsCatalogGroup) : null;
+      const products = selectedGroup ? selectedGroup.products : searchedProducts;
       mainButton.textContent = catalog.loading ? "Обновляем…" : "Обновить товары";
       mainButton.disabled = catalog.loading;
       const notice = catalog.loading && !catalog.loaded
         ? `<div class="card field-card">${itemEmpty("Загружаем каталог Ozon…")}</div>`
         : (catalog.error ? `<div class="card field-card"><div class="task-note"><b>Не удалось загрузить товары Ozon</b><br>${escapeHtml(catalog.error)}</div><div class="button-row"><button type="button" class="small-button" data-wms-catalog-action="refresh">Повторить</button></div></div>` : "");
-      const rows = products.length ? products.map((product) => `
+      const productRows = products.length ? products.map((product) => `
         <div class="card report-row wms-catalog-product">
           <div><b>${escapeHtml(product.name || "Без названия")}</b><span>Артикул: ${escapeHtml(product.offer_id || "—")}<br>Цвет: ${escapeHtml(product.color || "—")} · Размер: ${escapeHtml(product.size || "—")}</span></div>
           <div><span class="status-chip gray">Штрихкод: ${escapeHtml(product.barcode || "—")}</span><small>SKU: ${escapeHtml(product.sku || "—")}</small></div>
         </div>`).join("") : itemEmpty(catalog.loaded ? "По этому запросу товаров не найдено." : "Товары ещё не загружены.");
+      const groupsBlock = groups.length ? `<div class="op-list marketplace-group-grid">${groups.map((group) => {
+        const colors = new Set(group.products.map((product) => String(product.color || "Не указан")).filter(Boolean));
+        const sizes = new Set(group.products.map((product) => String(product.size || "Не указан")).filter(Boolean));
+        return `<button type="button" class="card marketplace-clickable marketplace-group-card" data-wms-catalog-group="${escapeHtml(group.key)}"><div class="group-title"><b>${escapeHtml(group.name)}</b><span class="status-chip">›</span></div><div class="marketplace-group-meta"><span>${group.products.length} вариантов</span><span>${colors.size} цветов</span><span>${sizes.size} размеров</span></div><div class="marketplace-group-meta"><span>Открыть цвета и размеры ›</span></div></button>`;
+      }).join("")}</div>` : itemEmpty(catalog.loaded ? "По этому запросу групп не найдено." : "Товары ещё не загружены.");
+      const colorsBlock = selectedGroup ? [...new Set(products.map((product) => String(product.color || "Не указан")))].sort((a, b) => a.localeCompare(b, "ru")).map((color) => {
+        const colorProducts = products.filter((product) => String(product.color || "Не указан") === color).sort((a, b) => String(a.size || "").localeCompare(String(b.size || ""), "ru", {numeric: true}));
+        return `<section class="wms-catalog-color-group"><div class="section-title"><b>${escapeHtml(color)}</b><span>${colorProducts.length} вариантов</span></div><div class="op-list">${colorProducts.map((product) => `
+          <div class="card report-row wms-catalog-product"><div><b>${escapeHtml(selectedGroup.name)}</b><span>Размер: ${escapeHtml(product.size || "—")}<br>Артикул: ${escapeHtml(product.offer_id || "—")}</span></div><div><span class="status-chip gray">Штрихкод: ${escapeHtml(product.barcode || "—")}</span><small>SKU: ${escapeHtml(product.sku || "—")}</small></div></div>`).join("")}</div></section>`;
+      }).join("") : "";
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Товары Ozon</h2><p>Каталог загружен из Ozon. Данные доступны только для просмотра и не меняют карточки на маркетплейсе.</p></div><div class="date">${catalog.loaded ? `${products.length} из ${(catalog.products || []).length}` : "загрузка"}</div></div>
+        <div class="screen-head"><div><h2>${selectedGroup ? escapeHtml(selectedGroup.name) : "Товары Ozon"}</h2><p>${selectedGroup ? "Варианты сгруппированы по цвету, затем по размеру." : "Выберите изделие, затем увидите его цвета и размеры."}</p></div><div class="date">${catalog.loaded ? `${products.length} из ${(catalog.products || []).length}` : "загрузка"}</div></div>
         <div class="card field-card"><div class="warehouse-v2-filter-row"><div class="field"><label>Поиск по артикулу, названию, цвету, размеру или штрихкоду</label><input id="wmsCatalogSearch" value="${escapeHtml(state.wmsCatalogSearch || "")}" placeholder="Например 1073896068 или Чёрный"></div><button type="button" class="small-button" data-wms-catalog-action="apply">Показать</button></div><div class="task-note">Последняя синхронизация Ozon: ${escapeHtml(catalog.lastSyncAt || "нет данных")}. В каталоге: артикул, название, цвет, размер и штрихкод.</div></div>
         ${notice}
-        <div class="section-title"><b>Каталог</b><span>${catalog.loaded ? products.length : ""}</span></div>
-        <div class="op-list">${rows}</div>
+        ${selectedGroup ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-catalog-action="groups">‹ Все группы</button></div><div class="section-title"><b>Цвета и размеры</b><span>${products.length}</span></div>${colorsBlock}` : `<div class="section-title"><b>Группы изделий</b><span>${catalog.loaded ? groups.length : ""}</span></div>${groupsBlock}`}
       `;
     }
 
@@ -10360,12 +10382,22 @@ MINIAPP_HTML = """<!doctype html>
       if (wmsCatalogAction) {
         const search = document.getElementById("wmsCatalogSearch");
         if (search) state.wmsCatalogSearch = search.value.trim();
-        if (wmsCatalogAction.dataset.wmsCatalogAction === "refresh") {
+        if (wmsCatalogAction.dataset.wmsCatalogAction === "groups") {
+          state.wmsCatalogGroup = "";
+          render();
+        } else if (wmsCatalogAction.dataset.wmsCatalogAction === "refresh") {
           state.wmsCatalog.loaded = false;
           refreshWmsCatalog();
         } else {
           render();
         }
+        return;
+      }
+
+      const wmsCatalogGroup = event.target.closest("[data-wms-catalog-group]");
+      if (wmsCatalogGroup) {
+        state.wmsCatalogGroup = wmsCatalogGroup.dataset.wmsCatalogGroup || "";
+        render();
         return;
       }
 
