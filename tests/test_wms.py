@@ -454,6 +454,48 @@ class WmsDbTests(unittest.TestCase):
         self.assertEqual(repo.find_stock(self.conn, pk, location_id=locations[0].id).quantity, 2)
         self.assertEqual(repo.find_stock(self.conn, pk, location_id=locations[1].id).quantity, 2)
 
+    def test_direct_putaway_is_valid_without_receipt(self):
+        from wms import operations as ops
+        from wms import repository as repo
+
+        storage = repo.get_zone_by_code(self.conn, "STORAGE")
+        location = repo.get_location_by_code(self.conn, "ST-DIRECT-PUTAWAY")
+        if location is None:
+            location = repo.create_location(
+                self.conn, zone_id=storage.id, code="ST-DIRECT-PUTAWAY"
+            )
+        self.conn.commit()
+        product = self._pk(product_name="Тест-Прямое-Размещение")
+
+        result = ops.putaway(
+            product, 6, to_location_code=location.code, request_key="test:direct:putaway"
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(repo.find_stock(self.conn, product, location_id=location.id).quantity, 6)
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT movement_type FROM wms_movements WHERE request_key=%s", ("test:direct:putaway",))
+            self.assertEqual(cur.fetchone()[0], "putaway_direct")
+
+    def test_material_receipt_is_not_placed_in_receive_or_address_cell(self):
+        from wms import operations as ops
+        from wms import repository as repo
+
+        material = self._pk(
+            item_type="material",
+            product_name="Тест-Дублерин",
+            product_size="—",
+            product_color="Черный",
+            stage_name="Материал",
+        )
+        result = ops.receive_material(
+            material, 2, unit="рул", request_key="test:material:direct-store"
+        )
+        self.assertTrue(result.ok)
+        stock = repo.find_stock(self.conn, material, unit="рул", location_id=None)
+        self.assertIsNotNone(stock)
+        self.assertEqual(stock.quantity, 2)
+
     def test_pick_decrements_only_scanned_location_and_is_idempotent(self):
         from wms import operations as ops
         from wms import repository as repo

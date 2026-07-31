@@ -306,7 +306,7 @@ def run_smoke() -> None:
                 'wmsSelectedLocationId',
                 'decodeCode128Image',
                 '+ Кладовщик',
-                'Товар появляется здесь автоматически после завершения упаковки.',
+                'Готовая продукция появляется здесь автоматически после упаковки.',
             ):
                 require(
                     desktop_marker in html_text,
@@ -344,6 +344,7 @@ def run_smoke() -> None:
             require(status == 200, f"PWA manifest returned HTTP {status}.")
             manifest = json.loads(manifest_body.decode("utf-8"))
             require(manifest.get("display") == "standalone", "PWA manifest is not standalone.")
+            require(manifest.get("orientation") == "portrait", "PWA manifest must lock portrait orientation.")
             require(manifest.get("start_url") == "/app", "PWA manifest start URL is invalid.")
             require(
                 manifest.get("display_override") == ["standalone", "minimal-ui"],

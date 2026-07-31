@@ -6954,14 +6954,16 @@ MINIAPP_HTML = """<!doctype html>
     async function wmsPutaway() {
       const d = readWmsDraftFromForm();
       const qty = parseInt(d.quantity, 10);
-      const materialMode = d.itemType === "material";
-      if (materialMode && d.toLocation) d.toLocationScanned = true;
       if (!d.toLocationScanned) {
         showToast("Склад", "Сначала отсканируйте ячейку размещения.");
         return;
       }
-      if (!materialMode && !d.productScanned) {
+      if (!d.productScanned) {
         showToast("Склад", "Отсканируйте штрихкод товара.");
+        return;
+      }
+      if (d.itemType !== "finished") {
+        showToast("Склад", "Адресное размещение работает только для готовой продукции.");
         return;
       }
       if (!d.productName || !qty || qty < 1) {
@@ -6981,14 +6983,14 @@ MINIAPP_HTML = """<!doctype html>
         const data = await api("/api/wms/putaway", {
           product_key: wmsProductKey(d),
           quantity: qty,
-          unit: materialMode ? (d.materialUnit || "рул") : "шт",
+          unit: "шт",
           request_key: requestKey,
           to_location_code: toLoc,
-          reason: materialMode ? "Размещение материала (вручную)" : "Размещение (ТСД)",
+          reason: "Размещение готовой продукции (ТСД)",
           tsd_device_id: navigator.userAgent.slice(0, 40),
         });
         const ok = data.status === "ok" || data.status === "duplicate";
-        showToast("Склад", ok ? `Размещено: ${qty} ${materialMode ? (d.materialUnit || "рул") : "шт"} → ${toLoc}` : (data.reason || "Ошибка размещения."));
+        showToast("Склад", ok ? `Размещено: ${qty} шт. → ${toLoc}` : (data.reason || "Ошибка размещения."));
         if (ok) {
           state.wmsDraft.quantity = "";
           state.wmsDraft.toLocation = "";
@@ -8834,7 +8836,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function wmsReceivingStock() {
-      return wmsStockAtLocation("RECEIVE-01");
+      return wmsStockAtLocation("RECEIVE-01").filter((row) => row.product_key && row.product_key.item_type === "finished");
     }
 
     function wmsReceivingMaterials() {
@@ -8903,6 +8905,7 @@ MINIAPP_HTML = """<!doctype html>
         production_receipt: "Приёмка",
         material_receipt: "Приёмка материалов",
         putaway: "Размещение",
+        putaway_direct: "Размещение",
         transfer: "Перемещение",
         pick: "Выдача из ячейки",
         ship: "Отгрузка",
@@ -9234,7 +9237,7 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.textContent = "Обновить остатки";
       mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Адресные остатки</h2><p>Отдельное хранение по категориям склада.</p></div><div class="date">${stock.length} поз.</div></div>
+        <div class="screen-head"><div><h2>${definition.itemType === "finished" ? "Адресные остатки" : `Остатки: ${escapeHtml(definition.label)}`}</h2><p>${definition.itemType === "finished" ? "Готовая продукция по адресным ячейкам." : "Остатки без адресного размещения."}</p></div><div class="date">${stock.length} поз.</div></div>
         ${renderWmsDataNotice()}
         <div class="tabs wms-stock-filter-tabs" role="tablist" aria-label="Раздел склада">
           ${wmsStockFilterDefinitions().map((item) => `<button type="button" class="tab ${item.id === definition.id ? "active" : ""}" role="tab" aria-selected="${item.id === definition.id ? "true" : "false"}" data-wms-stock-filter="${item.id}">${escapeHtml(item.label)}</button>`).join("")}
@@ -9247,7 +9250,7 @@ MINIAPP_HTML = """<!doctype html>
           </div>
           <div class="button-row"><button type="button" class="small-button secondary" data-wms-stock-action="reset-filters">Сбросить фильтры</button><span class="status-chip">${escapeHtml(definition.label)}</span></div>
         </div>
-        ${renderWmsWarehouseMap(stock)}
+        ${wmsHasAddressMapForCurrentStock() ? renderWmsWarehouseMap(stock) : ""}
         <div class="op-list">${stock.length ? stock.map((row) => {
           const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
           const itemLabel = definition.itemType === "material" ? "Материал" : (definition.itemType === "semifinished" ? "Полуфабрикат" : "Готовая продукция");
@@ -9625,25 +9628,23 @@ MINIAPP_HTML = """<!doctype html>
     function renderWmsReceive() {
       const d = state.wmsDraft;
       const receiving = wmsReceivingStock();
-      const materials = wmsReceivingMaterials();
       const materialDraft = state.wmsMaterialReceipt;
       const total = receiving.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
       const selectedProduct = receiving.find((row) => wmsProductKeysEqual(row.product_key, wmsProductKey(d)));
       mainButton.textContent = state.wmsData.loading ? "Обновляем…" : "Обновить приёмку";
       mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Зона приёмки</h2><p>Товар появляется здесь автоматически после завершения упаковки. Материалы принимаются вручную.</p></div><div class="date">${escapeHtml(total)} ед.</div></div>
+        <div class="screen-head"><div><h2>Зона приёмки</h2><p>Готовая продукция появляется здесь автоматически после упаковки. Материалы поступают сразу на склад материалов.</p></div><div class="date">${escapeHtml(total)} ед.</div></div>
         ${renderWmsDataNotice()}
-        <div class="card field-card"><div class="task-note"><b>Как работать</b><br>Проверьте поступление, откройте «Размещение», отсканируйте ячейку, затем штрихкод товара и укажите количество.</div></div>
+        <div class="card field-card"><div class="task-note"><b>Как работать</b><br>Приёмка и размещение — независимые операции. В «Размещении» можно сразу отсканировать ячейку, товар и указать количество, даже если товара нет в зоне приёмки.</div></div>
         <div class="section-title"><b>Ожидает размещения</b><span>${receiving.length} поз.</span></div>
         <div class="op-list">${receiving.length ? receiving.map((row, index) => {
           const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
-          const isMaterial = row.product_key && row.product_key.item_type === "material";
-          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>${isMaterial ? "Материал" : (row.product_key && row.product_key.item_type === "semifinished" ? "Полуфабрикат" : "Готовая продукция")} · доступно ${escapeHtml(available)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span>${isMaterial ? `<button type="button" class="link-button" data-wms-material-putaway="${materials.indexOf(row)}">Разместить</button>` : (state.data && state.data.is_admin ? `<button type="button" class="link-button" data-wms-receipt-product="${index}">штрихкод</button>` : "")}</div></div>`;
+          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>Готовая продукция · доступно ${escapeHtml(available)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span>${state.data && state.data.is_admin ? `<button type="button" class="link-button" data-wms-receipt-product="${index}">штрихкод</button>` : ""}</div></div>`;
         }).join("") : itemEmpty("После завершения упаковки товар появится здесь автоматически.")}</div>
         <div class="section-title"><b>Ручная приёмка материалов</b><span>без штрихкода</span></div>
         <div class="card field-card">
-          <div class="task-note"><b>Материал принимается в зону приёмки.</b><br>После сохранения выберите его в списке и вручную укажите ячейку размещения.</div>
+          <div class="task-note"><b>Материал сразу поступает на склад материалов.</b><br>Адресная ячейка для него не требуется.</div>
           <div class="form-grid">
             <div class="field"><label>Материал</label><input id="wmsMaterialName" value="${escapeHtml(materialDraft.name || "")}" placeholder="Ткань, дублерин…"></div>
             <div class="field"><label>Цвет</label><input id="wmsMaterialColor" value="${escapeHtml(materialDraft.color || "")}" placeholder="Черный, бежевый…"></div>
@@ -9667,21 +9668,18 @@ MINIAPP_HTML = """<!doctype html>
     function renderWmsPutaway() {
       const d = state.wmsDraft;
       const locationCode = (d.toLocation || "").replace(/^LOC:/i, "").trim();
-      const materialMode = d.itemType === "material";
-      const materialRow = materialMode ? wmsReceivingMaterials().find((row) => wmsProductKeysEqual(row.product_key, wmsProductKey(d))) : null;
-      const materialAvailable = materialRow ? Math.max(0, Number(materialRow.quantity || 0) - Number(materialRow.reserved_quantity || 0)) : 0;
-      const productDetected = !materialMode && Boolean(d.productScanned && d.productName && d.productSize && d.productColor);
+      const productDetected = Boolean(d.productScanned && d.productName && d.productSize && d.productColor);
       mainButton.textContent = "Разместить";
       mainButton.disabled = false;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Размещение</h2><p>${materialMode ? "Материал выбран из приёмки. Ячейку и количество введите вручную." : "Сначала ячейка, затем товар и количество."}</p></div></div>
-        ${materialMode ? `<div class="card field-card"><div class="task-note"><b>Материал</b><br>${escapeHtml(wmsProductLabel(wmsProductKey(d)))} · доступно в приёмке: ${escapeHtml(materialAvailable)} ${escapeHtml(d.materialUnit || "рул")}</div></div>` : renderWmsGuidedScanner("to_location", locationCode, productDetected, "Ячейка размещения")}
+        <div class="screen-head"><div><h2>Размещение готовой продукции</h2><p>Сначала ячейка, затем товар и количество. Приёмка не является обязательным шагом.</p></div></div>
+        ${renderWmsGuidedScanner("to_location", locationCode, productDetected, "Ячейка размещения")}
         <div class="card field-card">
           <label>Данные размещения</label>
           <div class="form-grid">
-            <div class="field full"><label>Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="${materialMode ? "Например Z1-S1-P1-1" : "Сначала отсканируйте ячейку"}" ${materialMode ? "" : "readonly"}></div>
+            <div class="field full"><label>Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="Сначала отсканируйте ячейку" readonly></div>
             ${productDetected ? `<div class="field full"><label>Товар</label><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(wmsProductKey(d)))}</b><span>Штрихкод распознан</span></div><span class="status-chip">✓</span></div></div>` : ""}
-            ${materialMode || productDetected ? `<div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" ${materialMode ? `max="${escapeHtml(materialAvailable)}"` : ""} step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>` : ""}
+            ${productDetected ? `<div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>` : ""}
           </div>
         </div>
         ${renderWmsLocationContents(locationCode)}
@@ -10564,31 +10562,6 @@ MINIAPP_HTML = """<!doctype html>
         window.setTimeout(() => {
           document.getElementById("wms-location-detail")?.scrollIntoView({behavior: "smooth", block: "start"});
         }, 0);
-        return;
-      }
-
-      const wmsMaterialPutaway = event.target.closest("[data-wms-material-putaway]");
-      if (wmsMaterialPutaway) {
-        const materialRows = wmsReceivingMaterials();
-        const row = materialRows[Number(wmsMaterialPutaway.dataset.wmsMaterialPutaway || -1)];
-        if (row && row.product_key) {
-          const product = row.product_key;
-          state.wmsDraft.itemType = "material";
-          state.wmsDraft.productName = product.product_name || "";
-          state.wmsDraft.productSize = product.product_size || "—";
-          state.wmsDraft.productColor = product.product_color || "";
-          state.wmsDraft.stageName = product.stage_name || "Материал";
-          state.wmsDraft.readyForPosition = product.ready_for_position || "Склад";
-          state.wmsDraft.materialUnit = row.unit || "рул";
-          state.wmsDraft.quantity = "";
-          state.wmsDraft.toLocation = "";
-          state.wmsDraft.toLocationScanned = false;
-          state.wmsDraft.productScanned = true;
-          state.workspace = "warehouse";
-          state.screen = "warehouse";
-          state.wmsView = "putaway";
-          render();
-        }
         return;
       }
 
@@ -11677,6 +11650,12 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     async function bootstrapApplication() {
+      // Android TSDs honor the manifest after installation; this covers
+      // browsers that also expose the Screen Orientation API. iOS simply
+      // ignores the unsupported call without affecting the application.
+      if (screen.orientation && typeof screen.orientation.lock === "function") {
+        try { await screen.orientation.lock("portrait"); } catch (_) {}
+      }
       if (isStandaloneWeb) {
         document.body.classList.add("web-mode");
         webActionSlot.appendChild(mainButton);

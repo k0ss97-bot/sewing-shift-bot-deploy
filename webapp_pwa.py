@@ -128,7 +128,7 @@ def build_manifest() -> dict[str, object]:
         "scope": APP_SCOPE,
         "display": "standalone",
         "display_override": ["standalone", "minimal-ui"],
-        "orientation": "any",
+        "orientation": "portrait",
         "background_color": BACKGROUND_COLOR,
         "theme_color": THEME_COLOR,
         "categories": ["business", "productivity"],

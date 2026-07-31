@@ -373,11 +373,11 @@ def flush_pending_wms_receipts(limit: int = 50):
 
 
 def receive_material_for_telegram(telegram_id: int, payload: dict):
-    """Receive a material into WMS and mirror the roll balance to SQLite.
+    """Receive a material into the material warehouse, without address cells.
 
-    WMS owns the addressable receipt and its idempotency key. The legacy
-    ``fabric_stock`` balance is mirrored after a new WMS movement so existing
-    cutting reservations continue to see manually received rolls.
+    The WMS journal supplies idempotency.  The actual working balance is kept
+    in ``fabric_stock`` because cutters consume materials from that warehouse,
+    while WMS address cells are intentionally limited to finished products.
     """
     employee = get_employee_for_access(telegram_id)
     if employee is None:
@@ -424,7 +424,7 @@ def receive_material_for_telegram(telegram_id: int, payload: dict):
     add_edit_log(
         telegram_id,
         "wms",
-        "Принял материал в адресный склад",
+        "Принял материал на склад материалов",
         "fabric_stock",
         stock_id,
         f"{stock_material}, {stock_color}: +{format_number(quantity)} {stock_unit}, остаток {format_number(total_quantity)} {stock_unit}",

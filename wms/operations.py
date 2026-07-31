@@ -107,7 +107,13 @@ def receive_material(
     reason: str | None = None,
     tsd_device_id: str | None = None,
 ) -> OperationResult:
-    """Accept a manually entered material receipt into the RECEIVE zone."""
+    """Accept a material directly into the non-addressable material store.
+
+    Address cells are reserved for finished goods.  Materials still use this
+    WMS movement as an idempotency anchor, but their physical balance belongs
+    to the material warehouse (mirrored to legacy ``fabric_stock`` by the web
+    handler), not to the finished-goods receiving zone.
+    """
     if product_key.item_type != "material":
         return OperationResult(False, reason="Для приёмки материалов нужен item_type=material.")
     if quantity <= 0:
@@ -118,13 +124,12 @@ def receive_material(
     request_key = request_key or _new_request_key("material-receipt")
     conn = get_pg_connection()
     try:
-        receive_loc = _zone_location(conn, "RECEIVE")
         if repo.movement_exists(conn, request_key):
             conn.rollback()
             return OperationResult(True, skipped_duplicate=True, reason="duplicate request_key")
         repo.upsert_stock(
             conn, product_key, delta=quantity, item_state="SELLABLE",
-            location_id=receive_loc.id, unit=unit,
+            location_id=None, unit=unit,
         )
         movement_id = repo.insert_movement(
             conn,
@@ -132,7 +137,7 @@ def receive_material(
             movement_type="material_receipt",
             product_key=product_key,
             quantity=quantity,
-            to_location_id=receive_loc.id,
+            to_location_id=None,
             to_state="SELLABLE",
             source_type="manual",
             reason=reason,
@@ -162,13 +167,21 @@ def putaway(
     reason: str | None = None,
     tsd_device_id: str | None = None,
 ) -> OperationResult:
-    """Move goods from the RECEIVE zone to a storage/pick location.
+    """Put finished goods into an address cell.
 
-    Decrements RECEIVE stock, increments the target location.  Rejects if
-    RECEIVE stock is insufficient.
+    A receiving balance is used as the source when it is available.  If the
+    same finished product has not been accepted into RECEIVE, placement stays
+    a valid independent scanner operation and records a direct putaway into
+    the selected cell.  This supports physical work that starts at a rack,
+    without turning "Приёмка" into a mandatory prerequisite.
     """
     if quantity <= 0:
         return OperationResult(False, reason="Количество должно быть больше нуля.")
+    if product_key.item_type != "finished":
+        return OperationResult(
+            False,
+            reason="Адресное размещение доступно только для готовой продукции.",
+        )
     request_key = request_key or _new_request_key("putaway")
     conn = get_pg_connection()
     try:
@@ -185,7 +198,8 @@ def putaway(
             conn.rollback()
             return OperationResult(True, skipped_duplicate=True)
 
-        # Check + decrement RECEIVE stock under row lock.
+        # A receipt is useful but not mandatory for an address placement.
+        # Lock it if present so an available receipt is moved atomically.
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT id, quantity FROM warehouse_stock
@@ -196,19 +210,21 @@ def putaway(
                 (*product_key.to_dict().values(), receive_loc.id, unit),
             )
             row = cur.fetchone()
-        if row is None or int(row[1]) < quantity:
-            conn.rollback()
-            return OperationResult(False, reason="Недостаточно товара в зоне приёмки.")
-        # Move: decrement source, increment target.
-        repo.upsert_stock(conn, product_key, delta=-quantity, location_id=receive_loc.id, unit=unit)
+        received_quantity = int(row[1]) if row is not None else 0
+        from_location_id = None
+        movement_type = "putaway_direct"
+        if received_quantity >= quantity:
+            repo.upsert_stock(conn, product_key, delta=-quantity, location_id=receive_loc.id, unit=unit)
+            from_location_id = receive_loc.id
+            movement_type = "putaway"
         repo.upsert_stock(conn, product_key, delta=quantity, location_id=target.id, unit=unit)
         movement_id = repo.insert_movement(
             conn,
             request_key=request_key,
-            movement_type="putaway",
+            movement_type=movement_type,
             product_key=product_key,
             quantity=quantity,
-            from_location_id=receive_loc.id,
+            from_location_id=from_location_id,
             to_location_id=target.id,
             reason=reason,
             actor_employee_id=employee_id,
