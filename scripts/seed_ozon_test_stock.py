@@ -15,7 +15,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
+from pathlib import Path
+
+# Running ``python scripts/...`` makes Python place ``scripts`` rather than the
+# repository root on sys.path.  Keep this operational script directly usable
+# from a release directory.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from marketplaces import warehouse_catalog
 from wms.connection import get_pg_connection
