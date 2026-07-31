@@ -419,8 +419,11 @@ class OzonClient:
         """Read all visible product characteristics, including colour/size."""
         rows: list[dict] = []
         last_id = ""
+        # The Ozon endpoint returns a non-JSON validation response for a
+        # larger page.  Keep the documented working page size and paginate.
+        page_size = 100
         for _ in range(20):
-            payload = {"filter": {"visibility": "ALL"}, "limit": 1000}
+            payload = {"filter": {"visibility": "ALL"}, "limit": page_size}
             if last_id:
                 payload["last_id"] = last_id
             response = self.post_readonly("/v4/product/info/attributes", payload)
@@ -428,7 +431,7 @@ class OzonClient:
             items = [item for item in result if isinstance(item, dict)] if isinstance(result, list) else self._response_items(response)
             rows.extend(items)
             next_last_id = _text(response.get("last_id") or response.get("cursor"))
-            if not next_last_id or next_last_id == last_id or len(items) < 1000:
+            if not next_last_id or next_last_id == last_id or len(items) < page_size:
                 break
             last_id = next_last_id
         return rows
