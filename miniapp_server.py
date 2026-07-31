@@ -5112,6 +5112,9 @@ def get_app_state(telegram_id: int, message: str = ""):
             "can_work": bool(employee and employee.get("status") == "active"),
             "can_admin": is_admin_user,
             "can_wms": can_access_wms(telegram_id),
+            # UI-only feature flag. Warehouse operations keep using the same
+            # guarded WMS endpoints and existing location ids/barcodes.
+            "warehouse_ui_v2": os.getenv("WAREHOUSE_UI_V2", "1").strip().lower() not in {"0", "false", "no", "off"},
             "routes_enabled": ROUTES_MINIAPP_ENABLED,
         },
     }

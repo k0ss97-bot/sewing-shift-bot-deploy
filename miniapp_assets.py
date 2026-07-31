@@ -966,6 +966,83 @@ MINIAPP_HTML = """<!doctype html>
       gap: 14px;
     }
 
+    /* Warehouse UI v2: presentation only. It never writes, sorts or recreates
+       physical locations; every action continues to use the existing cell id. */
+    .warehouse-v2-layout {
+      display: grid;
+      grid-template-columns: 226px minmax(0, 1fr);
+      align-items: start;
+      gap: 24px;
+    }
+
+    .warehouse-v2-sidebar {
+      position: sticky;
+      top: 16px;
+      display: grid;
+      gap: 4px;
+      padding: 18px 12px;
+      border: 1px solid rgba(25,89,243,.14);
+      border-radius: 18px;
+      background: rgba(255,255,255,.82);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .warehouse-v2-sidebar h3 {
+      margin: 0 0 10px 8px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+
+    .warehouse-v2-nav {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 11px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      color: var(--muted);
+      background: transparent;
+      text-align: left;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .warehouse-v2-nav:hover { background: rgba(37,99,235,.07); color: var(--accent-dark); }
+    .warehouse-v2-nav.active { color: white; background: var(--accent); box-shadow: 0 8px 18px rgba(25,89,243,.22); }
+    .warehouse-v2-nav .warehouse-v2-icon { width: 18px; text-align: center; font-size: 16px; }
+    .warehouse-v2-content { min-width: 0; }
+    .warehouse-v2-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .warehouse-v2-actions .summary-card { min-height: 116px; }
+    .warehouse-v2-alert { border-left: 4px solid var(--warning); }
+    .warehouse-v2-alert.critical { border-left-color: var(--danger); }
+    .warehouse-v2-filter-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(160px, .55fr) auto; gap: 10px; align-items: end; }
+    .warehouse-v2-filter-row .field { margin: 0; }
+    .warehouse-v2-status { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+    .warehouse-v2-status i { width: 9px; height: 9px; display: inline-block; border-radius: 99px; background: var(--sage); }
+    .warehouse-v2-status.occupied i { background: var(--accent); }
+    .warehouse-v2-status.reserved i { background: var(--warning); }
+    .warehouse-v2-status.blocked i { background: var(--danger); }
+
+    @media (max-width: 1023px) {
+      .warehouse-v2-layout { grid-template-columns: 1fr; }
+      .warehouse-v2-sidebar { position: static; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow-x: auto; padding: 8px; }
+      .warehouse-v2-sidebar h3 { display: none; }
+      .warehouse-v2-nav { justify-content: center; min-width: 104px; }
+      .warehouse-v2-nav span:last-child { white-space: nowrap; }
+    }
+
+    @media (max-width: 767px) {
+      .warehouse-v2-layout { gap: 12px; }
+      .warehouse-v2-sidebar { display: none; }
+      .warehouse-v2-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .warehouse-v2-filter-row { grid-template-columns: 1fr; }
+      .warehouse-v2-filter-row .small-button { min-height: 44px; }
+    }
+
     .wms-stock-filter-tabs {
       --tab-count: 3;
       margin: 0 0 12px;
@@ -1075,6 +1152,8 @@ MINIAPP_HTML = """<!doctype html>
       border-color: rgba(221,79,93,.50);
       background: rgba(255,238,240,.94);
     }
+
+    .wms-cell-filtered { opacity: .30; filter: grayscale(.45); }
 
     .wms-cell-section-start {
       margin-left: 8px;
@@ -4142,6 +4221,8 @@ MINIAPP_HTML = """<!doctype html>
       "wmsStockSizeFilter",
       "wmsStockColorFilter",
       "wmsSelectedLocationId",
+      "wmsMapSearch",
+      "wmsMapStatusFilter",
       "adminSection",
       "employeePositionFilter",
       "employeeStatusFilter",
@@ -4252,6 +4333,8 @@ MINIAPP_HTML = """<!doctype html>
       wmsStockProductFilter: "",
       wmsStockSizeFilter: "",
       wmsStockColorFilter: "",
+      wmsMapSearch: "",
+      wmsMapStatusFilter: "all",
       wmsSelectedLocationId: "",
       wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: []},
       pushDeviceActive: null,
@@ -4329,7 +4412,7 @@ MINIAPP_HTML = """<!doctype html>
       { id: "orders", label: "Задания", icon: "▣" },
     ];
     const productionScreens = new Set(["shift", "report", "analytics", "orders", "admin", "passport", "profile"]);
-    const warehouseMoreViews = new Set(["more", "transfer", "stock", "movements", "inventory", "scrap"]);
+    const warehouseMoreViews = new Set(["more", "transfer", "stock", "movements", "inventory", "scrap", "reports", "map"]);
 
     if (tg) {
       tg.ready();
@@ -8798,24 +8881,36 @@ MINIAPP_HTML = """<!doctype html>
       const total = stock.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
       const reserved = stock.reduce((sum, row) => sum + Number(row.reserved_quantity || 0), 0);
       const activeLocations = locations.filter((row) => row.status === "active").length;
+      const occupiedLocations = locations.filter((row) => wmsLocationSummary(row).quantity > 0).length;
+      const receiving = wmsReceivingStock().concat(wmsReceivingMaterials());
+      const unplaced = stock.filter((row) => !row.location_id && Number(row.quantity || 0) > 0);
+      const alerts = [
+        ...(unplaced.length ? [{level: "critical", title: "Товар без ячейки", text: `${unplaced.length} поз. ожидают размещения`, view: "putaway"}] : []),
+        ...(receiving.length ? [{level: "warning", title: "Ожидает приёмки", text: `${receiving.length} поз. находятся в зоне приёмки`, view: "receive"}] : []),
+        ...(reserved > 0 ? [{level: "info", title: "Есть резерв", text: `${reserved} ед. защищены от выдачи`, view: "stock"}] : []),
+      ];
       mainButton.textContent = state.wmsData.loading ? "Обновляем…" : "Обновить склад";
       mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Управление складом</h2><p>Сканирование продукции, адресное хранение и все складские операции.</p></div><div class="date">Кладовщик</div></div>
+        <div class="screen-head"><div><h2>Обзор склада</h2><p>Ключевые показатели и текущее состояние склада.</p></div><div class="date">${state.wmsData.loaded ? "данные загружены" : "загрузка"}</div></div>
         ${renderWmsDataNotice()}
         <div class="kpi-grid">
-          <button type="button" class="card kpi warehouse-category" data-wms-view="stock"><span class="kpi-top"><span>Остатки</span><span class="kpi-ico">▤</span></span><strong>${escapeHtml(total)}<small> шт.</small></strong><span>${stock.length} позиций · резерв ${escapeHtml(reserved)}</span></button>
+          <button type="button" class="card kpi warehouse-category" data-wms-view="stock"><span class="kpi-top"><span>Остатки SKU</span><span class="kpi-ico">▤</span></span><strong>${stock.length}<small> поз.</small></strong><span>${escapeHtml(total)} ед. на складе</span></button>
+          <button type="button" class="card kpi warehouse-category" data-wms-view="stock"><span class="kpi-top"><span>Товары на складе</span><span class="kpi-ico">□</span></span><strong>${escapeHtml(total)}<small> ед.</small></strong><span>Резерв: ${escapeHtml(reserved)} ед.</span></button>
+          <button type="button" class="card kpi warehouse-category" data-wms-view="map"><span class="kpi-top"><span>Занято ячеек</span><span class="kpi-ico">▦</span></span><strong>${occupiedLocations}<small> / ${activeLocations}</small></strong><span>${activeLocations ? Math.round((occupiedLocations / activeLocations) * 100) : 0}% действующих ячеек</span></button>
+          <button type="button" class="card kpi warehouse-category" data-wms-view="receive"><span class="kpi-top"><span>Ожидает приёмки</span><span class="kpi-ico">↓</span></span><strong>${receiving.length}<small> поз.</small></strong><span>Требуют проверки и размещения</span></button>
           <button type="button" class="card kpi warehouse-category" data-wms-view="movements"><span class="kpi-top"><span>Движения</span><span class="kpi-ico">⇄</span></span><strong>${movements.length}<small> зап.</small></strong><span>Последние операции</span></button>
-          <button type="button" class="card kpi warehouse-category" data-wms-view="putaway"><span class="kpi-top"><span>Ячейки</span><span class="kpi-ico">▦</span></span><strong>${activeLocations}<small> шт.</small></strong><span>Разместить продукцию</span></button>
-          <button type="button" class="card kpi warehouse-category" data-wms-view="inventory"><span class="kpi-top"><span>Пересчёт</span><span class="kpi-ico">≡</span></span><strong>0<small> расх.</small></strong><span>Провести инвентаризацию</span></button>
         </div>
+        ${alerts.length ? `<div class="section-title"><b>Требуют внимания</b><span>${alerts.length}</span></div><div class="op-list">${alerts.map((alert) => `<button type="button" class="card report-row warehouse-v2-alert ${alert.level === "critical" ? "critical" : ""}" data-wms-view="${alert.view}"><div><b>${escapeHtml(alert.title)}</b><span>${escapeHtml(alert.text)}</span></div><span class="status-chip ${alert.level === "warning" ? "warn" : ""}">${alert.level === "critical" ? "критично" : alert.level === "warning" ? "внимание" : "инфо"}</span></button>`).join("")}</div>` : ""}
         <div class="section-title"><b>Быстрые действия</b><span>сканер</span></div>
-        <div class="kpi-grid">
-          <button type="button" class="card summary-card clickable" data-wms-view="stock"><span>Карта ячеек</span><strong>▦</strong><small>Открыть адресное хранение</small></button>
-          <button type="button" class="card summary-card clickable" data-wms-view="receive"><span>Зона приёмки</span><strong>↓</strong><small>Поступает после упаковки</small></button>
+        <div class="warehouse-v2-actions">
+          <button type="button" class="card summary-card clickable" data-wms-view="receive"><span>Приёмка</span><strong>↓</strong><small>Проверить поступление</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="map"><span>Карта склада</span><strong>▦</strong><small>Открыть ячейку</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="putaway"><span>Размещение</span><strong>→</strong><small>Положить в ячейку</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="pick"><span>Выдача</span><strong>↑</strong><small>Забрать из ячейки</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="transfer"><span>Перемещение</span><strong>⇄</strong><small>Между ячейками</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="inventory"><span>Инвентаризация</span><strong>≡</strong><small>Пересчитать ячейку</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="reports"><span>Отчёты</span><strong>↧</strong><small>Остатки и движения</small></button>
         </div>
         <div class="section-title"><b>Последние движения</b><button type="button" data-wms-view="movements">показать все</button></div>
         <div class="op-list">${movements.length ? movements.slice(0, 4).map((movement) => `
@@ -8854,14 +8949,16 @@ MINIAPP_HTML = """<!doctype html>
       return {rows, quantity, reserved, available: Math.max(0, quantity - reserved), status};
     }
 
-    function renderWmsMapCell(location, parts, sectionStart, stockRows) {
-      if (!location) {
-        return `<div class="wms-cell wms-cell-empty ${sectionStart ? "wms-cell-section-start" : ""}" aria-hidden="true"><small>Нет ячейки</small></div>`;
-      }
+    function renderWmsMapCell(location, parts, sectionStart, stockRows, gridStyle = "") {
       const summary = wmsLocationSummary(location, stockRows);
       const selected = Number(state.wmsSelectedLocationId || 0) === Number(location.id);
+      const search = String(state.wmsMapSearch || "").trim().toLocaleLowerCase("ru");
+      const productText = summary.rows.map((row) => wmsProductLabel(row.product_key)).join(" ").toLocaleLowerCase("ru");
+      const searchable = `${location.code || ""} ${location.name_ru || ""} ${location.barcode || ""} ${productText}`.toLocaleLowerCase("ru");
+      const statusMatches = state.wmsMapStatusFilter === "all" || state.wmsMapStatusFilter === summary.status;
+      const searchMatches = !search || searchable.includes(search);
       const statusText = summary.status === "blocked" ? "Заблокирована" : (summary.quantity ? `${summary.quantity} ${wmsCurrentStockFilter().unit}` : "Свободна");
-      return `<button type="button" class="wms-cell wms-cell-${summary.status} ${sectionStart ? "wms-cell-section-start" : ""}" data-wms-cell-id="${escapeHtml(location.id)}" aria-label="Ячейка ${escapeHtml(location.code)}${selected ? ", выбрана" : ""}"><strong>${escapeHtml(location.code)}</strong><small>${escapeHtml(statusText)}</small></button>`;
+      return `<button type="button" class="wms-cell wms-cell-${summary.status} ${(!statusMatches || !searchMatches) ? "wms-cell-filtered" : ""} ${sectionStart ? "wms-cell-section-start" : ""}" ${gridStyle} data-wms-cell-id="${escapeHtml(location.id)}" aria-label="Ячейка ${escapeHtml(location.code)}${selected ? ", выбрана" : ""}"><strong>${escapeHtml(location.code)}</strong><small>${escapeHtml(statusText)}</small></button>`;
     }
 
     function renderWmsLocationDetail(stockRows = wmsFilteredStock()) {
@@ -8892,7 +8989,6 @@ MINIAPP_HTML = """<!doctype html>
       const locations = (state.wmsData.locations || []).map((location) => ({location, parts: wmsPhysicalLocationParts(location)})).filter((row) => row.parts);
       if (!locations.length) return `<div class="card field-card">${itemEmpty("Физические ячейки ещё не загружены.")}</div>`;
       const zones = [...new Set(locations.map((row) => row.parts.zone))].sort((a, b) => a - b);
-      const byCode = new Map(locations.map((row) => [row.location.code.toUpperCase(), row.location]));
       return `<div class="wms-map-shell">
         <div class="section-title"><b>Карта адресного хранения</b><span>${locations.length} яч.</span></div>
         <div class="wms-map-legend"><span><i></i> свободна</span><span class="occupied"><i></i> занята</span><span class="reserved"><i></i> есть резерв</span><span class="blocked"><i></i> заблокирована</span></div>
@@ -8902,19 +8998,83 @@ MINIAPP_HTML = """<!doctype html>
           const maxLevel = Math.max(...zoneRows.map((row) => row.parts.level));
           const maxPosition = Math.max(...zoneRows.map((row) => row.parts.position));
           const zoneQuantity = zoneRows.reduce((sum, row) => sum + wmsLocationSummary(row.location, stockRows).quantity, 0);
-          const cells = [];
-          for (let level = maxLevel; level >= 1; level -= 1) {
-            for (let section = 1; section <= maxSection; section += 1) {
-              for (let position = 1; position <= maxPosition; position += 1) {
-                const code = `Z${zone}-S${section}-P${level}-${position}`;
-                cells.push(renderWmsMapCell(byCode.get(code), {zone, section, level, position}, section > 1 && position === 1, stockRows));
-              }
-            }
-          }
-          return `<section class="wms-zone-map"><div class="wms-zone-map-head"><b>Зона №${zone}</b><span>${zoneRows.length} ячеек · ${zoneQuantity} ${escapeHtml(wmsCurrentStockFilter().unit)}</span></div><div class="wms-map-grid" style="grid-template-columns:repeat(${maxSection * maxPosition},minmax(62px,1fr))">${cells.join("")}</div></section>`;
+          /* Only existing locations are rendered. Their coordinates are read
+             from the already established Z/S/P code; no UI location is made. */
+          const cells = zoneRows.slice().sort((a, b) => (b.parts.level - a.parts.level) || (a.parts.section - b.parts.section) || (a.parts.position - b.parts.position)).map((row) => {
+            const column = ((row.parts.section - 1) * maxPosition) + row.parts.position;
+            const visualRow = maxLevel - row.parts.level + 1;
+            return renderWmsMapCell(row.location, row.parts, row.parts.section > 1 && row.parts.position === 1, stockRows, `style="grid-column:${column};grid-row:${visualRow}"`);
+          });
+          return `<section class="wms-zone-map"><div class="wms-zone-map-head"><b>Зона №${zone}</b><span>${zoneRows.length} ячеек · ${zoneQuantity} ${escapeHtml(wmsCurrentStockFilter().unit)}</span></div><div class="wms-map-grid" style="grid-template-columns:repeat(${maxSection * maxPosition},minmax(62px,1fr));grid-template-rows:repeat(${maxLevel},minmax(64px,auto))">${cells.join("")}</div></section>`;
         }).join("")}</div>
         ${renderWmsLocationDetail(stockRows)}
       </div>`;
+    }
+
+    function renderWmsMapView() {
+      const locations = state.wmsData.locations || [];
+      const stock = wmsFilteredStock();
+      const byStatus = locations.reduce((result, location) => {
+        const status = wmsLocationSummary(location, stock).status;
+        result[status] = (result[status] || 0) + 1;
+        return result;
+      }, {});
+      mainButton.textContent = "Обновить карту";
+      mainButton.disabled = state.wmsData.loading;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Размещение · карта склада</h2><p>Фактические ячейки, коды и штрихкоды сохранены без изменений.</p></div><div class="date">${locations.length} яч.</div></div>
+        ${renderWmsDataNotice()}
+        <div class="card field-card wms-stock-filter-card"><div class="warehouse-v2-filter-row">
+          <div class="field"><label>Найти ячейку, товар или штрихкод</label><input id="wmsMapSearch" value="${escapeHtml(state.wmsMapSearch || "")}" placeholder="Например Z1-S1-P1-1"></div>
+          <div class="field"><label>Статус ячейки</label><select id="wmsMapStatusFilter"><option value="all" ${state.wmsMapStatusFilter === "all" ? "selected" : ""}>Все статусы</option><option value="empty" ${state.wmsMapStatusFilter === "empty" ? "selected" : ""}>Свободна (${byStatus.empty || 0})</option><option value="occupied" ${state.wmsMapStatusFilter === "occupied" ? "selected" : ""}>Занята (${byStatus.occupied || 0})</option><option value="reserved" ${state.wmsMapStatusFilter === "reserved" ? "selected" : ""}>Есть резерв (${byStatus.reserved || 0})</option><option value="blocked" ${state.wmsMapStatusFilter === "blocked" ? "selected" : ""}>Заблокирована (${byStatus.blocked || 0})</option></select></div>
+          <button type="button" class="small-button" data-wms-map-action="apply">Показать</button>
+        </div></div>
+        ${renderWmsWarehouseMap(stock)}
+      `;
+    }
+
+    function renderWmsReports() {
+      const stock = state.wmsData.stock || [];
+      const movements = state.wmsData.movements || [];
+      mainButton.textContent = "Обновить отчёты";
+      mainButton.disabled = state.wmsData.loading;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Складские отчёты</h2><p>Остатки и журнал движений по действующим ячейкам.</p></div><div class="date">${stock.length + movements.length} строк</div></div>
+        ${renderWmsDataNotice()}
+        <div class="op-list">
+          <div class="card report-row"><div><b>Остатки по ячейкам</b><span>Товар, ячейка, количество, резерв и доступно</span></div><button type="button" class="small-button" data-wms-report="stock">Скачать CSV</button></div>
+          <div class="card report-row"><div><b>История движений</b><span>Дата, операция, товар, количество, исходная и целевая ячейки</span></div><button type="button" class="small-button" data-wms-report="movements">Скачать CSV</button></div>
+        </div>
+        <div class="card field-card"><div class="task-note"><b>Важно</b><br>Выгрузки формируются из текущих складских данных и не меняют остатки, ячейки или историю операций.</div></div>
+      `;
+    }
+
+    function downloadWmsReport(kind) {
+      const quote = (value) => `"${String(value == null ? "" : value).replace(/"/g, '""')}"`;
+      let rows = [];
+      let name = "warehouse-report";
+      if (kind === "stock") {
+        name = "warehouse-stock";
+        rows = [["Товар", "Размер", "Цвет", "Ячейка", "Количество", "Резерв", "Доступно", "Ед."]].concat((state.wmsData.stock || []).map((row) => {
+          const product = row.product_key || {};
+          const quantity = Number(row.quantity || 0);
+          const reserved = Number(row.reserved_quantity || 0);
+          return [product.product_name, product.product_size, product.product_color, wmsLocationLabel(row.location_id), quantity, reserved, Math.max(0, quantity - reserved), row.unit || "шт"];
+        }));
+      } else {
+        name = "warehouse-movements";
+        rows = [["Дата", "Операция", "Товар", "Количество", "Из ячейки", "В ячейку"]].concat((state.wmsData.movements || []).map((row) => [
+          row.occurred_at, wmsMovementLabel(row.movement_type), wmsProductLabel(row.product_key), row.quantity,
+          wmsLocationLabel(row.from_location_id), wmsLocationLabel(row.to_location_id),
+        ]));
+      }
+      const blob = new Blob(["\\ufeff" + rows.map((row) => row.map(quote).join(";")).join("\\n")], {type: "text/csv;charset=utf-8"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+      showToast("Отчёт", "CSV сформирован из текущих складских данных.");
     }
 
     function renderWmsStock() {
@@ -9163,6 +9323,24 @@ MINIAPP_HTML = """<!doctype html>
       renderWms();
     }
 
+    function renderWarehouseSidebar() {
+      const items = [
+        ["overview", "⌂", "Обзор"],
+        ["receive", "↓", "Приёмка"],
+        ["map", "▦", "Карта склада"],
+        ["putaway", "→", "Размещение"],
+        ["transfer", "⇄", "Перемещение"],
+        ["pick", "↑", "Выдача"],
+        ["stock", "▤", "Остатки"],
+        ["inventory", "≡", "Инвентаризация"],
+        ["reports", "↧", "Отчёты"],
+        ["more", "•••", "Ещё"],
+      ];
+      return `<aside class="warehouse-v2-sidebar" aria-label="Разделы склада"><h3>Управление складом</h3>${items.map(([id, icon, label]) => `
+        <button type="button" class="warehouse-v2-nav ${state.wmsView === id || (id === "more" && warehouseMoreViews.has(state.wmsView) && !["map", "reports"].includes(state.wmsView)) ? "active" : ""}" data-wms-view="${id}"><span class="warehouse-v2-icon">${icon}</span><span>${label}</span></button>
+      `).join("")}</aside>`;
+    }
+
     function renderWms() {
       if (!canAccessWms()) {
         mainButton.textContent = "Обновить";
@@ -9173,16 +9351,21 @@ MINIAPP_HTML = """<!doctype html>
         `;
         return;
       }
-      if (state.wmsView === "overview") return renderWmsOverview();
-      if (state.wmsView === "more") return renderWmsMore();
-      if (state.wmsView === "stock") return renderWmsStock();
-      if (state.wmsView === "movements") return renderWmsMovements();
-      if (state.wmsView === "inventory") return renderWmsInventory();
-      if (state.wmsView === "scrap") return renderWmsScrap();
-      if (state.wmsView === "pick") return renderWmsPick();
-      if (state.wmsView === "putaway") return renderWmsPutaway();
-      if (state.wmsView === "transfer") return renderWmsTransfer();
-      return renderWmsReceive();
+      if (state.wmsView === "overview") renderWmsOverview();
+      else if (state.wmsView === "more") renderWmsMore();
+      else if (state.wmsView === "map") renderWmsMapView();
+      else if (state.wmsView === "stock") renderWmsStock();
+      else if (state.wmsView === "movements") renderWmsMovements();
+      else if (state.wmsView === "inventory") renderWmsInventory();
+      else if (state.wmsView === "reports") renderWmsReports();
+      else if (state.wmsView === "scrap") renderWmsScrap();
+      else if (state.wmsView === "pick") renderWmsPick();
+      else if (state.wmsView === "putaway") renderWmsPutaway();
+      else if (state.wmsView === "transfer") renderWmsTransfer();
+      else renderWmsReceive();
+      if (!(state.data && state.data.features && state.data.features.warehouse_ui_v2)) return;
+      const content = mount.innerHTML;
+      mount.innerHTML = `<div class="warehouse-v2-layout">${renderWarehouseSidebar()}<div class="warehouse-v2-content">${content}</div></div>`;
     }
 
     function wmsProductOptions(selected) {
@@ -9266,19 +9449,11 @@ MINIAPP_HTML = """<!doctype html>
           <div class="form-grid">
             <div class="field full"><label>Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="${materialMode ? "Например Z1-S1-P1-1" : "Сначала отсканируйте ячейку"}" ${materialMode ? "" : "readonly"}></div>
             ${productDetected ? `<div class="field full"><label>Товар</label><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(wmsProductKey(d)))}</b><span>Штрихкод распознан</span></div><span class="status-chip">✓</span></div></div>` : ""}
-            ${state.data && state.data.is_admin ? `<div class="field full"><label>Код новой ячейки</label><input id="wmsNewLocation" placeholder="Например A-03-02"></div><div class="field"><label>Зона новой ячейки</label><select id="wmsLocationZone">
-              <option value="STORAGE" ${d.locationZone === "STORAGE" ? "selected" : ""}>Хранение</option>
-              <option value="PICK" ${d.locationZone === "PICK" ? "selected" : ""}>Отбор</option>
-              <option value="PACK" ${d.locationZone === "PACK" ? "selected" : ""}>Упаковка</option>
-              <option value="RECEIVE" ${d.locationZone === "RECEIVE" ? "selected" : ""}>Приёмка</option>
-              <option value="QUARANTINE" ${d.locationZone === "QUARANTINE" ? "selected" : ""}>Карантин</option>
-            </select></div><div class="field"><label>Название ячейки</label><input id="wmsLocationName" value="${escapeHtml(d.locationName || "")}" placeholder="Стеллаж A"></div>` : ""}
             ${materialMode || productDetected ? `<div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" ${materialMode ? `max="${escapeHtml(materialAvailable)}"` : ""} step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>` : ""}
           </div>
         </div>
         ${renderWmsLocationContents(locationCode)}
         <div class="button-row">
-          ${state.data && state.data.is_admin ? `<button class="small-button" data-wms-action="create_location">Создать ячейку</button>` : ""}
           <button class="small-button secondary" data-wms-action="putaway">Разместить</button>
         </div>
       `;
@@ -10079,12 +10254,32 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const wmsMapAction = event.target.closest("[data-wms-map-action]");
+      if (wmsMapAction && wmsMapAction.dataset.wmsMapAction === "apply") {
+        const search = document.getElementById("wmsMapSearch");
+        const status = document.getElementById("wmsMapStatusFilter");
+        state.wmsMapSearch = search ? search.value.trim() : "";
+        state.wmsMapStatusFilter = status ? status.value : "all";
+        const matched = wmsLocationByScan(state.wmsMapSearch) || (state.wmsData.locations || []).find((location) =>
+          String(location.code || "").toLocaleLowerCase("ru").includes(state.wmsMapSearch.toLocaleLowerCase("ru"))
+        );
+        if (matched) state.wmsSelectedLocationId = matched.id;
+        render();
+        return;
+      }
+
+      const wmsReport = event.target.closest("[data-wms-report]");
+      if (wmsReport) {
+        downloadWmsReport(wmsReport.dataset.wmsReport);
+        return;
+      }
+
       const wmsCell = event.target.closest("[data-wms-cell-id]");
       if (wmsCell) {
         state.wmsSelectedLocationId = wmsCell.dataset.wmsCellId || "";
         state.workspace = "warehouse";
         state.screen = "warehouse";
-        state.wmsView = "stock";
+        state.wmsView = state.wmsView === "map" ? "map" : "stock";
         render();
         return;
       }
