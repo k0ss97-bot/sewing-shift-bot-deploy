@@ -252,6 +252,55 @@ def _find_nested_text(value, keys: tuple[str, ...]) -> str:
     return ""
 
 
+# Ozon keeps the value of the clothing colour in a common characteristic and
+# uses several size characteristics depending on the category.  We keep the
+# IDs here rather than parsing an article like ``БДШВ-1/104``: the catalogue is
+# the source of truth and an article is not guaranteed to contain a size.
+OZON_COLOR_ATTRIBUTE_IDS = {10096}
+OZON_SIZE_ATTRIBUTE_IDS = (4295, 9533, 4508)
+
+
+def _product_identity(row: dict) -> tuple[str, str]:
+    return (_text(row.get("product_id") or row.get("id")), _text(row.get("offer_id")))
+
+
+def _attribute_value(row: dict, attribute_ids: set[int] | tuple[int, ...]) -> str:
+    wanted = set(attribute_ids)
+    for attribute in row.get("attributes") or []:
+        if not isinstance(attribute, dict) or _int(attribute.get("id"), -1) not in wanted:
+            continue
+        for value in attribute.get("values") or []:
+            if isinstance(value, dict) and _text(value.get("value")):
+                return _text(value["value"])
+    return ""
+
+
+def _enrich_catalog_products(products: list[dict], details: list[dict], attributes: list[dict]) -> list[dict]:
+    """Merge Ozon list, detailed-card and characteristic responses by product."""
+    details_by_id = {_product_identity(row)[0]: row for row in details if _product_identity(row)[0]}
+    attributes_by_id = {_product_identity(row)[0]: row for row in attributes if _product_identity(row)[0]}
+    enriched: list[dict] = []
+    for product in products:
+        product_id, _ = _product_identity(product)
+        detail = details_by_id.get(product_id, {})
+        attribute_row = attributes_by_id.get(product_id, {})
+        row = {**product, **detail}
+        # ``/v3/product/info/list`` calls the identifier ``id``. Preserve the
+        # original ``product_id`` so subsequent code has one stable key.
+        if product_id:
+            row["product_id"] = product_id
+        detail_barcodes = detail.get("barcodes") if isinstance(detail.get("barcodes"), list) else []
+        attribute_barcodes = attribute_row.get("barcodes") if isinstance(attribute_row.get("barcodes"), list) else []
+        if not row.get("barcode"):
+            row["barcode"] = _text(detail.get("barcode") or (detail_barcodes[0] if detail_barcodes else "") or attribute_row.get("barcode") or (attribute_barcodes[0] if attribute_barcodes else ""))
+        if not row.get("color"):
+            row["color"] = _attribute_value(attribute_row, OZON_COLOR_ATTRIBUTE_IDS)
+        if not row.get("size"):
+            row["size"] = _attribute_value(attribute_row, OZON_SIZE_ATTRIBUTE_IDS)
+        enriched.append(row)
+    return enriched
+
+
 class OzonClient:
     base_url = "https://api-seller.ozon.ru"
 
@@ -357,6 +406,33 @@ class OzonClient:
     def products(self) -> list[dict]:
         return self._paged_with_fallback(("/v3/product/list", "/v2/product/list"))
 
+    def product_details(self, product_ids: list[str]) -> list[dict]:
+        """Read detailed product cards in Ozon's safe batch size of 100."""
+        rows: list[dict] = []
+        ids = [value for value in dict.fromkeys(_text(item) for item in product_ids) if value]
+        for offset in range(0, len(ids), 100):
+            response = self.post_readonly("/v3/product/info/list", {"product_id": ids[offset:offset + 100]})
+            rows.extend(self._response_items(response))
+        return rows
+
+    def product_attributes(self) -> list[dict]:
+        """Read all visible product characteristics, including colour/size."""
+        rows: list[dict] = []
+        last_id = ""
+        for _ in range(20):
+            payload = {"filter": {"visibility": "ALL"}, "limit": 1000}
+            if last_id:
+                payload["last_id"] = last_id
+            response = self.post_readonly("/v4/product/info/attributes", payload)
+            result = response.get("result")
+            items = [item for item in result if isinstance(item, dict)] if isinstance(result, list) else self._response_items(response)
+            rows.extend(items)
+            next_last_id = _text(response.get("last_id") or response.get("cursor"))
+            if not next_last_id or next_last_id == last_id or len(items) < 1000:
+                break
+            last_id = next_last_id
+        return rows
+
     def prices(self) -> list[dict]:
         return self._paged_with_fallback(("/v5/product/info/prices", "/v4/product/info/prices"))
 
@@ -457,6 +533,10 @@ def sync_ozon() -> dict:
     try:
         client = OzonClient(os.getenv("OZON_CLIENT_ID", ""), os.getenv("OZON_API_KEY", ""))
         products = client.products()
+        product_ids = [_product_identity(item)[0] for item in products]
+        details = client.product_details(product_ids)
+        attributes = client.product_attributes()
+        products = _enrich_catalog_products(products, details, attributes)
         prices = client.prices()
         stocks = client.stocks()
         try:
