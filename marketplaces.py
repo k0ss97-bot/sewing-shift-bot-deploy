@@ -609,5 +609,37 @@ def dashboard() -> dict:
     }
 
 
+def warehouse_catalog() -> dict:
+    """Return the full, read-only Ozon catalogue for warehouse staff.
+
+    This deliberately exposes only identification data required to identify a
+    physical item while receiving, placing or issuing it.  It never calls Ozon
+    and never returns marketplace credentials, orders, prices, or diagnostics.
+    """
+    conn = get_db_connection()
+    ensure_schema(conn)
+    account_name = os.getenv("OZON_ACCOUNT_NAME", "Основной Ozon").strip() or "Основной Ozon"
+    account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
+    account = conn.execute(
+        "SELECT account_name,last_sync_at FROM marketplace_accounts WHERE id=?",
+        (account_id,),
+    ).fetchone()
+    rows = conn.execute(
+        """SELECT p.id,p.name,p.offer_id,p.sku,p.barcode,p.size,p.color,p.updated_at
+             FROM marketplace_products p
+             WHERE p.account_id=?
+             ORDER BY p.name COLLATE NOCASE, p.offer_id COLLATE NOCASE, p.size, p.color, p.id""",
+        (account_id,),
+    ).fetchall()
+    conn.close()
+    return {
+        "ok": True,
+        "marketplace": "ozon",
+        "account_name": account["account_name"] if account else account_name,
+        "last_sync_at": account["last_sync_at"] if account else None,
+        "products": [dict(row) for row in rows],
+    }
+
+
 def sync_for_admin() -> dict:
     return sync_ozon()

@@ -156,6 +156,7 @@ from wms import operations as wms_operations
 from wms.api import WMS_READ_ROUTES, WMS_ROUTES
 from wms.models import ProductKey
 from marketplaces import dashboard as marketplace_dashboard
+from marketplaces import warehouse_catalog as marketplace_warehouse_catalog
 from marketplaces import sync_for_admin as sync_marketplace_for_admin
 from web_push import WebPushDeliveryError, get_public_web_push_config, send_web_push
 
@@ -231,6 +232,12 @@ def get_marketplace_dashboard_for_admin(telegram_id: int):
     if not is_admin(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
     return marketplace_dashboard()
+
+
+def get_warehouse_catalog_for_access(telegram_id: int):
+    if not can_access_wms(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к складскому каталогу."}
+    return marketplace_warehouse_catalog()
 
 
 def sync_marketplace_for_telegram(telegram_id: int):
@@ -5486,6 +5493,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/production/submit-cutting-stage",
                 "/api/marketplaces/dashboard",
                 "/api/marketplaces/sync",
+                "/api/wms/catalog/products",
                 "/api/routes/create-batch",
                 "/api/routes/start",
                 "/api/routes/complete",
@@ -5706,6 +5714,11 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             telegram_id = int(user["id"])
+
+            if path == "/api/wms/catalog/products":
+                result = get_warehouse_catalog_for_access(telegram_id)
+                self.send_json(result, status=200 if result.get("ok") else 403)
+                return
 
             if path in WMS_ROUTES:
                 if not can_access_wms(telegram_id):
