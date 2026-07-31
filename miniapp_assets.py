@@ -8965,7 +8965,7 @@ MINIAPP_HTML = """<!doctype html>
           <button type="button" class="card summary-card clickable" data-wms-view="receive"><span>Приёмка</span><strong>↓</strong><small>Проверить поступление</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="map"><span>Карта склада</span><strong>▦</strong><small>Открыть ячейку</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="putaway"><span>Размещение</span><strong>→</strong><small>Положить в ячейку</small></button>
-          <button type="button" class="card summary-card clickable" data-wms-view="pick"><span>Выдача</span><strong>↑</strong><small>Забрать из ячейки</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="shipments"><span>Отгрузки</span><strong>↑</strong><small>Созданные отправки</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="transfer"><span>Перемещение</span><strong>⇄</strong><small>Между ячейками</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="inventory"><span>Инвентаризация</span><strong>≡</strong><small>Пересчитать ячейку</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="reports"><span>Отчёты</span><strong>↧</strong><small>Остатки и движения</small></button>
@@ -9268,6 +9268,28 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderWmsShipments() {
+      const shipments = new Map();
+      (state.wmsData.movements || []).filter((movement) => movement.movement_type === "ship" || movement.source_type === "shipment").forEach((movement) => {
+        const reference = String(movement.reason || "Отгрузка без номера");
+        const number = (reference.match(/(?:ТЕСТОВАЯ )?ОТГРУЗКА\\s+([A-Z0-9-]+)/i) || [])[1] || "Без номера";
+        const item = shipments.get(reference) || {number, reference, rows: [], total: 0, locations: new Set(), occurredAt: movement.occurred_at};
+        item.rows.push(movement);
+        item.total += Number(movement.quantity || 0);
+        if (movement.from_location_id) item.locations.add(wmsLocationLabel(movement.from_location_id));
+        if (String(movement.occurred_at || "") > String(item.occurredAt || "")) item.occurredAt = movement.occurred_at;
+        shipments.set(reference, item);
+      });
+      const rows = [...shipments.values()].sort((first, second) => String(second.occurredAt || "").localeCompare(String(first.occurredAt || "")));
+      mainButton.textContent = "Обновить отгрузки";
+      mainButton.disabled = state.wmsData.loading;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Отгрузки со склада</h2><p>Собранные отправки из адресных ячеек. Внешние маркетплейсы отсюда не изменяются.</p></div><div class="date">${rows.length} док.</div></div>
+        ${renderWmsDataNotice()}
+        <div class="op-list">${rows.length ? rows.map((shipment) => `<div class="card field-card"><div class="section-title"><b>${escapeHtml(shipment.number)}</b><span class="status-chip">отгружено</span></div><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(shipment.rows.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(shipment.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(shipment.locations.size)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(shipment.occurredAt) || "—")}</strong></div></div><div class="task-note">${escapeHtml(shipment.reference)}</div></div>`).join("") : itemEmpty("Отгрузок пока нет.")}</div>
+      `;
+    }
+
     async function refreshWmsWorkspace({silent = false} = {}) {
       if (!canAccessWms() || state.wmsData.loading) return;
       state.wmsData.loading = true;
@@ -9494,7 +9516,7 @@ MINIAPP_HTML = """<!doctype html>
         ["map", "▦", "Карта склада"],
         ["putaway", "→", "Размещение"],
         ["transfer", "⇄", "Перемещение"],
-        ["pick", "↑", "Выдача"],
+        ["shipments", "↑", "Отгрузки"],
         ["stock", "▤", "Остатки"],
         ["lookup", "⌕", "Проверка товара"],
         ["products", "▤", "Товары"],
@@ -9524,6 +9546,7 @@ MINIAPP_HTML = """<!doctype html>
       else if (state.wmsView === "lookup") renderWmsLookup();
       else if (state.wmsView === "products") renderWmsProducts();
       else if (state.wmsView === "movements") renderWmsMovements();
+      else if (state.wmsView === "shipments") renderWmsShipments();
       else if (state.wmsView === "inventory") renderWmsInventory();
       else if (state.wmsView === "reports") renderWmsReports();
       else if (state.wmsView === "scrap") renderWmsScrap();

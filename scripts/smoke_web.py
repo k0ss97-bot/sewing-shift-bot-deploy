@@ -296,7 +296,7 @@ def run_smoke() -> None:
                 'function refreshWmsWorkspace({silent = false} = {})',
                 'function wmsReceivingStock()',
                 'data-wms-view="stock"',
-                'data-wms-view="pick"',
+                'data-wms-view="shipments"',
                 'id="wmsHardwareScannerInput"',
                 'api("/api/wms/pick"',
                 'src="/assets/jsqr.js"',
