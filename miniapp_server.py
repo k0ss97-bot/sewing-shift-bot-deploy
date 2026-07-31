@@ -159,6 +159,7 @@ from wms.shipments import shipment_detail, shipment_excel_bytes, shipment_pdf_by
 from marketplaces import dashboard as marketplace_dashboard
 from marketplaces import warehouse_catalog as marketplace_warehouse_catalog
 from marketplaces import sync_for_admin as sync_marketplace_for_admin
+from marketplaces import marketplace_supplies, marketplace_supply_detail, create_internal_shipment_for_supply
 from web_push import WebPushDeliveryError, get_public_web_push_config, send_web_push
 
 
@@ -276,6 +277,31 @@ def sync_marketplace_for_telegram(telegram_id: int):
     if not is_admin(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Синхронизацию маркетплейсов может запускать только администратор."}
     return sync_marketplace_for_admin()
+
+
+def get_marketplace_supplies_for_admin(telegram_id: int, payload: dict | None = None):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    payload = payload or {}
+    return marketplace_supplies(
+        marketplace=str(payload.get("marketplace") or ""),
+        status=str(payload.get("status") or ""),
+        search=str(payload.get("search") or ""),
+        limit=payload.get("limit") or 100,
+    )
+
+
+def get_marketplace_supply_detail_for_admin(telegram_id: int, supply_id: int):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    supply = marketplace_supply_detail(supply_id)
+    return {"ok": True, "supply": supply} if supply else {"ok": False, "message": "Поставка не найдена."}
+
+
+def create_marketplace_shipment_for_admin(telegram_id: int, supply_id: int):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    return create_internal_shipment_for_supply(supply_id)
 
 
 def get_employee_for_access(telegram_id: int):
@@ -5525,6 +5551,9 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/production/submit-cutting-stage",
                 "/api/marketplaces/dashboard",
                 "/api/marketplaces/sync",
+                "/api/marketplaces/supplies",
+                "/api/marketplaces/supply/detail",
+                "/api/marketplaces/supply/create-shipment",
                 "/api/wms/catalog/products",
                 "/api/wms/shipment/detail",
                 "/api/wms/shipment/export",
@@ -5860,6 +5889,20 @@ def make_handler(bot_token: str, debug: bool):
                 result = get_marketplace_dashboard_for_admin(telegram_id)
             elif path == "/api/marketplaces/sync":
                 result = sync_marketplace_for_telegram(telegram_id)
+            elif path == "/api/marketplaces/supplies":
+                result = get_marketplace_supplies_for_admin(telegram_id, payload)
+            elif path == "/api/marketplaces/supply/detail":
+                try:
+                    supply_id = int(payload.get("supply_id") or 0)
+                except (TypeError, ValueError):
+                    supply_id = 0
+                result = get_marketplace_supply_detail_for_admin(telegram_id, supply_id)
+            elif path == "/api/marketplaces/supply/create-shipment":
+                try:
+                    supply_id = int(payload.get("supply_id") or 0)
+                except (TypeError, ValueError):
+                    supply_id = 0
+                result = create_marketplace_shipment_for_admin(telegram_id, supply_id)
             elif path == "/api/routes/create-batch":
                 result = create_route_batch_for_telegram(telegram_id, payload)
             elif path == "/api/routes/start":

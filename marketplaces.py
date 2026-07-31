@@ -122,6 +122,102 @@ CREATE INDEX IF NOT EXISTS idx_marketplace_production_links_status ON marketplac
 CREATE INDEX IF NOT EXISTS idx_marketplace_stocks_product ON marketplace_stocks(product_id, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_orders_account ON marketplace_orders(account_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_sync_runs_account ON marketplace_sync_runs(account_id, started_at DESC);
+CREATE TABLE IF NOT EXISTS marketplace_supplies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    marketplace TEXT NOT NULL,
+    account_id INTEGER,
+    external_supply_id TEXT NOT NULL,
+    external_preorder_id TEXT NOT NULL DEFAULT '',
+    external_status TEXT NOT NULL DEFAULT '',
+    canonical_status TEXT NOT NULL DEFAULT 'EXTERNAL_DRAFT',
+    supply_type TEXT NOT NULL DEFAULT '',
+    destination_type TEXT NOT NULL DEFAULT '',
+    destination_id TEXT NOT NULL DEFAULT '',
+    destination_name TEXT NOT NULL DEFAULT '',
+    macrolocal_cluster_id TEXT NOT NULL DEFAULT '',
+    planned_at TEXT,
+    timeslot_from TEXT,
+    timeslot_to TEXT,
+    created_at_external TEXT,
+    updated_at_external TEXT,
+    last_synced_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    warehouse_shipment_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(marketplace, account_id, external_supply_id),
+    FOREIGN KEY(account_id) REFERENCES marketplace_accounts(id)
+);
+CREATE TABLE IF NOT EXISTS marketplace_supply_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    supply_id INTEGER NOT NULL,
+    marketplace_product_id INTEGER,
+    external_product_id TEXT NOT NULL DEFAULT '',
+    offer_id TEXT NOT NULL DEFAULT '',
+    sku TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    barcode TEXT NOT NULL DEFAULT '',
+    size TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '',
+    quantity INTEGER NOT NULL DEFAULT 0,
+    mapped_status TEXT NOT NULL DEFAULT 'unmatched',
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY(supply_id) REFERENCES marketplace_supplies(id) ON DELETE CASCADE,
+    FOREIGN KEY(marketplace_product_id) REFERENCES marketplace_products(id)
+);
+CREATE TABLE IF NOT EXISTS warehouse_shipments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    number TEXT NOT NULL UNIQUE,
+    source_type TEXT NOT NULL DEFAULT 'marketplace_supply',
+    source_id INTEGER,
+    marketplace TEXT NOT NULL DEFAULT '',
+    external_supply_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'WAITING_RESERVATION',
+    destination_name TEXT NOT NULL DEFAULT '',
+    planned_at TEXT,
+    total_quantity INTEGER NOT NULL DEFAULT 0,
+    reserved_quantity INTEGER NOT NULL DEFAULT 0,
+    picked_quantity INTEGER NOT NULL DEFAULT 0,
+    packed_quantity INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(source_type, source_id),
+    FOREIGN KEY(source_id) REFERENCES marketplace_supplies(id)
+);
+CREATE TABLE IF NOT EXISTS warehouse_shipment_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shipment_id INTEGER NOT NULL,
+    marketplace_product_id INTEGER,
+    product_key TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    article TEXT NOT NULL DEFAULT '',
+    barcode TEXT NOT NULL DEFAULT '',
+    size TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '',
+    quantity INTEGER NOT NULL DEFAULT 0,
+    reserved_quantity INTEGER NOT NULL DEFAULT 0,
+    picked_quantity INTEGER NOT NULL DEFAULT 0,
+    packed_quantity INTEGER NOT NULL DEFAULT 0,
+    from_location_code TEXT NOT NULL DEFAULT '',
+    mapping_status TEXT NOT NULL DEFAULT 'unmatched',
+    FOREIGN KEY(shipment_id) REFERENCES warehouse_shipments(id) ON DELETE CASCADE,
+    FOREIGN KEY(marketplace_product_id) REFERENCES marketplace_products(id)
+);
+CREATE TABLE IF NOT EXISTS marketplace_sync_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    marketplace TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    external_id TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_marketplace_supplies_status ON marketplace_supplies(marketplace, canonical_status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_marketplace_supply_items_supply ON marketplace_supply_items(supply_id);
+CREATE INDEX IF NOT EXISTS idx_warehouse_shipments_status ON warehouse_shipments(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_marketplace_sync_events_created ON marketplace_sync_events(created_at DESC);
 """
 
 
@@ -170,6 +266,193 @@ def _int(value, default: int = 0) -> int:
 
 def _text(value) -> str:
     return "" if value is None else str(value).strip()
+
+
+MARKETPLACE_SUPPLY_STATUSES = (
+    "EXTERNAL_DRAFT", "PLANNED", "WAITING_RESERVATION", "SHORTAGE",
+    "READY_TO_PICK", "PICKING", "PICKED", "PACKING", "DOCUMENTS_REQUIRED",
+    "READY_TO_HANDOVER", "HANDED_OVER", "ACCEPTING", "ACCEPTED",
+    "PARTIALLY_ACCEPTED", "CANCELLED", "SYNC_ERROR",
+)
+
+
+def canonical_supply_status(marketplace: str, external_status: object) -> str:
+    """Map a marketplace status to the internal, read-only warehouse state."""
+    status = _text(external_status).lower().replace("-", "_").replace(" ", "_")
+    if any(token in status for token in ("cancel", "reject", "declin")):
+        return "CANCELLED"
+    if any(token in status for token in ("accept", "received", "delivered", "complete")):
+        return "ACCEPTED"
+    if any(token in status for token in ("handover", "handed", "transit", "shipped")):
+        return "HANDED_OVER"
+    if any(token in status for token in ("pack", "package")):
+        return "PACKING"
+    if any(token in status for token in ("pick", "assembly")):
+        return "READY_TO_PICK"
+    if any(token in status for token in ("plan", "ready", "created", "new")):
+        return "PLANNED"
+    if not status:
+        return "EXTERNAL_DRAFT"
+    return "EXTERNAL_DRAFT"
+
+
+def _sync_event(conn: sqlite3.Connection, marketplace: str, event_type: str, message: str,
+                *, severity: str = "info", external_id: str = "", payload: object = None) -> None:
+    conn.execute(
+        "INSERT INTO marketplace_sync_events (marketplace,event_type,severity,external_id,message,payload_json,created_at) VALUES (?,?,?,?,?,?,?)",
+        (_text(marketplace), _text(event_type), _text(severity) or "info", _text(external_id), _text(message), _json(payload), _now()),
+    )
+
+
+def upsert_marketplace_supply(conn: sqlite3.Connection, payload: dict, *, marketplace: str,
+                              account_id: int | None = None) -> int:
+    """Persist an external supply without sending any mutation to a marketplace."""
+    external_id = _text(payload.get("id") or payload.get("supply_id") or payload.get("supplyId") or payload.get("number"))
+    if not external_id:
+        raise MarketplaceError("У поставки нет внешнего идентификатора.", code="supply_id_missing")
+    now = _now()
+    external_status = _text(payload.get("status") or payload.get("state"))
+    canonical = canonical_supply_status(marketplace, external_status)
+    destination = payload.get("destination") if isinstance(payload.get("destination"), dict) else {}
+    timeslot = payload.get("timeslot") if isinstance(payload.get("timeslot"), dict) else {}
+    conn.execute(
+        """INSERT INTO marketplace_supplies
+           (marketplace,account_id,external_supply_id,external_preorder_id,external_status,canonical_status,
+            supply_type,destination_type,destination_id,destination_name,macrolocal_cluster_id,planned_at,
+            timeslot_from,timeslot_to,created_at_external,updated_at_external,last_synced_at,payload_json,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(marketplace,account_id,external_supply_id) DO UPDATE SET
+            external_preorder_id=excluded.external_preorder_id, external_status=excluded.external_status,
+            canonical_status=excluded.canonical_status, supply_type=excluded.supply_type,
+            destination_type=excluded.destination_type, destination_id=excluded.destination_id,
+            destination_name=excluded.destination_name, macrolocal_cluster_id=excluded.macrolocal_cluster_id,
+            planned_at=excluded.planned_at, timeslot_from=excluded.timeslot_from, timeslot_to=excluded.timeslot_to,
+            created_at_external=excluded.created_at_external, updated_at_external=excluded.updated_at_external,
+            last_synced_at=excluded.last_synced_at, payload_json=excluded.payload_json, updated_at=excluded.updated_at""",
+        (
+            _text(marketplace), account_id, external_id,
+            _text(payload.get("preorder_id") or payload.get("preorderId")), external_status, canonical,
+            _text(payload.get("type") or payload.get("supply_type")), _text(destination.get("type")),
+            _text(destination.get("id")), _text(destination.get("name") or payload.get("destination_name")),
+            _text(payload.get("macrolocal_cluster_id") or payload.get("macro_local_cluster_id")),
+            _text(payload.get("planned_at") or payload.get("shipment_date")),
+            _text(timeslot.get("from") or timeslot.get("start")), _text(timeslot.get("to") or timeslot.get("end")),
+            _text(payload.get("created_at")), _text(payload.get("updated_at")), now, _json(payload), now, now,
+        ),
+    )
+    row = conn.execute(
+        "SELECT id FROM marketplace_supplies WHERE marketplace=? AND account_id IS ? AND external_supply_id=?",
+        (_text(marketplace), account_id, external_id),
+    ).fetchone()
+    supply_id = int(row[0])
+    conn.execute("DELETE FROM marketplace_supply_items WHERE supply_id=?", (supply_id,))
+    items = payload.get("items") or payload.get("products") or []
+    if isinstance(items, dict):
+        items = items.get("items") or items.get("products") or []
+    if not isinstance(items, list):
+        items = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        offer_id = _text(item.get("offer_id") or item.get("offerId") or item.get("article"))
+        sku = _text(item.get("sku") or item.get("fbo_sku") or item.get("fbs_sku"))
+        external_product_id = _text(item.get("product_id") or item.get("id") or item.get("external_product_id"))
+        product = None
+        if account_id is not None:
+            product = conn.execute(
+                "SELECT id,barcode,size,color,name FROM marketplace_products WHERE account_id=? AND (external_product_id=? OR offer_id=? OR sku=?) ORDER BY id DESC LIMIT 1",
+                (account_id, external_product_id, offer_id, sku),
+            ).fetchone()
+        quantity = max(0, _int(item.get("quantity") or item.get("count") or item.get("qty")))
+        conn.execute(
+            "INSERT INTO marketplace_supply_items (supply_id,marketplace_product_id,external_product_id,offer_id,sku,name,barcode,size,color,quantity,mapped_status,payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (supply_id, product[0] if product else None, external_product_id, offer_id, sku,
+             _text(item.get("name") or item.get("title") or (product[4] if product else "")),
+             _text(item.get("barcode") or (product[1] if product else "")),
+             _text(item.get("size") or (product[2] if product else "")),
+             _text(item.get("color") or (product[3] if product else "")), quantity,
+             "matched" if product else "unmatched", _json(item)),
+        )
+    if any(_text(item.get("offer_id") or item.get("sku") or item.get("product_id")) and not conn.execute("SELECT 1 FROM marketplace_supply_items WHERE supply_id=? AND mapped_status='unmatched' LIMIT 1", (supply_id,)).fetchone() for item in items if isinstance(item, dict)):
+        pass
+    if external_status and canonical == "EXTERNAL_DRAFT" and external_status.lower() not in {"draft", "new"}:
+        _sync_event(conn, marketplace, "unknown_supply_status", f"Неизвестный статус поставки: {external_status}", severity="warning", external_id=external_id, payload=payload)
+    return supply_id
+
+
+def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str = "", search: str = "", limit: int = 100) -> list[dict]:
+    clauses, args = [], []
+    if marketplace and marketplace != "all":
+        clauses.append("s.marketplace=?"); args.append(marketplace)
+    if status:
+        clauses.append("s.canonical_status=?"); args.append(status)
+    if search:
+        term = f"%{search.lower()}%"
+        clauses.append("(lower(s.external_supply_id) LIKE ? OR lower(s.destination_name) LIKE ? OR lower(s.external_status) LIKE ?)")
+        args.extend([term, term, term])
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    args.append(max(1, min(500, int(limit or 100))))
+    rows = conn.execute(f"""SELECT s.id,s.marketplace,s.external_supply_id,s.external_preorder_id,s.external_status,
+            s.canonical_status,s.supply_type,s.destination_name,s.macrolocal_cluster_id,s.planned_at,
+            s.timeslot_from,s.timeslot_to,s.last_synced_at,s.warehouse_shipment_id,s.updated_at,
+            COUNT(i.id) AS item_count, COALESCE(SUM(i.quantity),0) AS total_quantity,
+            SUM(CASE WHEN i.mapped_status='unmatched' THEN 1 ELSE 0 END) AS unmatched_count
+        FROM marketplace_supplies s LEFT JOIN marketplace_supply_items i ON i.supply_id=s.id
+        {where} GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ?""", args).fetchall()
+    return [dict(row) for row in rows]
+
+
+def marketplace_supplies(*, marketplace: str = "", status: str = "", search: str = "", limit: int = 100) -> dict:
+    conn = get_db_connection(); ensure_schema(conn)
+    rows = _supply_rows(conn, marketplace=marketplace, status=status, search=search, limit=limit)
+    counts = {key: 0 for key in MARKETPLACE_SUPPLY_STATUSES}
+    for row in conn.execute("SELECT canonical_status,COUNT(*) AS count FROM marketplace_supplies GROUP BY canonical_status"):
+        counts[row[0]] = row[1]
+    conn.close()
+    return {"ok": True, "supplies": rows, "counts": counts, "statuses": list(MARKETPLACE_SUPPLY_STATUSES)}
+
+
+def marketplace_supply_detail(supply_id: int) -> dict | None:
+    conn = get_db_connection(); ensure_schema(conn)
+    row = conn.execute("SELECT * FROM marketplace_supplies WHERE id=?", (int(supply_id),)).fetchone()
+    if row is None:
+        conn.close(); return None
+    items = [dict(item) for item in conn.execute("SELECT * FROM marketplace_supply_items WHERE supply_id=? ORDER BY id", (int(supply_id),))]
+    shipment = None
+    if row["warehouse_shipment_id"]:
+        shipment = conn.execute("SELECT * FROM warehouse_shipments WHERE id=?", (row["warehouse_shipment_id"],)).fetchone()
+        shipment = dict(shipment) if shipment else None
+    result = dict(row); result["items"] = items; result["warehouse_shipment"] = shipment
+    conn.close(); return result
+
+
+def create_internal_shipment_for_supply(supply_id: int) -> dict:
+    """Create the internal picking document; reservation is a separate WMS step."""
+    conn = get_db_connection(); ensure_schema(conn)
+    supply = conn.execute("SELECT * FROM marketplace_supplies WHERE id=?", (int(supply_id),)).fetchone()
+    if supply is None:
+        conn.close(); return {"ok": False, "message": "Поставка не найдена."}
+    unmatched = conn.execute("SELECT COUNT(*) FROM marketplace_supply_items WHERE supply_id=? AND mapped_status='unmatched'", (int(supply_id),)).fetchone()[0]
+    if unmatched:
+        _sync_event(conn, supply["marketplace"], "mapping_required", "Поставка не передана на склад: есть не сопоставленные товары.", severity="critical", external_id=supply["external_supply_id"])
+        conn.commit(); conn.close()
+        return {"ok": False, "code": "mapping_required", "message": "Сначала сопоставьте все товары поставки с номенклатурой производства."}
+    existing = conn.execute("SELECT id,number,status FROM warehouse_shipments WHERE source_type='marketplace_supply' AND source_id=?", (int(supply_id),)).fetchone()
+    if existing:
+        conn.close(); return {"ok": True, "shipment": dict(existing), "created": False}
+    now = _now()
+    number = f"MP-{int(supply_id):06d}"
+    items = conn.execute("SELECT * FROM marketplace_supply_items WHERE supply_id=? ORDER BY id", (int(supply_id),)).fetchall()
+    total = sum(max(0, int(item["quantity"] or 0)) for item in items)
+    cursor = conn.execute("INSERT INTO warehouse_shipments (number,source_id,marketplace,external_supply_id,status,destination_name,planned_at,total_quantity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                          (number, int(supply_id), supply["marketplace"], supply["external_supply_id"], "WAITING_RESERVATION", supply["destination_name"], supply["planned_at"], total, now, now))
+    shipment_id = cursor.lastrowid
+    for item in items:
+        conn.execute("INSERT INTO warehouse_shipment_items (shipment_id,marketplace_product_id,product_key,name,article,barcode,size,color,quantity,mapping_status) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (shipment_id, item["marketplace_product_id"], item["offer_id"] or item["sku"] or item["external_product_id"], item["name"], item["offer_id"], item["barcode"], item["size"], item["color"], item["quantity"], item["mapped_status"]))
+    conn.execute("UPDATE marketplace_supplies SET warehouse_shipment_id=?,canonical_status='WAITING_RESERVATION',updated_at=? WHERE id=?", (shipment_id, now, int(supply_id)))
+    conn.commit(); conn.close()
+    return {"ok": True, "created": True, "shipment": {"id": shipment_id, "number": number, "status": "WAITING_RESERVATION", "total_quantity": total}}
 
 
 def product_group_for(*values: object) -> tuple[str, str]:
@@ -833,6 +1116,12 @@ def dashboard() -> dict:
     recent = conn.execute("SELECT id,status,products_count,prices_count,stocks_count,orders_count,error_message,started_at,finished_at FROM marketplace_sync_runs WHERE account_id=? ORDER BY id DESC LIMIT 5", (account_id,)).fetchall()
     configured = bool(os.getenv("OZON_CLIENT_ID", "").strip() and os.getenv("OZON_API_KEY", "").strip())
     wildberries_configured = bool(os.getenv("WB_API_TOKEN", "").strip())
+    supply_rows = _supply_rows(conn, limit=20)
+    supply_counts = {key: 0 for key in MARKETPLACE_SUPPLY_STATUSES}
+    for status_row in conn.execute("SELECT canonical_status,COUNT(*) AS count FROM marketplace_supplies GROUP BY canonical_status"):
+        supply_counts[status_row[0]] = int(status_row[1])
+    warehouse_shipments = [dict(row) for row in conn.execute("SELECT id,number,marketplace,external_supply_id,status,destination_name,total_quantity,reserved_quantity,picked_quantity,packed_quantity,planned_at,updated_at FROM warehouse_shipments ORDER BY updated_at DESC LIMIT 20")]
+    sync_events = [dict(row) for row in conn.execute("SELECT id,marketplace,event_type,severity,external_id,message,created_at FROM marketplace_sync_events ORDER BY id DESC LIMIT 20")]
     conn.close()
     return {
         "ok": True,
@@ -843,11 +1132,15 @@ def dashboard() -> dict:
             {"marketplace": "wildberries", "configured": wildberries_configured, "read_only": True},
         ],
         "accounts": [dict(row) for row in rows],
-        "summary": {"products": products, "stock_rows": stocks, "open_orders": orders},
+        "summary": {"products": products, "stock_rows": stocks, "open_orders": orders, "supplies": len(supply_rows), "warehouse_shipments": len(warehouse_shipments)},
         "product_groups": group_payload,
         "products_rows": products_payload,
         "orders_rows": [dict(row) for row in order_rows],
         "sync_runs": [dict(row) for row in recent],
+        "supplies": supply_rows,
+        "supply_counts": supply_counts,
+        "warehouse_shipments": warehouse_shipments,
+        "sync_events": sync_events,
     }
 
 

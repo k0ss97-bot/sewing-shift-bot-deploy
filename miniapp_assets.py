@@ -1506,6 +1506,20 @@ MINIAPP_HTML = """<!doctype html>
       box-shadow: 0 7px 16px rgba(25,89,243,.12);
     }
 
+    .marketplace-overview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .marketplace-supply-card { align-items: center; gap: 14px; }
+    .supply-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 7px; }
+    .critical-text { color: #b42318; font-weight: 700; }
+    @media (max-width: 720px) { .marketplace-overview-grid { grid-template-columns: 1fr; } .supply-actions { justify-content: flex-start; } }
+    .marketplace-menu-strip { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 14px; padding: 8px; border: 1px solid rgba(111,128,159,.14); border-radius: 16px; background: rgba(255,255,255,.72); }
+    .marketplace-menu-link { border: 0; border-radius: 10px; padding: 9px 13px; color: var(--muted); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+    .marketplace-menu-link.active { color: #fff; background: #1557ed; box-shadow: 0 8px 18px rgba(21,87,237,.2); }
+
     .marketplace-provider-panel {
       display: grid;
       gap: 12px;
@@ -5156,6 +5170,7 @@ MINIAPP_HTML = """<!doctype html>
           {id: "stocks", label: "Остатки", icon: "▦"},
           {id: "analytics", label: "Аналитика", icon: "▥"},
           {id: "orders", label: "Отгрузки", icon: "↑"},
+          {id: "supplies", label: "Поставки", icon: "↓"},
           {id: "sync", label: "Синхронизация", icon: "↻"},
         ];
         bottomNav.style.setProperty("--nav-count", marketplaceItems.length);
@@ -5772,6 +5787,24 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         state.marketplaceData.error = error.apiMessage || error.message || "Не удалось синхронизировать маркетплейс.";
         showToast("Ошибка", state.marketplaceData.error);
+      } finally {
+        state.marketplaceData.loading = false;
+        render();
+      }
+    }
+
+    async function createMarketplaceShipment(supplyId) {
+      if (!supplyId || state.marketplaceData.loading) return;
+      state.marketplaceData.loading = true;
+      render();
+      try {
+        const result = await api("/api/marketplaces/supply/create-shipment", {supply_id: Number(supplyId)});
+        if (!result.ok) throw new Error(result.message || "Не удалось создать складскую отгрузку.");
+        showToast("Отгрузка МП", result.created ? `Создан документ ${result.shipment.number}.` : "Документ уже существует.");
+        const data = await api("/api/marketplaces/dashboard");
+        state.marketplaceData.payload = data;
+      } catch (error) {
+        showToast("Отгрузка МП", error.apiMessage || error.message || "Не удалось создать складскую отгрузку.");
       } finally {
         state.marketplaceData.loading = false;
         render();
@@ -9497,6 +9530,8 @@ MINIAPP_HTML = """<!doctype html>
       const products = isWildberries ? [] : (payload.products_rows || []);
       const orders = isWildberries ? [] : (payload.orders_rows || []);
       const runs = isWildberries ? [] : (payload.sync_runs || []);
+      const supplies = isWildberries ? (payload.supplies || []).filter((row) => row.marketplace === "wildberries") : (payload.supplies || []).filter((row) => isAll || row.marketplace === "ozon");
+      const warehouseShipments = (payload.warehouse_shipments || []).filter((row) => isAll || row.marketplace === selectedProvider);
       const accounts = payload.accounts || [];
       const account = accounts[0] || {};
       const wildberries = (payload.connectors || []).find((item) => item.marketplace === "wildberries") || {};
@@ -9527,21 +9562,26 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card field-card"><div class="section-title"><b>Состояние синхронизации</b><span>${escapeHtml(account.last_sync_at || "нет данных")}</span></div><div class="task-note">Раздел аналитики показывает только данные, полученные из маркетплейса. Изменения на Ozon и Wildberries из приложения не отправляются.</div></div>
       `;
       const ordersBlock = orders.length ? `<div class="op-list">${orders.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-order-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>Заказ: ${escapeHtml(row.external_order_id)}<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")} ›</span></button>`).join("")}</div>` : itemEmpty("Отгрузки ещё не загружены.");
+      const suppliesBlock = supplies.length ? `<div class="op-list">${supplies.map((row) => `<div class="card report-row marketplace-supply-card"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id)}</b><span>${escapeHtml(row.destination_name || "Направление не указано")} · ${escapeHtml(row.item_count || 0)} поз. · ${escapeHtml(row.total_quantity || 0)} шт.${row.unmatched_count ? `<br><span class="critical-text">Не сопоставлено: ${escapeHtml(row.unmatched_count)}</span>` : ""}</span></div><div class="supply-actions"><span class="status-chip ${["SHORTAGE","SYNC_ERROR"].includes(row.canonical_status) ? "warn" : ""}">${escapeHtml(row.canonical_status)}</span>${row.warehouse_shipment_id ? `<span class="status-chip">MP-${String(row.warehouse_shipment_id).padStart(6, "0")}</span>` : (!row.unmatched_count ? `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>` : `<span class="status-chip warn">Нужно сопоставление</span>`)}</div></div>`).join("")}</div>` : itemEmpty("Поставки маркетплейсов ещё не загружены. После синхронизации они появятся здесь отдельными заданиями для склада.");
+      const warehouseShipmentsBlock = warehouseShipments.length ? `<div class="op-list">${warehouseShipments.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.number)}</b><span>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.destination_name || "Направление не указано")}<br>${escapeHtml(row.total_quantity || 0)} шт. · резерв ${escapeHtml(row.reserved_quantity || 0)} · отобрано ${escapeHtml(row.picked_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.status)}</span></div>`).join("")}</div>` : itemEmpty("Внутренних складских отгрузок пока нет.");
       const runsBlock = runs.length ? `<div class="op-list">${runs.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-sync-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.started_at || "Синхронизация")}</b><span>Товары ${escapeHtml(row.products_count)} · цены ${escapeHtml(row.prices_count)} · остатки ${escapeHtml(row.stocks_count)} · отгрузки ${escapeHtml(row.orders_count)}${row.error_message ? `<br>${escapeHtml(row.error_message)}` : ""}</span></div><span class="status-chip ${row.status === "success" ? "" : "warn"}">${escapeHtml(row.status)} ›</span></button>`).join("")}</div>` : itemEmpty("Синхронизаций ещё не было.");
       const overviewBlock = `
         <div class="kpi-grid">
           <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="products"><div class="kpi-top"><span>Товары</span><span class="kpi-ico">▤</span></div><strong>${escapeHtml(summary.products || 0)}<small> поз.</small></strong><span>Каталог ${providerName} · открыть товары ›</span></button>
           <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="stocks"><div class="kpi-top"><span>Остатки</span><span class="kpi-ico">▦</span></div><strong>${escapeHtml(summary.stock_rows || 0)}<small> строк</small></strong><span>FBO и FBS · открыть остатки ›</span></button>
           <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="orders"><div class="kpi-top"><span>Отгрузки</span><span class="kpi-ico">↑</span></div><strong>${escapeHtml(summary.open_orders || 0)}<small> открыто</small></strong><span>Данные ${providerName} · открыть список ›</span></button>
+          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="supplies"><div class="kpi-top"><span>Поставки МП</span><span class="kpi-ico">⇢</span></div><strong>${escapeHtml(supplies.length)}<small> поставок</small></strong><span>Внутренние задания для склада ›</span></button>
         </div>
+        <div class="marketplace-overview-grid"><div class="card field-card"><div class="section-title"><b>Поставки маркетплейсов</b><button type="button" class="small-button secondary" data-marketplace-view="supplies">Открыть ›</button></div>${suppliesBlock}</div><div class="card field-card"><div class="section-title"><b>Задания складу</b><button type="button" class="small-button secondary" data-marketplace-view="warehouse-shipments">Открыть ›</button></div>${warehouseShipmentsBlock}</div></div>
       `;
-      const content = state.marketplaceView === "overview" ? overviewBlock : state.marketplaceView === "orders" ? ordersBlock : state.marketplaceView === "sync" ? runsBlock : state.marketplaceView === "stocks" ? stocksBlock : state.marketplaceView === "analytics" ? analyticsBlock : productsBlock;
-      const title = state.marketplaceView === "overview" ? "Обзор" : state.marketplaceView === "orders" ? "Отгрузки" : state.marketplaceView === "sync" ? "Журнал синхронизации" : state.marketplaceView === "stocks" ? "Остатки" : state.marketplaceView === "analytics" ? "Аналитика" : "Товары";
+      const content = state.marketplaceView === "overview" ? overviewBlock : state.marketplaceView === "orders" ? ordersBlock : state.marketplaceView === "supplies" ? suppliesBlock : state.marketplaceView === "warehouse-shipments" ? warehouseShipmentsBlock : state.marketplaceView === "sync" ? runsBlock : state.marketplaceView === "stocks" ? stocksBlock : state.marketplaceView === "analytics" ? analyticsBlock : productsBlock;
+      const title = state.marketplaceView === "overview" ? "Обзор" : state.marketplaceView === "orders" ? "Заказы" : state.marketplaceView === "supplies" ? "Поставки" : state.marketplaceView === "warehouse-shipments" ? "Отгрузки на склад" : state.marketplaceView === "sync" ? "Журнал синхронизации" : state.marketplaceView === "stocks" ? "Остатки" : state.marketplaceView === "analytics" ? "Аналитика" : "Товары";
       const detail = renderMarketplaceDetail(products, orders, runs);
-      mount.innerHTML = `
+      const marketplaceMenu = `<div class="marketplace-menu-strip">${[["overview","Обзор"],["products","Товары"],["stocks","Остатки"],["orders","Заказы"],["supplies","Поставки"],["warehouse-shipments","Отгрузки на склад"],["analytics","Аналитика"],["sync","Синхронизация"]].map(([id,label]) => `<button type="button" class="marketplace-menu-link ${state.marketplaceView === id ? "active" : ""}" data-marketplace-view="${id}">${label}</button>`).join("")}</div>`;
+      mount.innerHTML = `${marketplaceMenu}
         <div class="screen-head"><div><h2>Управление ${providerTitle}</h2><p>Выберите площадку — содержимое разделов изменится под выбранный маркетплейс.</p></div><div class="marketplace-provider-inline"><div class="marketplace-provider-switch" role="tablist" aria-label="Выбор маркетплейса"><button type="button" class="marketplace-provider-button marketplace-provider-all ${isAll ? "active" : ""}" data-marketplace-provider="all" role="tab" aria-selected="${isAll}"><b>Общая</b><span>Все площадки</span></button><button type="button" class="marketplace-provider-button marketplace-provider-ozon ${isOzon ? "active" : ""}" data-marketplace-provider="ozon" role="tab" aria-selected="${isOzon}"><b>Ozon</b><span>${escapeHtml(payload.configured ? (account.account_name || "Подключён") : "Не подключён")}</span></button><button type="button" class="marketplace-provider-button marketplace-provider-wb ${isWildberries ? "active" : ""}" data-marketplace-provider="wildberries" role="tab" aria-selected="${isWildberries}"><b>Wildberries</b><span>${escapeHtml(wildberries.configured ? "Подключён" : "Не подключён")}</span></button></div><div class="marketplace-provider-status"><b>${isAll ? "Общий обзор" : providerName}</b><span>${escapeHtml(providerStatus)}</span></div></div></div>
         ${errorNotice}${notConfigured}
-        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? orders.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? products.length : state.marketplaceView === "analytics" ? "" : groups.length}</span></div>${content}`}
+        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? orders.length : state.marketplaceView === "supplies" ? supplies.length : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? products.length : state.marketplaceView === "analytics" ? "" : groups.length}</span></div>${content}`}
       `;
     }
 
@@ -10693,6 +10733,12 @@ MINIAPP_HTML = """<!doctype html>
         state.marketplaceView = "sync";
         state.marketplaceDetail = {kind: "sync", id: marketplaceSync.dataset.marketplaceSyncId || ""};
         render();
+        return;
+      }
+      const marketplaceSupplyCreate = event.target.closest("[data-marketplace-supply-create]");
+      if (marketplaceSupplyCreate) {
+        event.preventDefault();
+        createMarketplaceShipment(marketplaceSupplyCreate.dataset.marketplaceSupplyCreate || "");
         return;
       }
 
