@@ -1200,6 +1200,10 @@ MINIAPP_HTML = """<!doctype html>
       gap: 8px;
     }
 
+    /* ТСД работает как клавиатура: код не показываем в поле и очищаем после считывания. */
+    .wms-hardware-scanner-input { color: transparent; caret-color: transparent; }
+    .wms-hardware-scanner-input::placeholder { color: var(--muted); opacity: 1; }
+
     @media (max-width: 600px) {
       /* На телефоне карта не должна разъезжаться в горизонтальный скролл.
          Две колонки дают ячейке достаточно места для полного имени. */
@@ -4351,6 +4355,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsCatalogSearch: "",
       wmsCatalogGroup: "",
       wmsCatalog: {loading: false, loaded: false, error: "", products: [], lastSyncAt: ""},
+      wmsLookup: {barcode: "", productKey: null, error: ""},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
       wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
@@ -4426,7 +4431,7 @@ MINIAPP_HTML = """<!doctype html>
       { id: "orders", label: "Задания", icon: "▣" },
     ];
     const productionScreens = new Set(["shift", "report", "analytics", "orders", "admin", "passport", "profile"]);
-    const warehouseMoreViews = new Set(["more", "products", "transfer", "stock", "movements", "inventory", "scrap", "reports", "map"]);
+    const warehouseMoreViews = new Set(["more", "lookup", "products", "transfer", "stock", "movements", "inventory", "scrap", "reports", "map"]);
 
     if (tg) {
       tg.ready();
@@ -7778,6 +7783,7 @@ MINIAPP_HTML = """<!doctype html>
     async function handleWmsScan(rawValue) {
       const v = String(rawValue || "").trim();
       if (!v) return;
+      clearWmsHardwareScannerInput();
       const field = state.wmsScanField || "product";
       if (field === "bind_product") {
         const el = document.getElementById("wmsBarcode");
@@ -7795,7 +7801,7 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       if (!expectsLocation && scannedLocation) {
-        showToast("Склад", "Сейчас нужно отсканировать товар, а не ячейку.");
+        showToast("Склад", field === "lookup_product" ? "Для проверки отсканируйте товар, а не ячейку." : "Сейчас нужно отсканировать товар, а не ячейку.");
         return;
       }
       if (scannedLocation) {
@@ -7817,6 +7823,13 @@ MINIAPP_HTML = """<!doctype html>
         try {
           const data = await api("/api/wms/barcode/resolve", {barcode: v});
           const pk = data.product_key || {};
+          if (field === "lookup_product") {
+            state.wmsLookup = {barcode: v, productKey: pk, error: ""};
+            render();
+            focusWmsHardwareScanner();
+            showToast("ТСД", `Товар найден: ${wmsProductLabel(pk)}.`);
+            return;
+          }
           state.wmsDraft.itemType = pk.item_type || "finished";
           state.wmsDraft.productName = pk.product_name || "";
           state.wmsDraft.productSize = pk.product_size || "";
@@ -7838,9 +7851,28 @@ MINIAPP_HTML = """<!doctype html>
             showToast("ТСД", `Товар: ${state.wmsDraft.productName}`);
           }
         } catch (error) {
+          if (field === "lookup_product") {
+            state.wmsLookup = {barcode: v, productKey: null, error: error.apiMessage || "Штрихкод товара не зарегистрирован."};
+            render();
+            focusWmsHardwareScanner();
+          }
           showToast("ТСД", error.apiMessage || "Штрихкод товара не зарегистрирован.");
         }
       }
+    }
+
+    function clearWmsHardwareScannerInput() {
+      const input = document.getElementById("wmsHardwareScannerInput");
+      if (input) input.value = "";
+    }
+
+    function focusWmsHardwareScanner() {
+      window.setTimeout(() => {
+        const input = document.getElementById("wmsHardwareScannerInput");
+        if (!input) return;
+        input.value = "";
+        input.focus({preventScroll: true});
+      }, 0);
     }
 
     // Code 128 fallback for Safari/iPhone, where BarcodeDetector is often
@@ -8830,7 +8862,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="report-row"><div><b>2. Товар</b><span>${productDetected ? escapeHtml(wmsProductLabel(wmsProductKey(state.wmsDraft))) : "Отсканируйте штрихкод изделия"}</span></div><span class="status-chip ${productDetected ? "" : "gray"}">${productDetected ? "✓" : "2"}</span></div>
             <div class="report-row"><div><b>3. Количество</b><span>Введите количество и подтвердите операцию</span></div><span class="status-chip gray">3</span></div>
           </div>
-          <div class="field full"><label>Сканер ТСД</label><input id="wmsHardwareScannerInput" data-wms-hardware-field="${expectedField}" inputmode="none" autocomplete="off" placeholder="${escapeHtml(expectedText)}" autofocus></div>
+          <div class="field full"><label>Сканер ТСД</label><input id="wmsHardwareScannerInput" class="wms-hardware-scanner-input" data-wms-hardware-field="${expectedField}" inputmode="none" autocomplete="off" placeholder="${escapeHtml(expectedText)}" autofocus></div>
           <div class="button-row"><button class="small-button" data-wms-scan="${expectedField}">📷 ${escapeHtml(expectedText)}</button></div>
         </div>
       `;
@@ -8949,6 +8981,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="screen-head"><div><h2>Складские операции</h2><p>Контроль остатков, пересчёт и специальные операции.</p></div></div>
         ${renderWmsDataNotice()}
         <div class="kpi-grid">
+          <button type="button" class="card summary-card clickable" data-wms-view="lookup"><span>Проверка товара</span><strong>⌕</strong><small>Штрихкод · ячейки · остаток</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="products"><span>Товары Ozon</span><strong>▤</strong><small>Артикулы и штрихкоды</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="transfer"><span>Перемещение</span><strong>⇄</strong><small>Между ячейками</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="stock"><span>Остатки</span><strong>▤</strong><small>По адресным ячейкам</small></button>
@@ -8957,6 +8990,30 @@ MINIAPP_HTML = """<!doctype html>
           <button type="button" class="card summary-card clickable" data-wms-view="scrap"><span>Списание</span><strong>×</strong><small>Брак и карантин</small></button>
         </div>
       `;
+    }
+
+    function renderWmsLookup() {
+      const lookup = state.wmsLookup || {barcode: "", productKey: null, error: ""};
+      const productKey = lookup.productKey;
+      const rows = productKey ? (state.wmsData.stock || []).filter((row) =>
+        row.product_key && wmsProductKeysEqual(row.product_key, productKey) && Number(row.quantity || 0) > 0
+      ) : [];
+      const total = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+      const reserved = rows.reduce((sum, row) => sum + Number(row.reserved_quantity || 0), 0);
+      mainButton.textContent = "Обновить склад";
+      mainButton.disabled = state.wmsData.loading;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Проверка товара</h2><p>Сканируйте штрихкод: покажем товар, все ячейки и фактический остаток.</p></div><div class="date">ТСД</div></div>
+        ${renderWmsDataNotice()}
+        <div class="card field-card">
+          <div class="field full"><label>Сканер ТСД</label><input id="wmsHardwareScannerInput" class="wms-hardware-scanner-input" data-wms-hardware-field="lookup_product" inputmode="none" autocomplete="off" placeholder="Отсканируйте товар" autofocus></div>
+          <div class="button-row"><button type="button" class="small-button" data-wms-scan="lookup_product">📷 Сканировать товар</button></div>
+          <div class="task-note">После каждого считывания поле очищается и снова готово к следующему товару.</div>
+        </div>
+        ${lookup.error ? `<div class="card field-card"><div class="task-note"><b>Товар не найден</b><br>${escapeHtml(lookup.error)}<br>Если это новый товар, сначала один раз привяжите его штрихкод в приёмке.</div></div>` : ""}
+        ${productKey ? `<div class="card field-card"><div class="section-title"><b>${escapeHtml(wmsProductLabel(productKey))}</b><span class="status-chip">найден</span></div><div class="detail-grid"><div class="detail-box"><span>Штрихкод</span><strong>${escapeHtml(lookup.barcode || "—")}</strong></div><div class="detail-box"><span>Всего на складе</span><strong>${escapeHtml(total)} шт.</strong></div><div class="detail-box"><span>В резерве</span><strong>${escapeHtml(reserved)} шт.</strong></div><div class="detail-box"><span>Доступно</span><strong>${escapeHtml(Math.max(0, total - reserved))} шт.</strong></div></div></div><div class="section-title"><b>Ячейки хранения</b><span>${rows.length}</span></div><div class="op-list">${rows.length ? rows.map((row) => { const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)); return `<button type="button" class="card report-row marketplace-clickable" data-wms-cell-id="${escapeHtml(row.location_id)}"><div><b>${escapeHtml(wmsLocationLabel(row.location_id))}</b><span>Доступно ${escapeHtml(available)} · резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></button>`; }).join("") : itemEmpty("Товар распознан, но адресных остатков в ячейках пока нет.")}</div>` : itemEmpty("Наведите ТСД на штрихкод товара.")}
+      `;
+      focusWmsHardwareScanner();
     }
 
     function wmsPhysicalLocationParts(location) {
@@ -9436,13 +9493,14 @@ MINIAPP_HTML = """<!doctype html>
         ["transfer", "⇄", "Перемещение"],
         ["pick", "↑", "Выдача"],
         ["stock", "▤", "Остатки"],
+        ["lookup", "⌕", "Проверка товара"],
         ["products", "▤", "Товары"],
         ["inventory", "≡", "Инвентаризация"],
         ["reports", "↧", "Отчёты"],
         ["more", "•••", "Ещё"],
       ];
       return `<aside class="warehouse-v2-sidebar" aria-label="Разделы склада"><h3>Управление складом</h3>${items.map(([id, icon, label]) => `
-        <button type="button" class="warehouse-v2-nav ${state.wmsView === id || (id === "more" && warehouseMoreViews.has(state.wmsView) && !["map", "reports", "products"].includes(state.wmsView)) ? "active" : ""}" data-wms-view="${id}"><span class="warehouse-v2-icon">${icon}</span><span>${label}</span></button>
+        <button type="button" class="warehouse-v2-nav ${state.wmsView === id || (id === "more" && warehouseMoreViews.has(state.wmsView) && !["map", "reports", "products", "lookup"].includes(state.wmsView)) ? "active" : ""}" data-wms-view="${id}"><span class="warehouse-v2-icon">${icon}</span><span>${label}</span></button>
       `).join("")}</aside>`;
     }
 
@@ -9460,6 +9518,7 @@ MINIAPP_HTML = """<!doctype html>
       else if (state.wmsView === "more") renderWmsMore();
       else if (state.wmsView === "map") renderWmsMapView();
       else if (state.wmsView === "stock") renderWmsStock();
+      else if (state.wmsView === "lookup") renderWmsLookup();
       else if (state.wmsView === "products") renderWmsProducts();
       else if (state.wmsView === "movements") renderWmsMovements();
       else if (state.wmsView === "inventory") renderWmsInventory();
