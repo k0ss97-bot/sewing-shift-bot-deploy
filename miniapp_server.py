@@ -72,6 +72,7 @@ from database import (
     get_open_shifts,
     get_open_critical_notifications,
     get_open_shift_for_today,
+    get_latest_shift_for_employee,
     get_pending_employees,
     get_pending_wms_receipt_outbox,
     get_period_employee_summary,
@@ -1236,6 +1237,8 @@ def complete_route_task_for_telegram(
         }
 
     open_shift = get_open_shift_for_today(employee[0])
+    if open_shift is None and admin_override:
+        open_shift = get_latest_shift_for_employee(employee[0])
     if open_shift is None:
         return {"ok": False, "message": "Откройте смену перед выполнением задания."}
 
@@ -1251,7 +1254,8 @@ def complete_route_task_for_telegram(
 
     if admin_override:
         if get_open_shift_for_today(employee[0]) is None:
-            return {"ok": False, "message": "У выбранного исполнителя нет открытой смены сегодня."}
+            if get_latest_shift_for_employee(employee[0]) is None:
+                return {"ok": False, "message": "У выбранного исполнителя нет смены для записи операции."}
         if batch.get("assigned_employee_id") != employee[0]:
             if batch.get("assigned_employee_id"):
                 released = set_route_batch_work_state(
