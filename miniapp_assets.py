@@ -1120,11 +1120,10 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .wms-cell strong {
-      overflow: hidden;
       font-size: 11px;
       line-height: 1.1;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
 
     .wms-cell small {
@@ -8721,6 +8720,14 @@ MINIAPP_HTML = """<!doctype html>
       return definitions.find((definition) => definition.id === state.wmsStockFilter) || definitions[0];
     }
 
+    /* The imported 102 physical cells are the finished-goods warehouse.
+       Semi-finished goods and materials have their own stock categories, but
+       their address cells have not been created yet.  Do not show the finished
+       goods layout there as if those were their empty cells. */
+    function wmsHasAddressMapForCurrentStock() {
+      return wmsCurrentStockFilter().id === "finished";
+    }
+
     function wmsFilteredStockByType() {
       const definition = wmsCurrentStockFilter();
       return (state.wmsData.stock || []).filter((row) => row.product_key && row.product_key.item_type === definition.itemType);
@@ -8951,6 +8958,11 @@ MINIAPP_HTML = """<!doctype html>
       return {zone: Number(match[1]), section: Number(match[2]), level: Number(match[3]), position: Number(match[4])};
     }
 
+    function wmsLocationDisplayName(location) {
+      if (!location) return "Ячейка";
+      return String(location.name_ru || "").trim() || `Ячейка ${location.code || ""}`.trim();
+    }
+
     function wmsLocationSummary(location, stockRows = wmsFilteredStock()) {
       const rows = location ? wmsFilteredStockAtLocation(location.code, stockRows) : [];
       const quantity = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
@@ -8968,7 +8980,8 @@ MINIAPP_HTML = """<!doctype html>
       const statusMatches = state.wmsMapStatusFilter === "all" || state.wmsMapStatusFilter === summary.status;
       const searchMatches = !search || searchable.includes(search);
       const statusText = summary.status === "blocked" ? "Заблокирована" : (summary.quantity ? `${summary.quantity} ${wmsCurrentStockFilter().unit}` : "Свободна");
-      return `<button type="button" class="wms-cell wms-cell-${summary.status} ${(!statusMatches || !searchMatches) ? "wms-cell-filtered" : ""} ${sectionStart ? "wms-cell-section-start" : ""}" ${gridStyle} data-wms-cell-id="${escapeHtml(location.id)}" aria-label="Ячейка ${escapeHtml(location.code)}${selected ? ", выбрана" : ""}"><strong>${escapeHtml(location.code)}</strong><small>${escapeHtml(statusText)}</small></button>`;
+      const fullName = wmsLocationDisplayName(location);
+      return `<button type="button" class="wms-cell wms-cell-${summary.status} ${(!statusMatches || !searchMatches) ? "wms-cell-filtered" : ""} ${sectionStart ? "wms-cell-section-start" : ""}" ${gridStyle} data-wms-cell-id="${escapeHtml(location.id)}" title="${escapeHtml(fullName)}" aria-label="${escapeHtml(fullName)}${selected ? ", выбрана" : ""}"><strong>${escapeHtml(location.code)}</strong><small>${escapeHtml(statusText)}</small></button>`;
     }
 
     function renderWmsLocationDetail(stockRows = wmsFilteredStock()) {
@@ -8979,8 +8992,9 @@ MINIAPP_HTML = """<!doctype html>
       const movements = (state.wmsData.movements || []).filter((movement) => Number(movement.from_location_id) === Number(location.id) || Number(movement.to_location_id) === Number(location.id)).slice(0, 6);
       const statusLabel = summary.status === "blocked" ? "Заблокирована" : (summary.status === "empty" ? "Свободна" : "Занята");
       return `<div class="card field-card wms-location-detail">
-        <div class="section-title"><b>${escapeHtml(location.code)}</b><span>${escapeHtml(statusLabel)}</span></div>
+        <div class="section-title"><b>${escapeHtml(wmsLocationDisplayName(location))}</b><span>${escapeHtml(statusLabel)}</span></div>
         <div class="detail-grid">
+          <div class="detail-box"><span>Код ячейки</span><strong>${escapeHtml(location.code || "—")}</strong></div>
           <div class="detail-box"><span>Зона</span><strong>${escapeHtml(parts ? `Зона №${parts.zone}` : (location.name_ru || "-"))}</strong></div>
           <div class="detail-box"><span>Штрихкод</span><strong>${escapeHtml(location.barcode || location.code)}</strong></div>
           <div class="detail-box"><span>Всего</span><strong>${escapeHtml(summary.quantity)} ${escapeHtml(wmsCurrentStockFilter().unit)}</strong></div>
@@ -8996,6 +9010,11 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderWmsWarehouseMap() {
       const stockRows = arguments.length ? arguments[0] : wmsFilteredStock();
+      if (!wmsHasAddressMapForCurrentStock()) {
+        state.wmsSelectedLocationId = "";
+        const definition = wmsCurrentStockFilter();
+        return `<div class="card field-card"><div class="task-note"><b>Адресные ячейки ещё не заведены</b><br>Созданная карта из 102 ячеек относится к складу готовой продукции. Для раздела «${escapeHtml(definition.label)}» карта не показывается, чтобы не создавать ложных пустых ячеек.</div></div>`;
+      }
       const locations = (state.wmsData.locations || []).map((location) => ({location, parts: wmsPhysicalLocationParts(location)})).filter((row) => row.parts);
       if (!locations.length) return `<div class="card field-card">${itemEmpty("Физические ячейки ещё не загружены.")}</div>`;
       const zones = [...new Set(locations.map((row) => row.parts.zone))].sort((a, b) => a - b);
@@ -9022,6 +9041,8 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderWmsMapView() {
+      /* The map screen always opens the existing finished-goods layout. */
+      state.wmsStockFilter = "finished";
       const locations = state.wmsData.locations || [];
       const stock = wmsFilteredStock();
       const byStatus = locations.reduce((result, location) => {
@@ -9032,7 +9053,7 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.textContent = "Обновить карту";
       mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Размещение · карта склада</h2><p>Фактические ячейки, коды и штрихкоды сохранены без изменений.</p></div><div class="date">${locations.length} яч.</div></div>
+        <div class="screen-head"><div><h2>Размещение · карта готовой продукции</h2><p>Фактические ячейки, коды и штрихкоды сохранены без изменений. Нажмите на ячейку, чтобы открыть её содержимое.</p></div><div class="date">${locations.length} яч.</div></div>
         ${renderWmsDataNotice()}
         <div class="card field-card wms-stock-filter-card"><div class="warehouse-v2-filter-row">
           <div class="field"><label>Найти ячейку, товар или штрихкод</label><input id="wmsMapSearch" value="${escapeHtml(state.wmsMapSearch || "")}" placeholder="Например Z1-S1-P1-1"></div>
