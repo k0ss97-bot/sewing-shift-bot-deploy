@@ -3361,25 +3361,6 @@ def get_open_shift_for_today(employee_id: int):
     return shift
 
 
-def get_latest_shift_for_employee(employee_id: int):
-    """Return the most recent shift for an administrative backfill."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT id, employee_id, shift_date, start_time, end_time, status
-        FROM shifts
-        WHERE employee_id = ?
-        ORDER BY shift_date DESC, id DESC
-        LIMIT 1
-        """,
-        (employee_id,),
-    )
-    shift = cursor.fetchone()
-    conn.close()
-    return shift
-
-
 def get_editable_shift_for_today(employee_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
