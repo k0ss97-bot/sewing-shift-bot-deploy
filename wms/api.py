@@ -299,6 +299,18 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         return 400, {"ok": False, "message": "Штрихкод слишком длинный."}
     product_key = resolve_product_barcode(barcode)
     if product_key is None:
+        # Marketplace cards are the master for finished-goods labels.  A safe
+        # automatic link is available only for variants already mapped to an
+        # existing production route; legacy/manual WMS bindings keep priority.
+        try:
+            from marketplaces import resolve_production_product_by_barcode
+
+            marketplace_key = resolve_production_product_by_barcode(barcode)
+            if marketplace_key:
+                product_key = ProductKey.from_dict(marketplace_key)
+        except Exception:
+            logging.exception("Marketplace barcode fallback failed")
+    if product_key is None:
         return 404, {"ok": False, "message": "Штрихкод товара не зарегистрирован."}
     return 200, {"ok": True, "product_key": product_key.to_dict()}
 

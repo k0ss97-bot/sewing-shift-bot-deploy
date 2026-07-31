@@ -107,7 +107,18 @@ CREATE TABLE IF NOT EXISTS marketplace_sync_runs (
     finished_at TEXT,
     FOREIGN KEY(account_id) REFERENCES marketplace_accounts(id)
 );
+CREATE TABLE IF NOT EXISTS marketplace_production_links (
+    marketplace_product_id INTEGER PRIMARY KEY,
+    production_product_name TEXT NOT NULL DEFAULT '',
+    production_size TEXT NOT NULL DEFAULT '',
+    production_color TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'unmatched',
+    source TEXT NOT NULL DEFAULT 'auto',
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(marketplace_product_id) REFERENCES marketplace_products(id) ON DELETE CASCADE
+);
 CREATE INDEX IF NOT EXISTS idx_marketplace_products_account ON marketplace_products(account_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_marketplace_production_links_status ON marketplace_production_links(status, production_product_name);
 CREATE INDEX IF NOT EXISTS idx_marketplace_stocks_product ON marketplace_stocks(product_id, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_orders_account ON marketplace_orders(account_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_sync_runs_account ON marketplace_sync_runs(account_id, started_at DESC);
@@ -243,6 +254,143 @@ def product_group_for(*values: object) -> tuple[str, str]:
         slug = re.sub(r"[^a-zа-я0-9]+", "-", fallback).strip("-")[:48] or "other"
         return f"other-{slug}", fallback.capitalize()
     return "other", "Прочие товары"
+
+
+# Ozon contains individual selling variants. Production remains route-driven, so
+# only a variant whose type, size and colour are supported by an existing route
+# may become a factory/WMS product automatically. Everything else stays visible
+# in the catalogue with status ``unmatched`` until its route is configured.
+PRODUCTION_TARGET_BY_GROUP = {
+    "trousers-joggers": "Брюки-джоггеры",
+    "trousers-pullers": "Брюки-ползунки",
+    "leggings": "Легинсы",
+    "shorts": "Шорты",
+    "tshirts": "Футболки",
+    "sweatshirts": "Свитшоты",
+    "cardigans": "Кардиган",
+    "cardigans-children": "Кардиган",
+    "cardigans-teens": "Кардиган",
+    "bombers": "Бомбер",
+    "bombers-children": "Бомбер",
+    "bombers-teens": "Бомбер",
+    "jackets": "Жакет для девочек",
+    "skirt-shorts": "Юбка-шорты",
+}
+
+
+def _normalized_value(value: object) -> str:
+    return re.sub(r"[^a-zа-я0-9]+", "", _text(value).lower().replace("ё", "е"))
+
+
+def _production_size(value: object, allowed: list[str]) -> str:
+    match = re.search(r"(?<!\d)(\d{2,3})(?!\d)", _text(value))
+    candidate = match.group(1) if match else _text(value)
+    return candidate if candidate in allowed else ""
+
+
+def _production_color(value: object, allowed: list[str]) -> str:
+    normalized = _normalized_value(value)
+    for color in allowed:
+        if _normalized_value(color) == normalized:
+            return color
+    return ""
+
+
+def production_target_for_marketplace_product(row: dict) -> tuple[str, str, str] | None:
+    """Map one marketplace variant to one existing factory route, if safe."""
+    from catalog import PRODUCT_OPTIONS
+
+    group_key, _ = product_group_for(
+        row.get("name"), row.get("offer_id"), row.get("sku"), row.get("barcode"), row.get("size"),
+    )
+    if group_key == "trousers-arrows":
+        raw_size = _production_size(row.get("size"), [str(size) for size in range(80, 170)])
+        if raw_size and int(raw_size) <= 128:
+            product_name = "Брюки со стрелками детские"
+        elif raw_size and int(raw_size) >= 134:
+            product_name = "Брюки со стрелками подростковые"
+        else:
+            return None
+    else:
+        product_name = PRODUCTION_TARGET_BY_GROUP.get(group_key, "")
+    options = PRODUCT_OPTIONS.get(product_name)
+    if not options:
+        return None
+    size = _production_size(row.get("size"), list(options.get("sizes") or []))
+    color = _production_color(row.get("color"), list(options.get("colors") or []))
+    if not size or not color:
+        return None
+    return product_name, size, color
+
+
+def sync_production_links(conn: sqlite3.Connection, account_id: int) -> dict[str, int]:
+    """Refresh deterministic Ozon-to-production links without touching stock."""
+    rows = conn.execute(
+        "SELECT id,name,offer_id,sku,barcode,size,color FROM marketplace_products WHERE account_id=?",
+        (account_id,),
+    ).fetchall()
+    linked = 0
+    unmatched = 0
+    now = _now()
+    for source_row in rows:
+        row = dict(source_row)
+        target = production_target_for_marketplace_product(row)
+        if target:
+            product_name, size, color = target
+            status = "linked"
+            linked += 1
+        else:
+            product_name = size = color = ""
+            status = "unmatched"
+            unmatched += 1
+        conn.execute(
+            """INSERT INTO marketplace_production_links
+               (marketplace_product_id,production_product_name,production_size,production_color,status,source,updated_at)
+               VALUES (?,?,?,?,?,'auto',?)
+               ON CONFLICT(marketplace_product_id) DO UPDATE SET
+                 production_product_name=excluded.production_product_name,
+                 production_size=excluded.production_size,
+                 production_color=excluded.production_color,
+                 status=excluded.status,
+                 source=excluded.source,
+                 updated_at=excluded.updated_at""",
+            (row["id"], product_name, size, color, status, now),
+        )
+    return {"linked": linked, "unmatched": unmatched}
+
+
+def resolve_production_product_by_barcode(barcode: str) -> dict | None:
+    """Resolve an Ozon barcode to a linked internal product key for WMS scans."""
+    value = _text(barcode)
+    if not value:
+        return None
+    conn = get_db_connection()
+    try:
+        ensure_schema(conn)
+        account_name = os.getenv("OZON_ACCOUNT_NAME", "Основной Ozon").strip() or "Основной Ozon"
+        account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
+        sync_production_links(conn, account_id)
+        row = conn.execute(
+            """SELECT l.production_product_name,l.production_size,l.production_color
+                 FROM marketplace_products p
+                 JOIN marketplace_production_links l ON l.marketplace_product_id=p.id
+                 WHERE p.account_id=? AND p.barcode=? AND l.status='linked'
+                 LIMIT 1""",
+            (account_id, value),
+        ).fetchone()
+        conn.commit()
+        if not row:
+            return None
+        return {
+            "item_type": "finished",
+            "product_name": row[0],
+            "product_size": row[1],
+            "product_color": row[2],
+            "stage_name": "Упаковано",
+            "ready_for_position": "Склад",
+        }
+    finally:
+        conn.close()
 
 
 def _find_nested_text(value, keys: tuple[str, ...]) -> str:
@@ -559,6 +707,7 @@ def sync_ozon() -> dict:
         product_ids: dict[tuple[str, str], int] = {}
         for item in products:
             product_ids[(_text(item.get("id") or item.get("product_id")), _text(item.get("offer_id")))] = _product(conn, account_id, item)
+        link_summary = sync_production_links(conn, account_id)
         for item in prices:
             key = (_text(item.get("id") or item.get("product_id")), _text(item.get("offer_id")))
             pid = product_ids.get(key)
@@ -605,7 +754,7 @@ def sync_ozon() -> dict:
         conn.execute("UPDATE marketplace_sync_runs SET status='success', products_count=?, prices_count=?, stocks_count=?, orders_count=?, finished_at=? WHERE id=?", (len(products), len(prices), len(stocks), len(postings), finished, run_id))
         conn.execute("UPDATE marketplace_accounts SET last_sync_at=?, last_error='', updated_at=? WHERE id=?", (finished, finished, account_id))
         conn.commit()
-        return {"ok": True, "message": "Ozon синхронизирован.", "products": len(products), "prices": len(prices), "stocks": len(stocks), "orders": len(postings)}
+        return {"ok": True, "message": "Ozon синхронизирован.", "products": len(products), "prices": len(prices), "stocks": len(stocks), "orders": len(postings), "production_links": link_summary}
     except MarketplaceError as error:
         message = str(error)
         conn.execute("UPDATE marketplace_sync_runs SET status='error', error_message=?, finished_at=? WHERE id=?", (message, _now(), run_id))
@@ -717,9 +866,15 @@ def warehouse_catalog() -> dict:
         "SELECT account_name,last_sync_at FROM marketplace_accounts WHERE id=?",
         (account_id,),
     ).fetchone()
+    sync_production_links(conn, account_id)
     rows = conn.execute(
-        """SELECT p.id,p.name,p.offer_id,p.sku,p.barcode,p.size,p.color,p.updated_at
+        """SELECT p.id,p.name,p.offer_id,p.sku,p.barcode,p.size,p.color,p.updated_at,
+                  COALESCE(l.status,'unmatched') AS production_status,
+                  COALESCE(l.production_product_name,'') AS production_product_name,
+                  COALESCE(l.production_size,'') AS production_size,
+                  COALESCE(l.production_color,'') AS production_color
              FROM marketplace_products p
+             LEFT JOIN marketplace_production_links l ON l.marketplace_product_id=p.id
              WHERE p.account_id=?
              ORDER BY p.name COLLATE NOCASE, p.offer_id COLLATE NOCASE, p.size, p.color, p.id""",
         (account_id,),
@@ -728,7 +883,7 @@ def warehouse_catalog() -> dict:
     for row in rows:
         item = dict(row)
         group_key, group_name = product_group_for(
-            item.get("name"), item.get("offer_id"), item.get("sku"), item.get("barcode"),
+            item.get("name"), item.get("offer_id"), item.get("sku"), item.get("barcode"), item.get("size"),
         )
         item["group_key"] = group_key
         item["group_name"] = group_name
