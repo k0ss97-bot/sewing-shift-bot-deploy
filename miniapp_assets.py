@@ -3769,6 +3769,16 @@ MINIAPP_HTML = """<!doctype html>
         border-color: rgba(25,89,243,.16);
       }
 
+      /* UI v2 owns the desktop warehouse navigation. The old app sidebar is
+         kept for the reversible flag and for the mobile bottom navigation. */
+      body.web-mode.warehouse-workspace.warehouse-v2-enabled .bottom-nav {
+        display: none !important;
+      }
+
+      body.web-mode.warehouse-workspace.warehouse-v2-enabled .body {
+        padding-left: 52px !important;
+      }
+
       body.web-mode.marketplace-workspace .bottom-nav::before {
         content: "УПРАВЛЕНИЕ МАРКЕТПЛЕЙСАМИ";
       }
@@ -9858,6 +9868,7 @@ MINIAPP_HTML = """<!doctype html>
       const isMarketplaceWorkspace = state.workspace === "marketplaces";
       if (!isMarketplaceWorkspace) mainButton.hidden = false;
       document.body.classList.toggle("warehouse-workspace", isWarehouseWorkspace);
+      document.body.classList.toggle("warehouse-v2-enabled", Boolean(isWarehouseWorkspace && state.data.features && state.data.features.warehouse_ui_v2));
       document.body.classList.toggle("marketplace-workspace", isMarketplaceWorkspace);
       document.body.classList.toggle("has-wms-access", canAccessWms());
       const mobileWorkspaceNav = document.getElementById("mobileWorkspaceNav");
