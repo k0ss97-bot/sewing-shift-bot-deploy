@@ -4355,6 +4355,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsCatalogSearch: "",
       wmsCatalogGroup: "",
       wmsCatalog: {loading: false, loaded: false, error: "", products: [], lastSyncAt: ""},
+      wmsShipmentDetail: null,
       wmsLookup: {barcode: "", productKey: null, error: ""},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
@@ -5136,7 +5137,7 @@ MINIAPP_HTML = """<!doctype html>
           {id: "overview", label: "Главная", icon: "⌂"},
           {id: "receive", label: "Приёмка", icon: "↓"},
           {id: "putaway", label: "Размещение", icon: "→"},
-          {id: "pick", label: "Выдача", icon: "↑"},
+          {id: "shipments", label: "Отгрузки", icon: "↑"},
           {id: "more", label: "Ещё", icon: "•••"},
         ];
         bottomNav.style.setProperty("--nav-count", wmsItems.length);
@@ -9281,13 +9282,53 @@ MINIAPP_HTML = """<!doctype html>
         shipments.set(reference, item);
       });
       const rows = [...shipments.values()].sort((first, second) => String(second.occurredAt || "").localeCompare(String(first.occurredAt || "")));
+      const detail = state.wmsShipmentDetail || null;
       mainButton.textContent = "Обновить отгрузки";
       mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Отгрузки со склада</h2><p>Собранные отправки из адресных ячеек. Внешние маркетплейсы отсюда не изменяются.</p></div><div class="date">${rows.length} док.</div></div>
+        <div class="screen-head"><div><h2>${detail ? `Отгрузка ${escapeHtml(detail.number)}` : "Отгрузки со склада"}</h2><p>${detail ? "Лист отбора: что взять и из какой ячейки." : "Собранные отправки из адресных ячеек. Внешние маркетплейсы отсюда не изменяются."}</p></div><div class="date">${detail ? `${detail.total} шт.` : `${rows.length} док.`}</div></div>
         ${renderWmsDataNotice()}
-        <div class="op-list">${rows.length ? rows.map((shipment) => `<div class="card field-card"><div class="section-title"><b>${escapeHtml(shipment.number)}</b><span class="status-chip">отгружено</span></div><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(shipment.rows.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(shipment.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(shipment.locations.size)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(shipment.occurredAt) || "—")}</strong></div></div><div class="task-note">${escapeHtml(shipment.reference)}</div></div>`).join("") : itemEmpty("Отгрузок пока нет.")}</div>
+        ${detail ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="back">‹ Все отгрузки</button><button type="button" class="small-button secondary" data-wms-shipment-export="xlsx">Excel</button><button type="button" class="small-button" data-wms-shipment-export="pdf">PDF</button></div><div class="card field-card"><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(detail.lines.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(detail.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(detail.locations)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(detail.occurred_at) || "—")}</strong></div></div><div class="task-note">${escapeHtml(detail.reason || "")}</div></div><div class="section-title"><b>Лист отбора</b><span>${detail.lines.length} поз.</span></div><div class="op-list">${detail.lines.map((line, index) => `<div class="card report-row"><div><b>${index + 1}. ${escapeHtml(line.product_name)}</b><span>Размер ${escapeHtml(line.product_size)} · Цвет ${escapeHtml(line.product_color)}<br>Взять из: ${escapeHtml(line.from_location_code)}${line.from_location_name ? ` · ${escapeHtml(line.from_location_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(line.quantity)} шт.</span></div>`).join("")}</div>` : `<div class="op-list">${rows.length ? rows.map((shipment) => `<button type="button" class="card field-card marketplace-clickable" data-wms-shipment-number="${escapeHtml(shipment.number)}"><div class="section-title"><b>${escapeHtml(shipment.number)}</b><span class="status-chip">открыть ›</span></div><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(shipment.rows.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(shipment.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(shipment.locations.size)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(shipment.occurredAt) || "—")}</strong></div></div></button>`).join("") : itemEmpty("Отгрузок пока нет.")}</div>`}
       `;
+    }
+
+    async function loadWmsShipment(number) {
+      try {
+        const data = await api("/api/wms/shipment/detail", {shipment_number: number});
+        if (!data.ok) throw new Error(data.message || "Не удалось открыть отгрузку.");
+        state.wmsShipmentDetail = data.shipment;
+        render();
+      } catch (error) {
+        showToast("Отгрузка", error.apiMessage || error.message || "Не удалось открыть отгрузку.");
+      }
+    }
+
+    async function exportWmsShipment(format) {
+      const shipment = state.wmsShipmentDetail;
+      if (!shipment) return;
+      try {
+        const headers = {"Content-Type": "application/json"};
+        if (isStandaloneWeb && webCsrfToken) headers["X-CSRF-Token"] = webCsrfToken;
+        const response = await fetch("/api/wms/shipment/export", {method: "POST", headers, credentials: "same-origin", body: JSON.stringify({shipment_number: shipment.number, format, telegram_id: debugTelegramId})});
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.message || "Не удалось выгрузить отгрузку.");
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const match = disposition.match(/filename\\*=UTF-8''([^;]+)/);
+        const filename = match ? decodeURIComponent(match[1]) : `shipment.${format}`;
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+        showToast("Отгрузка", format === "pdf" ? "PDF сформирован." : "Excel сформирован.");
+      } catch (error) {
+        showToast("Отгрузка", error.message || "Не удалось выгрузить отгрузку.");
+      }
     }
 
     async function refreshWmsWorkspace({silent = false} = {}) {
@@ -10483,6 +10524,25 @@ MINIAPP_HTML = """<!doctype html>
       if (wmsCatalogGroup) {
         state.wmsCatalogGroup = wmsCatalogGroup.dataset.wmsCatalogGroup || "";
         render();
+        return;
+      }
+
+      const wmsShipment = event.target.closest("[data-wms-shipment-number]");
+      if (wmsShipment) {
+        loadWmsShipment(wmsShipment.dataset.wmsShipmentNumber || "");
+        return;
+      }
+
+      const wmsShipmentAction = event.target.closest("[data-wms-shipment-action]");
+      if (wmsShipmentAction && wmsShipmentAction.dataset.wmsShipmentAction === "back") {
+        state.wmsShipmentDetail = null;
+        render();
+        return;
+      }
+
+      const wmsShipmentExport = event.target.closest("[data-wms-shipment-export]");
+      if (wmsShipmentExport) {
+        exportWmsShipment(wmsShipmentExport.dataset.wmsShipmentExport || "xlsx");
         return;
       }
 

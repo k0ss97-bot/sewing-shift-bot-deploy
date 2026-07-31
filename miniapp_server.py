@@ -155,6 +155,7 @@ from wms import api as wms_api
 from wms import operations as wms_operations
 from wms.api import WMS_READ_ROUTES, WMS_ROUTES
 from wms.models import ProductKey
+from wms.shipments import shipment_detail, shipment_excel_bytes, shipment_pdf_bytes
 from marketplaces import dashboard as marketplace_dashboard
 from marketplaces import warehouse_catalog as marketplace_warehouse_catalog
 from marketplaces import sync_for_admin as sync_marketplace_for_admin
@@ -238,6 +239,37 @@ def get_warehouse_catalog_for_access(telegram_id: int):
     if not can_access_wms(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Нет доступа к складскому каталогу."}
     return marketplace_warehouse_catalog()
+
+
+def get_wms_shipment_for_access(telegram_id: int, shipment_number: str):
+    if not can_access_wms(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к складским операциям."}
+    shipment = shipment_detail(shipment_number)
+    if shipment is None:
+        return {"ok": False, "message": "Отгрузка не найдена."}
+    return {"ok": True, "shipment": shipment}
+
+
+def export_wms_shipment_for_access(telegram_id: int, shipment_number: str, export_format: str):
+    result = get_wms_shipment_for_access(telegram_id, shipment_number)
+    if not result.get("ok"):
+        return result
+    shipment = result["shipment"]
+    if export_format == "pdf":
+        return {
+            "ok": True,
+            "content": shipment_pdf_bytes(shipment),
+            "filename": f"shipment_{shipment['number']}.pdf",
+            "mime_type": "application/pdf",
+        }
+    if export_format == "xlsx":
+        return {
+            "ok": True,
+            "content": shipment_excel_bytes(shipment),
+            "filename": f"shipment_{shipment['number']}.xlsx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }
+    return {"ok": False, "message": "Поддерживаются форматы PDF и Excel."}
 
 
 def sync_marketplace_for_telegram(telegram_id: int):
@@ -5494,6 +5526,8 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/marketplaces/dashboard",
                 "/api/marketplaces/sync",
                 "/api/wms/catalog/products",
+                "/api/wms/shipment/detail",
+                "/api/wms/shipment/export",
                 "/api/routes/create-batch",
                 "/api/routes/start",
                 "/api/routes/complete",
@@ -5718,6 +5752,28 @@ def make_handler(bot_token: str, debug: bool):
             if path == "/api/wms/catalog/products":
                 result = get_warehouse_catalog_for_access(telegram_id)
                 self.send_json(result, status=200 if result.get("ok") else 403)
+                return
+
+            if path == "/api/wms/shipment/detail":
+                result = get_wms_shipment_for_access(telegram_id, payload.get("shipment_number", ""))
+                self.send_json(result, status=200 if result.get("ok") else (403 if result.get("code") == "forbidden" else 404))
+                return
+
+            if path == "/api/wms/shipment/export":
+                export_result = export_wms_shipment_for_access(
+                    telegram_id,
+                    payload.get("shipment_number", ""),
+                    str(payload.get("format") or "").lower(),
+                )
+                if not export_result.get("ok"):
+                    self.send_json(export_result, status=403 if export_result.get("code") == "forbidden" else 400)
+                    return
+                self.send_binary_file(
+                    export_result["content"],
+                    export_result["filename"],
+                    export_result["mime_type"],
+                    "attachment",
+                )
                 return
 
             if path in WMS_ROUTES:
