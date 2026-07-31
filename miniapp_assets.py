@@ -5706,29 +5706,6 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
-    async function adminCompleteRouteOperation(batchId) {
-      const performer = document.getElementById(`adminPerformer${batchId}`);
-      const quantity = document.getElementById(`adminGoodQuantity${batchId}`);
-      if (!performer || !performer.value) {
-        showToast("Операции", "Выберите исполнителя.");
-        performer?.focus();
-        return;
-      }
-      mainButton.disabled = true;
-      try {
-        const data = await api("/api/admin/route/complete", {
-          batch_id: batchId,
-          performer_id: performer.value,
-          good_quantity: quantity ? quantity.value : "",
-        });
-        if (!data.ok) throw new Error(data.message || "Не удалось закрыть операцию.");
-        replaceAdminDashboard(data, "Операция закрыта.");
-      } catch (error) {
-        showToast("Операции", error.message || "Не удалось закрыть операцию.");
-        mainButton.disabled = false;
-      }
-    }
-
     async function adminEmployeePosition(employeeId) {
       const select = document.getElementById(`employeePosition${employeeId}`);
       mainButton.disabled = true;
@@ -8391,7 +8368,6 @@ MINIAPP_HTML = """<!doctype html>
       const sections = [
         ["reports", "Отчёты"],
         ["size_markers", "Размерники"],
-        ["operations", "Операции"],
         ["employees", "Сотрудники"],
         ["shifts", "Смены"],
         ["feedback", "Связь"],
@@ -8439,47 +8415,6 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card kpi warn"><div class="kpi-top"><span>Осталось сделать</span><div class="kpi-ico">!</div></div><strong>${totalRemaining}<small> шт</small></strong><span>Открытые задания</span></div>
         </div>
         <div class="section-title"><b>Задания</b><button type="button" data-admin-action="refresh">обновить</button></div>
-        <div class="op-list">${rowsHtml}</div>
-      `;
-    }
-
-    function renderAdminOperations(admin) {
-      const control = admin && admin.production_control ? admin.production_control : {};
-      const details = control.details || {};
-      const tasks = Array.isArray(details.active_tasks) ? details.active_tasks : [];
-      const employees = (admin && admin.employees ? admin.employees : [])
-        .filter((employee) => employee.status === "active" && employee.position && employee.position !== "-");
-      mainButton.textContent = "Обновить операции";
-      mainButton.disabled = false;
-
-      const rowsHtml = tasks.length ? tasks.map((task) => {
-        const candidates = employees.filter((employee) => employee.position === task.position);
-        const selectedId = task.assigned_employee_id && candidates.some((employee) => Number(employee.id) === Number(task.assigned_employee_id))
-          ? String(task.assigned_employee_id)
-          : (candidates[0] ? String(candidates[0].id) : "");
-        const performerOptions = candidates.length
-          ? candidates.map((employee) => `<option value="${escapeHtml(employee.id)}" ${String(employee.id) === selectedId ? "selected" : ""}>${escapeHtml(employee.full_name)}</option>`).join("")
-          : `<option value="">Нет активных ${escapeHtml(task.position)}</option>`;
-        return `
-          <div class="card field-card">
-            <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${escapeHtml(task.operation)}</b><span>#${escapeHtml(task.id)} · ${escapeHtml(task.product)} · ${escapeHtml(task.size)} · ${escapeHtml(task.color)}</span></div><span class="status-chip ${task.work_state === "blocked" ? "warn" : "gray"}">${escapeHtml(task.status_text || task.work_state || "В работе")}</span></div>
-            <div class="detail-grid">
-              <div class="detail-box"><span>Количество</span><strong>${escapeHtml(task.quantity)} шт</strong></div>
-              <div class="detail-box"><span>Текущий исполнитель</span><strong>${escapeHtml(task.employee || "Не назначен")}</strong></div>
-            </div>
-            <div class="form-grid">
-              <div class="field"><label>Исполнитель (${escapeHtml(task.position)})</label><select id="adminPerformer${escapeHtml(task.id)}">${performerOptions}</select></div>
-              <div class="field"><label>Годное количество</label><input id="adminGoodQuantity${escapeHtml(task.id)}" type="number" min="0" max="${escapeHtml(task.quantity)}" value="${escapeHtml(task.quantity)}"></div>
-            </div>
-            <div class="button-row"><button type="button" class="small-button" data-admin-action="complete-route-operation" data-route-batch-id="${escapeHtml(task.id)}">Закрыть операцию</button><button type="button" class="small-button secondary" data-admin-action="refresh">Обновить</button></div>
-          </div>
-        `;
-      }).join("") : itemEmpty("Активных операций сейчас нет.");
-
-      return `
-        <div class="screen-head"><div><h2>Операции</h2><p>Администратор может закрыть активную операцию и указать фактического исполнителя. Следующий этап создастся автоматически по маршруту.</p></div><div class="date">${tasks.length} активных</div></div>
-        ${renderAdminTabs()}
-        <div class="card field-card"><b>Важно</b><span class="muted">Для выбранного исполнителя должна быть открыта смена сегодня. Закрытие проведёт полное количество или введённое годное количество.</span></div>
         <div class="op-list">${rowsHtml}</div>
       `;
     }
@@ -9605,10 +9540,6 @@ MINIAPP_HTML = """<!doctype html>
         mount.innerHTML = renderAdminSizeMarkers(admin);
         return;
       }
-      if (state.adminSection === "operations") {
-        mount.innerHTML = renderAdminOperations(admin);
-        return;
-      }
       if (state.adminSection === "shifts") {
         mount.innerHTML = renderAdminShifts(admin);
         return;
@@ -10412,7 +10343,6 @@ MINIAPP_HTML = """<!doctype html>
         if (adminAction.dataset.adminAction === "delete-employee") adminDeleteEmployee(adminAction.dataset.employeeId, adminAction.dataset.employeeName);
         if (adminAction.dataset.adminAction === "complete-size-marker") adminSizeMarkerStatus(adminAction.dataset.sizeMarkerId, "done");
         if (adminAction.dataset.adminAction === "reopen-size-marker") adminSizeMarkerStatus(adminAction.dataset.sizeMarkerId, "open");
-        if (adminAction.dataset.adminAction === "complete-route-operation") adminCompleteRouteOperation(adminAction.dataset.routeBatchId);
         if (adminAction.dataset.adminAction === "close-shift") adminCloseShift(adminAction.dataset.shiftId);
         if (adminAction.dataset.adminAction === "delete-shift") adminDeleteShift(adminAction.dataset.shiftId);
         return;

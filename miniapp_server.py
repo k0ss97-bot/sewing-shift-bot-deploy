@@ -1193,32 +1193,15 @@ def normalize_defect_photo(payload: dict):
     }, ""
 
 
-def complete_route_task_for_telegram(
-    telegram_id: int,
-    batch_id: int,
-    payload: dict | None = None,
-    *,
-    admin_override: bool = False,
-    performer_id: int | None = None,
-):
+def complete_route_task_for_telegram(telegram_id: int, batch_id: int, payload: dict | None = None):
     payload = payload or {}
-    viewer = get_employee_for_access(telegram_id)
-    if viewer is None or viewer[5] != "active":
+    employee = get_employee_for_access(telegram_id)
+
+    if employee is None or employee[5] != "active":
         return {"ok": False, "message": "Нет активного профиля."}
 
-    admin_override = bool(admin_override and is_admin(telegram_id))
-    if admin_override:
-        try:
-            performer_id = int(performer_id or 0)
-        except (TypeError, ValueError):
-            performer_id = 0
-        employee = get_employee_by_id(performer_id) if performer_id else None
-        if employee is None or employee[5] != "active" or employee[4] == "admin":
-            return {"ok": False, "message": "Выберите активного сотрудника-исполнителя."}
-    else:
-        employee = viewer
-        if is_admin(telegram_id):
-            return {"ok": False, "message": "Администратор не выполняет производственные задания."}
+    if is_admin(telegram_id):
+        return {"ok": False, "message": "Администратор не выполняет производственные задания."}
 
     request_id = str(payload.get("request_id") or "").strip()
     if request_id and has_route_completion_request(batch_id, employee[0], request_id):
@@ -1247,38 +1230,9 @@ def complete_route_task_for_telegram(
     current_step = get_route_step_for_batch(batch)
 
     if not can_employee_work_route_step(employee, current_step):
-        return {"ok": False, "message": "Выбранный сотрудник не может выполнять эту операцию." if admin_override else "Это задание сейчас доступно другой должности."}
+        return {"ok": False, "message": "Это задание сейчас доступно другой должности."}
 
-    if admin_override:
-        if get_open_shift_for_today(employee[0]) is None:
-            return {"ok": False, "message": "У выбранного исполнителя нет открытой смены сегодня."}
-        if batch.get("assigned_employee_id") != employee[0]:
-            if batch.get("assigned_employee_id"):
-                released = set_route_batch_work_state(
-                    batch_id,
-                    viewer[0],
-                    "release",
-                    "Переназначено администратором перед закрытием операции.",
-                    force=True,
-                )
-                if released is None:
-                    return {"ok": False, "message": "Не удалось освободить текущее назначение операции."}
-            assigned = assign_route_batch(batch_id, employee[0])
-            if assigned is None:
-                return {"ok": False, "message": "Не удалось назначить выбранного исполнителя."}
-            batch = assigned
-        elif (batch.get("work_state") or "in_work") != "in_work":
-            resumed = set_route_batch_work_state(
-                batch_id,
-                viewer[0],
-                "resume",
-                "Возобновлено администратором перед закрытием операции.",
-                force=True,
-            )
-            if resumed is None:
-                return {"ok": False, "message": "Не удалось возобновить операцию."}
-            batch = resumed
-    elif batch.get("assigned_employee_id") != employee[0]:
+    if batch.get("assigned_employee_id") != employee[0]:
         assignee = route_batch_assignee_to_dict(batch)
         if assignee:
             return {"ok": False, "message": f"Задание в работе у {assignee['full_name']}."}
@@ -1458,34 +1412,6 @@ def complete_route_task_for_telegram(
             "defect_dispositions": DEFECT_DISPOSITIONS,
         },
     }
-
-
-def complete_route_task_for_admin(telegram_id: int, batch_id: int, payload: dict):
-    if not is_admin(telegram_id):
-        return {"ok": False, "message": "Нет прав администратора."}
-    try:
-        performer_id = int(payload.get("performer_id") or 0)
-    except (TypeError, ValueError):
-        performer_id = 0
-    if performer_id <= 0:
-        return {"ok": False, "message": "Выберите исполнителя."}
-
-    completion_payload = dict(payload or {})
-    completion_payload.setdefault("good_quantity", "")
-    completion_payload["defect_quantity"] = 0
-    completion_payload["defect_reason"] = ""
-    completion_payload["defect_disposition"] = ""
-    completion_payload["defect_comment"] = ""
-    result = complete_route_task_for_telegram(
-        telegram_id,
-        batch_id,
-        completion_payload,
-        admin_override=True,
-        performer_id=performer_id,
-    )
-    if result.get("ok"):
-        result["message"] = "Операция закрыта администратором."
-    return result
 
 
 def route_task_work_action_for_telegram(telegram_id: int, batch_id: int, payload: dict):
@@ -4025,7 +3951,6 @@ def production_control_active_batch_to_dict(batch, step, employee_names):
         "position": step["position"],
         "stage": stage,
         "employee": employee_names.get(batch.get("assigned_employee_id"), ""),
-        "assigned_employee_id": batch.get("assigned_employee_id"),
         "good_quantity": int(batch.get("good_quantity") or 0),
         "defect_quantity": int(batch.get("defect_quantity") or 0),
         "priority": batch.get("priority") or "normal",
@@ -5482,7 +5407,6 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/routes/create-batch",
                 "/api/routes/start",
                 "/api/routes/complete",
-                "/api/admin/route/complete",
                 "/api/routes/work-action",
                 "/api/routes/passport",
                 "/api/routes/lookup",
@@ -5800,12 +5724,6 @@ def make_handler(bot_token: str, debug: bool):
                     batch_id = 0
 
                 result = complete_route_task_for_telegram(telegram_id, batch_id, payload)
-            elif path == "/api/admin/route/complete":
-                try:
-                    batch_id = int(payload.get("batch_id") or 0)
-                except (TypeError, ValueError):
-                    batch_id = 0
-                result = complete_route_task_for_admin(telegram_id, batch_id, payload)
             elif path == "/api/routes/work-action":
                 try:
                     batch_id = int(payload.get("batch_id") or 0)
