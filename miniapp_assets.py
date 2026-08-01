@@ -3898,6 +3898,7 @@ MINIAPP_HTML = """<!doctype html>
 
     /* Operations center: desktop-first control room built on the existing data. */
     .operations-center { display: grid; gap: 18px; }
+    .profile-btn svg { width: 21px; height: 21px; display: block; }
     .operations-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
     .operations-head h2 { margin: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.045em; }
     .operations-head p { margin: 8px 0 0; color: var(--muted); }
@@ -4023,7 +4024,7 @@ MINIAPP_HTML = """<!doctype html>
       <div class="appbar-profile"><span>Должность на проекте</span><small id="roleLabel">Загрузка</small></div>
       <div class="appbar-actions">
         <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
-        <button class="icon-btn" id="menuBtn" aria-label="Меню">⋯</button>
+        <button class="icon-btn profile-btn" id="menuBtn" aria-label="Открыть профиль" title="Профиль"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.1 4.1 0 1 0 0-8.2A4.1 4.1 0 0 0 12 12Zm0 2.1c-4.4 0-8 2.3-8 5.2 0 .5.4.9.9.9h14.2c.5 0 .9-.4.9-.9 0-2.9-3.6-5.2-8-5.2Z" fill="currentColor"/></svg></button>
       </div>
     </div>
 
