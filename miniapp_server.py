@@ -24,6 +24,7 @@ from database import (
     admin_close_shift,
     assign_production_task,
     assign_route_batch,
+    assign_route_batch_quantity,
     cancel_production_task,
     cancel_route_batch_and_restore_inputs,
     close_shift,
@@ -1121,7 +1122,7 @@ def get_completed_route_tasks_for_telegram(telegram_id: int):
     return tasks
 
 
-def start_route_task_for_telegram(telegram_id: int, batch_id: int):
+def start_route_task_for_telegram(telegram_id: int, batch_id: int, quantity: int | None = None):
     employee = get_employee_for_access(telegram_id)
 
     if employee is None or employee[5] != "active":
@@ -1148,7 +1149,7 @@ def start_route_task_for_telegram(telegram_id: int, batch_id: int):
         assignee_name = assignee["full_name"] if assignee else "другого сотрудника"
         return {"ok": False, "message": f"Задание уже в работе у {assignee_name}."}
 
-    assigned_batch = assign_route_batch(batch_id, employee[0])
+    assigned_batch = assign_route_batch_quantity(batch_id, employee[0], quantity)
 
     if assigned_batch is None:
         return {"ok": False, "message": "Не удалось взять задание в работу."}
@@ -5911,7 +5912,7 @@ def make_handler(bot_token: str, debug: bool):
                 except (TypeError, ValueError):
                     batch_id = 0
 
-                result = start_route_task_for_telegram(telegram_id, batch_id)
+                result = start_route_task_for_telegram(telegram_id, batch_id, payload.get("quantity"))
             elif path == "/api/routes/complete":
                 try:
                     batch_id = int(payload.get("batch_id") or 0)

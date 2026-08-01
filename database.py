@@ -7,6 +7,13 @@ from datetime import date, datetime, timedelta
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+from shift_time import (
+    DEFAULT_LUNCH_END,
+    DEFAULT_LUNCH_START,
+    calculate_shift_minutes,
+    normalize_lunch_time,
+)
+
 
 DB_FILE_NAME = "bot.db"
 DB_DIR_CANDIDATES = [
@@ -1701,6 +1708,142 @@ def backfill_traceability(cursor):
             )
 
 
+def _backfill_shift_time_metrics(cursor):
+    cursor.execute(
+        """
+        SELECT shifts.id, shifts.shift_date, shifts.start_time, shifts.end_time,
+               shifts.total_minutes, shifts.gross_minutes, shifts.status,
+               employees.lunch_start, employees.lunch_end
+        FROM shifts
+        JOIN employees ON employees.id = shifts.employee_id
+        """
+    )
+    for row in cursor.fetchall():
+        shift_id, shift_date, start_time, end_time, total_minutes, gross_minutes, status, lunch_start, lunch_end = row
+        lunch_start = normalize_lunch_time(lunch_start, DEFAULT_LUNCH_START)
+        lunch_end = normalize_lunch_time(lunch_end, DEFAULT_LUNCH_END)
+        if status == "closed" and end_time:
+            metrics = calculate_shift_minutes(shift_date, start_time, end_time, lunch_start, lunch_end)
+            source_gross = gross_minutes if gross_minutes is not None else total_minutes
+            if source_gross is not None:
+                metrics["gross_minutes"] = int(source_gross)
+                metrics["net_minutes"] = max(0, int(source_gross) - int(metrics["break_minutes"]))
+            cursor.execute(
+                """
+                UPDATE shifts
+                SET gross_minutes = ?, break_minutes = ?, total_minutes = ?,
+                    lunch_start = ?, lunch_end = ?, unclosed_reason = NULL
+                WHERE id = ?
+                """,
+                (
+                    metrics["gross_minutes"], metrics["break_minutes"], metrics["net_minutes"],
+                    lunch_start, lunch_end, shift_id,
+                ),
+            )
+        elif status == "open":
+            cursor.execute(
+                """
+                UPDATE shifts
+                SET lunch_start = ?, lunch_end = ?, unclosed_reason = ?
+                WHERE id = ?
+                """,
+                (lunch_start, lunch_end, "Смена не закрыта сотрудником", shift_id),
+            )
+
+
+def get_employee_lunch_window(employee_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT lunch_start, lunch_end FROM employees WHERE id = ?", (employee_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return DEFAULT_LUNCH_START, DEFAULT_LUNCH_END
+    return (
+        normalize_lunch_time(row[0], DEFAULT_LUNCH_START),
+        normalize_lunch_time(row[1], DEFAULT_LUNCH_END),
+    )
+
+
+def update_employee_lunch_window(employee_id: int, lunch_start: str, lunch_end: str):
+    lunch_start = normalize_lunch_time(lunch_start, "")
+    lunch_end = normalize_lunch_time(lunch_end, "")
+    if not lunch_start or not lunch_end or lunch_end <= lunch_start:
+        return None
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("BEGIN IMMEDIATE")
+    cursor.execute("SELECT id FROM employees WHERE id = ?", (employee_id,))
+    if cursor.fetchone() is None:
+        conn.rollback()
+        conn.close()
+        return None
+
+    cursor.execute(
+        "UPDATE employees SET lunch_start = ?, lunch_end = ? WHERE id = ?",
+        (lunch_start, lunch_end, employee_id),
+    )
+    cursor.execute(
+        """
+        SELECT id, shift_date, start_time, end_time, total_minutes, gross_minutes, status
+        FROM shifts
+        WHERE employee_id = ?
+        """,
+        (employee_id,),
+    )
+    for shift_id, shift_date, start_time, end_time, total_minutes, gross_minutes, status in cursor.fetchall():
+        if status != "closed" or not end_time:
+            cursor.execute(
+                "UPDATE shifts SET lunch_start = ?, lunch_end = ? WHERE id = ?",
+                (lunch_start, lunch_end, shift_id),
+            )
+            continue
+        metrics = calculate_shift_minutes(shift_date, start_time, end_time, lunch_start, lunch_end)
+        source_gross = gross_minutes if gross_minutes is not None else total_minutes
+        if source_gross is not None:
+            metrics["gross_minutes"] = int(source_gross)
+            metrics["net_minutes"] = max(0, int(source_gross) - int(metrics["break_minutes"]))
+        cursor.execute(
+            """
+            UPDATE shifts
+            SET gross_minutes = ?, break_minutes = ?, total_minutes = ?,
+                lunch_start = ?, lunch_end = ?
+            WHERE id = ?
+            """,
+            (
+                metrics["gross_minutes"], metrics["break_minutes"], metrics["net_minutes"],
+                lunch_start, lunch_end, shift_id,
+            ),
+        )
+    conn.commit()
+    conn.close()
+    return {"lunch_start": lunch_start, "lunch_end": lunch_end}
+
+
+def get_unclosed_shift_rows(start_date: str, end_date: str, employee_id: int | None = None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT shifts.id, employees.full_name, employees.position,
+               shifts.shift_date, shifts.start_time, shifts.end_time,
+               shifts.status, shifts.unclosed_reason
+        FROM shifts
+        JOIN employees ON employees.id = shifts.employee_id
+        WHERE shifts.shift_date BETWEEN ? AND ?
+          AND shifts.status = 'open'
+          AND employees.role != 'admin'
+          AND (? IS NULL OR shifts.employee_id = ?)
+        ORDER BY shifts.shift_date ASC, employees.full_name ASC, shifts.start_time ASC
+        """,
+        (start_date, end_date, employee_id, employee_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1728,6 +1871,10 @@ def init_db():
         cursor.execute(
             "ALTER TABLE employees ADD COLUMN can_access_wms INTEGER NOT NULL DEFAULT 0"
         )
+    if "lunch_start" not in employee_columns:
+        cursor.execute("ALTER TABLE employees ADD COLUMN lunch_start TEXT NOT NULL DEFAULT '13:00'")
+    if "lunch_end" not in employee_columns:
+        cursor.execute("ALTER TABLE employees ADD COLUMN lunch_end TEXT NOT NULL DEFAULT '14:00'")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS shifts (
@@ -1758,6 +1905,21 @@ def init_db():
             is_active INTEGER NOT NULL DEFAULT 1
         )
     """)
+
+    cursor.execute("PRAGMA table_info(shifts)")
+    shift_columns = {row[1] for row in cursor.fetchall()}
+    if "gross_minutes" not in shift_columns:
+        cursor.execute("ALTER TABLE shifts ADD COLUMN gross_minutes INTEGER")
+    if "break_minutes" not in shift_columns:
+        cursor.execute("ALTER TABLE shifts ADD COLUMN break_minutes INTEGER NOT NULL DEFAULT 0")
+    if "lunch_start" not in shift_columns:
+        cursor.execute("ALTER TABLE shifts ADD COLUMN lunch_start TEXT NOT NULL DEFAULT '13:00'")
+    if "lunch_end" not in shift_columns:
+        cursor.execute("ALTER TABLE shifts ADD COLUMN lunch_end TEXT NOT NULL DEFAULT '14:00'")
+    if "unclosed_reason" not in shift_columns:
+        cursor.execute("ALTER TABLE shifts ADD COLUMN unclosed_reason TEXT")
+
+    _backfill_shift_time_metrics(cursor)
 
     cursor.execute("PRAGMA table_info(operations)")
     operation_columns = [column[1] for column in cursor.fetchall()]
@@ -3456,10 +3618,23 @@ def create_shift(employee_id: int):
 
         cursor.execute(
             """
-            INSERT INTO shifts (employee_id, shift_date, start_time, created_at)
-            VALUES (?, ?, ?, ?)
+            SELECT lunch_start, lunch_end
+            FROM employees
+            WHERE id = ?
             """,
-            (employee_id, shift_date, start_time, created_at),
+            (employee_id,),
+        )
+        lunch_row = cursor.fetchone()
+        lunch_start = normalize_lunch_time(lunch_row[0] if lunch_row else None, DEFAULT_LUNCH_START)
+        lunch_end = normalize_lunch_time(lunch_row[1] if lunch_row else None, DEFAULT_LUNCH_END)
+        cursor.execute(
+            """
+            INSERT INTO shifts (
+                employee_id, shift_date, start_time, created_at,
+                lunch_start, lunch_end
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (employee_id, shift_date, start_time, created_at, lunch_start, lunch_end),
         )
         shift_id = cursor.lastrowid
         conn.commit()
@@ -4188,6 +4363,184 @@ def assign_route_batch(batch_id: int, employee_id: int):
     return get_route_batch_by_id(batch_id) if changed else None
 
 
+def assign_route_batch_quantity(batch_id: int, employee_id: int, quantity: int | None = None):
+    """Assign a whole route batch or create an independently traceable work part."""
+    try:
+        requested_quantity = int(quantity or 0)
+    except (TypeError, ValueError):
+        return None
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE id = ? AND status = 'active'",
+            (batch_id,),
+        )
+        batch = route_batch_from_row(cursor.fetchone())
+        if batch is None or batch.get("assigned_employee_id"):
+            raise ValueError("batch unavailable")
+
+        batch_quantity = int(batch.get("quantity") or 0)
+        if requested_quantity <= 0:
+            requested_quantity = batch_quantity
+        if requested_quantity > batch_quantity:
+            raise ValueError("quantity unavailable")
+
+        if requested_quantity == batch_quantity:
+            cursor.execute(
+                """
+                UPDATE route_batches
+                SET assigned_employee_id = ?, assigned_at = ?, work_state = 'in_work',
+                    blocked_reason = NULL, paused_at = NULL, last_activity_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'active' AND assigned_employee_id IS NULL
+                """,
+                (employee_id, now, now, now, batch_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("batch changed")
+            cursor.execute(f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE id = ?", (batch_id,))
+            assigned_batch = route_batch_from_row(cursor.fetchone())
+            _reserve_route_batch_inputs_on_start(cursor, assigned_batch, employee_id, now)
+            _record_production_event(
+                cursor, "task_started", batch_id=batch_id, actor_employee_id=employee_id,
+                quantity=requested_quantity, request_key=f"route-batch:{batch_id}:first-start", created_at=now,
+            )
+            conn.commit()
+            conn.close()
+            return get_route_batch_by_id(batch_id)
+
+        cursor.execute(
+            """
+            SELECT id, stock_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at
+            FROM route_batch_inputs WHERE batch_id = ? ORDER BY id
+            """,
+            (batch_id,),
+        )
+        input_rows = cursor.fetchall()
+        input_parts = []
+        for input_row in input_rows:
+            scaled = int(input_row[3] or 0) * requested_quantity
+            if scaled % batch_quantity:
+                raise ValueError("inputs cannot be split exactly")
+            input_parts.append((input_row, scaled // batch_quantity))
+
+        cursor.execute(
+            """
+            INSERT INTO route_batches (
+                product_name, product_size, product_color, quantity, route_step_index, status,
+                created_by_employee_id, created_at, updated_at, completed_at, source_stock_id,
+                assigned_employee_id, assigned_at, good_quantity, defect_quantity, priority, due_date,
+                parent_batch_id, source_cutting_batch_id, work_state, blocked_reason, paused_at,
+                last_activity_at, handover_count, packaging_option, packaging_output_name, packaging_ratio
+            ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, 0, 0, ?, ?, ?, ?,
+                      'in_work', NULL, NULL, ?, 0, ?, ?, ?)
+            """,
+            (
+                batch["product_name"], batch["product_size"], batch["product_color"], requested_quantity,
+                batch["route_step_index"], batch.get("created_by_employee_id"), now, now,
+                batch.get("source_stock_id"), employee_id, now, batch.get("priority") or "normal",
+                batch.get("due_date") or None, batch_id, batch.get("source_cutting_batch_id"), now,
+                batch.get("packaging_option") or "", batch.get("packaging_output_name") or "",
+                max(1, int(batch.get("packaging_ratio") or 1)),
+            ),
+        )
+        child_batch_id = cursor.lastrowid
+        _initialize_route_batch_trace(
+            cursor, child_batch_id, batch["product_name"], employee_id, now,
+            source="partial-assignment", route_snapshot=batch.get("route_snapshot") or "",
+            route_version=batch.get("route_version") or "",
+        )
+        cursor.execute(
+            """UPDATE route_batches SET quantity = quantity - ?, last_activity_at = ?, updated_at = ?
+               WHERE id = ? AND quantity > ?""",
+            (requested_quantity, now, now, batch_id, requested_quantity),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("batch changed")
+
+        for input_row, child_quantity in input_parts:
+            input_id, stock_id, input_role, _input_quantity, state, reserved_at, consumed_at, created_at = input_row
+            if child_quantity <= 0:
+                continue
+            cursor.execute(
+                "UPDATE route_batch_inputs SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
+                (child_quantity, input_id, child_quantity),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("input changed")
+            cursor.execute(
+                """INSERT INTO route_batch_inputs
+                   (batch_id, stock_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (child_batch_id, stock_id, input_role, child_quantity, state, reserved_at, consumed_at, created_at),
+            )
+            cursor.execute(
+                """
+                SELECT route_batch_input_lots.id, route_batch_input_lots.lot_id,
+                       route_batch_input_lots.quantity, route_batch_input_lots.reservation_state,
+                       route_batch_input_lots.reserved_at, route_batch_input_lots.consumed_at,
+                       route_batch_input_lots.created_at
+                FROM route_batch_input_lots
+                JOIN warehouse_stock_lots ON warehouse_stock_lots.id = route_batch_input_lots.lot_id
+                WHERE route_batch_input_lots.batch_id = ? AND route_batch_input_lots.input_role = ?
+                  AND warehouse_stock_lots.stock_id = ?
+                ORDER BY route_batch_input_lots.id
+                """,
+                (batch_id, input_role, stock_id),
+            )
+            lot_rows = cursor.fetchall()
+            if lot_rows:
+                remaining = child_quantity
+                for lot_row in lot_rows:
+                    if remaining <= 0:
+                        break
+                    lot_input_id, lot_id, lot_quantity, lot_state, lot_reserved_at, lot_consumed_at, lot_created_at = lot_row
+                    transferred = min(remaining, int(lot_quantity or 0))
+                    if transferred <= 0:
+                        continue
+                    cursor.execute(
+                        "UPDATE route_batch_input_lots SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
+                        (transferred, lot_input_id, transferred),
+                    )
+                    cursor.execute(
+                        """INSERT INTO route_batch_input_lots
+                           (batch_id, lot_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (child_batch_id, lot_id, input_role, transferred, lot_state, lot_reserved_at, lot_consumed_at, lot_created_at),
+                    )
+                    remaining -= transferred
+                if remaining:
+                    raise ValueError("input lots unavailable")
+
+        cursor.execute("DELETE FROM route_batch_inputs WHERE batch_id = ? AND quantity = 0", (batch_id,))
+        cursor.execute("DELETE FROM route_batch_input_lots WHERE batch_id = ? AND quantity = 0", (batch_id,))
+        cursor.execute(f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE id = ?", (child_batch_id,))
+        child_batch = route_batch_from_row(cursor.fetchone())
+        if not input_rows:
+            _reserve_route_batch_inputs_on_start(cursor, child_batch, employee_id, now)
+        _record_production_event(
+            cursor, "batch_split", batch_id=batch_id, actor_employee_id=employee_id, quantity=requested_quantity,
+            details={"child_batch_id": child_batch_id, "remaining_quantity": batch_quantity - requested_quantity},
+            request_key=f"route-batch:{batch_id}:split:{child_batch_id}", created_at=now,
+        )
+        _record_production_event(
+            cursor, "task_started", batch_id=child_batch_id, actor_employee_id=employee_id, quantity=requested_quantity,
+            details={"split_from_batch_id": batch_id}, request_key=f"route-batch:{child_batch_id}:first-start", created_at=now,
+        )
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+
+    conn.close()
+    return get_route_batch_by_id(child_batch_id)
+
+
 def create_route_batch(
     product_name: str,
     product_size: str,
@@ -4769,17 +5122,81 @@ def set_route_batch_work_state(
             )
             event_type = "task_resumed"
         else:
+            parent_batch_id = batch.get("parent_batch_id")
             cursor.execute(
-                """
-                UPDATE route_batches
-                SET assigned_employee_id = NULL, assigned_at = NULL,
-                    work_state = 'free', blocked_reason = NULL, paused_at = NULL,
-                    handover_count = handover_count + 1,
-                    last_activity_at = ?, updated_at = ?
-                WHERE id = ? AND status = 'active'
-                """,
-                (now, now, batch_id),
+                f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE id = ?",
+                (parent_batch_id,),
+            ) if parent_batch_id else None
+            parent_batch = route_batch_from_row(cursor.fetchone()) if parent_batch_id else None
+            can_merge_back = bool(
+                parent_batch
+                and parent_batch.get("status") == "active"
+                and not parent_batch.get("assigned_employee_id")
+                and parent_batch.get("route_step_index") == batch.get("route_step_index")
             )
+            if can_merge_back:
+                cursor.execute(
+                    """UPDATE route_batches
+                       SET quantity = quantity + ?, last_activity_at = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (batch["quantity"], now, now, parent_batch_id),
+                )
+                cursor.execute(
+                    """
+                    SELECT stock_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at
+                    FROM route_batch_inputs WHERE batch_id = ?
+                    """,
+                    (batch_id,),
+                )
+                for stock_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at in cursor.fetchall():
+                    cursor.execute(
+                        """INSERT INTO route_batch_inputs
+                           (batch_id, stock_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(batch_id, stock_id, input_role)
+                           DO UPDATE SET quantity = route_batch_inputs.quantity + excluded.quantity""",
+                        (parent_batch_id, stock_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at),
+                    )
+                cursor.execute(
+                    """
+                    SELECT lot_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at
+                    FROM route_batch_input_lots WHERE batch_id = ?
+                    """,
+                    (batch_id,),
+                )
+                for lot_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at in cursor.fetchall():
+                    cursor.execute(
+                        """INSERT INTO route_batch_input_lots
+                           (batch_id, lot_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(batch_id, lot_id, input_role)
+                           DO UPDATE SET quantity = route_batch_input_lots.quantity + excluded.quantity""",
+                        (parent_batch_id, lot_id, input_role, quantity, reservation_state, reserved_at, consumed_at, created_at),
+                    )
+                cursor.execute("DELETE FROM route_batch_inputs WHERE batch_id = ?", (batch_id,))
+                cursor.execute("DELETE FROM route_batch_input_lots WHERE batch_id = ?", (batch_id,))
+                cursor.execute(
+                    """
+                    UPDATE route_batches
+                    SET status = 'cancelled', assigned_employee_id = NULL, assigned_at = NULL,
+                        work_state = 'cancelled', blocked_reason = ?, paused_at = NULL,
+                        last_activity_at = ?, updated_at = ?
+                    WHERE id = ? AND status = 'active'
+                    """,
+                    (reason, now, now, batch_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE route_batches
+                    SET assigned_employee_id = NULL, assigned_at = NULL,
+                        work_state = 'free', blocked_reason = NULL, paused_at = NULL,
+                        handover_count = handover_count + 1,
+                        last_activity_at = ?, updated_at = ?
+                    WHERE id = ? AND status = 'active'
+                    """,
+                    (now, now, batch_id),
+                )
             changed = cursor.rowcount
             cursor.execute(
                 """
@@ -9748,8 +10165,9 @@ def close_shift(shift_id: int):
 
     cursor.execute(
         """
-        SELECT shift_date, start_time
+        SELECT shifts.shift_date, shifts.start_time, employees.lunch_start, employees.lunch_end
         FROM shifts
+        JOIN employees ON employees.id = shifts.employee_id
         WHERE id = ? AND status = 'open'
         """,
         (shift_id,)
@@ -9761,22 +10179,30 @@ def close_shift(shift_id: int):
         conn.close()
         return None
 
-    shift_date, start_time = row
-    start_dt = datetime.strptime(f"{shift_date} {start_time}", "%Y-%m-%d %H:%M")
-    total_minutes = int((now - start_dt).total_seconds() // 60)
+    shift_date, start_time, lunch_start, lunch_end = row
+    metrics = calculate_shift_minutes(shift_date, start_time, end_time, lunch_start, lunch_end)
+    total_minutes = metrics["net_minutes"]
 
     cursor.execute(
         """
         UPDATE shifts
         SET end_time = ?,
             total_minutes = ?,
+            gross_minutes = ?,
+            break_minutes = ?,
+            lunch_start = ?,
+            lunch_end = ?,
+            unclosed_reason = NULL,
             status = 'closed',
             edit_until = ?,
             closed_at = ?
         WHERE id = ?
           AND status = 'open'
         """,
-        (end_time, total_minutes, edit_until, closed_at, shift_id)
+        (
+            end_time, total_minutes, metrics["gross_minutes"], metrics["break_minutes"],
+            metrics["lunch_start"], metrics["lunch_end"], edit_until, closed_at, shift_id,
+        )
     )
 
     if cursor.rowcount != 1:
@@ -9790,6 +10216,8 @@ def close_shift(shift_id: int):
     return {
         "end_time": end_time,
         "total_minutes": total_minutes,
+        "gross_minutes": metrics["gross_minutes"],
+        "break_minutes": metrics["break_minutes"],
         "edit_until": edit_until,
     }
 

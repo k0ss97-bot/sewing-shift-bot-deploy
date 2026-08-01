@@ -4772,6 +4772,18 @@ MINIAPP_HTML = """<!doctype html>
       return window.confirm(`Взять это задание?\\n\\n${details}`);
     }
 
+    function requestTaskQuantity(task) {
+      const total = Math.max(1, Number(task && task.quantity) || 0);
+      const entered = window.prompt(`Сколько изделий взять в работу? Доступно: ${total} шт.`, String(total));
+      if (entered === null) return null;
+      const quantity = Number.parseInt(String(entered).trim(), 10);
+      if (!Number.isInteger(quantity) || quantity <= 0 || quantity > total) {
+        showToast("Количество", `Введите целое число от 1 до ${total}.`);
+        return null;
+      }
+      return quantity;
+    }
+
     function getReportOperations() {
       return state.data && state.data.report && state.data.report.operations ? state.data.report.operations : [];
     }
@@ -7598,13 +7610,16 @@ MINIAPP_HTML = """<!doctype html>
 
       if (!confirmTaskTake(current)) return;
 
+      const quantity = requestTaskQuantity(current);
+      if (quantity === null) return;
+
       const actionKey = `start-operation-task:${current.id}`;
       if (!beginAction(actionKey)) return;
 
       mainButton.disabled = true;
 
       try {
-        const data = await api("/api/routes/start", {batch_id: current.id});
+        const data = await api("/api/routes/start", {batch_id: current.id, quantity});
 
         if (!data.ok) {
           showToast("Задание", data.message || "Не удалось взять задание.");
@@ -10212,6 +10227,27 @@ MINIAPP_HTML = """<!doctype html>
       if (state.data.is_admin && state.workspace === "production" && state.screen === "shift") window.setTimeout(syncWebPushDeviceState, 0);
     }
 
+    function safeRenderAfterState() {
+      try {
+        render();
+        return;
+      } catch (error) {
+        console.error("Render failed", error);
+      }
+
+      state.workspace = "production";
+      if (state.data && state.data.is_admin) {
+        state.screen = "admin";
+        state.productionScreen = "admin";
+        state.adminSection = "employees";
+      } else {
+        state.screen = "orders";
+        state.productionScreen = "orders";
+      }
+      render();
+      showToast("Интерфейс", "Открыт безопасный раздел после ошибки экрана.");
+    }
+
     function setScreen(screen) {
       if (screen === "warehouse" || screen === "wms") {
         switchWorkspace("warehouse");
@@ -10290,7 +10326,7 @@ MINIAPP_HTML = """<!doctype html>
 
         state.data = data;
         if (message) showToast("Готово", message);
-        render();
+        safeRenderAfterState();
         if (getCompletionQueue().length && navigator.onLine) window.setTimeout(() => flushCompletionQueue(true), 0);
       } catch (error) {
         state.data = null;
