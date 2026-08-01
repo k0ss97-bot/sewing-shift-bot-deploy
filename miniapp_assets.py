@@ -4,7 +4,7 @@ MINIAPP_HTML = """<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Шагаем вместе</title>
   <style>
     :root {
@@ -3962,6 +3962,166 @@ MINIAPP_HTML = """<!doctype html>
       }
       body.web-mode .appbar-profile { display: none; }
       body.web-mode .workspace-nav button { font-size: 10px; }
+    }
+    /* Canonical responsive layer. Keep this block last so legacy rules cannot
+       silently override the desktop and mobile application shells. */
+    :where(button, [role="button"], .tab, .nav-item, .workspace-tab) {
+      touch-action: manipulation;
+    }
+
+    :where(.tab, .nav-item, .workspace-tab, .bottom-nav button) {
+      min-height: 44px;
+    }
+
+    :where(button, input, select, textarea):focus-visible {
+      outline: 3px solid rgba(25, 89, 243, .28);
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 899px) {
+      body.web-mode .app-shell,
+      body.web-mode .screen,
+      body.web-mode .screen-content {
+        min-width: 0;
+        max-width: 100%;
+      }
+
+      body.web-mode .screen {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+
+      body.web-mode .page-heading h1,
+      body.web-mode .screen-title {
+        font-size: clamp(26px, 8vw, 34px);
+        line-height: 1.05;
+      }
+
+      body.web-mode .tabs,
+      body.web-mode .segmented,
+      body.web-mode .workspace-tabs {
+        gap: 4px;
+        padding: 4px;
+      }
+
+      body.web-mode .tab,
+      body.web-mode .segmented button,
+      body.web-mode .workspace-tab {
+        min-height: 44px;
+        padding: 9px 10px;
+        font-size: 12px;
+        line-height: 1.15;
+      }
+
+      body.web-mode .operations-kpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 9px;
+      }
+
+      body.web-mode .operations-kpi {
+        min-height: 116px;
+        padding: 14px;
+        border-radius: 14px;
+      }
+
+      body.web-mode .operations-kpi span {
+        font-size: 10px;
+        letter-spacing: .045em;
+      }
+
+      body.web-mode .operations-kpi strong {
+        margin: 11px 0 6px;
+        font-size: 27px;
+      }
+
+      body.web-mode .operations-kpi small {
+        font-size: 11px;
+        line-height: 1.3;
+      }
+
+      body.web-mode .operations-actions {
+        grid-template-columns: 1fr;
+      }
+
+      body.web-mode .operations-actions button {
+        min-height: 48px;
+        font-size: 13px;
+      }
+
+      body.web-mode .orders-board {
+        display: grid;
+        grid-template-columns: none;
+        grid-auto-flow: column;
+        grid-auto-columns: min(86vw, 390px);
+        gap: 12px;
+        width: calc(100% + 14px);
+        margin-right: -14px;
+        padding: 2px 14px 14px 1px;
+        overflow-x: auto;
+        overflow-y: visible;
+        scroll-snap-type: x mandatory;
+        scroll-padding-left: 1px;
+        overscroll-behavior-inline: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      body.web-mode .orders-board > * {
+        min-width: 0;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+      }
+
+      body.web-mode .form-grid,
+      body.web-mode .details-grid,
+      body.web-mode .admin-grid,
+      body.web-mode .analytics-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      body.web-mode .card,
+      body.web-mode .panel,
+      body.web-mode .form-card {
+        max-width: 100%;
+        border-radius: 16px;
+      }
+
+      body.web-mode .table-wrap,
+      body.web-mode .data-table-wrap {
+        max-width: 100%;
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+    }
+
+    @media (max-width: 430px) {
+      body.web-mode .operations-kpi {
+        min-height: 108px;
+        padding: 12px;
+      }
+
+      body.web-mode .operations-kpi strong {
+        font-size: 24px;
+      }
+
+      body.web-mode .orders-board {
+        grid-auto-columns: calc(100vw - 42px);
+      }
+    }
+
+    @media (min-width: 900px) and (max-width: 1100px) {
+      body.web-mode .web-role-block {
+        display: none !important;
+      }
+
+      body.web-mode .web-appbar,
+      body.web-mode .workspace-tabs {
+        min-width: 0;
+      }
+
+      body.web-mode .operations-kpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
     }
   </style>
   <script src="/assets/jsqr.js"></script>
