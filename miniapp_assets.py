@@ -3950,6 +3950,19 @@ MINIAPP_HTML = """<!doctype html>
       .operations-layout { grid-template-columns: 1fr; }
       .operations-head { display: grid; }
     }
+    @media (max-width: 720px) {
+      .operations-actions { grid-template-columns: 1fr; }
+      .orders-board { grid-template-columns: 1fr; overflow: visible; }
+      .orders-column { min-width: 0; min-height: 0; }
+    }
+    @media (min-width: 900px) and (max-width: 1100px) {
+      body.web-mode .appbar {
+        grid-template-columns: 185px minmax(300px, 1fr) auto;
+        gap: 12px;
+      }
+      body.web-mode .appbar-profile { display: none; }
+      body.web-mode .workspace-nav button { font-size: 10px; }
+    }
   </style>
   <script src="/assets/jsqr.js"></script>
 </head>
@@ -8468,8 +8481,14 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderOrdersBoard() {
-      const allTasks = visibleOrderRows();
-      const filterRows = [...currentOrderRows(), ...getCompletedOrderRows()];
+      const seenTasks = new Set();
+      const allTasks = [...currentOrderRows(), ...getCompletedOrderRows()].filter((task) => {
+        const key = taskIdentity(task);
+        if (seenTasks.has(key) || !orderTaskMatchesFilters(task)) return false;
+        seenTasks.add(key);
+        return true;
+      });
+      const filterRows = allTasks;
       const columns = [
         ["in_work", "В работе"],
         ["free", "Ожидают"],
@@ -8493,11 +8512,10 @@ MINIAPP_HTML = """<!doctype html>
         <div class="orders-board">${columns.map(([id, label]) => {
           const rows = allTasks.filter((task) => bucketFor(task) === id);
           return `<section class="orders-column"><div class="orders-column-head"><b>${label}</b><span>${rows.length}</span></div>${rows.length ? rows.map((task) => {
-            const taskIndex = allTasks.indexOf(task);
             const title = task.task_kind === "route" ? task.operation : (task.stage_title || `Задание #${task.id}`);
             const product = task.product_name || task.product || "Изделие";
             const quantity = task.quantity || task.total_quantity || 0;
-            return `<article class="board-order-card" data-select-order="${taskIndex}"><b>${escapeHtml(title)}</b><span>${escapeHtml(product)}</span><div class="progress ${id === "blocked" ? "" : "sage"}"><i style="--w:${progressForTask(task)}%"></i></div><div class="board-order-meta"><span>${escapeHtml(quantity)} шт · ${escapeHtml(task.product_size || "-")}</span><span>${escapeHtml(priorityLabel(task.priority))}</span></div></article>`;
+            return `<article class="board-order-card" data-board-order-key="${escapeHtml(taskIdentity(task))}"><b>${escapeHtml(title)}</b><span>${escapeHtml(product)}</span><div class="progress ${id === "blocked" ? "" : "sage"}"><i style="--w:${progressForTask(task)}%"></i></div><div class="board-order-meta"><span>${escapeHtml(quantity)} шт · ${escapeHtml(task.product_size || "-")}</span><span>${escapeHtml(priorityLabel(task.priority))}</span></div></article>`;
           }).join("") : `<div class="empty">Нет заданий</div>`}</section>`;
         }).join("")}</div>
       `;
@@ -11229,6 +11247,21 @@ MINIAPP_HTML = """<!doctype html>
       if (op) {
         state.selectedOperation = Number(op.dataset.selectOperation);
         setScreen("operations");
+        return;
+      }
+
+      const boardOrder = event.target.closest("[data-board-order-key]");
+      if (boardOrder && state.data && state.data.is_admin) {
+        const boardKey = boardOrder.dataset.boardOrderKey || "";
+        const allRows = [...currentOrderRows(), ...getCompletedOrderRows()];
+        const current = allRows.find((task) => taskIdentity(task) === boardKey);
+        if (!current) return;
+        state.orderCategory = adminOrderCategoryForTask(current);
+        state.adminTaskStatus = orderTaskStatusBucket(current) === "done" ? "done" : "all";
+        state.orderMode = "list";
+        state.selectedOrder = 0;
+        state.selectedOrderKey = boardKey;
+        render();
         return;
       }
 
