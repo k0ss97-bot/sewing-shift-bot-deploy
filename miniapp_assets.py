@@ -4109,6 +4109,159 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    /* Shared loading and connection states. */
+    #connectionView[hidden] { display: none !important; }
+    #connectionView:not([hidden]) {
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    #connectionView:not([hidden]) .connection-card,
+    #connectionView:not([hidden]) [role="status"] {
+      width: min(100%, 460px);
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255,255,255,.92);
+      box-shadow: var(--shadow-soft), var(--inset-shadow);
+    }
+
+    #connectionView:not([hidden]) [role="status"]::before {
+      content: "";
+      display: block;
+      width: 42px;
+      height: 4px;
+      margin-bottom: 16px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), #8eb2ff, var(--accent));
+      background-size: 200% 100%;
+      animation: connection-progress 1.2s linear infinite;
+    }
+
+    @keyframes connection-progress {
+      to { background-position: -200% 0; }
+    }
+
+    /* Consistent semantic statuses across production, warehouse and reports. */
+    :where(.status, .status-pill, .badge)[data-status="free"],
+    :where(.status, .status-pill, .badge).free {
+      color: #1746b6;
+      border-color: rgba(25,89,243,.24);
+      background: #edf3ff;
+    }
+
+    :where(.status, .status-pill, .badge)[data-status="active"],
+    :where(.status, .status-pill, .badge).active,
+    :where(.status, .status-pill, .badge).in-progress {
+      color: #8c5300;
+      border-color: rgba(242,162,58,.32);
+      background: #fff5e6;
+    }
+
+    :where(.status, .status-pill, .badge)[data-status="done"],
+    :where(.status, .status-pill, .badge).done,
+    :where(.status, .status-pill, .badge).completed {
+      color: #176b43;
+      border-color: rgba(49,168,107,.28);
+      background: #eaf8f1;
+    }
+
+    :where(.status, .status-pill, .badge)[data-status="blocked"],
+    :where(.status, .status-pill, .badge).blocked,
+    :where(.status, .status-pill, .badge).overdue {
+      color: #a92d3a;
+      border-color: rgba(221,79,93,.30);
+      background: #fff0f2;
+    }
+
+    @media (max-width: 899px) {
+      body.web-mode .web-appbar {
+        min-height: 58px;
+        gap: 8px;
+        padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+      }
+
+      body.web-mode .web-role-block {
+        display: none !important;
+      }
+
+      body.web-mode .workspace-tabs {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        width: 100%;
+        overflow-x: auto;
+        scroll-snap-type: x proximity;
+        scrollbar-width: none;
+        background: rgba(247,249,253,.94);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+      }
+
+      body.web-mode .workspace-tabs::-webkit-scrollbar { display: none; }
+
+      body.web-mode .workspace-tab {
+        flex: 0 0 auto;
+        min-width: 148px;
+        scroll-snap-align: start;
+      }
+
+      body.web-mode .bottom-nav {
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+        background: rgba(255,255,255,.95);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+      }
+
+      body.web-mode :where(.form-actions, .create-actions, .wizard-actions, .action-row):has(.primary) {
+        position: sticky;
+        bottom: calc(68px + env(safe-area-inset-bottom));
+        z-index: 12;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255,255,255,.94);
+        box-shadow: 0 10px 30px rgba(16,23,34,.14);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+
+      body.web-mode :where(.warehouse-map, .storage-map, .location-grid) {
+        max-width: 100%;
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        scroll-snap-type: x proximity;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      body.web-mode :where(.warehouse-cell, .storage-cell, [data-location-code]) {
+        min-width: 116px;
+        min-height: 82px;
+        scroll-snap-align: start;
+      }
+
+      body.web-mode :where(.employee-card, .staff-card) {
+        padding: 14px;
+        border-radius: 15px;
+      }
+
+      body.web-mode :where(.employee-card, .staff-card) :where(button, .button) {
+        min-height: 44px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+    }
+
     @media (min-width: 900px) and (max-width: 1100px) {
       body.web-mode .web-role-block {
         display: none !important;
