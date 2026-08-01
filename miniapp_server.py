@@ -5343,7 +5343,7 @@ def make_handler(bot_token: str, debug: bool):
                 self.end_headers()
                 return
 
-            if path in {"/", "/app"}:
+            if path in {"/", "/app"} or path.startswith("/app/marketplaces"):
                 self.send_html(PWA_HTML)
                 return
 
