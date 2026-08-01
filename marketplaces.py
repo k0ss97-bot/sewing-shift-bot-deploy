@@ -817,7 +817,7 @@ class OzonClient:
                 return value
         return ""
 
-    def _paged(self, path: str, *, limit: int = 1000, max_pages: int = 20) -> list[dict]:
+    def _paged(self, path: str, *, limit: int = 100, max_pages: int = 100) -> list[dict]:
         rows: list[dict] = []
         cursor = ""
         for _ in range(max_pages):
@@ -893,7 +893,7 @@ class OzonClient:
                     "since": (now - timedelta(days=30)).isoformat().replace("+00:00", "Z"),
                     "to": now.isoformat().replace("+00:00", "Z"),
                 },
-                "limit": 1000,
+                "limit": 100,
                 "with": {"analytics_data": True, "financial_data": True},
             },
         )
@@ -963,8 +963,11 @@ def _stock_rows(row: dict) -> list[dict]:
 
 
 def sync_ozon() -> dict:
+    from marketplace_extended import ensure_schema as ensure_extended_schema, sync_extended
+
     conn = get_db_connection()
     ensure_schema(conn)
+    ensure_extended_schema(conn)
     account_name = os.getenv("OZON_ACCOUNT_NAME", "Основной Ozon").strip() or "Основной Ozon"
     account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
     started = _now()
@@ -1033,11 +1036,13 @@ def sync_ozon() -> dict:
                     "INSERT INTO marketplace_order_items (order_id,external_product_id,offer_id,sku,name,quantity,payload_json) VALUES (?,?,?,?,?,?,?)",
                     (order_id, _text(item.get("product_id")), _text(item.get("offer_id")), _text(item.get("sku")), _text(item.get("name")), _int(item.get("quantity")), _json(item)),
                 )
+        extended = sync_extended(conn, account_id)
+        total_orders = conn.execute("SELECT COUNT(*) FROM marketplace_orders WHERE account_id=?", (account_id,)).fetchone()[0]
         finished = _now()
-        conn.execute("UPDATE marketplace_sync_runs SET status='success', products_count=?, prices_count=?, stocks_count=?, orders_count=?, finished_at=? WHERE id=?", (len(products), len(prices), len(stocks), len(postings), finished, run_id))
+        conn.execute("UPDATE marketplace_sync_runs SET status='success', products_count=?, prices_count=?, stocks_count=?, orders_count=?, finished_at=? WHERE id=?", (len(products), len(prices), len(stocks), total_orders, finished, run_id))
         conn.execute("UPDATE marketplace_accounts SET last_sync_at=?, last_error='', updated_at=? WHERE id=?", (finished, finished, account_id))
         conn.commit()
-        return {"ok": True, "message": "Ozon синхронизирован.", "products": len(products), "prices": len(prices), "stocks": len(stocks), "orders": len(postings), "production_links": link_summary}
+        return {"ok": True, "message": "Ozon синхронизирован.", "products": len(products), "prices": len(prices), "stocks": len(stocks), "orders": total_orders, "extended": extended, "production_links": link_summary}
     except MarketplaceError as error:
         message = str(error)
         conn.execute("UPDATE marketplace_sync_runs SET status='error', error_message=?, finished_at=? WHERE id=?", (message, _now(), run_id))
@@ -1056,8 +1061,11 @@ def sync_ozon() -> dict:
 
 
 def dashboard() -> dict:
+    from marketplace_extended import dashboard_extension, ensure_schema as ensure_extended_schema
+
     conn = get_db_connection()
     ensure_schema(conn)
+    ensure_extended_schema(conn)
     account_name = os.getenv("OZON_ACCOUNT_NAME", "Основной Ozon").strip() or "Основной Ozon"
     account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
     rows = conn.execute("SELECT id,marketplace,account_name,seller_id,enabled,last_sync_at,last_error FROM marketplace_accounts ORDER BY marketplace,id").fetchall()
@@ -1070,7 +1078,7 @@ def dashboard() -> dict:
                   (SELECT old_price FROM marketplace_prices WHERE product_id=p.id ORDER BY id DESC LIMIT 1) AS old_price,
                   (SELECT SUM(available) FROM marketplace_stocks WHERE product_id=p.id AND id IN (SELECT MAX(id) FROM marketplace_stocks GROUP BY product_id,warehouse_type,warehouse_name)) AS available,
                   p.updated_at
-           FROM marketplace_products p WHERE p.account_id=? ORDER BY p.updated_at DESC LIMIT 100""",
+           FROM marketplace_products p WHERE p.account_id=? ORDER BY p.updated_at DESC""",
         (account_id,),
     ).fetchall()
     products_payload = []
@@ -1110,7 +1118,7 @@ def dashboard() -> dict:
         group_payload.append(group)
     group_payload.sort(key=lambda item: (item["name"].lower(), item["key"]))
     order_rows = conn.execute(
-        "SELECT id,external_order_id,posting_number,status,shipment_date,updated_at FROM marketplace_orders WHERE account_id=? ORDER BY updated_at DESC LIMIT 100",
+        "SELECT id,external_order_id,posting_number,status,shipment_date,updated_at FROM marketplace_orders WHERE account_id=? ORDER BY updated_at DESC",
         (account_id,),
     ).fetchall()
     recent = conn.execute("SELECT id,status,products_count,prices_count,stocks_count,orders_count,error_message,started_at,finished_at FROM marketplace_sync_runs WHERE account_id=? ORDER BY id DESC LIMIT 5", (account_id,)).fetchall()
@@ -1122,6 +1130,7 @@ def dashboard() -> dict:
         supply_counts[status_row[0]] = int(status_row[1])
     warehouse_shipments = [dict(row) for row in conn.execute("SELECT id,number,marketplace,external_supply_id,status,destination_name,total_quantity,reserved_quantity,picked_quantity,packed_quantity,planned_at,updated_at FROM warehouse_shipments ORDER BY updated_at DESC LIMIT 20")]
     sync_events = [dict(row) for row in conn.execute("SELECT id,marketplace,event_type,severity,external_id,message,created_at FROM marketplace_sync_events ORDER BY id DESC LIMIT 20")]
+    extended = dashboard_extension(conn, account_id)
     conn.close()
     return {
         "ok": True,
@@ -1141,6 +1150,7 @@ def dashboard() -> dict:
         "supply_counts": supply_counts,
         "warehouse_shipments": warehouse_shipments,
         "sync_events": sync_events,
+        "analytics": extended,
     }
 
 

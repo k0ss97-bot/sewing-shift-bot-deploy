@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly Shagaem Vmeste marketplace synchronization
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=true
+Unit=sewing-marketplaces-sync.service
+
+[Install]
+WantedBy=timers.target
