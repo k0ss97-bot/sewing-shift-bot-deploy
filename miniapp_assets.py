@@ -3895,6 +3895,60 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--muted, #888);
       font-style: italic;
     }
+
+    /* Operations center: desktop-first control room built on the existing data. */
+    .operations-center { display: grid; gap: 18px; }
+    .operations-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+    .operations-head h2 { margin: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.045em; }
+    .operations-head p { margin: 8px 0 0; color: var(--muted); }
+    .live-indicator { display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px; border-radius: 999px; background: rgba(49,168,107,.10); color: var(--sage-dark); font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .live-indicator::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px rgba(49,168,107,.11); }
+    .operations-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    .operations-kpi { min-height: 142px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.88); box-shadow: var(--inset-shadow), 0 10px 24px rgba(16,23,34,.06); text-align: left; }
+    .operations-kpi span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+    .operations-kpi strong { display: block; margin: 16px 0 7px; color: var(--text); font-size: 31px; line-height: 1; letter-spacing: -.05em; }
+    .operations-kpi small { display: block; color: var(--muted); font-size: 13px; font-weight: 600; }
+    .operations-kpi.risk { border-color: rgba(242,162,58,.34); background: linear-gradient(135deg, rgba(255,247,232,.94), rgba(255,255,255,.92)); }
+    .operations-kpi.overdue { border-color: rgba(221,79,93,.30); background: linear-gradient(135deg, rgba(255,239,242,.94), rgba(255,255,255,.92)); }
+    .operations-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(290px, .65fr); gap: 18px; }
+    .operations-panel { padding: 19px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.84); box-shadow: var(--inset-shadow), 0 10px 24px rgba(16,23,34,.05); }
+    .operations-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 17px; }
+    .operations-panel-head b { font-size: 16px; }
+    .operations-panel-head span { color: var(--muted); font-size: 12px; }
+    .shift-progress-value { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; margin-bottom: 12px; }
+    .shift-progress-value strong { font-size: 28px; letter-spacing: -.045em; }
+    .shift-progress-value small { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .stage-stack { display: grid; gap: 13px; }
+    .stage-row { display: grid; grid-template-columns: minmax(128px, 1fr) minmax(92px, 2.4fr) auto; align-items: center; gap: 11px; }
+    .stage-row b { font-size: 13px; }
+    .stage-row .progress { margin: 0; }
+    .stage-row .status-chip { min-width: 76px; justify-content: center; }
+    .operations-alerts { display: grid; gap: 9px; }
+    .operations-alert { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 11px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+    .operations-alert:last-child { border-bottom: 0; padding-bottom: 0; }
+    .operations-alert i { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--warning); }
+    .operations-alert.critical i { background: var(--danger); }
+    .operations-alert b { display: block; font-size: 13px; }
+    .operations-alert span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .operations-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .operations-actions button { min-height: 44px; border: 1px solid var(--line); border-radius: 11px; background: rgba(245,248,255,.88); color: var(--text); font-size: 12px; font-weight: 800; text-align: left; padding: 10px 12px; }
+    .operations-actions button.primary { color: #fff; border-color: var(--accent); background: var(--accent); box-shadow: var(--blue-shadow); }
+    .key-orders { display: grid; gap: 9px; }
+    .key-order { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(250,251,253,.94); cursor: pointer; }
+    .key-order b { display: block; font-size: 13px; }
+    .key-order span { color: var(--muted); font-size: 12px; }
+    .orders-board { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 8px; }
+    .orders-column { min-width: 220px; min-height: 290px; padding: 12px; border: 1px solid var(--line); border-radius: 15px; background: rgba(236,240,247,.62); }
+    .orders-column-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 11px; font-size: 13px; font-weight: 800; }
+    .orders-column-head span { display: grid; place-items: center; min-width: 24px; height: 24px; border-radius: 8px; background: #fff; color: var(--muted); font-size: 12px; }
+    .board-order-card { display: grid; gap: 9px; margin-bottom: 10px; padding: 13px; border: 1px solid rgba(109,124,158,.15); border-radius: 12px; background: #fff; box-shadow: 0 6px 14px rgba(16,23,34,.05); cursor: pointer; }
+    .board-order-card b { font-size: 13px; line-height: 1.3; }
+    .board-order-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+    @media (max-width: 820px) {
+      .operations-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .operations-layout { grid-template-columns: 1fr; }
+      .operations-head { display: grid; }
+    }
   </style>
   <script src="/assets/jsqr.js"></script>
 </head>
@@ -4250,6 +4304,7 @@ MINIAPP_HTML = """<!doctype html>
       "orderCategory",
       "adminTaskStatus",
       "orderMode",
+      "ordersPresentationVersion",
       "orderProductFilter",
       "orderSizeFilter",
       "orderColorFilter",
@@ -4336,7 +4391,8 @@ MINIAPP_HTML = """<!doctype html>
       orderCategory: "",
       adminTaskStatus: "all",
       reportSection: "work",
-      orderMode: "list",
+      orderMode: "board",
+      ordersPresentationVersion: "2",
       orderProductFilter: "",
       orderSizeFilter: "",
       orderColorFilter: "",
@@ -4413,6 +4469,10 @@ MINIAPP_HTML = """<!doctype html>
     };
 
     if (!state.taskCompletionDrafts || typeof state.taskCompletionDrafts !== "object") state.taskCompletionDrafts = {};
+    if (state.ordersPresentationVersion !== "2") {
+      state.ordersPresentationVersion = "2";
+      if (state.orderMode === "list") state.orderMode = "board";
+    }
     if (!state.cuttingStageDrafts || typeof state.cuttingStageDrafts !== "object") state.cuttingStageDrafts = {};
     if (!state.feedbackDraft || typeof state.feedbackDraft !== "object") state.feedbackDraft = {category: "Производство", message: ""};
     if (!Array.isArray(state.orderSizes)) state.orderSizes = [];
@@ -5723,6 +5783,76 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = renderAdminHomeOverview(period);
     }
 
+    function renderOperationsCenter() {
+      const admin = getAdmin() || {};
+      const control = admin.production_control || {};
+      const period = getAdminHomePeriod();
+      const stages = control.stages || [];
+      const alerts = control.alerts || [];
+      const routeTasks = getRouteTasks().filter((task) => task.work_state !== "cancelled");
+      const openShifts = admin.open_shifts || [];
+      const plan = Number(control.plan || 0);
+      const fact = Number(control.fact || 0);
+      const activeTasks = Number(control.active_tasks || routeTasks.filter((task) => task.work_state === "in_work").length);
+      const overdue = Number(control.overdue_tasks || alerts.filter((alert) => alert.type === "overdue").length);
+      const riskCount = alerts.filter((alert) => alert.type === "overdue" || alert.type === "defect" || alert.type === "shortage").length;
+      const maxStage = Math.max(1, ...stages.map((stage) => Number(stage.quantity || 0)));
+      const planPercent = plan > 0 ? Math.min(100, Math.round(fact / plan * 100)) : 0;
+      const keyOrders = [...routeTasks]
+        .sort((left, right) => Number(Boolean(right.due_date)) - Number(Boolean(left.due_date)) || Number(right.priority === "urgent") - Number(left.priority === "urgent"))
+        .slice(0, 5);
+
+      mainButton.textContent = "Обновить центр";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="operations-center">
+          <div class="operations-head">
+            <div><h2>Операционный центр</h2><p>Производство сейчас · ${escapeHtml(periodDateLabel(period) || "текущий период")}</p></div>
+            <div class="live-indicator">Данные актуальны</div>
+          </div>
+          <div class="operations-kpis">
+            <button class="operations-kpi" data-go="analytics"><span>План / факт</span><strong>${escapeHtml(fact)} / ${escapeHtml(plan)}</strong><small>${plan ? `${planPercent}% выполнения плана` : "План пока не задан"}</small></button>
+            <button class="operations-kpi" data-go="orders"><span>В работе</span><strong>${escapeHtml(activeTasks)}</strong><small>активных заданий в потоке</small></button>
+            <button class="operations-kpi risk" data-go="analytics"><span>Риск срыва</span><strong>${escapeHtml(riskCount)}</strong><small>сигналов требуют внимания</small></button>
+            <button class="operations-kpi overdue" data-go="orders"><span>Просрочено</span><strong>${escapeHtml(overdue)}</strong><small>заданий требуют решения</small></button>
+          </div>
+          <div class="operations-layout">
+            <div class="operations-panel">
+              <div class="operations-panel-head"><b>Ход смены</b><span>${escapeHtml(openShifts.length)} сотрудников на смене</span></div>
+              <div class="shift-progress-value"><div><strong>${escapeHtml(planPercent)}%</strong><small>факт ${escapeHtml(fact)} из ${escapeHtml(plan || 0)} шт</small></div><span class="status-chip ${openShifts.length ? "" : "gray"}">${openShifts.length ? "смена идёт" : "нет открытых смен"}</span></div>
+              <div class="progress sage"><i style="--w:${planPercent}%"></i></div>
+              <div class="operations-panel-head" style="margin-top:23px"><b>Производственные этапы</b><span>WIP и загрузка</span></div>
+              <div class="stage-stack">${stages.length ? stages.map((stage) => {
+                const quantity = Number(stage.quantity || 0);
+                const percent = Math.min(100, Math.round(quantity / maxStage * 100));
+                const delayed = Number(stage.overdue || 0) > 0;
+                const waiting = !quantity && Number(stage.free || 0) > 0;
+                const status = delayed ? "отстаёт" : waiting ? "ожидает" : quantity ? "в работе" : "норма";
+                return `<div class="stage-row"><b>${escapeHtml(stage.stage)}</b><div class="progress ${delayed ? "" : "sage"}"><i style="--w:${percent}%"></i></div><span class="status-chip ${delayed ? "warn" : waiting ? "gray" : ""}">${status}</span></div>`;
+              }).join("") : itemEmpty("Активных этапов пока нет.")}</div>
+            </div>
+            <div class="operations-panel">
+              <div class="operations-panel-head"><b>Быстрые действия</b><span>управление</span></div>
+              <div class="operations-actions">
+                <button class="primary" data-operations-action="create-order">Создать заказ</button>
+                <button data-go="orders">Перераспределить задачи</button>
+                <button data-go="analytics">Открыть аналитику</button>
+                <button data-go="admin" data-operations-action="employees">Назначить сотрудника</button>
+                <button data-operations-action="scan">Сканировать QR</button>
+                <button data-go="admin" data-operations-action="alerts">Оповещения</button>
+              </div>
+              <div class="operations-panel-head" style="margin-top:24px"><b>Оповещения</b><span>${alerts.length}</span></div>
+              <div class="operations-alerts">${alerts.length ? alerts.slice(0, 5).map((alert) => `<div class="operations-alert ${alert.type === "overdue" || alert.type === "defect" ? "critical" : ""}" ${alert.batch_id ? `data-analytics-task-id="${escapeHtml(alert.batch_id)}"` : `data-go="analytics"`}><i></i><div><b>${escapeHtml(alert.title)}</b><span>${escapeHtml(alert.detail)}</span></div><span>›</span></div>`).join("") : itemEmpty("Критичных отклонений не найдено.")}</div>
+            </div>
+          </div>
+          <div class="operations-panel">
+            <div class="operations-panel-head"><b>Ключевые заказы</b><button type="button" class="small-button secondary" data-go="orders">Все заказы</button></div>
+            <div class="key-orders">${keyOrders.length ? keyOrders.map((task) => `<div class="key-order" data-go="orders"><div><b>${escapeHtml(task.product_name || "Изделие")}: ${escapeHtml(task.operation || "Операция")}</b><span>${escapeHtml(task.product_size || "-")} · ${escapeHtml(task.product_color || "-")} · ${escapeHtml(task.quantity || 0)} шт${task.due_date ? ` · срок ${escapeHtml(task.due_date)}` : ""}</span></div><span class="status-chip ${task.work_state === "free" ? "gray" : task.work_state === "blocked" ? "warn" : ""}">${escapeHtml(task.status_text || "в работе")}</span></div>`).join("") : itemEmpty("Ключевых производственных заданий пока нет.")}</div>
+          </div>
+        </div>
+      `;
+    }
+
     async function loadHistory() {
       const actionKey = "load-history";
       if (!beginAction(actionKey)) return;
@@ -6218,7 +6348,7 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderShift() {
       if (state.data && state.data.is_admin) {
-        renderAdminHome();
+        renderOperationsCenter();
         return;
       }
 
@@ -8236,7 +8366,7 @@ MINIAPP_HTML = """<!doctype html>
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Создать задание на раскрой</h2><p>Дальнейшие операции система создаст по маршруту автоматически.</p></div><div class="date">админ</div></div>
-        <div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="list" role="tab" aria-selected="false">Текущие задания</button><button type="button" class="tab active" data-order-mode="create" role="tab" aria-selected="true">Создать задание</button></div>
+        <div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="board">Канбан</button><button type="button" class="tab" data-order-mode="list" role="tab" aria-selected="false">Список</button><button type="button" class="tab active" data-order-mode="create" role="tab" aria-selected="true">Создать задание</button></div>
         <div class="card field-card">
           <div class="form-grid">
             <div class="field full"><label>Изделия в одном настиле</label>${renderChoiceChips("product", catalog.map((item) => item.product_name), state.orderProducts)}<p class="empty">Выберите одно или несколько изделий. Для выбранных изделий применяются общие размеры, цвета и настил.</p></div>
@@ -8336,9 +8466,50 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderOrdersBoard() {
+      const allTasks = visibleOrderRows();
+      const filterRows = [...currentOrderRows(), ...getCompletedOrderRows()];
+      const columns = [
+        ["in_work", "В работе"],
+        ["free", "Ожидают"],
+        ["blocked", "Ожидают материалы / проблема"],
+        ["done", "Завершённые"],
+      ];
+      const bucketFor = (task) => {
+        if (task.work_state === "blocked" || task.work_state === "paused") return "blocked";
+        return orderTaskStatusBucket(task);
+      };
+      mainButton.textContent = "Обновить заказы";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Заказы</h2><p>Поток производственных заданий по этапам и статусам.</p></div><div class="date">${allTasks.length} заданий</div></div>
+        <div class="tabs order-mode-tabs" role="tablist" aria-label="Представление заказов">
+          <button type="button" class="tab active" data-order-mode="board">Канбан</button>
+          <button type="button" class="tab" data-order-mode="list">Список</button>
+          <button type="button" class="tab" data-order-mode="create">Создать заказ</button>
+        </div>
+        ${renderOrderFilters(filterRows)}
+        <div class="orders-board">${columns.map(([id, label]) => {
+          const rows = allTasks.filter((task) => bucketFor(task) === id);
+          return `<section class="orders-column"><div class="orders-column-head"><b>${label}</b><span>${rows.length}</span></div>${rows.length ? rows.map((task) => {
+            const taskIndex = allTasks.indexOf(task);
+            const title = task.task_kind === "route" ? task.operation : (task.stage_title || `Задание #${task.id}`);
+            const product = task.product_name || task.product || "Изделие";
+            const quantity = task.quantity || task.total_quantity || 0;
+            return `<article class="board-order-card" data-select-order="${taskIndex}"><b>${escapeHtml(title)}</b><span>${escapeHtml(product)}</span><div class="progress ${id === "blocked" ? "" : "sage"}"><i style="--w:${progressForTask(task)}%"></i></div><div class="board-order-meta"><span>${escapeHtml(quantity)} шт · ${escapeHtml(task.product_size || "-")}</span><span>${escapeHtml(priorityLabel(task.priority))}</span></div></article>`;
+          }).join("") : `<div class="empty">Нет заданий</div>`}</section>`;
+        }).join("")}</div>
+      `;
+    }
+
     function renderOrders() {
       if (state.data && state.data.is_admin && state.orderMode === "create") {
         renderOrderCreate();
+        return;
+      }
+
+      if (state.data && state.data.is_admin && state.orderMode === "board") {
+        renderOrdersBoard();
         return;
       }
 
@@ -8359,7 +8530,7 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>${state.data && state.data.is_admin ? "Заказы" : "Задания"}</h2><p>${state.data && state.data.is_admin ? "Создавайте задания на раскрой и контролируйте маршрут производства." : "Выберите свободное задание, чтобы взять его в работу."}</p></div><div class="date">${allTasks.length} заданий</div></div>
         <div class="scan-row"><button type="button" class="small-button secondary" data-task-action="scan">Сканировать QR</button></div>
-        ${state.data && state.data.is_admin ? `<div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab ${state.orderMode === "list" ? "active" : ""}" data-order-mode="list" role="tab" aria-selected="${state.orderMode === "list" ? "true" : "false"}">Текущие задания</button><button type="button" class="tab ${state.orderMode === "create" ? "active" : ""}" data-order-mode="create" role="tab" aria-selected="${state.orderMode === "create" ? "true" : "false"}">Создать задание</button></div>` : ""}
+        ${state.data && state.data.is_admin ? `<div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="board">Канбан</button><button type="button" class="tab ${state.orderMode === "list" ? "active" : ""}" data-order-mode="list" role="tab" aria-selected="${state.orderMode === "list" ? "true" : "false"}">Список</button><button type="button" class="tab ${state.orderMode === "create" ? "active" : ""}" data-order-mode="create" role="tab" aria-selected="${state.orderMode === "create" ? "true" : "false"}">Создать задание</button></div>` : ""}
         <div class="tabs admin-task-status-tabs" role="tablist" aria-label="Статус заданий">${["all", "free", "in_work", "done"].map((status) => `<button type="button" class="tab ${state.adminTaskStatus === status ? "active" : ""}" data-admin-task-status="${status}" role="tab" aria-selected="${state.adminTaskStatus === status ? "true" : "false"}">${adminTaskStatusLabel(status)}</button>`).join("")}</div>
         ${renderOrderFilters(filterRows)}
         <div class="op-list">
@@ -8574,7 +8745,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Контроль производства</h2><p>План, качество, незавершёнка и отклонения.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
+        <div class="screen-head"><div><h2>Аналитика производства</h2><p>План, качество, загрузка и риски по текущему периоду.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
         <div class="kpi-grid">
           <button type="button" class="card kpi analytics-card" data-analytics-view="planfact"><span class="kpi-top"><span>План / факт</span><span class="kpi-ico">${uiIcon("target")}</span></span><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Подробнее ›</span></button>
           <button type="button" class="card kpi good analytics-card" data-analytics-view="fpy"><span class="kpi-top"><span>FPY</span><span class="kpi-ico">${uiIcon("quality")}</span></span><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
@@ -10017,7 +10188,7 @@ MINIAPP_HTML = """<!doctype html>
       `).join("") : itemEmpty("Новых заявок нет.");
 
       return `
-        <div class="screen-head"><div><h2>Пользователи</h2><p>Заявки, роли, статусы и должности.</p></div><div class="date">${employees.length} всего</div></div>
+        <div class="screen-head"><div><h2>Сотрудники</h2><p>Управление персоналом, ролями, доступами и сменами.</p></div><div class="date">${employees.length} всего</div></div>
         ${renderAdminTabs()}
         <div class="kpi-grid">
           <div class="card kpi"><div class="kpi-top"><span>Заявки</span><div class="kpi-ico">${uiIcon("inbox")}</div></div><strong>${pending.length}<small> шт</small></strong><span>Ожидают решения</span></div>
@@ -10456,12 +10627,32 @@ MINIAPP_HTML = """<!doctype html>
         }
       }
 
+      const operationsAction = event.target.closest("[data-operations-action]");
+      if (operationsAction && state.data && state.data.is_admin) {
+        const action = operationsAction.dataset.operationsAction;
+        if (action === "create-order") {
+          resetOrderDraft();
+          setScreen("orders");
+          return;
+        }
+        if (action === "employees" || action === "alerts") {
+          state.adminSection = action === "employees" ? "employees" : "feedback";
+          setScreen("admin");
+          return;
+        }
+        if (action === "scan") {
+          setScreen("orders");
+          window.setTimeout(() => openQrScanner("route"), 0);
+          return;
+        }
+      }
+
       const orderMode = event.target.closest("[data-order-mode]");
       if (orderMode && state.data && state.data.is_admin) {
         if (orderMode.dataset.orderMode === "create") {
           resetOrderDraft();
         } else {
-          state.orderMode = "list";
+          state.orderMode = orderMode.dataset.orderMode === "board" ? "board" : "list";
         }
         render();
         return;
