@@ -1162,6 +1162,63 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(roll_counts["Жакет для девочек"], [])
         self.assertEqual(self.database.get_fabric_stock_rows()[0][2], 3)
 
+    def test_reset_cutting_task_returns_employee_to_contour_entry(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9010, "Курасова Наталья Валерьевна", "Раскройщик")
+        cutter = self.database.get_employee_by_telegram_id(9010)
+        self.database.update_employee_status(cutter[0], "active")
+        self.database.create_shift(cutter[0])
+        self.database.add_fabric_receipt("Ткань", "Капучино", 2, None)
+        created = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_names": ["Брюки со стрелками детские", "Кардиган детский"],
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["98"],
+                "colors": ["Капучино"],
+                "fabric_rolls": {"Капучино": "1"},
+            },
+        )
+        self.assertTrue(created["ok"], created)
+        tasks = self.database.get_active_production_tasks()
+        for task in tasks:
+            self.assertIsNotNone(self.database.assign_production_task(task[0], cutter[0]))
+            submitted = miniapp_server.submit_production_contours_for_telegram(
+                9010,
+                {"task_id": task[0], "quantities": {f"{task[1]}|98|Капучино": 3}},
+            )
+            self.assertTrue(submitted["ok"], submitted)
+
+        reset = self.database.reset_cutting_tasks_to_contours_entry(
+            "Курасова Наталья Валерьевна",
+            ["Кардиган детский", "Брюки со стрелками детские"],
+            replacement_color="Брауни",
+        )
+        self.assertEqual(len(reset), 2)
+        contour_tasks = self.database.get_active_production_tasks_for_contours()
+        self.assertEqual({row[1] for row in contour_tasks}, {"Кардиган детский", "Брюки со стрелками детские"})
+        for row in contour_tasks:
+            task = self.database.get_production_task_by_id(row[0])
+            self.assertEqual(task["assigned_employee_id"], cutter[0])
+            conn = self.database.get_db_connection()
+            colors = [item[0] for item in conn.execute(
+                "SELECT product_color FROM production_task_colors WHERE task_id = ?", (row[0],)
+            ).fetchall()]
+            conn.close()
+            self.assertEqual(colors, ["Брауни"])
+
+    def test_admin_can_edit_writeoff_and_delete_empty_material_card(self):
+        row = self.database.add_fabric_receipt("Ткань", "Брауни", 3, None)
+        edited = self.database.update_fabric_stock_card(row[0], "Ткань костюмная", "Брауни", "рул", None, "Уточнение")
+        self.assertEqual(edited[1], "Ткань костюмная")
+        written_off = self.database.write_off_fabric_stock(row[0], 3, None, "Повреждение")
+        self.assertEqual(int(written_off[3]), 0)
+        deleted = self.database.delete_zero_fabric_stock(row[0], None, "Карточка больше не используется")
+        self.assertEqual(deleted["id"], row[0])
+        self.assertIsNone(self.database.get_fabric_stock_by_id(row[0]))
+
     def test_elastic_preparation_completion_creates_sewing_task(self):
         miniapp_server = importlib.import_module("miniapp_server")
         self.database.create_employee(9003, "Тест Упаковщик", "Упаковщик")

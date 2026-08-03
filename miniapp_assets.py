@@ -8401,6 +8401,70 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function manageFabricStock(button) {
+      if (!state.data || !state.data.is_admin) return;
+      const action = button.dataset.fabricManage || "";
+      const stockId = Number(button.dataset.fabricId || 0);
+      const currentQuantity = Number(button.dataset.fabricQuantity || 0);
+      const currentName = button.dataset.fabricName || "Ткань";
+      const currentColor = button.dataset.fabricColor || "";
+      const currentUnit = button.dataset.fabricUnit || "рул";
+      const payload = {action, stock_id: stockId};
+
+      if (action === "edit") {
+        const materialName = window.prompt("Название материала", currentName);
+        if (materialName === null) return;
+        const productColor = window.prompt("Цвет материала", currentColor);
+        if (productColor === null) return;
+        const unit = window.prompt("Единица измерения", currentUnit);
+        if (unit === null) return;
+        payload.material_name = materialName.trim();
+        payload.product_color = productColor.trim();
+        payload.unit = unit.trim() || "рул";
+      } else if (action === "writeoff") {
+        const raw = window.prompt(`Сколько списать? Доступно: ${currentQuantity}`, String(currentQuantity));
+        if (raw === null) return;
+        const quantity = Number.parseInt(String(raw).trim(), 10);
+        if (!Number.isInteger(quantity) || quantity <= 0 || quantity > currentQuantity) {
+          showToast("Материалы", `Введите целое число от 1 до ${currentQuantity}.`);
+          return;
+        }
+        payload.quantity = quantity;
+      } else if (action === "delete") {
+        if (currentQuantity > 0) {
+          showToast("Материалы", "Сначала спишите остаток до нуля, затем удалите карточку.");
+          return;
+        }
+        if (!window.confirm(`Удалить пустую карточку «${currentName} · ${currentColor}»?`)) return;
+      } else {
+        return;
+      }
+
+      const defaultReason = action === "edit" ? "Редактирование карточки" : action === "writeoff" ? "Списание материала" : "Удаление пустой карточки";
+      const reason = window.prompt("Причина операции", defaultReason);
+      if (reason === null || !reason.trim()) {
+        showToast("Материалы", "Причина обязательна.");
+        return;
+      }
+      payload.reason = reason.trim();
+      const actionKey = `fabric-manage:${action}:${stockId}`;
+      if (!beginAction(actionKey)) return;
+      try {
+        const data = await api("/api/production/manage-fabric-stock", payload);
+        if (!data.ok) {
+          showToast("Материалы", data.message || "Операция не выполнена.");
+          return;
+        }
+        state.data.production = data.production || state.data.production;
+        render();
+        showToast("Материалы", data.message || "Готово.");
+      } catch (error) {
+        showToast("Ошибка", "Не удалось изменить материал.");
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
     function readWmsDraftFromForm() {
       const d = state.wmsDraft;
       const valueOrDraft = (id, key, fallback = "") => {
@@ -10269,9 +10333,9 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderAdminWarehouse(includeTabs = false) {
-      const fabricRows = (getProduction().fabric_stock || []).filter((row) => Number(row.quantity || 0) > 0);
+      const fabricRows = getProduction().fabric_stock || [];
       const warehouseRows = getWarehouseStock().filter((row) => Number(row.quantity || 0) > 0);
-      const receiptColors = getOrderColors();
+      const receiptColors = getOrderColors().filter((color) => color !== "Капучино");
       const semifinished = warehouseRows.filter((row) => row.item_type === "semifinished");
       const finished = warehouseRows.filter((row) => row.item_type === "finished");
       const totalQuantity = (rows) => rows.reduce((total, row) => total + Number(row.quantity || 0), 0);
@@ -10351,7 +10415,7 @@ MINIAPP_HTML = """<!doctype html>
         return row ? row.product_color_label || row.product_color : value;
       };
       const rowsHtml = filteredRows.length ? filteredRows.map((row) => isMaterials ? `
-        <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit === "рул" ? "рул." : row.unit)}</span><button type="button" class="small-button secondary" data-stock-adjust-kind="fabric" data-stock-adjust-id="${escapeHtml(row.id)}" data-stock-adjust-quantity="${escapeHtml(row.quantity)}" data-stock-adjust-label="${escapeHtml(`${row.material_name} · ${row.product_color_label || row.product_color}`)}">Изменить</button></div></div>
+        <div class="card report-row"><div><b>${escapeHtml(row.material_name)}</b><span>${escapeHtml(row.product_color_label || row.product_color)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit === "рул" ? "рул." : row.unit)}</span><div class="button-row compact"><button type="button" class="small-button secondary" data-fabric-manage="edit" data-fabric-id="${escapeHtml(row.id)}" data-fabric-name="${escapeHtml(row.material_name)}" data-fabric-color="${escapeHtml(row.product_color)}" data-fabric-unit="${escapeHtml(row.unit)}" data-fabric-quantity="${escapeHtml(row.quantity)}">Редактировать</button><button type="button" class="small-button secondary" data-fabric-manage="writeoff" data-fabric-id="${escapeHtml(row.id)}" data-fabric-name="${escapeHtml(row.material_name)}" data-fabric-color="${escapeHtml(row.product_color)}" data-fabric-unit="${escapeHtml(row.unit)}" data-fabric-quantity="${escapeHtml(row.quantity)}">Списать</button><button type="button" class="small-button danger" data-fabric-manage="delete" data-fabric-id="${escapeHtml(row.id)}" data-fabric-name="${escapeHtml(row.material_name)}" data-fabric-color="${escapeHtml(row.product_color)}" data-fabric-unit="${escapeHtml(row.unit)}" data-fabric-quantity="${escapeHtml(row.quantity)}">Удалить</button></div></div></div>
       ` : `
         <div class="card report-row"><div><b>${escapeHtml(row.product_name)}</b><span>${escapeHtml(row.stage_name)}<br>${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color_label || row.product_color)}${state.warehouseView === "semifinished" ? `<br>Для: ${escapeHtml(row.ready_for_position)}` : ""}</span></div><div><span class="status-chip">${escapeHtml(row.quantity_text)} ${escapeHtml(row.unit)}</span><button type="button" class="small-button secondary" data-stock-adjust-kind="warehouse" data-stock-adjust-id="${escapeHtml(row.id)}" data-stock-adjust-quantity="${escapeHtml(row.quantity)}" data-stock-adjust-label="${escapeHtml(`${row.product_name} · ${row.product_size} · ${row.product_color_label || row.product_color}`)}">Изменить</button></div></div>
       `).join("") : itemEmpty("По выбранным фильтрам остатков нет.");
@@ -13225,6 +13289,12 @@ MINIAPP_HTML = """<!doctype html>
           Number(stockAdjustment.dataset.stockAdjustQuantity || 0),
           stockAdjustment.dataset.stockAdjustLabel || "остаток",
         );
+        return;
+      }
+
+      const fabricManage = event.target.closest("[data-fabric-manage]");
+      if (fabricManage) {
+        manageFabricStock(fabricManage);
         return;
       }
 

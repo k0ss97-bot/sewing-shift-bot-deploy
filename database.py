@@ -8069,6 +8069,155 @@ def rollback_cutting_batch(batch_id: int, target_status: str):
     }
 
 
+def reset_cutting_tasks_to_contours_entry(employee_full_name: str, product_names: list[str], replacement_color: str = ""):
+    """Return the named employee's latest matching tasks to contour entry."""
+    employee_full_name = employee_full_name.strip()
+    product_names = [name.strip() for name in product_names if name.strip()]
+    replacement_color = replacement_color.strip()
+    if not employee_full_name or not product_names:
+        return None
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        placeholders = ",".join("?" for _ in product_names)
+        cursor.execute(
+            f"""
+            SELECT production_tasks.id, production_tasks.product_name, production_tasks.status,
+                   production_tasks.assigned_employee_id
+            FROM production_tasks
+            JOIN employees ON employees.id = production_tasks.assigned_employee_id
+            WHERE employees.full_name = ?
+              AND production_tasks.product_name IN ({placeholders})
+              AND production_tasks.status IN ('contours_done', 'in_cutting')
+            ORDER BY production_tasks.id DESC
+            """,
+            (employee_full_name, *product_names),
+        )
+        selected = {}
+        for row in cursor.fetchall():
+            selected.setdefault(row[1], row)
+        if any(name not in selected for name in product_names):
+            raise ValueError("assigned tasks not found")
+
+        now = local_now().isoformat()
+        reset_rows = []
+        for product_name in product_names:
+            task_id, _, old_status, employee_id = selected[product_name]
+            cursor.execute(
+                "SELECT id, status, contour_shift_id, contour_operation_id FROM cutting_batches WHERE production_task_id = ?",
+                (task_id,),
+            )
+            batches = cursor.fetchall()
+            if not batches:
+                raise ValueError("cutting batch not found")
+            for batch_id, batch_status, contour_shift_id, contour_operation_id in batches:
+                if batch_status == "formed":
+                    raise ValueError("formed batch")
+                cursor.execute(
+                    "SELECT COUNT(*) FROM route_batches WHERE source_cutting_batch_id = ? AND status NOT IN ('active', 'cancelled')",
+                    (batch_id,),
+                )
+                if int(cursor.fetchone()[0] or 0) > 0:
+                    raise ValueError("completed downstream work")
+                cursor.execute(
+                    "UPDATE route_batches SET status = 'cancelled', completed_at = ?, updated_at = ? WHERE source_cutting_batch_id = ? AND status = 'active'",
+                    (now, now, batch_id),
+                )
+                cursor.execute(
+                    "SELECT product_size, product_color, quantity FROM cutting_batch_matrix WHERE batch_id = ?",
+                    (batch_id,),
+                )
+                for product_size, product_color, quantity in cursor.fetchall():
+                    cursor.execute(
+                        """
+                        UPDATE shift_operations SET quantity = MAX(0, quantity - ?), updated_at = ?
+                        WHERE shift_id = ? AND operation_id = ? AND product_size = ? AND product_color = ?
+                        """,
+                        (int(quantity or 0), now, contour_shift_id, contour_operation_id, product_size, product_color),
+                    )
+                    cursor.execute(
+                        "DELETE FROM shift_operations WHERE shift_id = ? AND operation_id = ? AND product_size = ? AND product_color = ? AND quantity <= 0",
+                        (contour_shift_id, contour_operation_id, product_size, product_color),
+                    )
+                cursor.execute("DELETE FROM cutting_batch_arbitrary_operations WHERE batch_id = ?", (batch_id,))
+                cursor.execute("DELETE FROM cutting_batch_colors WHERE batch_id = ?", (batch_id,))
+                cursor.execute("DELETE FROM cutting_batch_sizes WHERE batch_id = ?", (batch_id,))
+                cursor.execute("DELETE FROM cutting_batch_matrix WHERE batch_id = ?", (batch_id,))
+                cursor.execute("DELETE FROM cutting_batches WHERE id = ?", (batch_id,))
+
+            cursor.execute("UPDATE production_task_items SET contour_quantity = 0 WHERE task_id = ?", (task_id,))
+            if replacement_color:
+                cursor.execute("DELETE FROM production_task_colors WHERE task_id = ?", (task_id,))
+                cursor.execute("INSERT INTO production_task_colors (task_id, product_color) VALUES (?, ?)", (task_id, replacement_color))
+                cursor.execute("UPDATE production_task_items SET product_color = ? WHERE task_id = ?", (replacement_color, task_id))
+                cursor.execute("UPDATE production_task_fabric_rolls SET product_color = ? WHERE task_id = ?", (replacement_color, task_id))
+                cursor.execute("UPDATE fabric_roll_defects SET product_color = ? WHERE task_id = ?", (replacement_color, task_id))
+            cursor.execute("UPDATE production_tasks SET status = 'active', updated_at = ? WHERE id = ?", (now, task_id))
+            _record_production_event(
+                cursor, "cutting_contours_reset", production_task_id=task_id,
+                actor_employee_id=employee_id, reason="Повторный ввод количества на нанесении контуров",
+                details={"product_name": product_name, "old_status": old_status, "replacement_color": replacement_color},
+                request_key=f"production-task:{task_id}:contours-reset:{now}", created_at=now,
+            )
+            reset_rows.append({"task_id": task_id, "product_name": product_name, "employee_id": employee_id})
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+    conn.close()
+    return reset_rows
+
+
+def rename_fabric_stock_color(material_name: str, old_color: str, new_color: str, employee_id: int | None, reason: str):
+    """Rename or merge material stock cards without losing balance or lots."""
+    material_name, old_color, new_color, reason = (value.strip() for value in (material_name, old_color, new_color, reason))
+    if not material_name or not old_color or not new_color or old_color == new_color or not reason:
+        return None
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            "SELECT id, quantity, unit FROM fabric_stock WHERE material_name = ? AND product_color = ? ORDER BY id",
+            (material_name, old_color),
+        )
+        source_rows = cursor.fetchall()
+        if not source_rows:
+            raise ValueError("source color absent")
+        now = local_now().isoformat()
+        changed = []
+        for source_id, source_quantity, unit in source_rows:
+            cursor.execute(
+                "SELECT id FROM fabric_stock WHERE material_name = ? AND product_color = ? AND unit = ? AND id != ?",
+                (material_name, new_color, unit, source_id),
+            )
+            target = cursor.fetchone()
+            if target is None:
+                cursor.execute("UPDATE fabric_stock SET product_color = ?, updated_at = ? WHERE id = ?", (new_color, now, source_id))
+                target_id = source_id
+            else:
+                target_id = target[0]
+                cursor.execute("UPDATE fabric_stock_lots SET stock_id = ?, updated_at = ? WHERE stock_id = ?", (target_id, now, source_id))
+                cursor.execute("UPDATE fabric_stock SET quantity = quantity + ?, updated_at = ? WHERE id = ?", (source_quantity, now, target_id))
+                cursor.execute("DELETE FROM fabric_stock WHERE id = ?", (source_id,))
+            changed.append({"source_id": source_id, "target_id": target_id, "quantity": int(source_quantity or 0), "unit": unit})
+        _record_production_event(
+            cursor, "material_color_renamed", actor_employee_id=employee_id, reason=reason,
+            details={"material_name": material_name, "old_color": old_color, "new_color": new_color, "cards": changed},
+            request_key=f"fabric-color:{material_name}:{old_color}:{new_color}:{now}", created_at=now,
+        )
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+    conn.close()
+    return changed
+
+
 def admin_update_cutting_batch_progress(batch_id: int, progress: int):
     if progress not in {25, 50, 75, 100}:
         return None
@@ -8251,6 +8400,22 @@ def get_fabric_stock_rows_with_ids():
     return rows
 
 
+def get_all_fabric_stock_rows_with_ids():
+    """Return active and zero-balance material cards for the admin editor."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, material_name, product_color, quantity, unit, updated_at
+        FROM fabric_stock
+        ORDER BY material_name ASC, product_color ASC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
 def get_fabric_stock_by_id(stock_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -8356,6 +8521,158 @@ def adjust_fabric_stock(
 
     conn.close()
     return get_fabric_stock_by_id(stock_id)
+
+
+def update_fabric_stock_card(
+    stock_id: int,
+    material_name: str,
+    product_color: str,
+    unit: str,
+    employee_id: int | None,
+    reason: str,
+):
+    """Edit material card metadata without rewriting historical movements."""
+    material_name = material_name.strip()
+    product_color = product_color.strip()
+    unit = unit.strip() or "рул"
+    reason = reason.strip()
+    if stock_id <= 0 or not material_name or not product_color or not reason:
+        return None
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            "SELECT id, material_name, product_color, quantity, unit FROM fabric_stock WHERE id = ?",
+            (stock_id,),
+        )
+        stock = cursor.fetchone()
+        if stock is None:
+            raise ValueError("stock unavailable")
+        cursor.execute(
+            """
+            SELECT id FROM fabric_stock
+            WHERE material_name = ? AND product_color = ? AND unit = ? AND id != ?
+            """,
+            (material_name, product_color, unit, stock_id),
+        )
+        if cursor.fetchone() is not None:
+            raise ValueError("duplicate card")
+
+        now = local_now().isoformat()
+        cursor.execute(
+            """
+            UPDATE fabric_stock
+            SET material_name = ?, product_color = ?, unit = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (material_name, product_color, unit, now, stock_id),
+        )
+        _record_production_event(
+            cursor,
+            "material_card_updated",
+            actor_employee_id=employee_id,
+            reason=reason,
+            details={
+                "stock_id": stock_id,
+                "old_material_name": stock[1],
+                "old_product_color": stock[2],
+                "old_unit": stock[4],
+                "material_name": material_name,
+                "product_color": product_color,
+                "unit": unit,
+            },
+            request_key=f"fabric-card-update:{stock_id}:{now}",
+            created_at=now,
+        )
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+    conn.close()
+    return get_fabric_stock_by_id(stock_id)
+
+
+def write_off_fabric_stock(stock_id: int, quantity: int, employee_id: int | None, reason: str):
+    """Write off a material quantity and preserve the operation in the movement journal."""
+    reason = reason.strip()
+    if stock_id <= 0 or quantity <= 0 or not reason:
+        return None
+    stock = get_fabric_stock_by_id(stock_id)
+    if stock is None or quantity > int(stock[3] or 0):
+        return None
+    result = adjust_fabric_stock(stock_id, int(stock[3] or 0) - quantity, employee_id, f"Списание: {reason}")
+    if result is None:
+        return None
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE fabric_stock_movements
+        SET movement_type = 'writeoff'
+        WHERE id = (
+            SELECT id FROM fabric_stock_movements
+            WHERE material_name = ? AND product_color = ? AND movement_type = 'adjustment'
+              AND created_by_employee_id IS ?
+            ORDER BY id DESC LIMIT 1
+        )
+        """,
+        (stock[1], stock[2], employee_id),
+    )
+    conn.commit()
+    conn.close()
+    return result
+
+
+def delete_zero_fabric_stock(stock_id: int, employee_id: int | None, reason: str):
+    """Delete an empty material card while keeping movements and production history."""
+    reason = reason.strip()
+    if stock_id <= 0 or not reason:
+        return None
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            "SELECT id, material_name, product_color, quantity, unit FROM fabric_stock WHERE id = ?",
+            (stock_id,),
+        )
+        stock = cursor.fetchone()
+        if stock is None or int(stock[3] or 0) != 0:
+            raise ValueError("non-empty stock")
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM production_task_fabric_lots
+            WHERE lot_id IN (SELECT id FROM fabric_stock_lots WHERE stock_id = ?)
+            """,
+            (stock_id,),
+        )
+        if int(cursor.fetchone()[0] or 0) > 0:
+            raise ValueError("stock has production history")
+        cursor.execute("DELETE FROM fabric_stock_lots WHERE stock_id = ? AND rolls_available = 0", (stock_id,))
+        cursor.execute("DELETE FROM fabric_stock WHERE id = ? AND quantity = 0", (stock_id,))
+        if cursor.rowcount != 1:
+            raise ValueError("stock changed")
+        now = local_now().isoformat()
+        _record_production_event(
+            cursor,
+            "material_card_deleted",
+            actor_employee_id=employee_id,
+            reason=reason,
+            details={"stock_id": stock_id, "material_name": stock[1], "product_color": stock[2], "unit": stock[4]},
+            request_key=f"fabric-card-delete:{stock_id}:{now}",
+            created_at=now,
+        )
+        conn.commit()
+    except (sqlite3.Error, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+    conn.close()
+    return {"id": stock_id, "material_name": stock[1], "product_color": stock[2]}
 
 
 def warehouse_stock_from_row(row):

@@ -35,6 +35,7 @@ from database import (
     create_route_batches_with_inputs,
     create_shift,
     delete_employee_if_unused,
+    delete_zero_fabric_stock,
     delete_shift_by_id,
     disable_web_push_subscription,
     ensure_admin_employee,
@@ -69,6 +70,7 @@ from database import (
     get_feedback_entries,
     get_feedback_entries_by_shift,
     get_fabric_stock_rows,
+    get_all_fabric_stock_rows_with_ids,
     get_fabric_stock_rows_with_ids,
     get_open_shifts,
     get_open_critical_notifications,
@@ -131,7 +133,9 @@ from database import (
     update_employee_role,
     update_employee_wms_access,
     update_operation_field,
+    update_fabric_stock_card,
     upsert_web_push_subscription,
+    write_off_fabric_stock,
 )
 from catalog import CUTTING_ARBITRARY_OPERATION, PREPARATION_OPERATION_OPTIONS, format_color_label
 from miniapp_auth import parse_auth_token
@@ -2326,7 +2330,7 @@ def get_production_state_for_telegram(telegram_id: int):
         "catalog": production_catalog_to_dict(),
         "order_colors": order_colors,
         "order_color_labels": [format_color_label(color) for color in order_colors],
-        "fabric_stock": [fabric_stock_to_dict(row) for row in get_fabric_stock_rows_with_ids()] if is_admin_user else [],
+        "fabric_stock": [fabric_stock_to_dict(row) for row in get_all_fabric_stock_rows_with_ids()] if is_admin_user else [],
         "warehouse_stock": warehouse_rows if is_admin_user else [],
         "tasks": [production_task_to_dict(row, employee) for row in get_active_production_tasks()] if is_admin_user else [],
         "completed_tasks": [production_task_to_dict(row, employee) for row in get_completed_production_tasks()] if is_admin_user else [],
@@ -2434,6 +2438,55 @@ def adjust_stock_for_telegram(telegram_id: int, payload: dict):
         "message": "Остаток скорректирован, причина записана в журнал движений.",
         "production": get_production_state_for_telegram(telegram_id),
     }
+
+
+def manage_fabric_stock_for_telegram(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+    action = (payload.get("action") or "").strip()
+    reason = (payload.get("reason") or "").strip()
+    try:
+        stock_id = int(payload.get("stock_id") or 0)
+    except (TypeError, ValueError):
+        stock_id = 0
+    if stock_id <= 0 or not reason:
+        return {"ok": False, "message": "Выберите материал и укажите причину."}
+
+    employee = get_employee_for_access(telegram_id)
+    employee_id = employee[0] if employee else None
+    if action == "edit":
+        row = update_fabric_stock_card(
+            stock_id,
+            str(payload.get("material_name") or ""),
+            str(payload.get("product_color") or ""),
+            str(payload.get("unit") or "рул"),
+            employee_id,
+            reason,
+        )
+        message = "Карточка материала обновлена."
+    elif action == "writeoff":
+        try:
+            quantity = int(payload.get("quantity") or 0)
+        except (TypeError, ValueError):
+            quantity = 0
+        row = write_off_fabric_stock(stock_id, quantity, employee_id, reason)
+        message = "Материал списан, операция записана в журнал движений."
+    elif action == "delete":
+        row = delete_zero_fabric_stock(stock_id, employee_id, reason)
+        message = "Пустая карточка материала удалена."
+    else:
+        return {"ok": False, "message": "Неизвестное действие с материалом."}
+
+    if row is None:
+        failure = {
+            "edit": "Не удалось изменить карточку: проверьте поля и отсутствие дубликата.",
+            "writeoff": "Не удалось списать материал: проверьте количество и остаток.",
+            "delete": "Удалить можно только карточку с нулевым остатком без связанного производственного резерва.",
+        }.get(action, "Не удалось изменить материал.")
+        return {"ok": False, "message": failure}
+
+    add_edit_log(telegram_id, "admin", f"Материал: {action}", "fabric_stock", stock_id, reason)
+    return {"ok": True, "message": message, "production": get_production_state_for_telegram(telegram_id)}
 
 
 def reject_fabric_rolls_for_telegram(telegram_id: int, payload: dict):
@@ -5794,6 +5847,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/feedback/send",
                 "/api/production/fabric-receipt",
                 "/api/production/adjust-stock",
+                "/api/production/manage-fabric-stock",
                 "/api/production/reject-fabric-rolls",
                 "/api/production/create-task",
                 "/api/production/create-order-task",
@@ -6128,6 +6182,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = add_fabric_receipt_for_telegram(telegram_id, payload)
             elif path == "/api/production/adjust-stock":
                 result = adjust_stock_for_telegram(telegram_id, payload)
+            elif path == "/api/production/manage-fabric-stock":
+                result = manage_fabric_stock_for_telegram(telegram_id, payload)
             elif path == "/api/production/reject-fabric-rolls":
                 result = reject_fabric_rolls_for_telegram(telegram_id, payload)
             elif path == "/api/production/create-task":
