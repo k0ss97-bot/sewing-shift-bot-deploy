@@ -9370,7 +9370,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function normalizeWmsScannedBarcode(rawValue) {
-      let value = String(rawValue || "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      let value = String(rawValue || "").replace(/[\\u0000-\\u001f\\u007f]/g, "").trim();
       if (value.startsWith("]") && /^[A-Za-z][0-9]/.test(value.slice(1, 3))) value = value.slice(3).trim();
       return value;
     }
