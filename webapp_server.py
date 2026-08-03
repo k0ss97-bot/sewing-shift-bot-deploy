@@ -103,10 +103,12 @@ def main() -> None:
 
     # Import after loading the environment because database.py resolves DB_DIR
     # when the module is imported.
-    from database import init_db
+    from database import apply_kurasova_brownie_contour_migration, init_db
     from miniapp_server import start_miniapp_server
 
     init_db()
+    if not apply_kurasova_brownie_contour_migration():
+        logging.warning("Requested Kurasova contour reset was not applied; matching active tasks were not found or are no longer safe to reset")
     server = start_miniapp_server(
         settings.secret,
         settings.host,

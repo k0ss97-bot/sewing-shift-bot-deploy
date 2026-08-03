@@ -8090,7 +8090,7 @@ def reset_cutting_tasks_to_contours_entry(employee_full_name: str, product_names
             JOIN employees ON employees.id = production_tasks.assigned_employee_id
             WHERE employees.full_name = ?
               AND production_tasks.product_name IN ({placeholders})
-              AND production_tasks.status IN ('contours_done', 'in_cutting')
+              AND production_tasks.status IN ('active', 'contours_done', 'in_cutting')
             ORDER BY production_tasks.id DESC
             """,
             (employee_full_name, *product_names),
@@ -8110,7 +8110,7 @@ def reset_cutting_tasks_to_contours_entry(employee_full_name: str, product_names
                 (task_id,),
             )
             batches = cursor.fetchall()
-            if not batches:
+            if not batches and old_status != "active":
                 raise ValueError("cutting batch not found")
             for batch_id, batch_status, contour_shift_id, contour_operation_id in batches:
                 if batch_status == "formed":
@@ -8186,7 +8186,15 @@ def rename_fabric_stock_color(material_name: str, old_color: str, new_color: str
         )
         source_rows = cursor.fetchall()
         if not source_rows:
-            raise ValueError("source color absent")
+            cursor.execute(
+                "SELECT id FROM fabric_stock WHERE material_name = ? AND product_color = ? LIMIT 1",
+                (material_name, new_color),
+            )
+            if cursor.fetchone() is None:
+                raise ValueError("source color absent")
+            conn.commit()
+            conn.close()
+            return []
         now = local_now().isoformat()
         changed = []
         for source_id, source_quantity, unit in source_rows:
@@ -8216,6 +8224,46 @@ def rename_fabric_stock_color(material_name: str, old_color: str, new_color: str
         return None
     conn.close()
     return changed
+
+
+def apply_kurasova_brownie_contour_migration():
+    """Apply the explicitly requested one-time production correction."""
+    migration_key = "2026-08-03-kurasova-brownie-contours-v1"
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS business_data_migrations (migration_key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    cursor.execute("SELECT 1 FROM business_data_migrations WHERE migration_key = ?", (migration_key,))
+    already_applied = cursor.fetchone() is not None
+    conn.commit()
+    conn.close()
+    if already_applied:
+        return True
+
+    reset = reset_cutting_tasks_to_contours_entry(
+        "Курасова Наталья Валерьевна",
+        ["Кардиган детский", "Брюки со стрелками детские"],
+        replacement_color="Брауни",
+    )
+    if not reset:
+        return False
+    renamed = rename_fabric_stock_color(
+        "Ткань", "Капучино", "Брауни", None,
+        "Замена материала по заданию администратора",
+    )
+    if renamed is None:
+        return False
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR IGNORE INTO business_data_migrations (migration_key, applied_at) VALUES (?, ?)",
+        (migration_key, local_now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return True
 
 
 def admin_update_cutting_batch_progress(batch_id: int, progress: int):
