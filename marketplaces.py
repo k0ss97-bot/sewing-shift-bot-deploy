@@ -1659,8 +1659,10 @@ def marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) -> list[
             resolved.append({
                 key: linked.get(key)
                 for key in (
-                    "id", "name", "group_name", "offer_id", "sku", "barcode",
-                    "size", "color", "image_url", "route_configured",
+                    "id", "external_product_id", "name", "group_name", "offer_id",
+                    "sku", "barcode", "size", "color", "image_url",
+                    "route_configured", "production_product_name",
+                    "production_size", "production_color",
                 )
             } | {"barcodes": sorted(alternate_barcodes)})
         else:

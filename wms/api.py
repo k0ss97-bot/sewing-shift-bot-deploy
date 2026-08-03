@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from typing import Any
 
 from . import operations as ops
@@ -301,6 +302,65 @@ def _stock(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return 200, {"stock": stock_payload}
 
 
+def _normalized_identity(value: Any) -> str:
+    return " ".join(
+        unicodedata.normalize("NFKC", str(value or ""))
+        .strip()
+        .replace("ё", "е")
+        .casefold()
+        .split()
+    )
+
+
+def _same_product_identity(first: ProductKey, second: ProductKey) -> bool:
+    return all(
+        _normalized_identity(getattr(first, field))
+        == _normalized_identity(getattr(second, field))
+        for field in ("item_type", "product_name", "product_size", "product_color")
+    )
+
+
+def _marketplace_scan_codes(product: dict[str, Any] | None) -> set[str]:
+    if not product:
+        return set()
+    values = [
+        product.get("barcode"),
+        product.get("sku"),
+        product.get("offer_id"),
+        product.get("external_product_id"),
+        *list(product.get("barcodes") or []),
+    ]
+    return {
+        normalized
+        for value in values
+        if value and (normalized := normalize_scanned_barcode(str(value)))
+    }
+
+
+def _stock_row_for_resolved_product(
+    stock_rows: list[Any],
+    metadata: list[dict[str, Any] | None],
+    product_key: ProductKey,
+) -> Any | None:
+    for stock_row in stock_rows:
+        if _same_product_identity(stock_row.product_key, product_key):
+            return stock_row
+    for stock_row, marketplace_product in zip(stock_rows, metadata):
+        if not marketplace_product:
+            continue
+        linked_key = ProductKey(
+            item_type="finished",
+            product_name=str(marketplace_product.get("production_product_name") or ""),
+            product_size=str(marketplace_product.get("production_size") or ""),
+            product_color=str(marketplace_product.get("production_color") or ""),
+            stage_name="Упаковано",
+            ready_for_position="Склад",
+        )
+        if linked_key.product_name and _same_product_identity(linked_key, product_key):
+            return stock_row
+    return None
+
+
 def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     barcode = normalize_scanned_barcode(str(payload.get("barcode") or ""))
     if not barcode:
@@ -308,6 +368,8 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     if len(barcode) > 128:
         return 400, {"ok": False, "message": "Штрихкод слишком длинный."}
     location_code = str(payload.get("location_code") or "").replace("LOC:", "").strip().upper()
+    stock_rows: list[Any] = []
+    marketplace_rows: list[dict[str, Any] | None] = []
     if location_code:
         conn = get_pg_connection()
         location = repo.get_location_by_code(conn, location_code)
@@ -316,21 +378,11 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             try:
                 from marketplaces import marketplace_metadata_for_wms_product_keys
 
-                metadata = marketplace_metadata_for_wms_product_keys(
+                marketplace_rows = marketplace_metadata_for_wms_product_keys(
                     [row.product_key.to_dict() for row in stock_rows]
                 )
-                for stock_row, marketplace_product in zip(stock_rows, metadata):
-                    if not marketplace_product:
-                        continue
-                    known_barcodes = {
-                        normalize_scanned_barcode(value)
-                        for value in (
-                            [marketplace_product.get("barcode")]
-                            + list(marketplace_product.get("barcodes") or [])
-                        )
-                        if value
-                    }
-                    if barcode in known_barcodes:
+                for stock_row, marketplace_product in zip(stock_rows, marketplace_rows):
+                    if barcode in _marketplace_scan_codes(marketplace_product):
                         return 200, {
                             "ok": True,
                             "product_key": stock_row.product_key.to_dict(),
@@ -351,6 +403,16 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
                 product_key = ProductKey.from_dict(marketplace_key)
         except Exception:
             logging.exception("Marketplace barcode fallback failed")
+    if product_key is not None and stock_rows:
+        stock_row = _stock_row_for_resolved_product(
+            stock_rows, marketplace_rows, product_key
+        )
+        if stock_row is not None:
+            return 200, {
+                "ok": True,
+                "product_key": stock_row.product_key.to_dict(),
+                "matched_in_location": True,
+            }
     if product_key is None:
         return 404, {"ok": False, "message": "Штрихкод товара не зарегистрирован."}
     return 200, {"ok": True, "product_key": product_key.to_dict()}

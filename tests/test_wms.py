@@ -187,6 +187,77 @@ class WmsContractTests(unittest.TestCase):
         self.assertEqual(body["stock"], [])
         get_rows.assert_called_once_with(sentinel, location_id=None)
 
+    def test_location_barcode_resolves_to_exact_stock_key_by_sku(self):
+        from wms import api
+
+        stock_key = ProductKey(
+            "finished",
+            "Ozon · Костюм классический · КДШВН-6/98-104",
+            "98-104",
+            "Светло-серый",
+            "Упаковано",
+            "Склад",
+        )
+        location = Location(7, 2, "Z2-S1-P3-2", "Z2-S1-P3-2", None, 0, 0, "active")
+        stock = WarehouseStock(3, stock_key, 14, 0, "SELLABLE", location.id, "шт")
+        marketplace = {
+            "sku": "447040077",
+            "barcode": "",
+            "barcodes": [],
+        }
+        with patch("wms.api.get_pg_connection"), patch(
+            "wms.api.repo.get_location_by_code", return_value=location
+        ), patch("wms.api.repo.get_stock_rows", return_value=[stock]), patch(
+            "marketplaces.marketplace_metadata_for_wms_product_keys",
+            return_value=[marketplace],
+        ), patch("wms.api.resolve_product_barcode", return_value=None):
+            status, body = api.handle(
+                "/api/wms/barcode/resolve",
+                {"barcode": "]C1447040077\r", "location_code": location.code},
+                employee_id=17,
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["matched_in_location"])
+        self.assertEqual(body["product_key"], stock_key.to_dict())
+
+    def test_location_barcode_maps_linked_production_key_to_actual_stock_row(self):
+        from wms import api
+
+        resolved_key = ProductKey(
+            "finished", "Кардиган детский", "104", "Брауни", "Упаковано", "Склад"
+        )
+        stock_key = ProductKey(
+            "finished",
+            "Ozon · Кардиган детский · КД-104-БР",
+            "104",
+            "Брауни",
+            "Упаковано",
+            "Склад",
+        )
+        location = Location(8, 2, "Z2-S1-P3-1", "Z2-S1-P3-1", None, 0, 0, "active")
+        stock = WarehouseStock(4, stock_key, 20, 0, "SELLABLE", location.id, "шт")
+        marketplace = {
+            "barcode": "",
+            "barcodes": [],
+            "production_product_name": "Кардиган детский",
+            "production_size": "104",
+            "production_color": "Брауни",
+        }
+        with patch("wms.api.get_pg_connection"), patch(
+            "wms.api.repo.get_location_by_code", return_value=location
+        ), patch("wms.api.repo.get_stock_rows", return_value=[stock]), patch(
+            "marketplaces.marketplace_metadata_for_wms_product_keys",
+            return_value=[marketplace],
+        ), patch("wms.api.resolve_product_barcode", return_value=resolved_key):
+            status, body = api.handle(
+                "/api/wms/barcode/resolve",
+                {"barcode": "4600000000012", "location_code": location.code},
+                employee_id=17,
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["matched_in_location"])
+        self.assertEqual(body["product_key"], stock_key.to_dict())
+
     def test_schema_keys_stock_by_location_and_enforces_balances(self):
         root = Path(__file__).resolve().parents[1]
         schema = (root / "wms_migrations" / "001_initial_wms.sql").read_text(
