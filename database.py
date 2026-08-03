@@ -43,16 +43,16 @@ LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
 
 
 def get_db_connection(timeout=30):
-    """Open a database connection with busy timeout for WAL-mode safety.
+    """Open a database connection with a matching SQLite busy timeout.
 
     Every write-capable function in this module must use this factory instead of
-    calling sqlite3.connect directly.  The busy_timeout PRAGMA tells SQLite to
-    wait up to 30 seconds when the database is locked by a concurrent writer,
-    which eliminates the "database is locked" crashes that happen when the
-    Telegram bot and the web application both write at the same time.
+    calling sqlite3.connect directly.  Normal writers keep the 30-second
+    default, while latency-sensitive read-only callers can request a shorter
+    timeout without it being overwritten by the PRAGMA below.
     """
-    conn = sqlite3.connect(DB_NAME, timeout=timeout)
-    conn.execute("PRAGMA busy_timeout = 30000")
+    timeout_seconds = max(0.0, float(timeout))
+    conn = sqlite3.connect(DB_NAME, timeout=timeout_seconds)
+    conn.execute(f"PRAGMA busy_timeout = {int(timeout_seconds * 1000)}")
     return conn
 ROUTE_BATCH_COLUMNS = [
     "id",
@@ -8944,7 +8944,7 @@ def acknowledge_critical_notification(notification_id: int, employee_id: int | N
         """
         UPDATE critical_notifications
         SET status = 'acknowledged', acknowledged_at = ?, acknowledged_by_employee_id = ?
-        WHERE id = ? AND status = 'open'
+        WHERE shifts.id = ? AND shifts.status = 'open'
         """,
         (now_text, employee_id, notification_id),
     )
@@ -10828,6 +10828,41 @@ def get_period_shift_details(start_date: str, end_date: str):
         (start_date, end_date)
     )
 
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_period_timesheet_rows(start_date: str, end_date: str):
+    """Return every non-admin employee and their shifts for a timesheet period.
+
+    Employees without shifts are intentionally retained so an exported
+    timesheet always contains the complete staff list.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            employees.id,
+            employees.full_name,
+            employees.position,
+            employees.status,
+            shifts.id,
+            shifts.shift_date,
+            shifts.start_time,
+            shifts.end_time,
+            shifts.total_minutes,
+            shifts.status
+        FROM employees
+        LEFT JOIN shifts ON shifts.employee_id = employees.id
+            AND shifts.shift_date BETWEEN ? AND ?
+        WHERE employees.role != 'admin'
+        ORDER BY employees.full_name COLLATE NOCASE, employees.id,
+                 shifts.shift_date, shifts.start_time, shifts.id
+        """,
+        (start_date, end_date),
+    )
     rows = cursor.fetchall()
     conn.close()
     return rows

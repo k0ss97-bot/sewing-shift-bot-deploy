@@ -462,8 +462,15 @@ def sync_extended(conn, account_id: int) -> dict:
     return {"counts": counts, "errors": errors}
 
 
-def dashboard_extension(conn, account_id: int) -> dict:
-    ensure_schema(conn)
+def dashboard_extension(conn, account_id: int, *, ensure_schema_first: bool = True) -> dict:
+    """Read extended dashboard data from an already-open connection.
+
+    Normal callers retain the historical schema bootstrap.  Read-only
+    aggregators can disable it after application startup so a dashboard GET
+    never upgrades its SQLite transaction or waits behind the sync writer.
+    """
+    if ensure_schema_first:
+        ensure_schema(conn)
     finance_daily = [dict(row) for row in conn.execute(
         """SELECT accrual_date AS date,
                   ROUND(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),2) AS revenue,

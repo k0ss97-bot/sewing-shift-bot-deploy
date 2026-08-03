@@ -7,7 +7,7 @@ import os
 import base64
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, quote, urlparse
 
@@ -28,7 +28,6 @@ from database import (
     cancel_production_task,
     cancel_route_batch_and_restore_inputs,
     close_shift,
-    canonical_route_product_name,
     complete_route_batch_step_atomic,
     create_cutting_contour_batch_for_task,
     create_production_task,
@@ -87,6 +86,7 @@ from database import (
     get_period_route_batch_input_lot_rows,
     get_period_route_batch_rows,
     get_period_shift_details,
+    get_period_timesheet_rows,
     get_period_warehouse_movement_rows,
     get_product_colors,
     get_product_sizes,
@@ -162,6 +162,9 @@ from marketplaces import dashboard as marketplace_dashboard
 from marketplaces import warehouse_catalog as marketplace_warehouse_catalog
 from marketplaces import sync_for_admin as sync_marketplace_for_admin
 from marketplaces import marketplace_supplies, marketplace_supply_detail, create_internal_shipment_for_supply
+from marketplace_phase1a import phase1a_data_quality, phase1a_products_page, start_phase1a_sync
+from analytics_overview import analytics_overview as build_analytics_overview
+from analytics_overview import analytics_overview_http_status
 from web_push import WebPushDeliveryError, get_public_web_push_config, send_web_push
 
 
@@ -178,7 +181,7 @@ CONTENT_SECURITY_POLICY = (
     "font-src 'self' data:; "
     "form-action 'self'; "
     "frame-ancestors 'self'; "
-    "img-src 'self' data: blob:; "
+    "img-src 'self' data: blob: https://ir.ozone.ru https://cdn1.ozone.ru; "
     "media-src 'self' blob:; "
     "object-src 'none'; "
     "script-src 'self' 'unsafe-inline' https://telegram.org; "
@@ -187,6 +190,17 @@ CONTENT_SECURITY_POLICY = (
 )
 ROUTES_MINIAPP_ENABLED = False
 LOGGER = logging.getLogger(__name__)
+
+
+class RequestJSONError(ValueError):
+    """A client-safe request-body failure with explicit HTTP semantics."""
+
+    def __init__(self, message: str, *, status: int = 400, code: str = "invalid_request"):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+
+
 CUTTING_CONTOUR_OPERATION = "Нанесение контуров лекал на ткань"
 CUTTING_LAYOUT_OPERATION = "Формирование настила"
 CUTTING_CUT_OPERATION = "Раскрой"
@@ -279,6 +293,54 @@ def sync_marketplace_for_telegram(telegram_id: int):
     if not is_admin(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Синхронизацию маркетплейсов может запускать только администратор."}
     return sync_marketplace_for_admin()
+
+
+def get_marketplace_data_quality_for_admin(telegram_id: int):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    return phase1a_data_quality()
+
+
+def get_marketplace_products_page_for_admin(telegram_id: int, payload: dict | None = None):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    return phase1a_products_page(payload)
+
+
+def start_marketplace_phase1a_for_admin(telegram_id: int, payload: dict | None = None):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Синхронизацию может запускать только администратор."}
+    payload = payload or {}
+    datasets = payload.get("datasets")
+    if datasets is not None and not isinstance(datasets, list):
+        return {"ok": False, "code": "invalid_dataset", "message": "datasets должен быть массивом."}
+    return start_phase1a_sync(datasets=datasets)
+
+
+def marketplace_phase1a_http_status(result: dict) -> int:
+    """Map the Phase 1A API envelope to meaningful HTTP semantics."""
+    if result.get("ok"):
+        return 202 if result.get("accepted") is True else 200
+    return {
+        "forbidden": 403,
+        "invalid_dataset": 400,
+        "invalid_pagination": 400,
+        "phase1a_disabled": 409,
+        "already_running": 409,
+        "not_configured": 503,
+        "postgres_unavailable": 503,
+    }.get(str(result.get("code") or ""), 400)
+
+
+def get_analytics_overview_for_admin(telegram_id: int, payload: dict | None = None):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    return build_analytics_overview(
+        payload,
+        dashboard_reader=lambda: marketplace_dashboard(read_only=True),
+        data_quality_reader=phase1a_data_quality,
+        production_reader=get_production_control_payload,
+    )
 
 
 def get_marketplace_supplies_for_admin(telegram_id: int, payload: dict | None = None):
@@ -991,12 +1053,11 @@ def stock_sizes_overlap(first_value: str, second_value: str):
 
 
 def route_map_to_dict(product_name: str):
-    options_product_name = canonical_route_product_name(product_name)
     return {
         "product_name": product_name,
-        "sizes": get_product_sizes(options_product_name),
-        "colors": [format_color_label(color) for color in get_product_colors(options_product_name)],
-        "raw_colors": get_product_colors(options_product_name),
+        "sizes": get_product_sizes(product_name),
+        "colors": [format_color_label(color) for color in get_product_colors(product_name)],
+        "raw_colors": get_product_colors(product_name),
         "steps": [
             {
                 "number": index,
@@ -1888,12 +1949,11 @@ def production_catalog_to_dict():
     catalog = []
 
     for product_name in PRODUCT_ROUTE_MAPS:
-        options_product_name = canonical_route_product_name(product_name)
-        colors = get_product_colors(options_product_name)
+        colors = get_product_colors(product_name)
         catalog.append(
             {
                 "product_name": product_name,
-                "sizes": get_product_sizes(options_product_name),
+                "sizes": get_product_sizes(product_name),
                 "colors": colors,
                 "color_labels": [format_color_label(color) for color in colors],
             }
@@ -3893,6 +3953,164 @@ def create_period_excel_bytes(start_date: str, end_date: str):
     return workbook_to_bytes(workbook)
 
 
+def build_period_timesheet(start_date: str, end_date: str):
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    if end < start:
+        raise ValueError("Дата окончания не может быть раньше даты начала.")
+    if (end - start).days > 366:
+        raise ValueError("Табель можно выгрузить максимум за 367 дней.")
+
+    dates = []
+    current = start
+    while current <= end:
+        dates.append(current)
+        current += timedelta(days=1)
+
+    employees = {}
+    shifts = []
+    for row in get_period_timesheet_rows(start_date, end_date):
+        employee_id, full_name, position, employee_status = row[:4]
+        employee = employees.setdefault(
+            int(employee_id),
+            {
+                "employee_id": int(employee_id),
+                "full_name": full_name or "Сотрудник",
+                "position": position or "-",
+                "status": employee_status or "inactive",
+                "days": {},
+                "shift_count": 0,
+                "worked_days": 0,
+                "total_minutes": 0,
+            },
+        )
+        shift_id, shift_date, start_time, end_time, total_minutes, shift_status = row[4:]
+        if shift_id is None:
+            continue
+        minutes = int(total_minutes or 0)
+        day = employee["days"].setdefault(
+            shift_date,
+            {"minutes": 0, "shift_count": 0, "open": False},
+        )
+        day["minutes"] += minutes
+        day["shift_count"] += 1
+        day["open"] = day["open"] or shift_status == "open"
+        employee["shift_count"] += 1
+        employee["total_minutes"] += minutes
+        shifts.append(
+            {
+                "shift_id": int(shift_id),
+                "employee_id": int(employee_id),
+                "employee": employee["full_name"],
+                "position": employee["position"],
+                "date": shift_date,
+                "start_time": start_time or "",
+                "end_time": end_time or "",
+                "total_minutes": minutes,
+                "total_time": minutes_to_excel_time(minutes),
+                "status": shift_status,
+            }
+        )
+
+    for employee in employees.values():
+        employee["worked_days"] = sum(
+            1 for day in employee["days"].values()
+            if day["minutes"] > 0 or day["open"]
+        )
+        employee["total_time"] = minutes_to_excel_time(employee["total_minutes"])
+
+    return {
+        "dates": [value.isoformat() for value in dates],
+        "employees": list(employees.values()),
+        "shifts": shifts,
+    }
+
+
+def create_timesheet_excel_bytes(start_date: str, end_date: str):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    timesheet = build_period_timesheet(start_date, end_date)
+    status_labels = {
+        "active": "Активен",
+        "inactive": "Неактивен",
+        "pending": "Ожидает",
+        "rejected": "Отклонён",
+    }
+    dates = [datetime.strptime(value, "%Y-%m-%d").date() for value in timesheet["dates"]]
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Табель"
+    sheet.append(
+        ["№", "Сотрудник", "Должность", "Статус"]
+        + [value.strftime("%d.%m") for value in dates]
+        + ["Отработано дней", "Смен", "Итого часов"]
+    )
+
+    for index, employee in enumerate(timesheet["employees"], start=1):
+        day_values = []
+        for value in dates:
+            day = employee["days"].get(value.isoformat())
+            if not day:
+                day_values.append("")
+            elif day["minutes"]:
+                day_values.append(round(day["minutes"] / 60, 2))
+            else:
+                day_values.append("Открыта")
+        sheet.append(
+            [
+                index,
+                employee["full_name"],
+                employee["position"],
+                status_labels.get(employee["status"], employee["status"]),
+                *day_values,
+                employee["worked_days"],
+                employee["shift_count"],
+                round(employee["total_minutes"] / 60, 2),
+            ]
+        )
+
+    total_row = sheet.max_row + 1
+    sheet.cell(total_row, 2, "Итого")
+    sheet.cell(total_row, 2).font = Font(bold=True)
+    for column in range(5, sheet.max_column + 1):
+        letter = sheet.cell(1, column).column_letter
+        sheet.cell(total_row, column, f"=SUM({letter}2:{letter}{total_row - 1})")
+        sheet.cell(total_row, column).font = Font(bold=True)
+
+    header_fill = PatternFill("solid", fgColor="F1E1D6")
+    weekend_fill = PatternFill("solid", fgColor="F4F5F7")
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center", text_rotation=90 if cell.column >= 5 and cell.column < 5 + len(dates) else 0)
+    for offset, value in enumerate(dates, start=5):
+        if value.weekday() >= 5:
+            for row_number in range(1, sheet.max_row + 1):
+                sheet.cell(row_number, offset).fill = weekend_fill
+    sheet.freeze_panes = "E2"
+    sheet.auto_filter.ref = f"A1:{sheet.cell(1, sheet.max_column).column_letter}{max(1, total_row - 1)}"
+    sheet.column_dimensions["A"].width = 6
+    sheet.column_dimensions["B"].width = 30
+    sheet.column_dimensions["C"].width = 22
+    sheet.column_dimensions["D"].width = 13
+    for column in range(5, 5 + len(dates)):
+        sheet.column_dimensions[sheet.cell(1, column).column_letter].width = 7
+    for column in range(5 + len(dates), sheet.max_column + 1):
+        sheet.column_dimensions[sheet.cell(1, column).column_letter].width = 16
+
+    details = workbook.create_sheet("Смены")
+    details.append(["ID смены", "Дата", "Сотрудник", "Должность", "Пришёл", "Ушёл", "Часы", "Статус"])
+    for shift in timesheet["shifts"]:
+        details.append([
+            shift["shift_id"], shift["date"], shift["employee"], shift["position"],
+            shift["start_time"], shift["end_time"], round(shift["total_minutes"] / 60, 2),
+            "Закрыта" if shift["status"] == "closed" else "Открыта",
+        ])
+    style_excel_sheet(details)
+    return workbook_to_bytes(workbook)
+
+
 def create_employee_excel_bytes(employee_id: int, start_date: str, end_date: str):
     from openpyxl import Workbook
 
@@ -4639,6 +4857,30 @@ def get_admin_report_payload(
             "operations": [operation_summary_to_dict(row) for row in get_period_operation_rows(today, today)],
         }
 
+    if report_type == "timesheet":
+        timesheet = build_period_timesheet(start_date, end_date)
+        return {
+            "type": "timesheet",
+            "title": f"Табель всех сотрудников: {start_date} — {end_date}",
+            "start_date": start_date,
+            "end_date": end_date,
+            "summary": [
+                {
+                    "employee_id": employee["employee_id"],
+                    "full_name": employee["full_name"],
+                    "position": employee["position"],
+                    "status": employee["status"],
+                    "shift_count": employee["shift_count"],
+                    "worked_days": employee["worked_days"],
+                    "total_minutes": employee["total_minutes"],
+                    "total_time": employee["total_time"],
+                }
+                for employee in timesheet["employees"]
+            ],
+            "shifts": timesheet["shifts"],
+            "operations": [],
+        }
+
     if report_type == "employee" and employee_id:
         summary = get_employee_period_summary(employee_id, start_date, end_date)
         return {
@@ -4706,15 +4948,16 @@ def get_admin_report_for_telegram(telegram_id: int, payload: dict):
     except (TypeError, ValueError):
         employee_id = 0
 
-    return {
-        "ok": True,
-        "report": get_admin_report_payload(
+    try:
+        report = get_admin_report_payload(
             report_type,
             start_date,
             end_date,
             employee_id or None,
-        ),
-    }
+        )
+    except ValueError as error:
+        return {"ok": False, "message": str(error)}
+    return {"ok": True, "report": report}
 
 
 def get_employee_history_for_telegram(telegram_id: int, payload: dict):
@@ -4802,6 +5045,12 @@ def export_admin_report_for_telegram(telegram_id: int, payload: dict):
         end_date = today
         content = create_period_excel_bytes(start_date, end_date)
         filename = f"report_today_{today}.xlsx"
+    elif report_type == "timesheet":
+        try:
+            content = create_timesheet_excel_bytes(start_date, end_date)
+        except ValueError as error:
+            return {"ok": False, "message": str(error)}
+        filename = f"timesheet_all_employees_{start_date}_{end_date}.xlsx"
     elif report_type == "employee":
         if employee_id <= 0:
             return {"ok": False, "message": "Выберите сотрудника для выгрузки."}
@@ -5233,35 +5482,6 @@ def make_handler(bot_token: str, debug: bool):
                 except Exception:
                     pass
 
-        def send_error(self, code, message=None, explain=None):
-            """Return a small safe error response for malformed HTTP requests.
-
-            ``BaseHTTPRequestHandler`` includes the complete request line in its
-            default 400 HTML page.  Internet scanners often send SOAP/XML
-            probes to ordinary HTTP ports; echoing that payload makes the
-            browser show a confusing page and can expose attacker-controlled
-            data.  Keep normal request handling unchanged, but make malformed
-            requests terse and close the connection so a poisoned keep-alive
-            stream cannot be reused.
-            """
-            if code not in {400, 501, 505}:
-                return super().send_error(code, message, explain)
-
-            self.close_connection = True
-            body = b"Bad Request\n"
-            try:
-                self.send_response(400, "Bad Request")
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                self.send_security_headers()
-                self.end_headers()
-                self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                # A scanner commonly closes the socket immediately after the
-                # malformed probe.  There is nothing useful left to send.
-                pass
-
         def _send_error_500(self):
             body = json.dumps(
                 {"ok": False, "message": "Внутренняя ошибка сервера."},
@@ -5584,6 +5804,10 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/production/submit-cutting-stage",
                 "/api/marketplaces/dashboard",
                 "/api/marketplaces/sync",
+                "/api/marketplaces/data-quality",
+                "/api/marketplaces/products/page",
+                "/api/marketplaces/phase1a/sync",
+                "/api/analytics/overview",
                 "/api/marketplaces/supplies",
                 "/api/marketplaces/supply/detail",
                 "/api/marketplaces/supply/create-shipment",
@@ -5625,9 +5849,19 @@ def make_handler(bot_token: str, debug: bool):
                 self.send_json({"ok": False, "message": "Ожидается JSON-запрос."}, status=415)
                 return
 
-            payload = self.read_json_body()
-            if payload.pop("_request_too_large", False):
-                self.send_json({"ok": False, "message": "Запрос или файл слишком большой."}, status=413)
+            try:
+                payload = self.read_json_body()
+            except RequestJSONError as error:
+                self.send_json(
+                    {"ok": False, "code": error.code, "message": str(error)},
+                    status=error.status,
+                )
+                return
+            if not isinstance(payload, dict):
+                self.send_json(
+                    {"ok": False, "code": "invalid_request", "message": "Ожидается JSON-объект."},
+                    status=400,
+                )
                 return
 
             uses_web_cookie = bool(self.web_session_token())
@@ -5845,7 +6079,7 @@ def make_handler(bot_token: str, debug: bool):
                         status=403,
                     )
                     return
-                if path in {"/api/wms/receive", "/api/wms/barcode/register", "/api/wms/locations/create"} and not is_admin(telegram_id):
+                if path in {"/api/wms/receive", "/api/wms/barcode/register", "/api/wms/locations/create", "/api/wms/shipment/create"} and not is_admin(telegram_id):
                     self.send_json(
                         {"ok": False, "code": "forbidden", "message": "Эту складскую операцию может выполнять только администратор."},
                         status=403,
@@ -5922,6 +6156,22 @@ def make_handler(bot_token: str, debug: bool):
                 result = get_marketplace_dashboard_for_admin(telegram_id)
             elif path == "/api/marketplaces/sync":
                 result = sync_marketplace_for_telegram(telegram_id)
+            elif path == "/api/marketplaces/data-quality":
+                result = get_marketplace_data_quality_for_admin(telegram_id)
+                self.send_json(result, status=marketplace_phase1a_http_status(result))
+                return
+            elif path == "/api/marketplaces/products/page":
+                result = get_marketplace_products_page_for_admin(telegram_id, payload)
+                self.send_json(result, status=marketplace_phase1a_http_status(result))
+                return
+            elif path == "/api/marketplaces/phase1a/sync":
+                result = start_marketplace_phase1a_for_admin(telegram_id, payload)
+                self.send_json(result, status=marketplace_phase1a_http_status(result))
+                return
+            elif path == "/api/analytics/overview":
+                result = get_analytics_overview_for_admin(telegram_id, payload)
+                self.send_json(result, status=analytics_overview_http_status(result))
+                return
             elif path == "/api/marketplaces/supplies":
                 result = get_marketplace_supplies_for_admin(telegram_id, payload)
             elif path == "/api/marketplaces/supply/detail":
@@ -6014,21 +6264,40 @@ def make_handler(bot_token: str, debug: bool):
             self.send_json(result)
 
         def read_json_body(self):
-            try:
-                content_length = int(self.headers.get("Content-Length", "0") or "0")
-            except ValueError:
-                return {}
-
-            if content_length < 0 or content_length > MAX_REQUEST_BODY_BYTES:
+            transfer_encoding = self.headers.get("Transfer-Encoding", "").strip()
+            if transfer_encoding:
                 self.close_connection = True
-                return {"_request_too_large": True}
+                raise RequestJSONError("Transfer-Encoding для JSON-запросов не поддерживается.")
+
+            raw_content_length = self.headers.get("Content-Length")
+            if raw_content_length in (None, ""):
+                content_length = 0
+            elif not str(raw_content_length).strip().isdigit():
+                self.close_connection = True
+                raise RequestJSONError("Content-Length должен быть неотрицательным целым числом.")
+            else:
+                try:
+                    content_length = int(str(raw_content_length).strip())
+                except (ValueError, OverflowError) as error:
+                    self.close_connection = True
+                    raise RequestJSONError(
+                        "Content-Length должен быть неотрицательным целым числом."
+                    ) from error
+
+            if content_length > MAX_REQUEST_BODY_BYTES:
+                self.close_connection = True
+                raise RequestJSONError(
+                    "Запрос или файл слишком большой.",
+                    status=413,
+                    code="request_too_large",
+                )
 
             raw_body = self.rfile.read(content_length) if content_length else b"{}"
 
             try:
                 return json.loads(raw_body.decode("utf-8"))
-            except json.JSONDecodeError:
-                return {}
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise RequestJSONError("Тело запроса должно быть корректным JSON в UTF-8.") from error
 
         def send_security_headers(self):
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -6083,10 +6352,6 @@ def make_handler(bot_token: str, debug: bool):
             self.wfile.write(content)
 
         def log_message(self, format_string, *args):
-            # Do not persist attacker-controlled SOAP/XML request lines from
-            # malformed probes in the application log.
-            if args and isinstance(args[0], str) and args[0].lstrip().startswith("<"):
-                args = ("[malformed request]",) + args[1:]
             logging.info("Miniapp: " + format_string, *args)
 
     return MiniAppRequestHandler

@@ -4,7 +4,7 @@ MINIAPP_HTML = """<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Шагаем вместе</title>
   <style>
     :root {
@@ -1154,6 +1154,12 @@ MINIAPP_HTML = """<!doctype html>
 
     .wms-cell-filtered { opacity: .30; filter: grayscale(.45); }
 
+    .wms-product-rich { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .wms-product-rich-copy { display: grid; gap: 4px; min-width: 0; }
+    .wms-product-rich-copy b { line-height: 1.25; }
+    .wms-product-rich-copy span,
+    .wms-product-rich-copy small { color: var(--muted); line-height: 1.35; }
+
     .wms-cell-section-start {
       margin-left: 8px;
     }
@@ -1200,33 +1206,70 @@ MINIAPP_HTML = """<!doctype html>
       gap: 8px;
     }
 
+    .wms-shipment-picker {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .wms-shipment-line {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 118px auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .wms-shipment-line .field { margin: 0; }
+
+    .wms-shipment-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(25,89,243,.07);
+    }
+
     /* ТСД работает как клавиатура: код не показываем в поле и очищаем после считывания. */
     .wms-hardware-scanner-input { color: transparent; caret-color: transparent; }
     .wms-hardware-scanner-input::placeholder { color: var(--muted); opacity: 1; }
 
     @media (max-width: 600px) {
-      /* На телефоне карта не должна разъезжаться в горизонтальный скролл.
-         Две колонки дают ячейке достаточно места для полного имени. */
+      /* Physical coordinates must stay intact on mobile. The previous
+         two-column override conflicted with inline grid coordinates and
+         squeezed implicit columns until labels overlapped. */
       .wms-map-scroll {
         overflow-x: visible;
-        padding-right: 0;
+        padding: 2px 0 10px;
       }
 
       .wms-zone-map {
         min-width: 0;
         width: 100%;
+        margin-bottom: 12px;
       }
 
       .wms-map-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-        gap: 8px;
-        padding: 8px;
+        grid-template-columns: repeat(var(--wms-columns), 94px) !important;
+        grid-auto-columns: 94px;
+        width: 100%;
+        gap: 6px;
+        padding: 9px 9px 12px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-snap-type: x proximity;
+        overscroll-behavior-inline: contain;
+        scrollbar-width: thin;
+        -webkit-overflow-scrolling: touch;
       }
 
       .wms-cell {
-        min-width: 0;
+        min-width: 94px;
         min-height: 72px;
         padding: 8px 9px;
+        scroll-snap-align: start;
       }
 
       .wms-cell strong {
@@ -1245,6 +1288,13 @@ MINIAPP_HTML = """<!doctype html>
       .wms-cell-section-start {
         margin-left: 0;
       }
+
+      .wms-shipment-picker,
+      .wms-shipment-line {
+        grid-template-columns: 1fr;
+      }
+
+      .wms-shipment-line .small-button { width: 100%; }
     }
 
     .op-icon {
@@ -3832,7 +3882,21 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       body.web-mode.marketplace-workspace .bottom-nav {
-        border-color: rgba(25,89,243,.16);
+        display: none !important;
+      }
+
+      body.web-mode.marketplace-workspace .body {
+        padding-left: 52px !important;
+      }
+    }
+
+    body.web-mode.marketplace-workspace .bottom-nav {
+      display: none !important;
+    }
+
+    @media (max-width: 899px) {
+      body.web-mode.marketplace-workspace .body {
+        padding-bottom: calc(28px + env(safe-area-inset-bottom)) !important;
       }
     }
 
@@ -3894,6 +3958,914 @@ MINIAPP_HTML = """<!doctype html>
       padding: 8px 10px;
       color: var(--muted, #888);
       font-style: italic;
+    }
+
+    /* Operations center: desktop-first control room built on the existing data. */
+    .operations-center { display: grid; gap: 18px; }
+    .profile-btn svg { width: 21px; height: 21px; display: block; }
+    .operations-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+    .operations-head h2 { margin: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.045em; }
+    .operations-head p { margin: 8px 0 0; color: var(--muted); }
+    .live-indicator { display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px; border-radius: 999px; background: rgba(49,168,107,.10); color: var(--sage-dark); font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .live-indicator::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px rgba(49,168,107,.11); }
+    .operations-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    .operations-kpi { min-height: 142px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.88); box-shadow: var(--inset-shadow), 0 10px 24px rgba(16,23,34,.06); text-align: left; }
+    .operations-kpi span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+    .operations-kpi strong { display: block; margin: 16px 0 7px; color: var(--text); font-size: 31px; line-height: 1; letter-spacing: -.05em; }
+    .operations-kpi small { display: block; color: var(--muted); font-size: 13px; font-weight: 600; }
+    .operations-kpi.risk { border-color: rgba(242,162,58,.34); background: linear-gradient(135deg, rgba(255,247,232,.94), rgba(255,255,255,.92)); }
+    .operations-kpi.overdue { border-color: rgba(221,79,93,.30); background: linear-gradient(135deg, rgba(255,239,242,.94), rgba(255,255,255,.92)); }
+    .operations-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(290px, .65fr); gap: 18px; }
+    .operations-panel { padding: 19px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.84); box-shadow: var(--inset-shadow), 0 10px 24px rgba(16,23,34,.05); }
+    .operations-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 17px; }
+    .operations-panel-head b { font-size: 16px; }
+    .operations-panel-head span { color: var(--muted); font-size: 12px; }
+    .shift-progress-value { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; margin-bottom: 12px; }
+    .shift-progress-value strong { font-size: 28px; letter-spacing: -.045em; }
+    .shift-progress-value small { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .shift-team { margin-top: 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(247,249,253,.82); overflow: hidden; }
+    .shift-team summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; cursor: pointer; font-weight: 800; list-style: none; }
+    .shift-team summary::-webkit-details-marker { display: none; }
+    .shift-team summary::after { content: "⌄"; color: var(--primary); font-size: 18px; transition: transform .18s ease; }
+    .shift-team[open] summary::after { transform: rotate(180deg); }
+    .shift-team-list { display: grid; border-top: 1px solid var(--line); }
+    .shift-team-row { display: grid; grid-template-columns: minmax(170px, 1fr) minmax(130px, .65fr) minmax(150px, auto); gap: 14px; align-items: center; padding: 12px 14px; }
+    .shift-team-row + .shift-team-row { border-top: 1px solid var(--line); }
+    .shift-team-person, .shift-team-time { display: grid; gap: 3px; min-width: 0; }
+    .shift-team-person b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .shift-team-person span, .shift-team-time span { color: var(--muted); font-size: 12px; }
+    .shift-team-time b { font-size: 13px; }
+    .stage-stack { display: grid; gap: 13px; }
+    .stage-row { display: grid; grid-template-columns: minmax(128px, 1fr) minmax(92px, 2.4fr) auto; align-items: center; gap: 11px; }
+    .stage-row b { font-size: 13px; }
+    .stage-row .progress { margin: 0; }
+    .stage-row .status-chip { min-width: 76px; justify-content: center; }
+    .operations-alerts { display: grid; gap: 9px; }
+    .operations-alert { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 11px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+    .operations-alert:last-child { border-bottom: 0; padding-bottom: 0; }
+    .operations-alert i { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--warning); }
+    .operations-alert.critical i { background: var(--danger); }
+    .operations-alert b { display: block; font-size: 13px; }
+    .operations-alert span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .operations-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .operations-actions button { min-height: 44px; border: 1px solid var(--line); border-radius: 11px; background: rgba(245,248,255,.88); color: var(--text); font-size: 12px; font-weight: 800; text-align: left; padding: 10px 12px; }
+    .operations-actions button.primary { color: #fff; border-color: var(--accent); background: var(--accent); box-shadow: var(--blue-shadow); }
+    .key-orders { display: grid; gap: 9px; }
+    .key-order { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(250,251,253,.94); cursor: pointer; }
+    .key-order b { display: block; font-size: 13px; }
+    .key-order span { color: var(--muted); font-size: 12px; }
+    .orders-board { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 8px; }
+    .orders-column { min-width: 220px; min-height: 290px; padding: 12px; border: 1px solid var(--line); border-radius: 15px; background: rgba(236,240,247,.62); }
+    .orders-column-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 11px; font-size: 13px; font-weight: 800; }
+    .orders-column-head span { display: grid; place-items: center; min-width: 24px; height: 24px; border-radius: 8px; background: #fff; color: var(--muted); font-size: 12px; }
+    .board-order-card { display: grid; gap: 9px; margin-bottom: 10px; padding: 13px; border: 1px solid rgba(109,124,158,.15); border-radius: 12px; background: #fff; box-shadow: 0 6px 14px rgba(16,23,34,.05); cursor: pointer; }
+    .board-order-card b { font-size: 13px; line-height: 1.3; }
+    .board-order-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+    @media (max-width: 820px) {
+      .operations-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .operations-layout { grid-template-columns: 1fr; }
+      .shift-team-row { grid-template-columns: 1fr auto; }
+      .shift-team-time { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .operations-head { display: grid; }
+    }
+    @media (max-width: 720px) {
+      .operations-actions { grid-template-columns: 1fr; }
+      .orders-board { grid-template-columns: 1fr; overflow: visible; }
+      .orders-column { min-width: 0; min-height: 0; }
+    }
+    @media (min-width: 900px) and (max-width: 1100px) {
+      body.web-mode .appbar {
+        grid-template-columns: 185px minmax(300px, 1fr) auto;
+        gap: 12px;
+      }
+      body.web-mode .appbar-profile { display: none; }
+      body.web-mode .workspace-nav button { font-size: 10px; }
+    }
+    /* Marketplace dashboard v2: one adaptive component for all providers. */
+    body.marketplace-workspace {
+      --marketplace-primary: #2563eb;
+      --marketplace-soft: #eef4ff;
+      --ozon-color: #005bff;
+      --wildberries-color: #a100ff;
+    }
+
+    .marketplace-layout {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 18px;
+      width: min(100%, 1600px);
+      margin: 0 auto;
+    }
+
+    .marketplace-main { min-width: 0; }
+
+    .marketplace-layout .marketplace-menu-strip {
+      position: sticky;
+      top: 92px;
+      align-self: start;
+      display: flex;
+      flex-direction: column;
+      flex-wrap: nowrap;
+      gap: 5px;
+      margin: 0;
+      padding: 12px;
+      max-height: calc(100dvh - 116px);
+      overflow-y: auto;
+      border-radius: 18px;
+    }
+
+    .marketplace-layout .marketplace-menu-link {
+      min-height: 44px;
+      padding: 11px 13px;
+      text-align: left;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .marketplace-layout .marketplace-menu-link.active {
+      color: #1746b6;
+      background: var(--marketplace-soft);
+      box-shadow: inset 3px 0 0 var(--marketplace-primary);
+    }
+
+    .marketplace-v2-head { margin-bottom: 14px; }
+    .marketplace-v2-head h2 { font-size: clamp(28px, 3vw, 34px); }
+
+    .marketplace-brand-mark {
+      min-width: 92px;
+      padding: 10px 14px;
+      border: 1px solid rgba(37,99,235,.18);
+      border-radius: 13px;
+      color: #1b4db5;
+      background: #eef4ff;
+      font-size: 14px;
+      font-weight: 900;
+      text-align: center;
+      letter-spacing: .04em;
+    }
+
+    .marketplace-brand-mark.ozon { color: #005bff; background: #eaf1ff; }
+    .marketplace-brand-mark.wb { color: #8d0aa5; background: #f7eaff; }
+
+    .marketplace-filter-bar {
+      display: grid;
+      grid-template-columns: minmax(220px, 300px) 1fr auto;
+      align-items: end;
+      gap: 12px;
+      margin: 14px 0;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: rgba(255,255,255,.86);
+      box-shadow: var(--inset-shadow);
+    }
+
+    .marketplace-filter-bar label { display: grid; gap: 6px; }
+    .marketplace-filter-bar label > span { color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+    .marketplace-filter-bar select { min-height: 44px; border: 1px solid var(--line); border-radius: 11px; padding: 8px 36px 8px 11px; background: #fff; }
+    .marketplace-period-label { align-self: center; color: var(--muted); font-size: 13px; font-weight: 700; }
+
+    .marketplace-filter-panel { margin-bottom: 14px; padding: 16px; }
+    .marketplace-check { display: flex; align-items: center; gap: 9px; min-height: 44px; color: var(--text); font-size: 13px; font-weight: 700; }
+    .marketplace-check input { width: 18px; height: 18px; }
+
+    .marketplace-v2-kpis {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .marketplace-v2-kpi {
+      min-height: 118px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,.92);
+      color: var(--text);
+      text-align: left;
+      box-shadow: var(--inset-shadow), 0 8px 22px rgba(16,23,34,.05);
+    }
+
+    .marketplace-v2-kpi > span { display: block; min-height: 30px; color: var(--muted); font-size: 12px; font-weight: 750; }
+    .marketplace-v2-kpi strong { display: block; margin: 7px 0 8px; font-size: clamp(23px, 2vw, 30px); line-height: 1; letter-spacing: -.04em; }
+    .marketplace-v2-kpi strong small { font-size: 12px; letter-spacing: 0; }
+    .marketplace-v2-kpi > small { display: block; color: #237e52; font-size: 11px; line-height: 1.3; }
+    .marketplace-v2-kpi.unavailable { cursor: default; background: rgba(248,250,252,.9); }
+    .marketplace-v2-kpi.unavailable strong, .marketplace-v2-kpi.unavailable > small { color: var(--muted); }
+
+    .marketplace-v2-analytics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 14px 0;
+    }
+
+    .marketplace-analytic-card { min-height: 286px; padding: 16px; }
+    .marketplace-chart-empty, .marketplace-empty-metric { min-height: 210px; display: grid; align-content: center; justify-items: center; gap: 7px; padding: 20px; border-radius: 13px; background: linear-gradient(180deg,#f7f9fd,#fff); color: var(--muted); text-align: center; }
+    .marketplace-chart-empty b, .marketplace-empty-metric b { color: var(--text); font-size: 14px; }
+    .marketplace-chart-empty span, .marketplace-empty-metric span { max-width: 260px; font-size: 12px; line-height: 1.45; }
+    .marketplace-empty-metric { min-height: 210px; }
+
+    .marketplace-order-bars { height: 210px; display: flex; align-items: flex-end; gap: 7px; padding: 16px 4px 4px; }
+    .marketplace-order-bars i { flex: 1; min-width: 7px; height: var(--bar-height); border-radius: 6px 6px 2px 2px; background: linear-gradient(180deg,var(--marketplace-primary),#1647ca); }
+
+    .marketplace-product-detail, .marketplace-sales-detail { margin-top: 14px; }
+    .marketplace-table-scroll { max-width: 100%; overflow-x: auto; }
+    .marketplace-table { font-size: 13px; }
+    .marketplace-source { display: inline-flex; align-items: center; min-height: 25px; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+    .marketplace-source.ozon { color: #005bff; background: #eaf1ff; }
+    .marketplace-source.wb { color: #8d0aa5; background: #f7eaff; }
+
+    .marketplace-placeholder { min-height: 330px; display: grid; align-content: center; justify-items: center; gap: 10px; text-align: center; }
+    .marketplace-placeholder-icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 16px; color: var(--marketplace-primary); background: var(--marketplace-soft); font-size: 26px; }
+    .marketplace-placeholder h3, .marketplace-placeholder p { margin: 0; }
+    .marketplace-placeholder p { max-width: 540px; color: var(--muted); line-height: 1.5; }
+
+    @media (max-width: 1280px) {
+      .marketplace-layout { grid-template-columns: 190px minmax(0, 1fr); }
+      .marketplace-v2-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .marketplace-v2-analytics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 899px) {
+      body.web-mode main button { min-height: 44px; }
+      .marketplace-layout { display: block; width: 100%; }
+      .marketplace-layout .marketplace-menu-strip { position: sticky; top: 0; z-index: 18; flex-direction: row; overflow-x: auto; overflow-y: hidden; max-height: none; margin-bottom: 12px; padding: 5px; border-radius: 13px; scrollbar-width: none; }
+      .marketplace-layout .marketplace-menu-strip::-webkit-scrollbar { display: none; }
+      .marketplace-layout .marketplace-menu-link { flex: 0 0 auto; min-width: 104px; text-align: center; }
+      .marketplace-layout .marketplace-menu-link.active { box-shadow: inset 0 -3px 0 var(--marketplace-primary); }
+      .marketplace-provider-inline { display: block; }
+      .marketplace-provider-inline .marketplace-provider-switch { display: grid; grid-template-columns: 1fr; }
+      .marketplace-filter-bar { grid-template-columns: 1fr; align-items: stretch; }
+      .marketplace-period-label { min-height: 24px; }
+      .marketplace-v2-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .marketplace-v2-analytics { grid-template-columns: 1fr; }
+      .marketplace-analytic-card { min-height: 250px; }
+      .marketplace-v2-head { align-items: flex-start; }
+      .marketplace-brand-mark { min-width: 74px; padding: 8px 10px; }
+    }
+
+    @media (max-width: 430px) {
+      .marketplace-v2-kpis { gap: 8px; }
+      .marketplace-v2-kpi { min-height: 112px; padding: 12px; }
+      .marketplace-v2-kpi strong { font-size: 22px; }
+    }
+
+    /* Unified analytics overview. Every value in this block comes from the
+       marketplace dashboard or production-control payload; unavailable data
+       is deliberately kept separate from a confirmed zero. */
+    .analytics-hub-tabs {
+      display: flex; width: max-content; max-width: 100%; gap: 5px; overflow-x: auto;
+      margin-top: 14px; padding: 5px; border: 1px solid var(--line); border-radius: 13px;
+      background: rgba(255,255,255,.82); box-shadow: var(--inset-shadow); scrollbar-width: none;
+    }
+    .analytics-hub-tabs::-webkit-scrollbar { display: none; }
+    .analytics-hub-tabs button {
+      flex: 0 0 auto; min-height: 36px; padding: 8px 14px; border: 0; border-radius: 9px;
+      background: transparent; color: var(--muted); font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+    .analytics-hub-tabs button:hover { color: var(--text); background: rgba(37,99,235,.07); }
+    .analytics-hub-tabs button.active { color: #fff; background: var(--marketplace-primary, #2563eb); box-shadow: 0 7px 16px rgba(37,99,235,.2); }
+    .analytics-overview { display: grid; gap: 16px; margin-top: 14px; }
+    .analytics-overview-notice {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
+      padding: 13px 15px; border: 1px solid rgba(37,99,235,.15); border-radius: 14px;
+      background: rgba(239,245,255,.86); color: #24467f;
+    }
+    .analytics-overview-notice.warn { border-color: rgba(180,83,9,.2); background: #fff7e8; color: #8a4b08; }
+    .analytics-overview-notice.error { border-color: rgba(180,35,53,.2); background: #fff0f2; color: #9c2536; }
+    .analytics-overview-notice div { display: grid; gap: 3px; }
+    .analytics-overview-notice b { color: inherit; font-size: 13px; }
+    .analytics-overview-notice span { font-size: 12px; line-height: 1.45; }
+    .analytics-overview-notice button { flex: 0 0 auto; }
+    .analytics-period-bar {
+      display: grid; grid-template-columns: minmax(210px, 290px) minmax(320px, 1fr) auto;
+      align-items: end; gap: 12px; padding: 14px; border: 1px solid var(--line);
+      border-radius: 15px; background: rgba(255,255,255,.88); box-shadow: var(--inset-shadow);
+    }
+    .analytics-period-bar label { display: grid; gap: 6px; min-width: 0; }
+    .analytics-period-bar label > span {
+      color: var(--muted); font-size: 10px; font-weight: 850; letter-spacing: .05em; text-transform: uppercase;
+    }
+    .analytics-period-bar select, .analytics-period-bar input { width: 100%; min-height: 42px; }
+    .analytics-period-dates { display: grid; grid-template-columns: repeat(2, minmax(145px, 1fr)); gap: 10px; }
+    .analytics-period-current { align-self: center; color: var(--muted); font-size: 12px; font-weight: 750; white-space: nowrap; }
+    .analytics-overview-kpis {
+      display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px;
+    }
+    .analytics-overview-kpi {
+      min-width: 0; min-height: 132px; padding: 15px; border: 1px solid var(--line);
+      border-radius: 15px; background: rgba(255,255,255,.94); box-shadow: var(--inset-shadow),0 8px 22px rgba(16,23,34,.045);
+    }
+    .analytics-overview-kpi.partial { border-color: rgba(180,83,9,.22); background: linear-gradient(145deg,#fff,#fff9ee); }
+    .analytics-overview-kpi.unavailable { background: rgba(248,250,252,.9); }
+    .analytics-overview-kpi.danger { border-color: rgba(180,35,53,.2); background: linear-gradient(145deg,#fff,#fff2f4); }
+    .analytics-overview-kpi > span { display: block; min-height: 29px; color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.3; }
+    .analytics-overview-kpi strong { display: block; overflow: hidden; margin: 8px 0; font-size: clamp(20px,2vw,29px); line-height: 1.05; letter-spacing: -.045em; text-overflow: ellipsis; white-space: nowrap; }
+    .analytics-overview-kpi strong small { margin-left: 3px; font-size: 11px; letter-spacing: 0; }
+    .analytics-overview-kpi > small { display: block; color: var(--muted); font-size: 10px; line-height: 1.35; }
+    .analytics-overview-grid { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(320px,.75fr); gap: 14px; }
+    .analytics-overview-section { min-width: 0; padding: 17px !important; }
+    .analytics-overview-section .section-title { margin-top: 0; }
+    .analytics-combined-chart { min-height: 290px; margin-top: 10px; }
+    .analytics-combined-chart svg { display: block; width: 100%; height: 270px; overflow: visible; }
+    .analytics-chart-legend { display: flex; flex-wrap: wrap; gap: 9px 16px; margin-top: 9px; color: var(--muted); font-size: 11px; }
+    .analytics-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .analytics-chart-legend i { width: 18px; height: 3px; border-radius: 99px; background: var(--legend-color); }
+    .analytics-chart-source { margin-top: 8px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .analytics-provider-list { display: grid; gap: 10px; }
+    .analytics-provider-card { padding: 13px; border: 1px solid var(--line); border-radius: 13px; background: rgba(248,250,254,.82); }
+    .analytics-provider-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .analytics-provider-head b { font-size: 14px; }
+    .analytics-provider-metrics { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-top: 11px; }
+    .analytics-provider-metric { min-width: 0; padding: 9px; border-radius: 10px; background: #fff; }
+    .analytics-provider-metric span, .analytics-provider-metric small { display: block; color: var(--muted); font-size: 9px; line-height: 1.35; }
+    .analytics-provider-metric b { display: block; overflow: hidden; margin: 4px 0 2px; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+    .analytics-three-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+    .analytics-risk-list, .analytics-matrix-list, .analytics-supply-list, .analytics-quality-list { display: grid; gap: 8px; }
+    .analytics-risk-row, .analytics-matrix-row, .analytics-supply-row, .analytics-quality-row {
+      display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px;
+      padding: 10px 0; border-bottom: 1px solid rgba(84,101,134,.11);
+    }
+    .analytics-risk-row:last-child, .analytics-matrix-row:last-child, .analytics-supply-row:last-child, .analytics-quality-row:last-child { border-bottom: 0; }
+    .analytics-risk-copy, .analytics-matrix-copy, .analytics-supply-copy, .analytics-quality-copy { display: grid; gap: 3px; min-width: 0; }
+    .analytics-risk-copy b, .analytics-matrix-copy b, .analytics-supply-copy b, .analytics-quality-copy b { overflow: hidden; font-size: 12px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+    .analytics-risk-copy span, .analytics-matrix-copy span, .analytics-supply-copy span, .analytics-quality-copy span { color: var(--muted); font-size: 10px; line-height: 1.4; }
+    .analytics-matrix-values { display: grid; grid-template-columns: repeat(2,minmax(66px,auto)); gap: 6px; text-align: right; }
+    .analytics-matrix-values span { padding: 5px 7px; border-radius: 8px; background: rgba(238,243,252,.9); color: var(--text); font-size: 10px; font-weight: 800; white-space: nowrap; }
+    .analytics-loading-card { position: relative; overflow: hidden; min-height: 132px; background: #f5f7fb; }
+    .analytics-loading-card::after {
+      content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+      background: linear-gradient(90deg,transparent,rgba(255,255,255,.8),transparent);
+      animation: analytics-shimmer 1.15s infinite;
+    }
+    @keyframes analytics-shimmer { to { transform: translateX(100%); } }
+
+    @media (max-width: 1380px) {
+      .analytics-overview-kpis { grid-template-columns: repeat(4,minmax(0,1fr)); }
+      .analytics-three-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .analytics-three-grid > :last-child { grid-column: 1 / -1; }
+    }
+    @media (max-width: 960px) {
+      .analytics-period-bar, .analytics-overview-grid { grid-template-columns: 1fr; }
+      .analytics-period-current { white-space: normal; }
+      .analytics-overview-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .analytics-three-grid { grid-template-columns: 1fr; }
+      .analytics-three-grid > :last-child { grid-column: auto; }
+    }
+    @media (max-width: 540px) {
+      .analytics-hub-tabs { width: 100%; }
+      .analytics-hub-tabs button { flex: 1 0 auto; min-height: 42px; }
+      .analytics-overview { gap: 12px; }
+      .analytics-overview-notice { display: grid; }
+      .analytics-overview-notice button { width: 100%; }
+      .analytics-period-dates { grid-template-columns: 1fr; }
+      .analytics-overview-kpis { gap: 8px; }
+      .analytics-overview-kpi { min-height: 122px; padding: 12px; }
+      .analytics-overview-kpi strong { font-size: 21px; }
+      .analytics-overview-section { padding: 14px !important; }
+      .analytics-provider-metrics { grid-template-columns: 1fr; }
+      .analytics-matrix-row { grid-template-columns: 1fr; }
+      .analytics-matrix-values { justify-content: start; text-align: left; }
+    }
+
+    /* Canonical responsive layer. Keep this block last so legacy rules cannot
+       silently override the desktop and mobile application shells. */
+    :where(button, [role="button"], .tab, .nav-item, .workspace-tab) {
+      touch-action: manipulation;
+    }
+
+    :where(.tab, .nav-item, .workspace-tab, .bottom-nav button) {
+      min-height: 44px;
+    }
+
+    :where(button, input, select, textarea):focus-visible {
+      outline: 3px solid rgba(25, 89, 243, .28);
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 899px) {
+      body.web-mode .app-shell,
+      body.web-mode .screen,
+      body.web-mode .screen-content {
+        min-width: 0;
+        max-width: 100%;
+      }
+
+      body.web-mode .screen {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+
+      body.web-mode .page-heading h1,
+      body.web-mode .screen-title {
+        font-size: clamp(26px, 8vw, 34px);
+        line-height: 1.05;
+      }
+
+      body.web-mode .tabs,
+      body.web-mode .segmented,
+      body.web-mode .workspace-tabs {
+        gap: 4px;
+        padding: 4px;
+      }
+
+      body.web-mode .tab,
+      body.web-mode .segmented button,
+      body.web-mode .workspace-tab {
+        min-height: 44px;
+        padding: 9px 10px;
+        font-size: 12px;
+        line-height: 1.15;
+      }
+
+      body.web-mode .operations-kpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 9px;
+      }
+
+      body.web-mode .operations-kpi {
+        min-height: 116px;
+        padding: 14px;
+        border-radius: 14px;
+      }
+
+      body.web-mode .operations-kpi span {
+        font-size: 10px;
+        letter-spacing: .045em;
+      }
+
+      body.web-mode .operations-kpi strong {
+        margin: 11px 0 6px;
+        font-size: 27px;
+      }
+
+      body.web-mode .operations-kpi small {
+        font-size: 11px;
+        line-height: 1.3;
+      }
+
+      body.web-mode .operations-actions {
+        grid-template-columns: 1fr;
+      }
+
+      body.web-mode .operations-actions button {
+        min-height: 48px;
+        font-size: 13px;
+      }
+
+      body.web-mode .orders-board {
+        display: grid;
+        grid-template-columns: none;
+        grid-auto-flow: column;
+        grid-auto-columns: min(86vw, 390px);
+        gap: 12px;
+        width: calc(100% + 14px);
+        margin-right: -14px;
+        padding: 2px 14px 14px 1px;
+        overflow-x: auto;
+        overflow-y: visible;
+        scroll-snap-type: x mandatory;
+        scroll-padding-left: 1px;
+        overscroll-behavior-inline: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      body.web-mode .orders-board > * {
+        min-width: 0;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+      }
+
+      body.web-mode .form-grid,
+      body.web-mode .details-grid,
+      body.web-mode .admin-grid,
+      body.web-mode .analytics-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      body.web-mode .card,
+      body.web-mode .panel,
+      body.web-mode .form-card {
+        max-width: 100%;
+        border-radius: 16px;
+      }
+
+      body.web-mode .table-wrap,
+      body.web-mode .data-table-wrap {
+        max-width: 100%;
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+    }
+
+    @media (max-width: 430px) {
+      body.web-mode .operations-kpi {
+        min-height: 108px;
+        padding: 12px;
+      }
+
+      body.web-mode .operations-kpi strong {
+        font-size: 24px;
+      }
+
+      body.web-mode .orders-board {
+        grid-auto-columns: calc(100vw - 42px);
+      }
+    }
+
+    /* Shared loading and connection states. */
+    #connectionView[hidden] { display: none !important; }
+    #connectionView:not([hidden]) {
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    #connectionView:not([hidden]) .connection-card,
+    #connectionView:not([hidden]) [role="status"] {
+      width: min(100%, 460px);
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255,255,255,.92);
+      box-shadow: var(--shadow-soft), var(--inset-shadow);
+    }
+
+    #connectionView:not([hidden]) [role="status"]::before {
+      content: "";
+      display: block;
+      width: 42px;
+      height: 4px;
+      margin-bottom: 16px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), #8eb2ff, var(--accent));
+      background-size: 200% 100%;
+      animation: connection-progress 1.2s linear infinite;
+    }
+
+    @keyframes connection-progress {
+      to { background-position: -200% 0; }
+    }
+
+    /* Consistent semantic statuses across production, warehouse and reports. */
+    :where(.status, .status-pill, .badge)[data-status="free"],
+    :where(.status, .status-pill, .badge).free {
+      color: #1746b6;
+      border-color: rgba(25,89,243,.24);
+      background: #edf3ff;
+    }
+
+    :where(.status, .status-pill, .badge)[data-status="active"],
+    :where(.status, .status-pill, .badge).active,
+    :where(.status, .status-pill, .badge).in-progress {
+      color: #8c5300;
+      border-color: rgba(242,162,58,.32);
+      background: #fff5e6;
+    }
+
+    :where(.status, .status-pill, .badge)[data-status="done"],
+    :where(.status, .status-pill, .badge).done,
+    :where(.status, .status-pill, .badge).completed {
+      color: #176b43;
+      border-color: rgba(49,168,107,.28);
+      background: #eaf8f1;
+    }
+
+    :where(.status, .status-pill, .badge)[data-status="blocked"],
+    :where(.status, .status-pill, .badge).blocked,
+    :where(.status, .status-pill, .badge).overdue {
+      color: #a92d3a;
+      border-color: rgba(221,79,93,.30);
+      background: #fff0f2;
+    }
+
+    @media (max-width: 899px) {
+      body.web-mode .web-appbar {
+        min-height: 58px;
+        gap: 8px;
+        padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+      }
+
+      body.web-mode .web-role-block {
+        display: none !important;
+      }
+
+      body.web-mode .workspace-tabs {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        width: 100%;
+        overflow-x: auto;
+        scroll-snap-type: x proximity;
+        scrollbar-width: none;
+        background: rgba(247,249,253,.94);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+      }
+
+      body.web-mode .workspace-tabs::-webkit-scrollbar { display: none; }
+
+      body.web-mode .workspace-tab {
+        flex: 0 0 auto;
+        min-width: 148px;
+        scroll-snap-align: start;
+      }
+
+      body.web-mode .bottom-nav {
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+        background: rgba(255,255,255,.95);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+      }
+
+      body.web-mode :where(.form-actions, .create-actions, .wizard-actions, .action-row):has(.primary) {
+        position: sticky;
+        bottom: calc(68px + env(safe-area-inset-bottom));
+        z-index: 12;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255,255,255,.94);
+        box-shadow: 0 10px 30px rgba(16,23,34,.14);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+
+      body.web-mode :where(.warehouse-map, .storage-map, .location-grid) {
+        max-width: 100%;
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        scroll-snap-type: x proximity;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      body.web-mode :where(.warehouse-cell, .storage-cell, [data-location-code]) {
+        min-width: 116px;
+        min-height: 82px;
+        scroll-snap-align: start;
+      }
+
+      body.web-mode :where(.employee-card, .staff-card) {
+        padding: 14px;
+        border-radius: 15px;
+      }
+
+      body.web-mode :where(.employee-card, .staff-card) :where(button, .button) {
+        min-height: 44px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+    }
+
+    @media (min-width: 900px) and (max-width: 1100px) {
+      body.web-mode .web-role-block {
+        display: none !important;
+      }
+
+      body.web-mode .web-appbar,
+      body.web-mode .workspace-tabs {
+        min-width: 0;
+      }
+
+      body.web-mode .operations-kpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    .marketplace-product-avatar {
+      width: 48px; height: 58px; flex: 0 0 48px; position: relative;
+      display: inline-grid; place-items: center; overflow: hidden;
+      border: 1px solid rgba(25, 54, 112, .12); border-radius: 12px;
+      background: linear-gradient(145deg, #f8faff, #edf2fb); color: #718096;
+      font-size: 18px;
+    }
+    .marketplace-product-avatar img {
+      position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
+      object-fit: contain; padding: 3px; background: #fff;
+    }
+    .marketplace-product-avatar.compact { width: 34px; height: 42px; flex-basis: 34px; border-radius: 9px; }
+    .marketplace-product-avatar.large {
+      width: 92px; height: 116px; flex-basis: 92px; border-radius: 14px; background: #fff;
+    }
+    .marketplace-product-heading, .marketplace-table-product {
+      display: flex; align-items: center; gap: 11px; min-width: 0;
+    }
+    .marketplace-product-heading > div, .marketplace-table-product > span:last-child { min-width: 0; }
+    .marketplace-product-heading strong, .marketplace-table-product strong {
+      display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .marketplace-variant-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
+    }
+    .marketplace-color-sections { display: grid; gap: 20px; }
+    .marketplace-color-section { display: grid; gap: 10px; }
+    .marketplace-color-heading {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 10px 13px; border-left: 4px solid #2462ec; border-radius: 0 11px 11px 0;
+      background: linear-gradient(90deg, rgba(35, 96, 236, .10), rgba(35, 96, 236, .025));
+    }
+    .marketplace-color-heading b { font-size: 14px; }
+    .marketplace-color-heading span { color: var(--muted); font-size: 11px; font-weight: 800; }
+    .marketplace-product-card {
+      min-width: 0; min-height: 148px; padding: 15px !important;
+      display: grid !important; grid-template-columns: 92px minmax(0, 1fr) auto;
+      align-items: center !important; gap: 15px !important; text-align: left;
+    }
+    .marketplace-product-card-body {
+      display: grid; align-content: center; gap: 8px; min-width: 0;
+    }
+    .marketplace-product-card .product-title { display: block; min-width: 0; }
+    .marketplace-product-card .product-title b {
+      display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical; font-size: 16px; line-height: 1.22;
+    }
+    .marketplace-product-primary-meta,
+    .marketplace-product-commercial {
+      display: flex; flex-wrap: wrap; gap: 7px 14px; color: var(--ink);
+      font-size: 13px; font-weight: 750;
+    }
+    .marketplace-product-primary-meta span,
+    .marketplace-product-commercial span {
+      display: inline-flex; align-items: center; min-height: 26px; padding: 4px 8px;
+      border-radius: 8px; background: rgba(238, 243, 252, .86);
+    }
+    .marketplace-product-secondary-meta {
+      overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.4;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .marketplace-card-arrow { align-self: start; margin-top: 2px; }
+    .marketplace-stock-section { display: grid; gap: 14px; }
+    .marketplace-stock-filters {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 12px;
+      padding: 15px; border: 1px solid rgba(35, 75, 160, .12); border-radius: 15px;
+      background: rgba(255, 255, 255, .78);
+    }
+    .marketplace-stock-filters label { display: grid; gap: 6px; min-width: 0; }
+    .marketplace-stock-filters label > span {
+      color: var(--muted); font-size: 11px; font-weight: 850; text-transform: uppercase; letter-spacing: .04em;
+    }
+    .marketplace-stock-filters select { width: 100%; }
+    .marketplace-chart-panel {
+      padding: 20px !important; display: grid; gap: 18px; min-height: 430px;
+    }
+    .marketplace-chart-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;
+    }
+    .marketplace-chart-summary { display: grid; gap: 6px; }
+    .marketplace-chart-summary > span {
+      color: var(--muted); font-size: 11px; font-weight: 850; text-transform: uppercase; letter-spacing: .06em;
+    }
+    .marketplace-chart-summary strong { font-size: clamp(26px, 3vw, 40px); line-height: 1; }
+    .marketplace-chart-summary small { color: var(--muted); font-size: 12px; }
+    .marketplace-chart-switch {
+      display: inline-grid; grid-template-columns: repeat(2, minmax(130px, 1fr)); gap: 4px;
+      padding: 4px; border: 1px solid var(--line); border-radius: 13px; background: rgba(238, 242, 249, .9);
+    }
+    .marketplace-chart-switch button {
+      min-height: 38px; padding: 8px 13px; border: 0; border-radius: 9px;
+      background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 850; cursor: pointer;
+    }
+    .marketplace-chart-switch button.active {
+      color: #fff; background: linear-gradient(135deg, #2765f4, #1144c8); box-shadow: 0 8px 18px rgba(25, 77, 207, .22);
+    }
+    .marketplace-chart-canvas {
+      min-height: 300px; padding: 12px 8px 0; border-radius: 15px;
+      background: linear-gradient(180deg, rgba(243, 247, 255, .78), rgba(255, 255, 255, .32));
+    }
+    .marketplace-chart-canvas .marketplace-line-chart { min-height: 280px; }
+    .marketplace-chart-canvas .marketplace-line-chart svg { width: 100%; height: 280px; overflow: visible; }
+    .marketplace-chart-note { color: var(--muted); font-size: 12px; }
+    .marketplace-line-chart { position: relative; }
+    .chart-point-hit { fill: transparent; stroke: transparent; pointer-events: all; cursor: crosshair; }
+    .marketplace-point-tooltip {
+      position: absolute; z-index: 5; min-width: 152px; padding: 9px 11px;
+      border-radius: 10px; background: #111827; color: #fff;
+      box-shadow: 0 10px 26px rgba(15, 23, 42, .28); pointer-events: none;
+      transform: translate(-50%, calc(-100% - 14px)); text-align: center;
+    }
+    .marketplace-point-tooltip[hidden] { display: none !important; }
+    .marketplace-point-tooltip b { display: block; font-size: 13px; white-space: nowrap; }
+    .marketplace-point-tooltip span { display: block; margin-top: 3px; color: #cbd5e1; font-size: 11px; }
+    .marketplace-date-range {
+      display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 10px; min-width: min(100%, 330px);
+    }
+    .marketplace-date-range label { display: grid; gap: 5px; }
+    .marketplace-date-range label > span {
+      color: var(--muted); font-size: 10px; font-weight: 850; text-transform: uppercase; letter-spacing: .05em;
+    }
+    .marketplace-date-range input { width: 100%; min-height: 42px; }
+    .marketplace-stock-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+    }
+    .marketplace-stock-card {
+      min-width: 0; padding: 14px !important; display: grid !important;
+      grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center !important; gap: 12px !important;
+    }
+    .marketplace-stock-card[hidden] { display: none !important; }
+    .marketplace-stock-card-body { display: grid; gap: 7px; min-width: 0; text-align: left; }
+    .marketplace-stock-card-body b {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px;
+    }
+    .marketplace-stock-card-body > small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .marketplace-stock-breakdown { display: flex; flex-wrap: wrap; gap: 6px; }
+    .marketplace-stock-breakdown span {
+      padding: 4px 7px; border-radius: 7px; background: rgba(237, 242, 250, .9);
+      color: var(--muted); font-size: 11px; font-weight: 750;
+    }
+    .marketplace-stock-result { display: grid; justify-items: end; gap: 7px; }
+    .marketplace-stock-level.enough { color: #176b44; background: #e1f4e9; }
+    .marketplace-stock-level.low { color: #9a5a00; background: #fff0d6; }
+    .marketplace-stock-level.absent { color: #b42335; background: #ffe4e8; }
+    .marketplace-stock-empty { display: none; }
+    .marketplace-stock-empty.visible { display: block; }
+    .marketplace-menu-strip {
+      padding: 14px !important; gap: 5px !important; align-content: start;
+      border: 1px solid rgba(25, 54, 112, .10); border-radius: 18px;
+      background: rgba(255, 255, 255, .86); box-shadow: 0 12px 34px rgba(35, 61, 115, .08);
+    }
+    .marketplace-menu-label {
+      margin: 10px 9px 5px; color: #8a96aa; font-size: 9px; font-weight: 900;
+      letter-spacing: .12em; text-transform: uppercase;
+    }
+    .marketplace-menu-label:first-child { margin-top: 2px; }
+    .marketplace-menu-link, .marketplace-provider-menu-button {
+      width: 100%; min-height: 42px; padding: 9px 11px !important; display: flex !important;
+      align-items: center; gap: 10px; border: 0; border-radius: 11px !important;
+      background: transparent; color: #566276; font-size: 12px; font-weight: 800;
+      text-align: left; cursor: pointer;
+    }
+    .marketplace-menu-link:hover, .marketplace-provider-menu-button:hover { background: #f0f4fc; color: #1748c9; }
+    .marketplace-menu-link.active, .marketplace-provider-menu-button.active {
+      color: #fff !important; background: linear-gradient(135deg, #2364f5, #0f43c7) !important;
+      box-shadow: 0 8px 18px rgba(27, 78, 204, .22);
+    }
+    .marketplace-menu-icon {
+      width: 24px; height: 24px; flex: 0 0 24px; display: inline-grid; place-items: center;
+      border-radius: 7px; background: rgba(40, 91, 211, .09); color: #2355ca; font-size: 12px;
+    }
+    .active .marketplace-menu-icon { background: rgba(255,255,255,.18); color: #fff; }
+    .marketplace-provider-menu-button small { margin-left: auto; color: #99a3b5; font-size: 9px; }
+    .marketplace-provider-menu-button.active small { color: rgba(255,255,255,.75); }
+    .marketplace-provider-menu-button:disabled { opacity: .52; cursor: not-allowed; }
+    .marketplace-line-chart { width: 100%; min-height: 230px; display: grid; align-items: center; }
+    .marketplace-line-chart svg { width: 100%; height: 230px; overflow: visible; }
+    .marketplace-line-chart .chart-grid { stroke: #dfe6f1; stroke-width: 1; stroke-dasharray: 4 6; }
+    .marketplace-line-chart .chart-axis-label { fill: #8b97aa; font-size: 10px; }
+    .marketplace-line-chart .chart-area { fill: url(#marketplaceChartArea); opacity: .7; }
+    .marketplace-line-chart .chart-line-primary { fill: none; stroke: #1764f5; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    .marketplace-line-chart .chart-line-secondary { fill: none; stroke: #7da6ff; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .marketplace-line-chart .chart-point-primary { fill: #fff; stroke: #1764f5; stroke-width: 2.5; }
+    .marketplace-line-chart .chart-point-secondary { fill: #fff; stroke: #7da6ff; stroke-width: 2; }
+    .marketplace-chart-legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 11px; }
+    .marketplace-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .marketplace-chart-legend i { width: 16px; height: 3px; border-radius: 3px; background: #1764f5; }
+    .marketplace-chart-legend i.secondary { background: #7da6ff; }
+    @media (max-width: 700px) {
+      .marketplace-product-avatar { width: 42px; height: 52px; flex-basis: 42px; }
+      .marketplace-product-avatar.compact { width: 32px; height: 40px; flex-basis: 32px; }
+      .marketplace-variant-grid { grid-template-columns: 1fr; gap: 10px; }
+      .marketplace-product-card {
+        min-height: 130px; grid-template-columns: 76px minmax(0, 1fr) auto;
+        gap: 11px !important; padding: 12px !important;
+      }
+      .marketplace-product-avatar.large { width: 76px; height: 98px; flex-basis: 76px; }
+      .marketplace-product-card .product-title b { font-size: 14px; }
+      .marketplace-product-primary-meta, .marketplace-product-commercial { gap: 5px 8px; font-size: 12px; }
+      .marketplace-product-secondary-meta { white-space: normal; }
+      .marketplace-stock-filters { grid-template-columns: 1fr; padding: 12px; }
+      .marketplace-chart-panel { min-height: 390px; padding: 14px !important; }
+      .marketplace-chart-head { display: grid; }
+      .marketplace-chart-switch { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .marketplace-chart-canvas { min-height: 250px; padding-inline: 0; }
+      .marketplace-chart-canvas .marketplace-line-chart,
+      .marketplace-chart-canvas .marketplace-line-chart svg { min-height: 240px; height: 240px; }
+      .marketplace-date-range { width: 100%; min-width: 0; grid-template-columns: 1fr; }
+      .marketplace-stock-grid { grid-template-columns: 1fr; }
+      .marketplace-stock-card { grid-template-columns: 48px minmax(0, 1fr) auto; padding: 11px !important; gap: 9px !important; }
+      .marketplace-stock-card-body b, .marketplace-stock-card-body > small { white-space: normal; }
+      .marketplace-menu-strip {
+        display: flex !important; overflow-x: auto; padding: 8px !important; gap: 6px !important;
+        border-radius: 14px; position: static !important; scrollbar-width: none;
+      }
+      .marketplace-menu-strip::-webkit-scrollbar { display: none; }
+      .marketplace-menu-label { display: none; }
+      .marketplace-menu-link, .marketplace-provider-menu-button {
+        width: auto; min-width: max-content; min-height: 38px; padding: 7px 10px !important;
+      }
+      .marketplace-provider-menu-button small { display: none; }
+      .marketplace-menu-icon { width: 21px; height: 21px; flex-basis: 21px; }
+      .marketplace-line-chart, .marketplace-line-chart svg { min-height: 190px; height: 190px; }
     }
   </style>
   <script src="/assets/jsqr.js"></script>
@@ -3964,12 +4936,12 @@ MINIAPP_HTML = """<!doctype html>
         <button class="active" type="button" data-workspace="production" aria-current="page">Управление производством</button>
         <button type="button" data-workspace="warehouse">Управление складом</button>
         <button type="button" data-workspace="marketplaces" hidden>Управление маркетплейсами</button>
-        <button type="button" disabled title="Раздел готовится">Отчёт</button>
+        <button type="button" data-workspace="analytics">Аналитика</button>
       </nav>
       <div class="appbar-profile"><span>Должность на проекте</span><small id="roleLabel">Загрузка</small></div>
       <div class="appbar-actions">
         <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
-        <button class="icon-btn" id="menuBtn" aria-label="Меню">⋯</button>
+        <button class="icon-btn profile-btn" id="menuBtn" aria-label="Открыть профиль" title="Профиль"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.1 4.1 0 1 0 0-8.2A4.1 4.1 0 0 0 12 12Zm0 2.1c-4.4 0-8 2.3-8 5.2 0 .5.4.9.9.9h14.2c.5 0 .9-.4.9-.9 0-2.9-3.6-5.2-8-5.2Z" fill="currentColor"/></svg></button>
       </div>
     </div>
 
@@ -3977,6 +4949,7 @@ MINIAPP_HTML = """<!doctype html>
       <button class="active" type="button" data-workspace="production" aria-current="page">Производство</button>
       <button type="button" data-workspace="warehouse">Склад</button>
       <button type="button" data-workspace="marketplaces" hidden>Маркетплейсы</button>
+      <button type="button" data-workspace="analytics" hidden>Аналитика</button>
     </nav>
 
     <div class="body">
@@ -4250,6 +5223,7 @@ MINIAPP_HTML = """<!doctype html>
       "orderCategory",
       "adminTaskStatus",
       "orderMode",
+      "ordersPresentationVersion",
       "orderProductFilter",
       "orderSizeFilter",
       "orderColorFilter",
@@ -4299,6 +5273,7 @@ MINIAPP_HTML = """<!doctype html>
       "analyticsStage",
       "analyticsTaskId",
       "analyticsReturnView",
+      "analyticsHubTab",
       "employeeHomeView",
       "userStartDate",
       "userEndDate",
@@ -4321,10 +5296,18 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     const state = {
-      workspace: "production",
+      workspace: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "production",
       marketplaceView: "overview",
       marketplaceProvider: "all",
-      screen: "shift",
+      marketplacePeriod: "30d",
+      marketplaceChartMetric: "revenue",
+      marketplaceDateFrom: "",
+      marketplaceDateTo: "",
+      marketplaceFiltersOpen: false,
+      marketplaceFilters: {onlyProblems: false, inStockOnly: false, orderStatus: "all"},
+      marketplaceLocationInitialized: false,
+      analyticsHubTab: "general",
+      screen: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "shift",
       productionScreen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
@@ -4336,7 +5319,8 @@ MINIAPP_HTML = """<!doctype html>
       orderCategory: "",
       adminTaskStatus: "all",
       reportSection: "work",
-      orderMode: "list",
+      orderMode: "board",
+      ordersPresentationVersion: "2",
       orderProductFilter: "",
       orderSizeFilter: "",
       orderColorFilter: "",
@@ -4364,7 +5348,7 @@ MINIAPP_HTML = """<!doctype html>
       employeePositionFilter: "",
       employeeStatusFilter: "",
       employeeShiftFilter: "",
-      adminReportType: "period",
+      adminReportType: "timesheet",
       adminStartDate: "",
       adminEndDate: "",
       adminEmployeeId: "",
@@ -4401,18 +5385,27 @@ MINIAPP_HTML = """<!doctype html>
       wmsCatalogGroup: "",
       wmsCatalog: {loading: false, loaded: false, error: "", products: [], lastSyncAt: ""},
       wmsShipmentDetail: null,
+      wmsShipmentCreate: false,
+      wmsShipmentDraft: {destination: "", comment: "", lines: {}},
       wmsLookup: {barcode: "", productKey: null, error: ""},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
       wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
       wmsMaterialReceipt: {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""},
       marketplaceData: {loading: false, loaded: false, error: "", payload: null},
+      marketplaceQuality: {loading: false, syncing: false, polling: false, loaded: false, error: "", payload: null, products: null, page: 1, query: ""},
+      analyticsQuality: {loading: false, loaded: false, error: "", payload: null},
+      analyticsOverview: {loading: false, loaded: false, error: "", payload: null, requestKey: ""},
       marketplaceDetail: null,
       ...persistedUiState,
       data: null,
     };
 
     if (!state.taskCompletionDrafts || typeof state.taskCompletionDrafts !== "object") state.taskCompletionDrafts = {};
+    if (state.ordersPresentationVersion !== "2") {
+      state.ordersPresentationVersion = "2";
+      if (state.orderMode === "list") state.orderMode = "board";
+    }
     if (!state.cuttingStageDrafts || typeof state.cuttingStageDrafts !== "object") state.cuttingStageDrafts = {};
     if (!state.feedbackDraft || typeof state.feedbackDraft !== "object") state.feedbackDraft = {category: "Производство", message: ""};
     if (!Array.isArray(state.orderSizes)) state.orderSizes = [];
@@ -4770,6 +5763,18 @@ MINIAPP_HTML = """<!doctype html>
         "\\nПосле подтверждения задание закрепится за вами.",
       ].join("\\n");
       return window.confirm(`Взять это задание?\\n\\n${details}`);
+    }
+
+    function requestTaskQuantity(task) {
+      const total = Math.max(1, Number(task && task.quantity) || 0);
+      const entered = window.prompt(`Сколько изделий взять в работу? Доступно: ${total} шт.`, String(total));
+      if (entered === null) return null;
+      const quantity = Number.parseInt(String(entered).trim(), 10);
+      if (!Number.isInteger(quantity) || quantity <= 0 || quantity > total) {
+        showToast("Количество", `Введите целое число от 1 до ${total}.`);
+        return null;
+      }
+      return quantity;
     }
 
     function getReportOperations() {
@@ -5711,6 +6716,89 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = renderAdminHomeOverview(period);
     }
 
+    function renderOperationsCenter() {
+      const admin = getAdmin() || {};
+      const control = admin.production_control || {};
+      const period = getAdminHomePeriod();
+      const stages = control.stages || [];
+      const alerts = control.alerts || [];
+      const routeTasks = getRouteTasks().filter((task) => task.work_state !== "cancelled");
+      const openShifts = admin.open_shifts || [];
+      const todayShiftRows = (period.employees || [])
+        .filter((employee) => employee.start_time)
+        .sort((left, right) => Number(Boolean(right.on_shift)) - Number(Boolean(left.on_shift)) || String(left.start_time || "").localeCompare(String(right.start_time || "")) || String(left.name || "").localeCompare(String(right.name || ""), "ru"));
+      const plan = Number(control.plan || 0);
+      const fact = Number(control.fact || 0);
+      const activeTasks = Number(control.active_tasks || routeTasks.filter((task) => task.work_state === "in_work").length);
+      const overdue = Number(control.overdue_tasks || alerts.filter((alert) => alert.type === "overdue").length);
+      const riskCount = alerts.filter((alert) => alert.type === "overdue" || alert.type === "defect" || alert.type === "shortage").length;
+      const maxStage = Math.max(1, ...stages.map((stage) => Number(stage.quantity || 0)));
+      const planPercent = plan > 0 ? Math.min(100, Math.round(fact / plan * 100)) : 0;
+      const keyOrders = [...routeTasks]
+        .sort((left, right) => Number(Boolean(right.due_date)) - Number(Boolean(left.due_date)) || Number(right.priority === "urgent") - Number(left.priority === "urgent"))
+        .slice(0, 5);
+
+      mainButton.textContent = "Обновить центр";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="operations-center">
+          <div class="operations-head">
+            <div><h2>Операционный центр</h2><p>Производство сейчас · ${escapeHtml(periodDateLabel(period) || "текущий период")}</p></div>
+            <div class="live-indicator">Данные актуальны</div>
+          </div>
+          <div class="operations-kpis">
+            <button class="operations-kpi" data-go="analytics"><span>План / факт</span><strong>${escapeHtml(fact)} / ${escapeHtml(plan)}</strong><small>${plan ? `${planPercent}% выполнения плана` : "План пока не задан"}</small></button>
+            <button class="operations-kpi" data-go="orders"><span>В работе</span><strong>${escapeHtml(activeTasks)}</strong><small>активных заданий в потоке</small></button>
+            <button class="operations-kpi risk" data-go="analytics"><span>Риск срыва</span><strong>${escapeHtml(riskCount)}</strong><small>сигналов требуют внимания</small></button>
+            <button class="operations-kpi overdue" data-go="orders"><span>Просрочено</span><strong>${escapeHtml(overdue)}</strong><small>заданий требуют решения</small></button>
+          </div>
+          <div class="operations-layout">
+            <div class="operations-panel">
+              <div class="operations-panel-head"><b>Ход смены</b><span>${escapeHtml(openShifts.length)} сотрудников на смене</span></div>
+              <div class="shift-progress-value"><div><strong>${escapeHtml(planPercent)}%</strong><small>факт ${escapeHtml(fact)} из ${escapeHtml(plan || 0)} шт</small></div><span class="status-chip ${openShifts.length ? "" : "gray"}">${openShifts.length ? "смена идёт" : "нет открытых смен"}</span></div>
+              <div class="progress sage"><i style="--w:${planPercent}%"></i></div>
+              <details class="shift-team" open>
+                <summary><span>Сотрудники смены</span><small>${escapeHtml(todayShiftRows.length)} за сегодня</small></summary>
+                <div class="shift-team-list">${todayShiftRows.length ? todayShiftRows.map((employee) => `
+                  <div class="shift-team-row">
+                    <div class="shift-team-person"><b>${escapeHtml(employee.name || "Сотрудник")}</b><span>${escapeHtml(employee.position || "Должность не указана")}</span></div>
+                    <div class="shift-team-time"><span>Открыл смену <b>${escapeHtml(employee.start_time || "—")}</b></span><span>Закрыл смену <b>${employee.on_shift ? "смена идёт" : escapeHtml(employee.end_time || "не закрыта")}</b></span></div>
+                    <span class="status-chip ${employee.on_shift ? "" : "gray"}">${employee.on_shift ? "сейчас на смене" : "смена закрыта"}</span>
+                  </div>
+                `).join("") : itemEmpty("Сегодня смены ещё не открывали.")}</div>
+              </details>
+              <div class="operations-panel-head" style="margin-top:23px"><b>Производственные этапы</b><span>WIP и загрузка</span></div>
+              <div class="stage-stack">${stages.length ? stages.map((stage) => {
+                const quantity = Number(stage.quantity || 0);
+                const percent = Math.min(100, Math.round(quantity / maxStage * 100));
+                const delayed = Number(stage.overdue || 0) > 0;
+                const waiting = !quantity && Number(stage.free || 0) > 0;
+                const status = delayed ? "отстаёт" : waiting ? "ожидает" : quantity ? "в работе" : "норма";
+                return `<div class="stage-row"><b>${escapeHtml(stage.stage)}</b><div class="progress ${delayed ? "" : "sage"}"><i style="--w:${percent}%"></i></div><span class="status-chip ${delayed ? "warn" : waiting ? "gray" : ""}">${status}</span></div>`;
+              }).join("") : itemEmpty("Активных этапов пока нет.")}</div>
+            </div>
+            <div class="operations-panel">
+              <div class="operations-panel-head"><b>Быстрые действия</b><span>управление</span></div>
+              <div class="operations-actions">
+                <button class="primary" data-operations-action="create-order">Создать заказ</button>
+                <button data-go="orders">Перераспределить задачи</button>
+                <button data-go="analytics">Открыть аналитику</button>
+                <button data-go="admin" data-operations-action="employees">Назначить сотрудника</button>
+                <button data-operations-action="scan">Сканировать QR</button>
+                <button data-go="admin" data-operations-action="alerts">Оповещения</button>
+              </div>
+              <div class="operations-panel-head" style="margin-top:24px"><b>Оповещения</b><span>${alerts.length}</span></div>
+              <div class="operations-alerts">${alerts.length ? alerts.slice(0, 5).map((alert) => `<div class="operations-alert ${alert.type === "overdue" || alert.type === "defect" ? "critical" : ""}" ${alert.batch_id ? `data-analytics-task-id="${escapeHtml(alert.batch_id)}"` : `data-go="analytics"`}><i></i><div><b>${escapeHtml(alert.title)}</b><span>${escapeHtml(alert.detail)}</span></div><span>›</span></div>`).join("") : itemEmpty("Критичных отклонений не найдено.")}</div>
+            </div>
+          </div>
+          <div class="operations-panel">
+            <div class="operations-panel-head"><b>Ключевые заказы</b><button type="button" class="small-button secondary" data-go="orders">Все заказы</button></div>
+            <div class="key-orders">${keyOrders.length ? keyOrders.map((task) => `<div class="key-order" data-go="orders"><div><b>${escapeHtml(task.product_name || "Изделие")}: ${escapeHtml(task.operation || "Операция")}</b><span>${escapeHtml(task.product_size || "-")} · ${escapeHtml(task.product_color || "-")} · ${escapeHtml(task.quantity || 0)} шт${task.due_date ? ` · срок ${escapeHtml(task.due_date)}` : ""}</span></div><span class="status-chip ${task.work_state === "free" ? "gray" : task.work_state === "blocked" ? "warn" : ""}">${escapeHtml(task.status_text || "в работе")}</span></div>`).join("") : itemEmpty("Ключевых производственных заданий пока нет.")}</div>
+          </div>
+        </div>
+      `;
+    }
+
     async function loadHistory() {
       const actionKey = "load-history";
       if (!beginAction(actionKey)) return;
@@ -5795,7 +6883,74 @@ MINIAPP_HTML = """<!doctype html>
         state.marketplaceData.error = error.apiMessage || error.message || "Не удалось загрузить маркетплейсы.";
       } finally {
         state.marketplaceData.loading = false;
-        if (state.workspace === "marketplaces") render();
+        if (["marketplaces", "analytics"].includes(state.workspace)) render();
+      }
+    }
+
+    async function refreshAnalyticsQuality({silent = false} = {}) {
+      if (!canAccessMarketplaces() || state.analyticsQuality.loading) return;
+      state.analyticsQuality.loading = true;
+      state.analyticsQuality.error = "";
+      if (!silent && state.workspace === "analytics") render();
+      try {
+        const quality = await api("/api/marketplaces/data-quality");
+        if (!quality.ok) throw new Error(quality.message || "Не удалось загрузить качество данных.");
+        state.analyticsQuality.payload = quality;
+        state.analyticsQuality.loaded = true;
+        // The full data-quality screen owns product pagination. Sharing only
+        // the envelope lets the overview prefer PostgreSQL totals without
+        // falsely marking that product page as loaded.
+        state.marketplaceQuality.payload = quality;
+      } catch (error) {
+        state.analyticsQuality.error = error.apiMessage || error.message || "Не удалось загрузить качество данных.";
+      } finally {
+        state.analyticsQuality.loading = false;
+        if (state.workspace === "analytics") render();
+      }
+    }
+
+    function marketplaceLocalIsoDate(value = new Date()) {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Yekaterinburg", year: "numeric", month: "2-digit", day: "2-digit",
+      }).formatToParts(value);
+      const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+      return `${byType.year}-${byType.month}-${byType.day}`;
+    }
+
+    function analyticsOverviewRequest() {
+      const period = marketplacePeriodMeta(state.marketplacePeriod);
+      const payload = {start_date: period.startKey, end_date: period.endKey};
+      return {payload, key: `${payload.start_date}|${payload.end_date}`};
+    }
+
+    async function refreshAnalyticsOverview({silent = false} = {}) {
+      if (!canAccessMarketplaces() || state.analyticsOverview.loading) return;
+      const request = analyticsOverviewRequest();
+      state.analyticsOverview.loading = true;
+      state.analyticsOverview.error = "";
+      state.analyticsOverview.requestKey = request.key;
+      if (!silent && state.workspace === "analytics") render();
+      try {
+        const overview = await api("/api/analytics/overview", request.payload);
+        if (!overview.ok) throw new Error(overview.message || "Не удалось загрузить общую аналитику.");
+        if (state.analyticsOverview.requestKey !== request.key) return;
+        state.analyticsOverview.payload = overview;
+        state.analyticsOverview.loaded = true;
+      } catch (error) {
+        if (state.analyticsOverview.requestKey !== request.key) return;
+        state.analyticsOverview.payload = null;
+        state.analyticsOverview.loaded = false;
+        state.analyticsOverview.error = error.apiMessage || error.message || "Не удалось загрузить общую аналитику.";
+      } finally {
+        if (state.analyticsOverview.requestKey === request.key) {
+          state.analyticsOverview.loading = false;
+          if (state.workspace === "analytics") render();
+        } else {
+          state.analyticsOverview.loading = false;
+          if (state.workspace === "analytics" && state.analyticsHubTab === "general") {
+            window.setTimeout(() => refreshAnalyticsOverview({silent: true}), 0);
+          }
+        }
       }
     }
 
@@ -5822,6 +6977,111 @@ MINIAPP_HTML = """<!doctype html>
         state.marketplaceData.loading = false;
         render();
       }
+    }
+
+    async function refreshMarketplaceQuality({silent = false} = {}) {
+      if (!canAccessMarketplaces() || state.marketplaceQuality.loading) return;
+      state.marketplaceQuality.loading = true;
+      state.marketplaceQuality.error = "";
+      if (!silent) render();
+      try {
+        const page = Math.max(1, Number(state.marketplaceQuality.page || 1));
+        const query = String(state.marketplaceQuality.query || "").trim().slice(0, 200);
+        const [quality, products] = await Promise.all([
+          api("/api/marketplaces/data-quality"),
+          api("/api/marketplaces/products/page", {page, page_size: 20, query}),
+        ]);
+        if (!quality.ok) throw new Error(quality.message || "Не удалось загрузить качество данных.");
+        if (!products.ok) throw new Error(products.message || "Не удалось загрузить каталог PostgreSQL.");
+        state.marketplaceQuality.payload = quality;
+        state.marketplaceQuality.products = products;
+        state.marketplaceQuality.page = Number(products.page || page);
+        state.marketplaceQuality.loaded = true;
+      } catch (error) {
+        state.marketplaceQuality.error = error.apiMessage || error.message || "Не удалось загрузить качество данных.";
+      } finally {
+        state.marketplaceQuality.loading = false;
+        if (state.workspace === "marketplaces") render();
+        const workerRunning = Boolean(state.marketplaceQuality.payload?.phase1a?.worker?.running);
+        if (workerRunning && !state.marketplaceQuality.polling) {
+          window.setTimeout(() => pollMarketplaceQualityWorker(), 0);
+        }
+      }
+    }
+
+    async function pollMarketplaceQualityWorker() {
+      if (state.marketplaceQuality.polling) return;
+      state.marketplaceQuality.polling = true;
+      state.marketplaceQuality.syncing = true;
+      render();
+      try {
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 2500));
+          await refreshMarketplaceQuality({silent: true});
+          const worker = state.marketplaceQuality.payload?.phase1a?.worker || {};
+          if (!worker.running) {
+            const result = worker.last_result;
+            if (result && typeof result.ok === "boolean") {
+              showToast(
+                result.ok ? "PostgreSQL Phase 1A" : "Phase 1A завершена с ошибкой",
+                result.message || (result.ok ? "Синхронизация завершена." : "Проверьте экран качества данных."),
+              );
+            } else {
+              showToast("PostgreSQL Phase 1A", "Внешняя синхронизация завершена. Состояние наборов обновлено.");
+            }
+            return;
+          }
+        }
+        showToast("PostgreSQL Phase 1A", "Синхронизация ещё выполняется. Состояние можно обновить вручную.");
+      } finally {
+        state.marketplaceQuality.polling = false;
+        state.marketplaceQuality.syncing = false;
+        if (state.workspace === "marketplaces") render();
+      }
+    }
+
+    async function syncMarketplacePhase1A() {
+      const workerRunning = Boolean(state.marketplaceQuality.payload?.phase1a?.worker?.running);
+      if (!canAccessMarketplaces() || state.marketplaceQuality.loading || state.marketplaceQuality.syncing || workerRunning) return;
+      state.marketplaceQuality.syncing = true;
+      state.marketplaceQuality.loading = true;
+      state.marketplaceQuality.error = "";
+      render();
+      try {
+        const result = await api("/api/marketplaces/phase1a/sync", {datasets: ["catalog", "prices", "stocks"]});
+        if (!result.ok) throw new Error(result.message || "Phase 1A не запущена.");
+        showToast("PostgreSQL Phase 1A", result.message || "Синхронизация запущена.");
+      } catch (error) {
+        state.marketplaceQuality.error = error.apiMessage || error.message || "Не удалось запустить Phase 1A.";
+        showToast("Ошибка", state.marketplaceQuality.error);
+      } finally {
+        state.marketplaceQuality.loading = false;
+        await refreshMarketplaceQuality({silent: true});
+        const running = Boolean(state.marketplaceQuality.payload?.phase1a?.worker?.running);
+        if (running) {
+          window.setTimeout(() => pollMarketplaceQualityWorker(), 0);
+        } else {
+          state.marketplaceQuality.syncing = false;
+          render();
+        }
+      }
+    }
+
+    function searchMarketplaceQualityProducts() {
+      const input = document.getElementById("marketplaceQualitySearch");
+      state.marketplaceQuality.query = String(input?.value || state.marketplaceQuality.query || "").trim().slice(0, 200);
+      state.marketplaceQuality.page = 1;
+      refreshMarketplaceQuality();
+    }
+
+    function changeMarketplaceQualityPage(delta) {
+      const products = state.marketplaceQuality.products || {};
+      const current = Math.max(1, Number(products.page || state.marketplaceQuality.page || 1));
+      const pages = Math.max(0, Number(products.pages || 0));
+      const next = Math.max(1, Math.min(pages || 1, current + Number(delta || 0)));
+      if (next === current) return;
+      state.marketplaceQuality.page = next;
+      refreshMarketplaceQuality();
     }
 
     async function createMarketplaceShipment(supplyId) {
@@ -6102,7 +7362,7 @@ MINIAPP_HTML = """<!doctype html>
           headers: exportHeaders,
           credentials: "same-origin",
           body: JSON.stringify({
-            ...(state.adminAppliedReportPayload || getAdminReportPayload()),
+            ...getAdminReportPayload(),
             telegram_id: debugTelegramId,
           }),
         });
@@ -6206,7 +7466,7 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderShift() {
       if (state.data && state.data.is_admin) {
-        renderAdminHome();
+        renderOperationsCenter();
         return;
       }
 
@@ -7598,13 +8858,16 @@ MINIAPP_HTML = """<!doctype html>
 
       if (!confirmTaskTake(current)) return;
 
+      const quantity = requestTaskQuantity(current);
+      if (quantity === null) return;
+
       const actionKey = `start-operation-task:${current.id}`;
       if (!beginAction(actionKey)) return;
 
       mainButton.disabled = true;
 
       try {
-        const data = await api("/api/routes/start", {batch_id: current.id});
+        const data = await api("/api/routes/start", {batch_id: current.id, quantity});
 
         if (!data.ok) {
           showToast("Задание", data.message || "Не удалось взять задание.");
@@ -8221,7 +9484,7 @@ MINIAPP_HTML = """<!doctype html>
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Создать задание на раскрой</h2><p>Дальнейшие операции система создаст по маршруту автоматически.</p></div><div class="date">админ</div></div>
-        <div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="list" role="tab" aria-selected="false">Текущие задания</button><button type="button" class="tab active" data-order-mode="create" role="tab" aria-selected="true">Создать задание</button></div>
+        <div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="board">Канбан</button><button type="button" class="tab" data-order-mode="list" role="tab" aria-selected="false">Список</button><button type="button" class="tab active" data-order-mode="create" role="tab" aria-selected="true">Создать задание</button></div>
         <div class="card field-card">
           <div class="form-grid">
             <div class="field full"><label>Изделия в одном настиле</label>${renderChoiceChips("product", catalog.map((item) => item.product_name), state.orderProducts)}<p class="empty">Выберите одно или несколько изделий. Для выбранных изделий применяются общие размеры, цвета и настил.</p></div>
@@ -8321,9 +9584,55 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function renderOrdersBoard() {
+      const seenTasks = new Set();
+      const allTasks = [...currentOrderRows(), ...getCompletedOrderRows()].filter((task) => {
+        const key = taskIdentity(task);
+        if (seenTasks.has(key) || !orderTaskMatchesFilters(task)) return false;
+        seenTasks.add(key);
+        return true;
+      });
+      const filterRows = allTasks;
+      const columns = [
+        ["in_work", "В работе"],
+        ["free", "Ожидают"],
+        ["blocked", "Ожидают материалы / проблема"],
+        ["done", "Завершённые"],
+      ];
+      const bucketFor = (task) => {
+        if (task.work_state === "blocked" || task.work_state === "paused") return "blocked";
+        return orderTaskStatusBucket(task);
+      };
+      mainButton.textContent = "Обновить заказы";
+      mainButton.disabled = false;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Заказы</h2><p>Поток производственных заданий по этапам и статусам.</p></div><div class="date">${allTasks.length} заданий</div></div>
+        <div class="tabs order-mode-tabs" role="tablist" aria-label="Представление заказов">
+          <button type="button" class="tab active" data-order-mode="board">Канбан</button>
+          <button type="button" class="tab" data-order-mode="list">Список</button>
+          <button type="button" class="tab" data-order-mode="create">Создать заказ</button>
+        </div>
+        ${renderOrderFilters(filterRows)}
+        <div class="orders-board">${columns.map(([id, label]) => {
+          const rows = allTasks.filter((task) => bucketFor(task) === id);
+          return `<section class="orders-column"><div class="orders-column-head"><b>${label}</b><span>${rows.length}</span></div>${rows.length ? rows.map((task) => {
+            const title = task.task_kind === "route" ? task.operation : (task.stage_title || `Задание #${task.id}`);
+            const product = task.product_name || task.product || "Изделие";
+            const quantity = task.quantity || task.total_quantity || 0;
+            return `<article class="board-order-card" data-board-order-key="${escapeHtml(taskIdentity(task))}"><b>${escapeHtml(title)}</b><span>${escapeHtml(product)}</span><div class="progress ${id === "blocked" ? "" : "sage"}"><i style="--w:${progressForTask(task)}%"></i></div><div class="board-order-meta"><span>${escapeHtml(quantity)} шт · ${escapeHtml(task.product_size || "-")}</span><span>${escapeHtml(priorityLabel(task.priority))}</span></div></article>`;
+          }).join("") : `<div class="empty">Нет заданий</div>`}</section>`;
+        }).join("")}</div>
+      `;
+    }
+
     function renderOrders() {
       if (state.data && state.data.is_admin && state.orderMode === "create") {
         renderOrderCreate();
+        return;
+      }
+
+      if (state.data && state.data.is_admin && state.orderMode === "board") {
+        renderOrdersBoard();
         return;
       }
 
@@ -8344,7 +9653,7 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>${state.data && state.data.is_admin ? "Заказы" : "Задания"}</h2><p>${state.data && state.data.is_admin ? "Создавайте задания на раскрой и контролируйте маршрут производства." : "Выберите свободное задание, чтобы взять его в работу."}</p></div><div class="date">${allTasks.length} заданий</div></div>
         <div class="scan-row"><button type="button" class="small-button secondary" data-task-action="scan">Сканировать QR</button></div>
-        ${state.data && state.data.is_admin ? `<div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab ${state.orderMode === "list" ? "active" : ""}" data-order-mode="list" role="tab" aria-selected="${state.orderMode === "list" ? "true" : "false"}">Текущие задания</button><button type="button" class="tab ${state.orderMode === "create" ? "active" : ""}" data-order-mode="create" role="tab" aria-selected="${state.orderMode === "create" ? "true" : "false"}">Создать задание</button></div>` : ""}
+        ${state.data && state.data.is_admin ? `<div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="board">Канбан</button><button type="button" class="tab ${state.orderMode === "list" ? "active" : ""}" data-order-mode="list" role="tab" aria-selected="${state.orderMode === "list" ? "true" : "false"}">Список</button><button type="button" class="tab ${state.orderMode === "create" ? "active" : ""}" data-order-mode="create" role="tab" aria-selected="${state.orderMode === "create" ? "true" : "false"}">Создать задание</button></div>` : ""}
         <div class="tabs admin-task-status-tabs" role="tablist" aria-label="Статус заданий">${["all", "free", "in_work", "done"].map((status) => `<button type="button" class="tab ${state.adminTaskStatus === status ? "active" : ""}" data-admin-task-status="${status}" role="tab" aria-selected="${state.adminTaskStatus === status ? "true" : "false"}">${adminTaskStatusLabel(status)}</button>`).join("")}</div>
         ${renderOrderFilters(filterRows)}
         <div class="op-list">
@@ -8559,7 +9868,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Контроль производства</h2><p>План, качество, незавершёнка и отклонения.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
+        <div class="screen-head"><div><h2>Аналитика производства</h2><p>План, качество, загрузка и риски по текущему периоду.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
         <div class="kpi-grid">
           <button type="button" class="card kpi analytics-card" data-analytics-view="planfact"><span class="kpi-top"><span>План / факт</span><span class="kpi-ico">${uiIcon("target")}</span></span><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Подробнее ›</span></button>
           <button type="button" class="card kpi good analytics-card" data-analytics-view="fpy"><span class="kpi-top"><span>FPY</span><span class="kpi-ico">${uiIcon("quality")}</span></span><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
@@ -8944,7 +10253,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="section-title"><b>Содержимое ${escapeHtml(location.code)}</b><span>${rows.length} поз.</span></div>
         <div class="op-list">${rows.length ? rows.map((row) => {
           const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
-          return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>Доступно ${escapeHtml(available)} · резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>`;
+          return renderWmsStockProductRow(row, available);
         }).join("") : itemEmpty("Ячейка пустая.")}</div>
       `;
     }
@@ -8961,6 +10270,15 @@ MINIAPP_HTML = """<!doctype html>
         return [product.product_name, product.product_color].filter(Boolean).join(" · ") || "Материал";
       }
       return [product.product_name, product.product_size, product.product_color].filter(Boolean).join(" · ") || "Товар";
+    }
+
+    function renderWmsStockProductRow(row, available = null) {
+      const product = row.marketplace_product || null;
+      const free = available == null ? Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)) : available;
+      const identity = product
+        ? `<div class="wms-product-rich">${marketplaceProductAvatar(product, false, true)}<div class="wms-product-rich-copy"><b>${escapeHtml(product.group_name || product.name || "Товар Ozon")}</b><span>Артикул: ${escapeHtml(product.offer_id || "—")} · SKU: ${escapeHtml(product.sku || "—")}</span><small>Размер ${escapeHtml(product.size || row.product_key?.product_size || "—")} · цвет ${escapeHtml(product.color || row.product_key?.product_color || "—")}</small></div></div>`
+        : `<div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>Складская номенклатура</span></div>`;
+      return `<div class="card report-row">${identity}<div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span><small>Доступно ${escapeHtml(free)} · резерв ${escapeHtml(row.reserved_quantity || 0)}</small></div></div>`;
     }
 
     function wmsMovementLabel(type) {
@@ -9137,7 +10455,7 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="button-row"><button type="button" class="small-button" data-wms-cell-action="putaway" data-wms-cell-code="${escapeHtml(location.code)}">Разместить сюда</button><button type="button" class="small-button secondary" data-wms-cell-action="pick" data-wms-cell-code="${escapeHtml(location.code)}">Выдать из ячейки</button></div>
         <div class="section-title"><b>Содержимое</b><span>${summary.rows.length} поз.</span></div>
-        <div class="wms-location-products">${summary.rows.length ? summary.rows.map((row) => `<div class="report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>Доступно ${escapeHtml(Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)))} · резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></div>`).join("") : itemEmpty("Ячейка свободна.")}</div>
+        <div class="wms-location-products">${summary.rows.length ? summary.rows.map((row) => renderWmsStockProductRow(row)).join("") : itemEmpty("Ячейка свободна.")}</div>
         <div class="section-title"><b>История ячейки</b><span>${movements.length}</span></div>
         <div class="wms-location-products">${movements.length ? movements.map((movement) => `<div class="report-row"><div><b>${escapeHtml(wmsMovementLabel(movement.movement_type))}</b><span>${escapeHtml(wmsProductLabel(movement.product_key))}<br>${escapeHtml(wmsMovementTime(movement.occurred_at))}</span></div><span class="status-chip gray">${escapeHtml(movement.quantity)} шт.</span></div>`).join("") : itemEmpty("Движений по ячейке пока нет.")}</div>
       </div>`;
@@ -9170,7 +10488,7 @@ MINIAPP_HTML = """<!doctype html>
             const visualRow = maxLevel - row.parts.level + 1;
             return renderWmsMapCell(row.location, row.parts, row.parts.section > 1 && row.parts.position === 1, stockRows, `style="grid-column:${column};grid-row:${visualRow}"`);
           });
-          return `<section class="wms-zone-map"><div class="wms-zone-map-head"><b>Зона №${zone}</b><span>${zoneRows.length} ячеек · ${zoneQuantity} ${escapeHtml(wmsCurrentStockFilter().unit)}</span></div><div class="wms-map-grid" style="grid-template-columns:repeat(${maxSection * maxPosition},minmax(62px,1fr));grid-template-rows:repeat(${maxLevel},minmax(64px,auto))">${cells.join("")}</div></section>`;
+          return `<section class="wms-zone-map"><div class="wms-zone-map-head"><b>Зона №${zone}</b><span>${zoneRows.length} ячеек · ${zoneQuantity} ${escapeHtml(wmsCurrentStockFilter().unit)}</span></div><div class="wms-map-grid" style="--wms-columns:${maxSection * maxPosition};grid-template-columns:repeat(${maxSection * maxPosition},minmax(62px,1fr));grid-template-rows:repeat(${maxLevel},minmax(64px,auto))">${cells.join("")}</div></section>`;
         }).join("")}</div>
       </div>`;
     }
@@ -9252,7 +10570,7 @@ MINIAPP_HTML = """<!doctype html>
       const colorsBlock = selectedGroup ? [...new Set(products.map((product) => String(product.color || "Не указан")))].sort((a, b) => a.localeCompare(b, "ru")).map((color) => {
         const colorProducts = products.filter((product) => String(product.color || "Не указан") === color).sort((a, b) => String(a.size || "").localeCompare(String(b.size || ""), "ru", {numeric: true}));
         return `<section class="wms-catalog-color-group"><div class="section-title"><b>${escapeHtml(color)}</b><span>${colorProducts.length} вариантов</span></div><div class="op-list">${colorProducts.map((product) => `
-          <div class="card report-row wms-catalog-product"><div><b>${escapeHtml(selectedGroup.name)}</b><span>Размер: ${escapeHtml(product.size || "—")}<br>Артикул: ${escapeHtml(product.offer_id || "—")}<br>${product.production_status === "linked" ? `Производство: ${escapeHtml(product.production_product_name)} · ${escapeHtml(product.production_size)} · ${escapeHtml(product.production_color)}` : "Маршрут производства пока не настроен"}</span></div><div><span class="status-chip ${product.production_status === "linked" ? "" : "gray"}">${product.production_status === "linked" ? "связано" : "без маршрута"}</span><span class="status-chip gray">Штрихкод: ${escapeHtml(product.barcode || "—")}</span><small>SKU: ${escapeHtml(product.sku || "—")}</small></div></div>`).join("")}</div></section>`;
+          <div class="card report-row wms-catalog-product"><div><b>${escapeHtml(selectedGroup.name)}</b><span>Размер: ${escapeHtml(product.size || "—")}<br>Артикул: ${escapeHtml(product.offer_id || "—")}<br>${product.route_configured ? `Производство: ${escapeHtml(product.production_product_name)} · ${escapeHtml(product.production_size)} · ${escapeHtml(product.production_color)}` : `Единая карточка: ${escapeHtml(product.production_product_name)} · маршрут производства пока не настроен`}</span></div><div><span class="status-chip ${product.route_configured ? "" : "gray"}">${product.route_configured ? "маршрут связан" : "каталог связан"}</span><span class="status-chip gray">Штрихкод: ${escapeHtml(product.barcode || "—")}</span><small>SKU: ${escapeHtml(product.sku || "—")}</small></div></div>`).join("")}</div></section>`;
       }).join("") : "";
       mount.innerHTML = `
         <div class="screen-head"><div><h2>${selectedGroup ? escapeHtml(selectedGroup.name) : "Товары Ozon"}</h2><p>${selectedGroup ? "Варианты сгруппированы по цвету, затем по размеру." : "Выберите изделие, затем увидите его цвета и размеры."}</p></div><div class="date">${catalog.loaded ? `${products.length} из ${(catalog.products || []).length}` : "загрузка"}</div></div>
@@ -9350,13 +10668,56 @@ MINIAPP_HTML = """<!doctype html>
       });
       const rows = [...shipments.values()].sort((first, second) => String(second.occurredAt || "").localeCompare(String(first.occurredAt || "")));
       const detail = state.wmsShipmentDetail || null;
+      const creating = Boolean(state.wmsShipmentCreate && state.data && state.data.is_admin);
+      const availableRows = (state.wmsData.stock || []).filter((row) => row.product_key?.item_type === "finished" && row.location_id && Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)) > 0);
+      const draftLines = Object.entries(state.wmsShipmentDraft.lines || {}).map(([stockId, quantity]) => {
+        const stock = availableRows.find((row) => String(row.id) === String(stockId));
+        return stock ? {stock, quantity} : null;
+      }).filter(Boolean);
+      const selectedIds = new Set(draftLines.map((line) => String(line.stock.id)));
+      const pickerRows = availableRows.filter((row) => !selectedIds.has(String(row.id)));
+      const draftTotal = draftLines.reduce((sum, line) => sum + Math.max(0, Number(line.quantity || 0)), 0);
       mainButton.textContent = "Обновить отгрузки";
       mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>${detail ? `Отгрузка ${escapeHtml(detail.number)}` : "Отгрузки со склада"}</h2><p>${detail ? "Лист отбора: что взять и из какой ячейки." : "Собранные отправки из адресных ячеек. Внешние маркетплейсы отсюда не изменяются."}</p></div><div class="date">${detail ? `${detail.total} шт.` : `${rows.length} док.`}</div></div>
+        <div class="screen-head"><div><h2>${detail ? `Отгрузка ${escapeHtml(detail.number)}` : (creating ? "Новая отгрузка" : "Отгрузки со склада")}</h2><p>${detail ? "Лист отбора: что взять и из какой ячейки." : (creating ? "Добавьте товары из доступных адресных остатков и подтвердите документ." : "Собранные отправки из адресных ячеек. Внешние маркетплейсы отсюда не изменяются.")}</p></div><div class="date">${detail ? `${detail.total} шт.` : `${rows.length} док.`}</div></div>
         ${renderWmsDataNotice()}
-        ${detail ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="back">‹ Все отгрузки</button><button type="button" class="small-button secondary" data-wms-shipment-export="xlsx">Excel</button><button type="button" class="small-button" data-wms-shipment-export="pdf">PDF</button></div><div class="card field-card"><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(detail.lines.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(detail.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(detail.locations)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(detail.occurred_at) || "—")}</strong></div></div><div class="task-note">${escapeHtml(detail.reason || "")}</div></div><div class="section-title"><b>Лист отбора</b><span>${detail.lines.length} поз.</span></div><div class="op-list">${detail.lines.map((line, index) => `<div class="card report-row"><div><b>${index + 1}. ${escapeHtml(line.product_name)}</b><span>Размер ${escapeHtml(line.product_size)} · Цвет ${escapeHtml(line.product_color)}<br>Взять из: ${escapeHtml(line.from_location_code)}${line.from_location_name ? ` · ${escapeHtml(line.from_location_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(line.quantity)} шт.</span></div>`).join("")}</div>` : `<div class="op-list">${rows.length ? rows.map((shipment) => `<button type="button" class="card field-card marketplace-clickable" data-wms-shipment-number="${escapeHtml(shipment.number)}"><div class="section-title"><b>${escapeHtml(shipment.number)}</b><span class="status-chip">открыть ›</span></div><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(shipment.rows.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(shipment.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(shipment.locations.size)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(shipment.occurredAt) || "—")}</strong></div></div></button>`).join("") : itemEmpty("Отгрузок пока нет.")}</div>`}
+        ${detail ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="back">‹ Все отгрузки</button><button type="button" class="small-button secondary" data-wms-shipment-export="xlsx">Excel</button><button type="button" class="small-button" data-wms-shipment-export="pdf">PDF</button></div><div class="card field-card"><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(detail.lines.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(detail.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(detail.locations)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(detail.occurred_at) || "—")}</strong></div></div><div class="task-note">${escapeHtml(detail.reason || "")}</div></div><div class="section-title"><b>Лист отбора</b><span>${detail.lines.length} поз.</span></div><div class="op-list">${detail.lines.map((line, index) => `<div class="card report-row"><div><b>${index + 1}. ${escapeHtml(line.product_name)}</b><span>Размер ${escapeHtml(line.product_size)} · Цвет ${escapeHtml(line.product_color)}<br>Взять из: ${escapeHtml(line.from_location_code)}${line.from_location_name ? ` · ${escapeHtml(line.from_location_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(line.quantity)} шт.</span></div>`).join("")}</div>` : creating ? `<div class="card field-card"><div class="form-grid"><div class="field"><label>Получатель или назначение</label><input id="wmsShipmentDestination" maxlength="120" placeholder="Например, магазин или контрагент" value="${escapeHtml(state.wmsShipmentDraft.destination || "")}"></div><div class="field"><label>Комментарий</label><input id="wmsShipmentComment" maxlength="300" placeholder="Необязательно" value="${escapeHtml(state.wmsShipmentDraft.comment || "")}"></div></div><div class="wms-shipment-picker"><div class="field"><label>Добавить товар из ячейки</label><select id="wmsShipmentProduct">${pickerRows.length ? `<option value="">Выберите товар</option>${pickerRows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(wmsProductLabel(row.product_key))} · ${escapeHtml(wmsLocationLabel(row.location_id))} · доступно ${escapeHtml(Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)))}</option>`).join("")}` : `<option value="">Все доступные позиции добавлены</option>`}</select></div><button type="button" class="small-button secondary" data-wms-shipment-action="add">Добавить позицию</button></div></div><div class="section-title"><b>Состав отгрузки</b><span>${draftLines.length} поз.</span></div><div class="op-list">${draftLines.length ? draftLines.map(({stock, quantity}) => { const available = Math.max(0, Number(stock.quantity || 0) - Number(stock.reserved_quantity || 0)); return `<div class="card wms-shipment-line">${stock.marketplace_product ? `<div class="wms-product-rich">${marketplaceProductAvatar(stock.marketplace_product, false, true)}<div class="wms-product-rich-copy"><b>${escapeHtml(stock.marketplace_product.group_name || stock.marketplace_product.name || wmsProductLabel(stock.product_key))}</b><span>${escapeHtml(wmsProductLabel(stock.product_key))}</span><small>Ячейка ${escapeHtml(wmsLocationLabel(stock.location_id))} · доступно ${escapeHtml(available)} ${escapeHtml(stock.unit || "шт")}</small></div></div>` : `<div><b>${escapeHtml(wmsProductLabel(stock.product_key))}</b><span>Ячейка ${escapeHtml(wmsLocationLabel(stock.location_id))} · доступно ${escapeHtml(available)} ${escapeHtml(stock.unit || "шт")}</span></div>`}<div class="field"><label>Количество</label><input type="number" min="1" max="${escapeHtml(available)}" step="1" inputmode="numeric" data-wms-shipment-qty="${escapeHtml(stock.id)}" value="${escapeHtml(quantity)}"></div><button type="button" class="small-button danger" data-wms-shipment-remove="${escapeHtml(stock.id)}">Убрать</button></div>`; }).join("") : itemEmpty("Добавьте товары из списка выше.")}</div><div class="wms-shipment-summary"><div><b>Итого к отгрузке</b><br><span>${draftLines.length} позиций</span></div><strong>${escapeHtml(draftTotal)} шт.</strong></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="cancel">Отмена</button><button type="button" class="small-button" data-wms-shipment-action="submit" ${draftLines.length ? "" : "disabled"}>Создать и списать со склада</button></div>` : `<div class="button-row">${state.data && state.data.is_admin ? `<button type="button" class="small-button" data-wms-shipment-action="new">+ Создать отгрузку</button>` : ""}</div><div class="op-list">${rows.length ? rows.map((shipment) => `<button type="button" class="card field-card marketplace-clickable" data-wms-shipment-number="${escapeHtml(shipment.number)}"><div class="section-title"><b>${escapeHtml(shipment.number)}</b><span class="status-chip">открыть ›</span></div><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(shipment.rows.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(shipment.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(shipment.locations.size)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(shipment.occurredAt) || "—")}</strong></div></div></button>`).join("") : itemEmpty("Отгрузок пока нет.")}</div>`}
       `;
+    }
+
+    function syncWmsShipmentDraft() {
+      const destination = document.getElementById("wmsShipmentDestination");
+      const comment = document.getElementById("wmsShipmentComment");
+      if (destination) state.wmsShipmentDraft.destination = destination.value.trim();
+      if (comment) state.wmsShipmentDraft.comment = comment.value.trim();
+      document.querySelectorAll("[data-wms-shipment-qty]").forEach((input) => {
+        state.wmsShipmentDraft.lines[input.dataset.wmsShipmentQty] = input.value;
+      });
+    }
+
+    async function createWmsShipment() {
+      if (!(state.data && state.data.is_admin)) return;
+      syncWmsShipmentDraft();
+      const stockRows = state.wmsData.stock || [];
+      const lines = Object.entries(state.wmsShipmentDraft.lines || {}).map(([stockId, quantity]) => {
+        const stock = stockRows.find((row) => String(row.id) === String(stockId));
+        if (!stock) return null;
+        return {product_key: stock.product_key, quantity: Number(quantity || 0), from_location_code: wmsLocationLabel(stock.location_id), unit: stock.unit || "шт"};
+      }).filter(Boolean);
+      if (!state.wmsShipmentDraft.destination) return showToast("Отгрузка", "Укажите получателя или назначение.");
+      if (!lines.length || lines.some((line) => !Number.isInteger(line.quantity) || line.quantity <= 0)) return showToast("Отгрузка", "Проверьте количество во всех позициях.");
+      try {
+        const result = await api("/api/wms/shipment/create", {destination: state.wmsShipmentDraft.destination, comment: state.wmsShipmentDraft.comment, lines});
+        if (!result.ok) throw new Error(result.message || "Не удалось создать отгрузку.");
+        state.wmsShipmentCreate = false;
+        state.wmsShipmentDraft = {destination: "", comment: "", lines: {}};
+        await refreshWmsWorkspace({silent: true});
+        await loadWmsShipment(result.shipment.number);
+        showToast("Отгрузка", result.message || "Документ создан.");
+      } catch (error) {
+        showToast("Отгрузка", error.apiMessage || error.message || "Не удалось создать отгрузку.");
+      }
     }
 
     async function loadWmsShipment(number) {
@@ -9468,57 +10829,227 @@ MINIAPP_HTML = """<!doctype html>
       return `<div class="marketplace-detail-field"><span>${escapeHtml(label)}</span><b>${escapeHtml(value == null || value === "" ? "—" : value)}</b></div>`;
     }
 
+    function marketplaceProductionStockText(row) {
+      if (row?.production_stock_available === false) return "WMS недоступен";
+      if (!row?.production_linked && row?.products == null) return "Маршрут не настроен";
+      if (row?.products != null && Number(row.production_linked_products || 0) === 0) return "Маршрут не настроен";
+      return `${Number(row?.production_available || 0)} шт.`;
+    }
+
     function marketplaceBackButton(label = "Назад") {
       return `<button type="button" class="small-button secondary" data-marketplace-action="back">‹ ${escapeHtml(label)}</button>`;
     }
 
+    function marketplaceProductAvatar(row, compact = false, large = false) {
+      const imageUrl = String((row && row.image_url) || "");
+      const name = String((row && row.name) || "Товар");
+      const sizeClass = large ? " large" : (compact ? " compact" : "");
+      return `<span class="marketplace-product-avatar${sizeClass}"><span aria-hidden="true">▦</span>${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}" loading="lazy" referrerpolicy="no-referrer">` : ""}</span>`;
+    }
+
+    function marketplaceStockLevel(quantity) {
+      const value = Number(quantity || 0);
+      if (value <= 0) return {key: "absent", label: "Отсутствует"};
+      if (value < 10) return {key: "low", label: "Нужно пополнить"};
+      return {key: "enough", label: "Хватает"};
+    }
+
+    function filterMarketplaceStocks(control) {
+      const section = control.closest(".marketplace-stock-section");
+      if (!section) return;
+      const warehouse = section.querySelector('[data-stock-filter="warehouse"]')?.value || "all";
+      const product = section.querySelector('[data-stock-filter="product"]')?.value || "all";
+      const color = section.querySelector('[data-stock-filter="color"]')?.value || "all";
+      const size = section.querySelector('[data-stock-filter="size"]')?.value || "all";
+      const criticality = section.querySelector('[data-stock-filter="criticality"]')?.value || "all";
+      let visible = 0;
+      section.querySelectorAll(".marketplace-stock-card").forEach((card) => {
+        const stocks = Object.fromEntries(String(card.dataset.stockMap || "").split("|").filter(Boolean).map((part) => {
+          const splitAt = part.lastIndexOf(":");
+          return [part.slice(0, splitAt), Number(part.slice(splitAt + 1) || 0)];
+        }));
+        const quantity = warehouse === "all" ? Number(card.dataset.stockTotal || 0) : Number(stocks[warehouse] || 0);
+        const level = marketplaceStockLevel(quantity);
+        const matches = (product === "all" || card.dataset.stockProduct === product)
+          && (color === "all" || card.dataset.stockColor === color)
+          && (size === "all" || card.dataset.stockSize === size)
+          && (criticality === "all" || level.key === criticality);
+        card.hidden = !matches;
+        if (matches) visible += 1;
+        const quantityNode = card.querySelector("[data-stock-quantity]");
+        const levelNode = card.querySelector("[data-stock-level]");
+        if (quantityNode) quantityNode.textContent = `${quantity} шт.`;
+        if (levelNode) {
+          levelNode.textContent = level.label;
+          levelNode.className = `status-chip marketplace-stock-level ${level.key}`;
+        }
+      });
+      const countNode = section.querySelector("[data-stock-visible-count]");
+      const emptyNode = section.querySelector(".marketplace-stock-empty");
+      if (countNode) countNode.textContent = String(visible);
+      if (emptyNode) emptyNode.classList.toggle("visible", visible === 0);
+    }
+
+    function marketplaceLineChart(rows, primaryKey = "revenue", secondaryKey = "net") {
+      const source = Array.isArray(rows) ? rows.filter(Boolean) : [];
+      if (!source.length) return itemEmpty("За выбранный период данных нет.");
+      const width = 720, height = 230, left = 48, right = 18, top = 18, bottom = 34;
+      const chartWidth = width - left - right, chartHeight = height - top - bottom;
+      const primary = source.map((row) => Number(row[primaryKey] || 0));
+      const secondary = secondaryKey ? source.map((row) => Number(row[secondaryKey] || 0)) : [];
+      const minimum = Math.min(0, ...primary, ...secondary);
+      const maximum = Math.max(minimum + 1, 0, ...primary, ...secondary);
+      const valueRange = maximum - minimum;
+      const x = (index) => source.length === 1 ? left + chartWidth / 2 : left + chartWidth * index / (source.length - 1);
+      const y = (value) => top + chartHeight * (maximum - Number(value || 0)) / valueRange;
+      const points = (values) => values.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
+      const primaryPoints = points(primary);
+      const secondaryPoints = points(secondary);
+      const areaPoints = source.length > 1 ? `${left},${y(0)} ${primaryPoints} ${x(source.length - 1)},${y(0)}` : "";
+      const labelIndexes = [...new Set([0, Math.floor((source.length - 1) / 2), source.length - 1])];
+      const valueLabel = (value) => { const number = Number(value || 0); const absolute = Math.abs(number); return absolute >= 1000000 ? `${(number / 1000000).toFixed(1)}м` : absolute >= 1000 ? `${Math.round(number / 1000)}к` : String(Math.round(number)); };
+      const pointEvents = 'tabindex="0" role="button" onmouseenter="showMarketplaceChartTooltip(this)" onmouseleave="hideMarketplaceChartTooltip(this)" onfocus="showMarketplaceChartTooltip(this)" onblur="hideMarketplaceChartTooltip(this)" onclick="showMarketplaceChartTooltip(this)" ontouchstart="showMarketplaceChartTooltip(this)"';
+      return `<div class="marketplace-line-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Динамика показателей"><defs><linearGradient id="marketplaceChartArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4f83ff" stop-opacity=".28"/><stop offset="100%" stop-color="#4f83ff" stop-opacity="0"/></linearGradient></defs>${[0,.25,.5,.75,1].map((ratio) => { const gridY = top + chartHeight * ratio; const tickValue = maximum - valueRange * ratio; return `<line class="chart-grid" x1="${left}" y1="${gridY}" x2="${width-right}" y2="${gridY}"/><text class="chart-axis-label" x="${left-8}" y="${gridY+4}" text-anchor="end">${valueLabel(tickValue)}</text>`; }).join("")}${minimum < 0 && maximum > 0 ? `<line x1="${left}" y1="${y(0)}" x2="${width-right}" y2="${y(0)}" stroke="#7d8799" stroke-width="1.5"/>` : ""}${areaPoints ? `<polygon class="chart-area" points="${areaPoints}"/>` : ""}${source.length > 1 ? `<polyline class="chart-line-primary" points="${primaryPoints}"/>` : ""}${secondary.length ? `<polyline class="chart-line-secondary" points="${secondaryPoints}"/>` : ""}${primary.map((value,index) => { const pointLabel = `${source[index].date || "Дата не указана"} · ${marketplaceMoney(value)}`; return `<circle class="chart-point-primary" cx="${x(index)}" cy="${y(value)}" r="${source.length === 1 ? 6 : 3.6}"/><circle class="chart-point-hit" cx="${x(index)}" cy="${y(value)}" r="12" ${pointEvents} aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(source[index].date || "")}" data-chart-value="${escapeHtml(value)}"><title>${escapeHtml(pointLabel)}</title></circle>${source.length === 1 ? `<text class="chart-axis-label" x="${x(index)}" y="${Math.max(top + 16, y(value) - 14)}" text-anchor="middle">${escapeHtml(valueLabel(value))}</text>` : ""}`; }).join("")}${secondary.map((value,index) => { const pointLabel = `${source[index].date || "Дата не указана"} · ${marketplaceMoney(value)}`; return `<circle class="chart-point-secondary" cx="${x(index)}" cy="${y(value)}" r="3"/><circle class="chart-point-hit" cx="${x(index)}" cy="${y(value)}" r="10" ${pointEvents} aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(source[index].date || "")}" data-chart-value="${escapeHtml(value)}"><title>${escapeHtml(pointLabel)}</title></circle>`; }).join("")}${labelIndexes.map((index) => `<text class="chart-axis-label" x="${x(index)}" y="${height-9}" text-anchor="middle">${escapeHtml(String(source[index].date || "").slice(5))}</text>`).join("")}</svg><div class="marketplace-point-tooltip" hidden></div></div>`;
+    }
+
+    function marketplaceOrderLineChart(orders) {
+      const daily = new Map();
+      (orders || []).forEach((row) => {
+        const date = String(row.shipment_date || row.updated_at || "").slice(0, 10);
+        if (date) daily.set(date, (daily.get(date) || 0) + 1);
+      });
+      return marketplaceLineChart([...daily.entries()].sort((a,b) => a[0].localeCompare(b[0])).map(([date,value]) => ({date,value})), "value", null);
+    }
+
+    function showMarketplaceChartTooltip(point) {
+      const chart = point.closest(".marketplace-line-chart");
+      const tooltip = chart?.querySelector(".marketplace-point-tooltip");
+      if (!chart || !tooltip) return;
+      const chartRect = chart.getBoundingClientRect();
+      const pointRect = point.getBoundingClientRect();
+      const rawDate = String(point.dataset.chartDate || "");
+      const date = rawDate ? new Date(`${rawDate}T00:00:00`) : null;
+      const dateLabel = date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString("ru-RU") : (rawDate || "Дата не указана");
+      tooltip.innerHTML = `<b>${escapeHtml(marketplaceMoney(Number(point.dataset.chartValue || 0)))}</b><span>${escapeHtml(dateLabel)}</span>`;
+      tooltip.style.left = `${pointRect.left - chartRect.left + pointRect.width / 2}px`;
+      tooltip.style.top = `${pointRect.top - chartRect.top + pointRect.height / 2}px`;
+      tooltip.hidden = false;
+    }
+
+    function hideMarketplaceChartTooltip(point) {
+      const tooltip = point.closest(".marketplace-line-chart")?.querySelector(".marketplace-point-tooltip");
+      if (tooltip) tooltip.hidden = true;
+    }
+
     function renderMarketplaceDetail(products, orders, runs) {
       const detail = state.marketplaceDetail || {};
+      const providerLabel = state.marketplaceProvider === "wildberries" ? "Wildberries" : (state.marketplaceProvider === "all" ? "маркетплейсы" : "Ozon");
+      const rootPayload = state.marketplaceData.payload || {};
+      const selectedPayload = state.marketplaceProvider === "wildberries" ? (rootPayload.wildberries || {}) : rootPayload;
+      const selectedAnalytics = selectedPayload.analytics || {};
+      const selectedCapabilityStatuses = selectedAnalytics.capability_statuses || {};
+      const selectedStockCapability = selectedCapabilityStatuses.stocks || {};
+      const selectedStocksUsable = state.marketplaceProvider !== "wildberries"
+        || selectedStockCapability.status === "available"
+        || (!selectedCapabilityStatuses.stocks && selectedAnalytics.capabilities?.stocks === true);
+      const selectedProductHistoryCapability = selectedCapabilityStatuses.product_history || {};
+      const selectedProductHistoryUsable = state.marketplaceProvider !== "wildberries"
+        || selectedProductHistoryCapability.status === "available"
+        || selectedAnalytics.capabilities?.product_history === true;
       if (detail.kind === "group") {
-        const groupRows = products.filter((row) => String(row.group_key || "other") === String(detail.key));
-        const group = marketplaceGroups(state.marketplaceData.payload || {}, products).find((row) => String(row.key) === String(detail.key));
+        const groupRows = products.filter((row) => String(row.group_key || "other") === String(detail.key)).sort((left, right) => {
+          const colorCompare = String(left.color || "Цвет не указан").localeCompare(String(right.color || "Цвет не указан"), "ru");
+          if (colorCompare) return colorCompare;
+          return String(left.size || "").localeCompare(String(right.size || ""), "ru", {numeric: true, sensitivity: "base"});
+        });
+        const colorGroups = [];
+        groupRows.forEach((row) => {
+          const color = String(row.color || "Цвет не указан");
+          let colorGroup = colorGroups.find((item) => item.color === color);
+          if (!colorGroup) {
+            colorGroup = {color, rows: []};
+            colorGroups.push(colorGroup);
+          }
+          colorGroup.rows.push(row);
+        });
+        const group = marketplaceGroups(selectedPayload, products).find((row) => String(row.key) === String(detail.key));
         if (!group) return "";
+        const groupStock = selectedStocksUsable && group.available !== null && group.available !== undefined ? `${Number(group.available || 0)} шт.` : "—";
         return `
-          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К группам")}</div><div><h3>${escapeHtml(group.name)}</h3><p>${groupRows.length} позиций · ${group.articles || groupRows.length} артикулов · остаток ${escapeHtml(group.available || 0)} шт.</p></div></div>
+          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К группам")}</div><div><h3>${escapeHtml(group.name)}</h3><p>${groupRows.length} позиций · ${group.articles || groupRows.length} артикулов · ${escapeHtml(providerLabel)} ${escapeHtml(groupStock)} · производство ${escapeHtml(marketplaceProductionStockText(group))}</p></div></div>
           <div class="marketplace-detail-grid">
             ${marketplaceDetailField("Товаров в группе", group.products || groupRows.length)}
             ${marketplaceDetailField("Артикулов", group.articles || groupRows.length)}
+            ${marketplaceDetailField(`Остаток ${providerLabel}`, groupStock)}
+            ${marketplaceDetailField("Остаток производства", marketplaceProductionStockText(group))}
             ${marketplaceDetailField("Цена от", marketplaceMoney(group.price_min))}
             ${marketplaceDetailField("Цена до", marketplaceMoney(group.price_max))}
           </div>
           <div class="section-title"><b>Товары группы</b><span>${groupRows.length}</span></div>
-          <div class="op-list">${groupRows.length ? groupRows.map((row) => `
-            <button type="button" class="card report-row marketplace-clickable marketplace-product-card" data-marketplace-product-id="${escapeHtml(row.id)}">
-              <div class="product-title"><b>${escapeHtml(row.name || "Товар Ozon")}</b><span class="status-chip">›</span></div>
-              <div class="marketplace-product-meta"><span>Название: ${escapeHtml(row.name || "—")}</span><span>Артикул: ${escapeHtml(row.offer_id || "—")}</span><span>SKU: ${escapeHtml(row.sku || "—")}</span></div>
-              <div class="marketplace-product-meta"><span>${escapeHtml(row.size || "Размер не указан")} · ${escapeHtml(row.color || "Цвет не указан")}</span></div>
-              <div class="marketplace-product-meta"><span>Остаток: ${escapeHtml(row.available == null ? "—" : row.available)} шт.</span><span>Цена: ${marketplaceMoney(row.current_price)}</span></div>
-            </button>`).join("") : itemEmpty("В этой группе пока нет товаров.")}</div>
+          <div class="marketplace-color-sections">${groupRows.length ? colorGroups.map((colorGroup) => `<section class="marketplace-color-section"><div class="marketplace-color-heading"><b>${escapeHtml(colorGroup.color)}</b><span>${colorGroup.rows.length} вариантов</span></div><div class="marketplace-variant-grid">${colorGroup.rows.map((row) => `
+            <button type="button" class="card marketplace-clickable marketplace-product-card" data-marketplace-product-id="${escapeHtml(row.id)}">
+              ${marketplaceProductAvatar(row, false, true)}
+              <span class="marketplace-product-card-body">
+                <span class="product-title"><b>${escapeHtml(row.name || `Товар ${providerLabel}`)}</b></span>
+                <span class="marketplace-product-primary-meta"><span>${escapeHtml(row.size || "Размер не указан")}</span><span>${escapeHtml(row.color || "Цвет не указан")}</span></span>
+                <span class="marketplace-product-secondary-meta">Артикул: ${escapeHtml(row.offer_id || "—")} · SKU: ${escapeHtml(row.sku || "—")}</span>
+                <span class="marketplace-product-commercial"><span>${escapeHtml(providerLabel)}: ${selectedStocksUsable && row.available != null ? `${escapeHtml(row.available)} шт.` : "—"}</span><span>Производство: ${escapeHtml(marketplaceProductionStockText(row))}</span><span>${marketplaceMoney(row.current_price)}</span></span>
+              </span>
+              <span class="status-chip marketplace-card-arrow">›</span>
+            </button>`).join("")}</div></section>`).join("") : itemEmpty("В этой группе пока нет товаров.")}</div>
         `;
       }
       if (detail.kind === "product") {
         const product = products.find((row) => String(row.id) === String(detail.id));
         if (!product) return "";
+        const productPeriod = state.marketplaceProductPeriod || "7d";
+        const history = Array.isArray(product.history) ? product.history : [];
+        const periodHistory = selectedProductHistoryUsable
+          ? (productPeriod === "all" ? history : history.filter((row) => marketplaceDateInPeriod(row.date, marketplacePeriodMeta(productPeriod))))
+          : [];
+        const historyTotals = periodHistory.reduce((result, row) => ({
+          orders: result.orders + Number(row.orders || 0),
+          units: result.units + Number(row.units || 0),
+          returns: result.returns + Number(row.returns || 0),
+          accruals: result.accruals + Number(row.accruals || 0),
+        }), {orders: 0, units: 0, returns: 0, accruals: 0});
+        const warehouseStocks = product.warehouse_stocks || {};
+        const productHistoryValue = (value, suffix = "") => selectedProductHistoryUsable ? `${escapeHtml(value)}${suffix}` : "—";
+        const productChart = !selectedProductHistoryUsable
+          ? `<div class="marketplace-chart-empty"><b>История товара недоступна</b><span>${escapeHtml(providerLabel)} пока не предоставляет подтверждённую историю заказов, продаж, возвратов и начислений по этой карточке.</span></div>`
+          : periodHistory.length
+          ? `${marketplaceLineChart(periodHistory, "units", "orders")}<div class="marketplace-chart-legend"><span><i></i>Продано, шт.</span><span><i class="secondary"></i>Заказы</span></div>`
+          : `<div class="marketplace-chart-empty"><b>За выбранный период операций нет</b><span>Источник истории доступен и подтвердил пустой период.</span></div>`;
         return `
-          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К группе")}</div><div><h3>${escapeHtml(product.name || product.offer_id || product.sku || "Товар")}</h3><p>${escapeHtml(product.group_name || "Товар маркетплейса")}</p></div></div>
+          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К группе")}</div><div class="marketplace-product-heading">${marketplaceProductAvatar(product, false, true)}<span><h3>${escapeHtml(product.name || product.offer_id || product.sku || "Товар")}</h3><p>${escapeHtml(product.group_name || "Товар маркетплейса")}</p></span></div></div>
           <div class="marketplace-detail-grid">
             ${marketplaceDetailField("Артикул", product.offer_id)}
             ${marketplaceDetailField("SKU", product.sku)}
             ${marketplaceDetailField("Штрихкод", product.barcode)}
             ${marketplaceDetailField("Размер", product.size)}
             ${marketplaceDetailField("Цвет", product.color)}
-            ${marketplaceDetailField("Остаток", `${product.available == null ? "—" : product.available} шт.`)}
+            ${marketplaceDetailField(`Остаток ${providerLabel}`, selectedStocksUsable && product.available != null ? `${product.available} шт.` : "—")}
+            ${marketplaceDetailField("Остаток производства", marketplaceProductionStockText(product))}
+            ${marketplaceDetailField(`${providerLabel} · склады`, selectedStocksUsable ? `${Object.values(warehouseStocks).reduce((sum, value) => sum + Number(value || 0), 0)} шт.` : "—")}
             ${marketplaceDetailField("Текущая цена", marketplaceMoney(product.current_price))}
             ${marketplaceDetailField("Старая цена", marketplaceMoney(product.old_price))}
             ${marketplaceDetailField("Обновлено", product.updated_at)}
           </div>
+          <div class="marketplace-filter-bar"><label><span>Период по товару</span><select onchange="state.marketplaceProductPeriod=this.value;renderMarketplaces()"><option value="7d" ${productPeriod === "7d" ? "selected" : ""}>Последние 7 дней</option><option value="30d" ${productPeriod === "30d" ? "selected" : ""}>Последние 30 дней</option><option value="all" ${productPeriod === "all" ? "selected" : ""}>Всё время</option></select></label><div class="marketplace-period-label">${productPeriod === "all" ? "Вся загруженная история" : escapeHtml(marketplacePeriodMeta(productPeriod).label)}</div></div>
+          <div class="marketplace-v2-kpis">
+            <div class="card marketplace-v2-kpi"><span>Заказы</span><strong>${productHistoryValue(historyTotals.orders, " шт.")}</strong><small>${selectedProductHistoryUsable ? "Связанные с товаром" : "Источник не подтверждён"}</small></div>
+            <div class="card marketplace-v2-kpi"><span>Продано</span><strong>${productHistoryValue(historyTotals.units, " шт.")}</strong><small>${selectedProductHistoryUsable ? "По загруженным заказам" : "Источник не подтверждён"}</small></div>
+            <div class="card marketplace-v2-kpi"><span>Возвраты</span><strong>${productHistoryValue(historyTotals.returns, " шт.")}</strong><small>${selectedProductHistoryUsable ? `По данным ${escapeHtml(providerLabel)}` : "Источник не подтверждён"}</small></div>
+            <div class="card marketplace-v2-kpi"><span>Начисления</span><strong>${selectedProductHistoryUsable ? marketplaceMoney(historyTotals.accruals) : "—"}</strong><small>${selectedProductHistoryUsable ? "Связанные по SKU" : "Источник не подтверждён"}</small></div>
+          </div>
+          <section class="card marketplace-analytic-card"><div class="section-title"><b>Динамика товара</b><span>${selectedProductHistoryUsable ? `${periodHistory.length} дней с данными` : "нет подтверждённого источника"}</span></div>${productChart}</section>
         `;
       }
       if (detail.kind === "order") {
         const order = orders.find((row) => String(row.id) === String(detail.id));
         if (!order) return "";
         return `
-          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К отгрузкам")}</div><div><h3>${escapeHtml(order.posting_number || order.external_order_id || "Отгрузка")}</h3><p>Отгрузка Ozon · подробности доступны только для чтения</p></div></div>
+          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К отгрузкам")}</div><div><h3>${escapeHtml(order.posting_number || order.external_order_id || "Отгрузка")}</h3><p>Отгрузка ${escapeHtml(providerLabel)} · подробности доступны только для чтения</p></div></div>
           <div class="marketplace-detail-grid">
             ${marketplaceDetailField("Номер заказа", order.external_order_id)}
             ${marketplaceDetailField("Статус", order.status)}
@@ -9545,6 +11076,85 @@ MINIAPP_HTML = """<!doctype html>
       return "";
     }
 
+    const marketplaceRouteMap = {
+      overview: "", products: "/products", orders: "/orders", supplies: "/supplies",
+      finance: "/finance", analytics: "/analytics", reviews: "/reviews", settings: "/settings",
+      "data-quality": "/data-quality",
+      stocks: "/stocks", "warehouse-shipments": "/warehouse-shipments", sync: "/sync",
+    };
+
+    function marketplaceViewFromPath(pathname) {
+      const path = String(pathname || "");
+      const marker = "/app/marketplaces";
+      const suffix = path.startsWith(marker) ? path.slice(marker.length).split("/").filter(Boolean)[0] || "" : "";
+      if (!suffix) return "overview";
+      const found = Object.entries(marketplaceRouteMap).find(([, route]) => route === `/${suffix}`);
+      return found ? found[0] : "overview";
+    }
+
+    function applyMarketplaceLocation() {
+      if (!isStandaloneWeb || !window.location.pathname.startsWith("/app/marketplaces")) return;
+      const params = new URLSearchParams(window.location.search);
+      const scope = params.get("scope");
+      const period = params.get("period");
+      const dateFrom = params.get("from") || "";
+      const dateTo = params.get("to") || "";
+      state.marketplaceProvider = ["all", "ozon", "wildberries"].includes(scope) ? scope : "all";
+      state.marketplaceView = marketplaceViewFromPath(window.location.pathname);
+      if (state.marketplaceView === "data-quality") state.marketplaceProvider = "ozon";
+      state.marketplacePeriod = ["today", "yesterday", "7d", "30d", "month", "previous-month", "custom"].includes(period) ? period : "7d";
+    state.marketplaceDateFrom = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateFrom) ? dateFrom : "";
+      state.marketplaceDateTo = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateTo) ? dateTo : "";
+    }
+
+    function syncMarketplaceLocation() {
+      if (!isStandaloneWeb || !window.history || typeof window.history.replaceState !== "function") return;
+      const route = marketplaceRouteMap[state.marketplaceView] || "";
+      const params = new URLSearchParams();
+      params.set("scope", ["all", "ozon", "wildberries"].includes(state.marketplaceProvider) ? state.marketplaceProvider : "all");
+      params.set("period", state.marketplacePeriod || "7d");
+      if (state.marketplacePeriod === "custom" && state.marketplaceDateFrom && state.marketplaceDateTo) {
+        params.set("from", state.marketplaceDateFrom);
+        params.set("to", state.marketplaceDateTo);
+      }
+      window.history.replaceState(null, "", `/app/marketplaces${route}?${params.toString()}`);
+    }
+
+    function marketplacePeriodMeta(period) {
+      const todayKey = marketplaceLocalIsoDate();
+      const end = new Date(`${todayKey}T00:00:00Z`);
+      const start = new Date(end);
+      const key = period || "7d";
+      if (key === "custom" && state.marketplaceDateFrom && state.marketplaceDateTo) {
+        const customStart = new Date(`${state.marketplaceDateFrom}T00:00:00Z`);
+        const customEnd = new Date(`${state.marketplaceDateTo}T00:00:00Z`);
+        if (!Number.isNaN(customStart.getTime()) && !Number.isNaN(customEnd.getTime())) {
+          start.setTime(Math.min(customStart.getTime(), customEnd.getTime()));
+          end.setTime(Math.max(customStart.getTime(), customEnd.getTime()));
+        }
+      }
+      if (key === "yesterday") { start.setUTCDate(start.getUTCDate() - 1); end.setUTCDate(end.getUTCDate() - 1); }
+      if (key === "7d") start.setUTCDate(start.getUTCDate() - 6);
+      if (key === "30d") start.setUTCDate(start.getUTCDate() - 29);
+      if (key === "month") start.setUTCDate(1);
+      if (key === "previous-month") { start.setUTCMonth(start.getUTCMonth() - 1, 1); end.setUTCDate(0); }
+      const dateKey = (value) => value.toISOString().slice(0, 10);
+      const formatKey = (value) => `${value.slice(8, 10)}.${value.slice(5, 7)}.${value.slice(0, 4)}`;
+      const startKey = dateKey(start);
+      const endKey = dateKey(end);
+      return {start, end, startKey, endKey, label: `${formatKey(startKey)} — ${formatKey(endKey)}`};
+    }
+
+    function marketplaceDateInPeriod(value, meta) {
+      const match = String(value || "").match(/^(\\d{4}-\\d{2}-\\d{2})/);
+      if (!match) return false;
+      return match[1] >= meta.startKey && match[1] <= meta.endKey;
+    }
+
+    function marketplaceUnavailable(label) {
+      return `<div class="marketplace-empty-metric"><b>${escapeHtml(label)}</b><span>Нет данных от API</span></div>`;
+    }
+
     function renderMarketplaces() {
       if (!canAccessMarketplaces()) {
         mainButton.textContent = "Обновить";
@@ -9552,39 +11162,174 @@ MINIAPP_HTML = """<!doctype html>
         mount.innerHTML = `<div class="screen-head"><div><h2>Маркетплейсы</h2><p>Раздел доступен администратору.</p></div></div><div class="card field-card">${itemEmpty("Нет прав администратора.")}</div>`;
         return;
       }
+      if (!state.marketplaceLocationInitialized) {
+        applyMarketplaceLocation();
+        state.marketplaceLocationInitialized = true;
+      }
+      if (state.marketplaceView === "data-quality") state.marketplaceProvider = "ozon";
       const payload = state.marketplaceData.payload || {};
       const selectedProvider = ["all", "ozon", "wildberries"].includes(state.marketplaceProvider) ? state.marketplaceProvider : "all";
       const isOzon = selectedProvider === "ozon";
       const isWildberries = selectedProvider === "wildberries";
       const isAll = selectedProvider === "all";
-      const summary = isWildberries ? {} : (payload.summary || {});
-      const products = isWildberries ? [] : (payload.products_rows || []);
-      const orders = isWildberries ? [] : (payload.orders_rows || []);
-      const runs = isWildberries ? [] : (payload.sync_runs || []);
+      const providerPayload = isWildberries ? (payload.wildberries || {}) : payload;
+      const summary = providerPayload.summary || {};
+      const periodMeta = marketplacePeriodMeta(state.marketplacePeriod);
+      const allProducts = providerPayload.products_rows || [];
+      const allOrders = providerPayload.orders_rows || [];
+      const analytics = providerPayload.analytics || {};
+      const wbCapabilities = analytics.capabilities && typeof analytics.capabilities === "object" ? analytics.capabilities : {};
+      const wbCapabilityStatuses = analytics.capability_statuses && typeof analytics.capability_statuses === "object" ? analytics.capability_statuses : {};
+      const wbCatalogStatus = wbCapabilityStatuses.catalog?.status || (wbCapabilities.catalog ? "legacy" : "no_data");
+      const wbStocksStatus = wbCapabilityStatuses.stocks?.status || (wbCapabilities.stocks ? "legacy" : "no_data");
+      const wbCatalogUsable = ["available", "legacy"].includes(wbCatalogStatus);
+      const wbStocksUsable = ["available", "legacy"].includes(wbStocksStatus);
+      const financeDaily = analytics.finance_daily || [];
+      const periodFinance = financeDaily.filter((row) => marketplaceDateInPeriod(row.date, periodMeta));
+      const periodRevenue = periodFinance.reduce((sum, row) => sum + Number(row.revenue || 0), 0);
+      const periodNet = periodFinance.reduce((sum, row) => sum + Number(row.net || 0), 0);
+      const allReturns = analytics.returns_rows || [];
+      const periodReturnDays = (analytics.returns_daily || []).filter((row) => marketplaceDateInPeriod(row.date, periodMeta));
+      const periodReturnRecords = periodReturnDays.reduce((sum, row) => sum + Number(row.records || 0), 0);
+      const returnQuantity = periodReturnDays.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+      const ratingValue = analytics.rating;
+      const wbReviews = analytics.reviews_rows || [];
+      const wbReviewSummary = analytics.reviews_summary || {};
+      const wbFeedbacksCapability = wbCapabilityStatuses.feedbacks || {};
+      const wbFeedbacksStatus = wbFeedbacksCapability.status || (wbCapabilities.reviews ? "legacy" : "no_data");
+      const wbFeedbacksCurrent = wbFeedbacksStatus === "available";
+      const wbHistoricalRating = wbReviewSummary.rating != null ? wbReviewSummary.rating : ratingValue;
+      const effectiveRating = isWildberries ? (wbFeedbacksCurrent ? wbHistoricalRating : null) : ratingValue;
+      if (isWildberries && !wbStocksUsable) state.marketplaceFilters.inStockOnly = false;
+      if (isWildberries) state.marketplaceFilters.onlyProblems = false;
+      const applyInStockFilter = state.marketplaceFilters.inStockOnly && (!isWildberries || wbStocksUsable);
+      const applyProblemFilter = state.marketplaceFilters.onlyProblems && !isWildberries;
+      const products = allProducts.filter((row) => !applyInStockFilter || Number(row.available || 0) > 0);
+      const orders = allOrders.filter((row) => marketplaceDateInPeriod(row.shipment_date || row.created_at, periodMeta)).filter((row) => state.marketplaceFilters.orderStatus === "all" || String(row.status || "") === state.marketplaceFilters.orderStatus).filter((row) => !applyProblemFilter || !["delivering", "awaiting_packaging"].includes(String(row.status || "")));
+      const runs = providerPayload.sync_runs || [];
       const supplies = isWildberries ? (payload.supplies || []).filter((row) => row.marketplace === "wildberries") : (payload.supplies || []).filter((row) => isAll || row.marketplace === "ozon");
+      const wbSuppliesCapability = wbCapabilityStatuses.supplies || {};
+      const wbSuppliesStatus = wbSuppliesCapability.status || (wbCapabilities.supplies ? "legacy" : "no_data");
+      const wbSuppliesCurrent = wbSuppliesStatus === "available";
       const warehouseShipments = (payload.warehouse_shipments || []).filter((row) => isAll || row.marketplace === selectedProvider);
-      const accounts = payload.accounts || [];
+      const accounts = providerPayload.accounts || [];
       const account = accounts[0] || {};
       const wildberries = (payload.connectors || []).find((item) => item.marketplace === "wildberries") || {};
+      const wildberriesConnected = Boolean((payload.wildberries || {}).configured || wildberries.configured);
       const providerName = isAll ? "маркетплейсов" : (isOzon ? "Ozon" : "Wildberries");
       const providerConfigured = isAll
-        ? Boolean(payload.configured || wildberries.configured)
-        : (isOzon ? Boolean(payload.configured) : Boolean(wildberries.configured));
+        ? Boolean(payload.configured || wildberriesConnected)
+        : (isOzon ? Boolean(payload.configured) : wildberriesConnected);
       const providerStatus = isAll
-        ? `Ozon: ${payload.configured ? "подключён" : "не подключён"} · Wildberries: ${wildberries.configured ? "подключён" : "не подключён"}`
+        ? `Ozon: ${payload.configured ? "подключён" : "не подключён"} · Wildberries: ${wildberriesConnected ? "подключён" : "не подключён"}`
         : (isOzon
           ? (providerConfigured ? `Подключён · ${account.account_name || "Основной аккаунт"}` : "Не настроен · добавьте ключи")
-          : (providerConfigured ? "Токен задан · синхронизатор готовится" : "Токен пока не задан"));
+          : (providerConfigured ? `Подключён · ${account.account_name || "Основной Wildberries"}` : "Токен пока не задан"));
       const providerTitle = isAll ? "маркетплейсами" : providerName;
-      const groups = marketplaceGroups(payload, products);
-      mainButton.hidden = isWildberries;
-      mainButton.textContent = state.marketplaceData.loading ? "Синхронизация…" : "Синхронизировать Ozon";
-      mainButton.disabled = isWildberries || state.marketplaceData.loading;
-      const errorNotice = !isWildberries && state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
+      const groups = marketplaceGroups(applyInStockFilter ? {...providerPayload, product_groups: []} : providerPayload, products);
+      const qualityView = state.marketplaceView === "data-quality";
+      const qualityActionBusy = state.marketplaceQuality.loading
+        || state.marketplaceQuality.syncing
+        || Boolean(state.marketplaceQuality.payload?.phase1a?.worker?.running);
+      mainButton.hidden = false;
+      mainButton.textContent = qualityView
+        ? (qualityActionBusy ? "Phase 1A выполняется…" : "Запустить Phase 1A")
+        : (state.marketplaceData.loading ? "Синхронизация…" : `Синхронизировать ${isWildberries ? "Wildberries" : isAll ? "маркетплейсы" : "Ozon"}`);
+      mainButton.disabled = qualityView ? qualityActionBusy : state.marketplaceData.loading;
+      const errorNotice = state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
       const notConfigured = !providerConfigured ? `<div class="card field-card"><div class="task-note"><b>${isAll ? "Маркетплейсы пока не подключены" : `${providerName} пока не подключён`}</b><br>${isAll ? "Подключите хотя бы одну площадку, чтобы загрузить товары и остатки." : (isOzon ? "Добавьте на сервере OZON_CLIENT_ID и OZON_API_KEY в /etc/sewing-web/sewing-web.env, затем перезапустите сервис." : "Добавьте токен Wildberries, чтобы загрузить товары, остатки и отгрузки.")}</div></div>` : "";
-      const productsBlock = groups.length ? `<div class="op-list marketplace-group-grid">${groups.map((group) => `<button type="button" class="card marketplace-clickable marketplace-group-card" data-marketplace-group="${escapeHtml(group.key)}"><div class="group-title"><b>${escapeHtml(group.name)}</b><span class="status-chip">›</span></div><div class="marketplace-group-meta"><span>${escapeHtml(group.products || 0)} поз.</span><span>${escapeHtml(group.articles || group.products || 0)} артикулов</span><span>Остаток: ${escapeHtml(group.available || 0)} шт.</span></div><div class="marketplace-group-meta"><span>Цена: ${marketplaceMoney(group.price_min)}${group.price_max != null && group.price_max !== group.price_min ? ` — ${marketplaceMoney(group.price_max)}` : ""}</span><span>Открыть группу ›</span></div></button>`).join("")}</div>` : itemEmpty("Товары ещё не загружены.");
-      const stocksBlock = products.length ? `<div class="op-list">${products.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-product-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.name || "Товар Ozon")}</b><span>${escapeHtml(row.group_name || "Прочие товары")} · Артикул: ${escapeHtml(row.offer_id || "—")}</span></div><span class="status-chip ${Number(row.available || 0) > 0 ? "" : "gray"}">${escapeHtml(row.available == null ? "—" : row.available)} шт. ›</span></button>`).join("")}</div>` : itemEmpty("Остатки ещё не загружены.");
-      const analyticsBlock = `
+      const kpiUnavailable = (label, hint) => `<div class="card marketplace-v2-kpi unavailable" title="${escapeHtml(hint)}"><span>${escapeHtml(label)}</span><strong>—</strong><small>Нет данных от API</small></div>`;
+      const kpiValue = (label, value, suffix, hint, view = "") => `${view ? `<button type="button" class="card marketplace-v2-kpi" data-marketplace-view="${view}">` : `<div class="card marketplace-v2-kpi">`}<span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}<small>${escapeHtml(suffix)}</small></strong><small>${escapeHtml(hint)}</small>${view ? "</button>" : "</div>"}`;
+      const groupMarketplaceStockText = (group) => isWildberries && !wbStocksUsable || group.available === null || group.available === undefined ? "—" : `${Number(group.available || 0)} шт.`;
+      const productsBlock = groups.length ? `<div class="op-list marketplace-group-grid">${groups.map((group) => `<button type="button" class="card marketplace-clickable marketplace-group-card" data-marketplace-group="${escapeHtml(group.key)}"><div class="group-title"><span class="marketplace-product-heading">${marketplaceProductAvatar(group)}<span><b>${escapeHtml(group.name)}</b></span></span><span class="status-chip">›</span></div><div class="marketplace-group-meta"><span>${escapeHtml(group.products || 0)} поз.</span><span>${escapeHtml(group.articles || group.products || 0)} артикулов</span><span>${escapeHtml(providerName)}: ${escapeHtml(groupMarketplaceStockText(group))}</span><span>Производство: ${escapeHtml(marketplaceProductionStockText(group))}</span></div><div class="marketplace-group-meta"><span>Цена: ${marketplaceMoney(group.price_min)}${group.price_max != null && group.price_max !== group.price_min ? ` — ${marketplaceMoney(group.price_max)}` : ""}</span><span>Открыть группу ›</span></div></button>`).join("")}</div>` : itemEmpty("Товары ещё не загружены.");
+      const warehouseOptions = Array.isArray(providerPayload.warehouses) ? providerPayload.warehouses : [{key:"fbo",name:"FBO — склады маркетплейса"},{key:"fbs",name:"FBS — собственный склад"}];
+      const stockColors = [...new Set(products.map((row) => String(row.color || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru"));
+      const stockSizes = [...new Set(products.map((row) => String(row.size || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru", {numeric: true, sensitivity: "base"}));
+      const stocksBlock = products.length ? `<section class="marketplace-stock-section"><div class="marketplace-stock-filters"><label><span>Реальный склад ${escapeHtml(providerName)}</span><select data-stock-filter="warehouse" onchange="filterMarketplaceStocks(this)"><option value="all">Все склады ${escapeHtml(providerName)}</option>${warehouseOptions.map((warehouse) => `<option value="${escapeHtml(warehouse.key)}">${escapeHtml(warehouse.name)}</option>`).join("")}</select></label><label><span>Номенклатура</span><select data-stock-filter="product" onchange="filterMarketplaceStocks(this)"><option value="all">Вся номенклатура</option>${groups.map((group) => `<option value="${escapeHtml(group.key)}">${escapeHtml(group.name)}</option>`).join("")}</select></label><label><span>Цвет</span><select data-stock-filter="color" onchange="filterMarketplaceStocks(this)"><option value="all">Все цвета</option>${stockColors.map((color) => `<option value="${escapeHtml(color)}">${escapeHtml(color)}</option>`).join("")}</select></label><label><span>Размер</span><select data-stock-filter="size" onchange="filterMarketplaceStocks(this)"><option value="all">Все размеры</option>${stockSizes.map((size) => `<option value="${escapeHtml(size)}">${escapeHtml(size)}</option>`).join("")}</select></label><label><span>Критичность</span><select data-stock-filter="criticality" onchange="filterMarketplaceStocks(this)"><option value="all">Все состояния</option><option value="enough">Хватает · от 10 шт.</option><option value="low">Нужно пополнить · 1–9 шт.</option><option value="absent">Отсутствует · 0 шт.</option></select></label></div><div class="section-title"><b>Остатки по товарам</b><span data-stock-visible-count>${products.length}</span></div><div class="marketplace-stock-grid">${products.map((row) => { const stockMap = row.warehouse_stocks || {}; const total = Number(row.available || 0); const level = marketplaceStockLevel(total); const nonEmptyWarehouses = warehouseOptions.filter((warehouse) => Number(stockMap[warehouse.key] || 0) > 0); const encodedStockMap = escapeHtml(warehouseOptions.map((warehouse) => `${warehouse.key}:${Number(stockMap[warehouse.key] || 0)}`).join("|")); return `<button type="button" class="card marketplace-clickable marketplace-stock-card" data-marketplace-product-id="${escapeHtml(row.id)}" data-stock-product="${escapeHtml(row.group_key || "other")}" data-stock-color="${escapeHtml(String(row.color || ""))}" data-stock-size="${escapeHtml(String(row.size || ""))}" data-stock-total="${total}" data-stock-map="${encodedStockMap}">${marketplaceProductAvatar(row)}<span class="marketplace-stock-card-body"><b>${escapeHtml(row.name || `Товар ${providerName}`)}</b><small>${escapeHtml(row.group_name || "Прочие товары")} · ${escapeHtml(row.color || "Цвет не указан")} · ${escapeHtml(row.size || "Размер не указан")} · Артикул: ${escapeHtml(row.offer_id || "—")}</small><span class="marketplace-stock-breakdown">${nonEmptyWarehouses.slice(0, 3).map((warehouse) => `<span>${escapeHtml(warehouse.name)}: ${Number(stockMap[warehouse.key] || 0)} шт.</span>`).join("")}${nonEmptyWarehouses.length > 3 ? `<span>Ещё складов: ${nonEmptyWarehouses.length - 3}</span>` : ""}</span></span><span class="marketplace-stock-result"><b data-stock-quantity>${total} шт.</b><span data-stock-level class="status-chip marketplace-stock-level ${level.key}">${level.label}</span></span></button>`; }).join("")}</div><div class="marketplace-stock-empty">${itemEmpty("По выбранным фильтрам товаров нет.")}</div></section>` : itemEmpty("Остатки ещё не загружены.");
+      const wbPeriodCapability = (name, fallback) => {
+        const capability = wbCapabilityStatuses[name] && typeof wbCapabilityStatuses[name] === "object" ? wbCapabilityStatuses[name] : {};
+        const status = capability.status || (fallback ? "legacy" : "no_data");
+        const coverageStart = String(capability.coverage_start_date || "");
+        const coverageEnd = String(capability.coverage_end_date || "");
+        const hasCoverage = /^\\d{4}-\\d{2}-\\d{2}$/.test(coverageStart) && /^\\d{4}-\\d{2}-\\d{2}$/.test(coverageEnd);
+        const selectedStart = periodMeta.startKey;
+        const selectedEnd = periodMeta.endKey;
+        return {
+          status,
+          coverageStart,
+          coverageEnd,
+          hasCoverage,
+          covered: hasCoverage && selectedStart >= coverageStart && selectedEnd <= coverageEnd,
+          usable: ["available", "partial", "legacy"].includes(status),
+        };
+      };
+      const wbRowsInCoverage = (rows, coverage, dateKeys = ["date"]) => (Array.isArray(rows) ? rows : []).filter((row) => {
+        const rowDate = String(dateKeys.map((key) => row?.[key]).find(Boolean) || "").slice(0, 10);
+        if (!marketplaceDateInPeriod(rowDate, periodMeta)) return false;
+        return !coverage.hasCoverage || (rowDate >= coverage.coverageStart && rowDate <= coverage.coverageEnd);
+      });
+      const wbOrdersCoverage = wbPeriodCapability("orders", wbCapabilities.orders);
+      const wbFinanceCoverage = wbPeriodCapability("finance", wbCapabilities.finance);
+      const wbSalesCoverage = wbPeriodCapability("sales", wbCapabilities.sales);
+      const verifiedOrders = isWildberries ? wbRowsInCoverage(orders, wbOrdersCoverage, ["shipment_date", "created_at", "updated_at"]) : orders;
+      const verifiedOrdersAvailable = !isWildberries || (wbOrdersCoverage.usable && (wbOrdersCoverage.covered || verifiedOrders.length > 0));
+      const verifiedPeriodFinance = isWildberries ? wbRowsInCoverage(financeDaily, wbFinanceCoverage) : periodFinance;
+      const verifiedPeriodRevenue = verifiedPeriodFinance.reduce((sum, row) => sum + Number(row.revenue || 0), 0);
+      const verifiedPeriodNet = verifiedPeriodFinance.reduce((sum, row) => sum + Number(row.net || 0), 0);
+      const verifiedReturnDays = isWildberries ? wbRowsInCoverage(analytics.returns_daily, wbSalesCoverage) : periodReturnDays;
+      const verifiedReturnRecords = verifiedReturnDays.reduce((sum, row) => sum + Number(row.records || 0), 0);
+      const verifiedReturnQuantity = verifiedReturnDays.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+      const wbFunnelCoverage = wbPeriodCapability("funnel", wbCapabilities.sales_funnel);
+      const wbFunnelDaily = wbRowsInCoverage(analytics.sales_funnel_daily, wbFunnelCoverage);
+      const wbAdvertising = analytics.advertising || {};
+      const wbAdvertisingCoverage = wbPeriodCapability("advertising", wbCapabilities.advertising);
+      const wbAdvertisingDaily = wbRowsInCoverage(wbAdvertising.daily, wbAdvertisingCoverage);
+      const wbAdSummaryBase = wbAdvertising.summary || {};
+      const wbAdSummary = {
+        ...wbAdSummaryBase,
+        views: wbAdvertisingDaily.reduce((sum, row) => sum + Number(row.views || 0), 0),
+        clicks: wbAdvertisingDaily.reduce((sum, row) => sum + Number(row.clicks || 0), 0),
+        spend: wbAdvertisingDaily.reduce((sum, row) => sum + Number(row.spend || 0), 0),
+        orders: wbAdvertisingDaily.reduce((sum, row) => sum + Number(row.orders || 0), 0),
+        revenue: wbAdvertisingDaily.reduce((sum, row) => sum + Number(row.revenue || 0), 0),
+      };
+      wbAdSummary.ctr = wbAdSummary.views ? wbAdSummary.clicks * 100 / wbAdSummary.views : 0;
+      wbAdSummary.roas = wbAdSummary.spend ? wbAdSummary.revenue / wbAdSummary.spend : 0;
+      const wbFunnelChart = !wbFunnelCoverage.usable
+        ? marketplaceUnavailable("Воронка продаж")
+        : wbFunnelDaily.length
+          ? marketplaceLineChart(wbFunnelDaily, "order_sum", null)
+          : wbFunnelCoverage.covered
+            ? `<div class="marketplace-chart-empty"><b>За выбранный период заказов нет</b><span>Источник Wildberries доступен; в выбранном диапазоне подтверждён пустой ряд.</span></div>`
+            : `<div class="marketplace-chart-empty"><b>Период покрыт частично</b><span>WB подтвердил только ${escapeHtml(wbFunnelCoverage.coverageStart || "часть периода")} — ${escapeHtml(wbFunnelCoverage.coverageEnd || "текущую дату")}.</span></div>`;
+      const wbAdvertisingChart = !wbAdvertisingCoverage.usable
+        ? marketplaceUnavailable("Расходы на рекламу")
+        : wbAdvertisingDaily.length
+          ? marketplaceLineChart(wbAdvertisingDaily, "spend", null)
+          : wbAdvertisingCoverage.covered
+            ? `<div class="marketplace-chart-empty"><b>За выбранный период расходов нет</b><span>Источник рекламы доступен; в выбранном диапазоне подтверждён пустой ряд.</span></div>`
+            : `<div class="marketplace-chart-empty"><b>Период рекламы не подтверждён</b><span>Данные вне подтверждённого окна не подменяются нулём.</span></div>`;
+      const wbCoverageNotice = (!wbFunnelCoverage.covered && wbFunnelCoverage.usable) || (!wbAdvertisingCoverage.covered && wbAdvertisingCoverage.usable)
+        ? `<div class="analytics-overview-notice warn"><div><b>Графики покрывают выбранный период не полностью</b><span>Показаны только даты внутри подтверждённых API-окон; сохранённые старые строки за их пределами скрыты.</span></div></div>`
+        : "";
+      const wbAnalyticsBlock = `
+        <div class="marketplace-v2-kpis">
+          ${wbCatalogUsable ? kpiValue("Карточки", summary.products || 0, " шт.", `Каталог Wildberries${wbCatalogStatus === "legacy" ? " · прежний snapshot" : ""}`, "products") : kpiUnavailable("Карточки", "Каталог Wildberries недоступен")}
+          ${wbStocksUsable ? kpiValue("Остатки", products.reduce((sum,row) => sum + Number(row.available || 0), 0), " шт.", `По складам WB${wbStocksStatus === "legacy" ? " · прежний snapshot" : ""}`, "stocks") : kpiUnavailable("Остатки", "Для API остатков нужны права токена Wildberries")}
+          ${wbOrdersCoverage.usable && (wbOrdersCoverage.covered || verifiedOrders.length) ? kpiValue("Заказы", verifiedOrders.length, " шт.", `${periodMeta.label}${wbOrdersCoverage.covered ? "" : " · частичное покрытие"}`, "orders") : kpiUnavailable("Заказы", "Выбранный период не покрыт API заказов Wildberries")}
+          ${wbCapabilities.advertising ? kpiValue("Реклама", wbAdSummary.campaigns || 0, " камп.", `${wbAdSummary.active_campaigns || 0} активных`) : kpiUnavailable("Реклама", "API рекламы Wildberries недоступен")}
+          ${wbAdvertisingCoverage.usable && (wbAdvertisingCoverage.covered || wbAdvertisingDaily.length) ? kpiValue("Расходы", marketplaceMoney(wbAdSummary.spend || 0), "", `${periodMeta.label}${wbAdvertisingCoverage.covered ? "" : " · частичное покрытие"} · CTR ${Number(wbAdSummary.ctr || 0).toFixed(2)}%`) : kpiUnavailable("Расходы", "Выбранный период не покрыт API рекламы Wildberries")}
+          ${wbAdvertisingCoverage.usable && (wbAdvertisingCoverage.covered || wbAdvertisingDaily.length) ? kpiValue("ROAS", Number(wbAdSummary.roas || 0).toFixed(2), "", `${wbAdSummary.orders || 0} заказов из рекламы${wbAdvertisingCoverage.covered ? "" : " · частично"}`) : kpiUnavailable("ROAS", "Выбранный период не покрыт API рекламы Wildberries")}
+        </div>
+        ${wbCoverageNotice}
+        <div class="marketplace-wide-grid">
+          <section class="card marketplace-chart-panel"><div class="marketplace-chart-head"><div class="marketplace-chart-summary"><span>Воронка продаж</span><strong>${wbFunnelCoverage.usable && (wbFunnelCoverage.covered || wbFunnelDaily.length) ? marketplaceMoney(wbFunnelDaily.reduce((sum,row) => sum + Number(row.order_sum || 0), 0)) : "—"}</strong><small>${escapeHtml(periodMeta.label)}${wbFunnelCoverage.covered ? "" : " · частичное покрытие"} · заказы по данным аналитики WB</small></div></div><div class="marketplace-chart-canvas">${wbFunnelChart}</div></section>
+          <section class="card marketplace-chart-panel"><div class="marketplace-chart-head"><div class="marketplace-chart-summary"><span>Расходы на рекламу</span><strong>${wbAdvertisingCoverage.usable && (wbAdvertisingCoverage.covered || wbAdvertisingDaily.length) ? marketplaceMoney(wbAdSummary.spend || 0) : "—"}</strong><small>${escapeHtml(periodMeta.label)}${wbAdvertisingCoverage.covered ? "" : " · частичное покрытие"} · ${wbAdSummary.views || 0} показов · ${wbAdSummary.clicks || 0} кликов</small></div></div><div class="marketplace-chart-canvas">${wbAdvertisingChart}</div></section>
+        </div>
+        <div class="card field-card"><div class="section-title"><b>Рекламные кампании</b><span>${(wbAdvertising.campaigns || []).length}</span></div>${(wbAdvertising.campaigns || []).length ? `<div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Кампания</th><th>Статус</th><th>Оплата</th><th>Бюджет в день</th></tr></thead><tbody>${wbAdvertising.campaigns.map((row) => `<tr><td>${escapeHtml(row.name || row.campaign_id)}</td><td>${escapeHtml(row.status || "—")}</td><td>${escapeHtml(row.payment_type || "—")}</td><td>${marketplaceMoney(row.daily_budget || 0)}</td></tr>`).join("")}</tbody></table></div>` : itemEmpty("Кампании появятся после синхронизации.")}</div>
+        <div class="card field-card"><div class="section-title"><b>Доступность данных WB</b><span>${escapeHtml(account.last_sync_at || "нет данных")}</span></div><div class="marketplace-mini-list">${Object.entries(analytics.capabilities || {}).map(([key,value]) => { const capabilityKey = key === "sales_funnel" ? "funnel" : key; const status = wbCapabilityStatuses[capabilityKey]?.status || (value ? "available" : "no_data"); const statusLabel = {available:"Подключено",partial:"Доступно частично",permission_required:"Нужны права токена",unauthorized:"Токен отклонён",payment_required:"Нужен платный доступ",error:"Ошибка источника",unavailable:"Временно недоступно",no_data:"Нет подтверждённых данных"}[status] || status; return `<div class="marketplace-mini-row"><span>${escapeHtml({catalog:"Товары и карточки",prices:"Цены и скидки",orders:"Заказы",sales_funnel:"Воронка продаж",advertising:"Реклама",stocks:"Остатки по складам",finance:"Финансы"}[key] || key)}</span><b>${escapeHtml(statusLabel)}</b></div>`; }).join("")}</div></div>
+      `;
+      const analyticsBlock = isWildberries ? wbAnalyticsBlock : `
         <div class="kpi-grid">
           <div class="card kpi"><div class="kpi-top"><span>Карточки товаров</span><span class="kpi-ico">▤</span></div><strong>${escapeHtml(summary.products || 0)}</strong><span>Загружено из ${providerName}</span></div>
           <div class="card kpi"><div class="kpi-top"><span>Строк остатков</span><span class="kpi-ico">▦</span></div><strong>${escapeHtml(summary.stock_rows || 0)}</strong><span>FBO и FBS</span></div>
@@ -9592,12 +11337,14 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="card field-card"><div class="section-title"><b>Состояние синхронизации</b><span>${escapeHtml(account.last_sync_at || "нет данных")}</span></div><div class="task-note">Раздел аналитики показывает только данные, полученные из маркетплейса. Изменения на Ozon и Wildberries из приложения не отправляются.</div></div>
       `;
-      const ordersBlock = orders.length ? `<div class="op-list">${orders.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-order-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>Заказ: ${escapeHtml(row.external_order_id)}<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")} ›</span></button>`).join("")}</div>` : itemEmpty("Отгрузки ещё не загружены.");
-      const suppliesBlock = supplies.length ? `<div class="op-list">${supplies.map((row) => `<div class="card report-row marketplace-supply-card"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id)}</b><span>${escapeHtml(row.destination_name || "Направление не указано")} · ${escapeHtml(row.item_count || 0)} поз. · ${escapeHtml(row.total_quantity || 0)} шт.${row.unmatched_count ? `<br><span class="critical-text">Не сопоставлено: ${escapeHtml(row.unmatched_count)}</span>` : ""}</span></div><div class="supply-actions"><span class="status-chip ${["SHORTAGE","SYNC_ERROR"].includes(row.canonical_status) ? "warn" : ""}">${escapeHtml(row.canonical_status)}</span>${row.warehouse_shipment_id ? `<span class="status-chip">MP-${String(row.warehouse_shipment_id).padStart(6, "0")}</span>` : (!row.unmatched_count ? `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>` : `<span class="status-chip warn">Нужно сопоставление</span>`)}</div></div>`).join("")}</div>` : itemEmpty("Поставки маркетплейсов ещё не загружены. После синхронизации они появятся здесь отдельными заданиями для склада.");
+      const ordersBlock = verifiedOrdersAvailable && verifiedOrders.length ? `<div class="op-list">${verifiedOrders.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-order-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>Заказ: ${escapeHtml(row.external_order_id)}<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")} ›</span></button>`).join("")}</div>` : itemEmpty(isWildberries && !verifiedOrdersAvailable ? "Выбранный период или источник заказов WB не подтверждён." : "За выбранный период отгрузок нет.");
+      const suppliesBlock = supplies.length
+        ? `${isWildberries && !wbSuppliesCurrent ? `<div class="analytics-overview-notice warn"><div><b>Показана сохранённая история поставок WB</b><span>${escapeHtml(wbSuppliesCapability.safe_message || "Текущий источник поставок не подтверждён; создание складских заданий отключено.")}</span></div></div>` : ""}<div class="op-list">${supplies.map((row) => `<div class="card report-row marketplace-supply-card"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id)}</b><span>${escapeHtml(row.destination_name || "Направление не указано")} · ${escapeHtml(row.item_count || 0)} поз. · ${escapeHtml(row.total_quantity || 0)} шт.${row.unmatched_count ? `<br><span class="critical-text">Не сопоставлено: ${escapeHtml(row.unmatched_count)}</span>` : ""}</span></div><div class="supply-actions"><span class="status-chip ${["SHORTAGE","SYNC_ERROR"].includes(row.canonical_status) ? "warn" : ""}">${escapeHtml(row.canonical_status)}</span>${row.warehouse_shipment_id ? `<span class="status-chip">MP-${String(row.warehouse_shipment_id).padStart(6, "0")}</span>` : (isWildberries && !wbSuppliesCurrent ? `<span class="status-chip warn">только история</span>` : (!row.unmatched_count ? `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>` : `<span class="status-chip warn">Нужно сопоставление</span>`))}</div></div>`).join("")}</div>`
+        : itemEmpty(isWildberries && wbSuppliesCurrent ? "Источник поставок WB доступен; активных поставок нет." : "Поставки маркетплейсов ещё не подтверждены.");
       const warehouseShipmentsBlock = warehouseShipments.length ? `<div class="op-list">${warehouseShipments.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.number)}</b><span>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.destination_name || "Направление не указано")}<br>${escapeHtml(row.total_quantity || 0)} шт. · резерв ${escapeHtml(row.reserved_quantity || 0)} · отобрано ${escapeHtml(row.picked_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.status)}</span></div>`).join("")}</div>` : itemEmpty("Внутренних складских отгрузок пока нет.");
-      const topProducts = [...products].sort((a, b) => Number(b.available || 0) - Number(a.available || 0)).slice(0, 5);
+      const topProducts = isWildberries && !wbStocksUsable ? [] : [...products].sort((a, b) => Number(b.available || 0) - Number(a.available || 0)).slice(0, 5);
       const topProductsBlock = topProducts.length ? `<div class="marketplace-mini-list">${topProducts.map((row) => `<div class="marketplace-mini-row"><span>${escapeHtml(row.name || row.offer_id || "Товар")}</span><b>${escapeHtml(row.available == null ? 0 : row.available)} шт.</b></div>`).join("")}</div>` : itemEmpty("После синхронизации здесь появятся товары-лидеры.");
-      const recentOrdersBlock = orders.length ? `<table class="marketplace-table"><thead><tr><th>Заказ</th><th>Товар</th><th>Статус</th></tr></thead><tbody>${orders.slice(0, 5).map((row) => `<tr><td>${escapeHtml(row.posting_number || row.external_order_id || "—")}</td><td>${escapeHtml(row.external_order_id || "—")}</td><td>${escapeHtml(row.status || "—")}</td></tr>`).join("")}</tbody></table>` : itemEmpty("Заказы появятся после синхронизации.");
+      const recentOrdersBlock = verifiedOrdersAvailable && verifiedOrders.length ? `<table class="marketplace-table"><thead><tr><th>Заказ</th><th>Товар</th><th>Статус</th></tr></thead><tbody>${verifiedOrders.slice(0, 5).map((row) => `<tr><td>${escapeHtml(row.posting_number || row.external_order_id || "—")}</td><td>${escapeHtml(row.external_order_id || "—")}</td><td>${escapeHtml(row.status || "—")}</td></tr>`).join("")}</tbody></table>` : itemEmpty(isWildberries && !verifiedOrdersAvailable ? "Период или источник заказов не подтверждён API Wildberries." : "За выбранный период заказов нет.");
       const notificationsBlock = (payload.sync_events || []).slice(0, 4).map((row) => `<div class="marketplace-notice"><i class="marketplace-notice-dot"></i><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.event_type || "Событие")}</b><span>${escapeHtml(row.message || "Обновление данных")}</span></div></div>`).join("") || `<div class="marketplace-notice"><i class="marketplace-notice-dot"></i><div><b>Система готова</b><span>Уведомления о синхронизации и поставках появятся здесь.</span></div></div>`;
       const chartBars = (values, wb = false) => { const max = Math.max(1, ...values.map((value) => Number(value || 0))); return values.map((value) => `<i class="marketplace-chart-bar ${wb ? "wb" : ""}" style="--bar-height:${Math.max(8, (Number(value || 0) / max) * 100)}%" title="${escapeHtml(value || 0)}"></i>`).join(""); };
       const providerDashboard = (key, label, configured, wb = false) => {
@@ -9608,26 +11355,133 @@ MINIAPP_HTML = """<!doctype html>
         return `<section class="marketplace-provider-dashboard ${wb ? "wb-panel" : "ozon-panel"}"><div class="provider-heading"><div><h3>${label}</h3><span>${configured ? "Подключён · только чтение" : "Не подключён"}</span></div><span class="status-chip">${configured ? "готов" : "настроить"}</span></div><div class="marketplace-dashboard-kpis"><div class="marketplace-dashboard-kpi"><span>Заказы</span><strong>${escapeHtml(providerSummary.open_orders || 0)}</strong><small>открыто</small></div><div class="marketplace-dashboard-kpi"><span>Товары</span><strong>${escapeHtml(providerSummary.products || 0)}</strong><small>позиций</small></div><div class="marketplace-dashboard-kpi"><span>Остатки</span><strong>${escapeHtml(providerSummary.stock_rows || 0)}</strong><small>строк</small></div></div><div class="marketplace-dashboard-lower"><div><div class="section-title"><b>Показатели</b><span>из синхронизации</span></div><div class="marketplace-chart">${configured ? chartBars(chartValues) : itemEmpty("Нет данных")}</div></div><div><div class="section-title"><b>Топ товары</b><span>${providerProducts.length}</span></div>${wb ? itemEmpty("Нет синхронизированных товаров.") : topProductsBlock}</div></div></section>`;
       };
       const runsBlock = runs.length ? `<div class="op-list">${runs.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-sync-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.started_at || "Синхронизация")}</b><span>Товары ${escapeHtml(row.products_count)} · цены ${escapeHtml(row.prices_count)} · остатки ${escapeHtml(row.stocks_count)} · отгрузки ${escapeHtml(row.orders_count)}${row.error_message ? `<br>${escapeHtml(row.error_message)}` : ""}</span></div><span class="status-chip ${row.status === "success" ? "" : "warn"}">${escapeHtml(row.status)} ›</span></button>`).join("")}</div>` : itemEmpty("Синхронизаций ещё не было.");
+      const sourceLabel = isAll ? "Ozon и Wildberries" : (isOzon ? "Ozon" : "Wildberries");
+      const salesChart = verifiedPeriodFinance.length ? `${marketplaceLineChart(verifiedPeriodFinance)}<div class="marketplace-chart-legend"><span><i></i>Начислено</span><span><i class="secondary"></i>Итог после удержаний</span></div><div class="marketplace-chart-caption"><span>Начислено ${marketplaceMoney(verifiedPeriodRevenue)}</span><span>Итог ${marketplaceMoney(verifiedPeriodNet)}</span></div>` : `<div class="marketplace-chart-empty"><b>${isWildberries && !wbFinanceCoverage.covered ? "Период финансов не подтверждён" : "За период начислений нет"}</b><span>${isWildberries && !wbFinanceCoverage.covered ? "Старые строки вне фактического API-окна скрыты." : `Источник доступен, но операций ${providerName} в диапазоне нет.`}</span></div>`;
+      const chartMetric = state.marketplaceChartMetric === "net" ? "net" : "revenue";
+      const chartMetricTitle = chartMetric === "net" ? "После удержаний" : "Начислено";
+      const chartMetricTotal = chartMetric === "net" ? verifiedPeriodNet : verifiedPeriodRevenue;
+      const financeConfirmed = isWildberries ? wbFinanceCoverage.usable && wbFinanceCoverage.covered : analytics.finance_available === true;
+      const financePartiallyUsable = isWildberries && wbFinanceCoverage.usable && verifiedPeriodFinance.length > 0;
+      const overviewFinanceChart = verifiedPeriodFinance.length && (financeConfirmed || financePartiallyUsable)
+        ? marketplaceLineChart(verifiedPeriodFinance, chartMetric, null)
+        : financeConfirmed
+          ? `<div class="marketplace-chart-empty"><b>За выбранный период операций нет</b><span>Финансовый источник доступен; в выбранном диапазоне подтверждён пустой ряд.</span></div>`
+          : `<div class="marketplace-chart-empty"><b>Финансовая динамика недоступна</b><span>Синхронизация финансов ${escapeHtml(providerName)} не подтверждена.</span></div>`;
+      const revenueKpi = financeConfirmed || financePartiallyUsable ? kpiValue("Начисления", marketplaceMoney(verifiedPeriodRevenue), "", `Итог после удержаний: ${marketplaceMoney(verifiedPeriodNet)}${financeConfirmed ? "" : " · частичное покрытие"}`, "finance") : kpiUnavailable("Начисления", "Выбранный период не покрыт финансовой выгрузкой");
+      const returnsConfirmed = isWildberries ? wbSalesCoverage.usable && wbSalesCoverage.covered : analytics.returns_available;
+      const returnsPartiallyUsable = isWildberries && wbSalesCoverage.usable && verifiedReturnDays.length > 0;
+      const returnsKpi = returnsConfirmed || returnsPartiallyUsable ? kpiValue("Возвраты", verifiedReturnQuantity, " шт.", `${verifiedReturnRecords} записей за период${returnsConfirmed ? "" : " · частично"}`, "reviews") : kpiUnavailable("Возвраты", "Выбранный период не покрыт выгрузкой возвратов");
+      const ratingCurrent = isWildberries ? wbFeedbacksCurrent && effectiveRating != null : (analytics.rating_available || effectiveRating != null);
+      const ratingKpi = ratingCurrent ? kpiValue("Рейтинг магазина", Number(effectiveRating).toFixed(2), "", `Актуальная сводка ${providerName}`, "reviews") : kpiUnavailable("Рейтинг магазина", isWildberries ? "Текущий API отзывов WB не подтверждён" : "Рейтинг ещё не синхронизирован");
+      const overviewOrdersKpi = isWildberries
+        ? (wbOrdersCoverage.usable && (wbOrdersCoverage.covered || verifiedOrders.length) ? kpiValue("Заказы", verifiedOrders.length, " шт.", `${periodMeta.label}${wbOrdersCoverage.covered ? "" : " · частично"}`, "orders") : kpiUnavailable("Заказы", "Выбранный период не покрыт API заказов WB"))
+        : kpiValue("Заказы", orders.length, " шт.", `${sourceLabel} · выбранный период`, "orders");
+      const overviewProductsKpi = isWildberries
+        ? (wbCatalogUsable ? kpiValue("Товары в продаже", products.length, " шт.", `Wildberries${wbCatalogStatus === "legacy" ? " · прежний snapshot" : " · подтверждено"}`, "products") : kpiUnavailable("Товары в продаже", "Каталог WB сейчас недоступен"))
+        : kpiValue("Товары в продаже", products.length, " шт.", `${sourceLabel} · синхронизировано`, "products");
+      const overviewStockKpi = isWildberries
+        ? (wbStocksUsable ? kpiValue("Остатки на складах", products.reduce((sum, row) => sum + Number(row.available || 0), 0), " шт.", `Wildberries${wbStocksStatus === "legacy" ? " · прежний snapshot" : " · подтверждено"}`, "stocks") : kpiUnavailable("Остатки на складах", "API остатков WB сейчас недоступен"))
+        : kpiValue("Остатки на складах", products.reduce((sum, row) => sum + Number(row.available || 0), 0), " шт.", isAll ? "Сумма доступных остатков" : sourceLabel, "stocks");
+      const calendarMax = marketplaceLocalIsoDate();
       const overviewBlock = `
-        <div class="kpi-grid">
-          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="products"><div class="kpi-top"><span>Товары</span><span class="kpi-ico">▤</span></div><strong>${escapeHtml(summary.products || 0)}<small> поз.</small></strong><span>Каталог ${providerName} · открыть товары ›</span></button>
-          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="stocks"><div class="kpi-top"><span>Остатки</span><span class="kpi-ico">▦</span></div><strong>${escapeHtml(summary.stock_rows || 0)}<small> строк</small></strong><span>FBO и FBS · открыть остатки ›</span></button>
-          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="orders"><div class="kpi-top"><span>Отгрузки</span><span class="kpi-ico">↑</span></div><strong>${escapeHtml(summary.open_orders || 0)}<small> открыто</small></strong><span>Данные ${providerName} · открыть список ›</span></button>
-          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="supplies"><div class="kpi-top"><span>Поставки МП</span><span class="kpi-ico">⇢</span></div><strong>${escapeHtml(supplies.length)}<small> поставок</small></strong><span>Внутренние задания для склада ›</span></button>
-        </div>
-        <div class="marketplace-dashboard-grid ${isAll ? "" : "single"}">${isAll ? providerDashboard("ozon", "Ozon", Boolean(payload.configured)) + providerDashboard("wildberries", "Wildberries", Boolean(wildberries.configured), true) : providerDashboard(selectedProvider, providerName, providerConfigured, isWildberries)}</div>
-        <div class="marketplace-overview-grid"><div class="card field-card"><div class="section-title"><b>Поставки маркетплейсов</b><button type="button" class="small-button secondary" data-marketplace-view="supplies">Открыть ›</button></div>${suppliesBlock}</div><div class="card field-card"><div class="section-title"><b>Задания складу</b><button type="button" class="small-button secondary" data-marketplace-view="warehouse-shipments">Открыть ›</button></div>${warehouseShipmentsBlock}</div></div>
+        <div class="marketplace-filter-bar"><label><span>Период</span><select id="marketplacePeriod"><option value="today" ${state.marketplacePeriod === "today" ? "selected" : ""}>Сегодня</option><option value="yesterday" ${state.marketplacePeriod === "yesterday" ? "selected" : ""}>Вчера</option><option value="7d" ${state.marketplacePeriod === "7d" ? "selected" : ""}>Последние 7 дней</option><option value="30d" ${state.marketplacePeriod === "30d" ? "selected" : ""}>Последние 30 дней</option><option value="month" ${state.marketplacePeriod === "month" ? "selected" : ""}>Текущий месяц</option><option value="previous-month" ${state.marketplacePeriod === "previous-month" ? "selected" : ""}>Предыдущий месяц</option><option value="custom" ${state.marketplacePeriod === "custom" ? "selected" : ""}>Произвольный диапазон</option></select></label><div class="marketplace-date-range"><label><span>С даты</span><input type="date" max="${calendarMax}" value="${escapeHtml(state.marketplaceDateFrom)}" onchange="state.marketplaceDateFrom=this.value;if(state.marketplaceDateFrom&&state.marketplaceDateTo){state.marketplacePeriod='custom';syncMarketplaceLocation();renderMarketplaces()}"></label><label><span>По дату</span><input type="date" max="${calendarMax}" value="${escapeHtml(state.marketplaceDateTo)}" onchange="state.marketplaceDateTo=this.value;if(state.marketplaceDateFrom&&state.marketplaceDateTo){state.marketplacePeriod='custom';syncMarketplaceLocation();renderMarketplaces()}"></label></div><div class="marketplace-period-label">${escapeHtml(periodMeta.label)}</div><button type="button" class="small-button secondary" data-marketplace-filter-action="toggle">Фильтры${state.marketplaceFilters.onlyProblems || state.marketplaceFilters.inStockOnly || state.marketplaceFilters.orderStatus !== "all" ? " · активны" : ""}</button></div>
+        ${state.marketplaceFiltersOpen ? `<div class="card marketplace-filter-panel"><div class="form-grid"><div class="field"><label>Статус заказа</label><select id="marketplaceOrderStatus"><option value="all">Все статусы</option>${[...new Set(allOrders.map((row) => String(row.status || "")).filter(Boolean))].map((status) => `<option value="${escapeHtml(status)}" ${state.marketplaceFilters.orderStatus === status ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}</select></div><label class="marketplace-check"><input id="marketplaceInStockOnly" type="checkbox" ${state.marketplaceFilters.inStockOnly ? "checked" : ""} ${isWildberries && !wbStocksUsable ? "disabled" : ""}> Только товары в наличии${isWildberries && !wbStocksUsable ? " · остатки не подтверждены" : ""}</label><label class="marketplace-check"><input id="marketplaceOnlyProblems" type="checkbox" ${state.marketplaceFilters.onlyProblems ? "checked" : ""} ${isWildberries ? "disabled" : ""}> ${isWildberries ? "Проблемные статусы WB пока не классифицированы" : "Только проблемные позиции"}</label></div><div class="button-row"><button type="button" class="small-button" data-marketplace-filter-action="apply">Применить</button><button type="button" class="small-button secondary" data-marketplace-filter-action="reset">Сбросить</button><button type="button" class="small-button secondary" data-marketplace-filter-action="cancel">Отмена</button></div></div>` : ""}
+        <div class="marketplace-v2-kpis">${overviewOrdersKpi}${revenueKpi}${overviewProductsKpi}${returnsKpi}${isAll ? `${overviewStockKpi}${kpiUnavailable("Упущенная выручка", "Расчёт упущенной выручки требует данных о спросе")}` : `${ratingKpi}${overviewStockKpi}`}</div>
+        <section class="card marketplace-chart-panel"><div class="marketplace-chart-head"><div class="marketplace-chart-summary"><span>${escapeHtml(chartMetricTitle)}</span><strong>${financeConfirmed || financePartiallyUsable ? marketplaceMoney(chartMetricTotal) : "—"}</strong><small>${escapeHtml(periodMeta.label)} · ${financeConfirmed || financePartiallyUsable ? `${escapeHtml(verifiedPeriodFinance.length)} дней с операциями${financeConfirmed ? "" : " · частично"}` : "источник или период недоступен"}</small></div><div class="marketplace-chart-switch" aria-label="Показатель графика"><button type="button" class="${chartMetric === "revenue" ? "active" : ""}" onclick="state.marketplaceChartMetric='revenue';renderMarketplaces()">Начислено</button><button type="button" class="${chartMetric === "net" ? "active" : ""}" onclick="state.marketplaceChartMetric='net';renderMarketplaces()">После удержаний</button></div></div><div class="marketplace-chart-canvas">${overviewFinanceChart}</div><div class="marketplace-chart-note">Наведите, коснитесь или выберите точку с клавиатуры, чтобы увидеть дату и сумму. Период выбирается над графиком.</div></section>
         <div class="marketplace-wide-grid"><div class="card field-card"><div class="section-title"><b>Последние заказы</b><button type="button" class="small-button secondary" data-marketplace-view="orders">Все заказы ›</button></div>${recentOrdersBlock}</div><div class="card field-card"><div class="section-title"><b>Уведомления</b><span>${(payload.sync_events || []).length}</span></div>${notificationsBlock}</div></div>
-      `;
-      const content = state.marketplaceView === "overview" ? overviewBlock : state.marketplaceView === "orders" ? ordersBlock : state.marketplaceView === "supplies" ? suppliesBlock : state.marketplaceView === "warehouse-shipments" ? warehouseShipmentsBlock : state.marketplaceView === "sync" ? runsBlock : state.marketplaceView === "stocks" ? stocksBlock : state.marketplaceView === "analytics" ? analyticsBlock : productsBlock;
-      const title = state.marketplaceView === "overview" ? "Обзор" : state.marketplaceView === "orders" ? "Заказы" : state.marketplaceView === "supplies" ? "Поставки" : state.marketplaceView === "warehouse-shipments" ? "Отгрузки на склад" : state.marketplaceView === "sync" ? "Журнал синхронизации" : state.marketplaceView === "stocks" ? "Остатки" : state.marketplaceView === "analytics" ? "Аналитика" : "Товары";
+        <section class="card field-card marketplace-product-detail"><div class="section-title"><b>Детализация по товарам</b><button type="button" class="small-button secondary" data-marketplace-view="products">Все товары ›</button></div>${(!isWildberries || wbCatalogUsable) && products.length ? `<div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Товар</th><th>Маркетплейс</th><th>Артикул</th><th>В продаже</th><th>Остаток</th></tr></thead><tbody>${products.slice(0, 12).map((row) => `<tr><td><span class="marketplace-table-product">${marketplaceProductAvatar(row, true)}<span><strong>${escapeHtml(row.name || "Без названия")}</strong></span></span></td><td><span class="marketplace-source ${isWildberries ? "wildberries" : "ozon"}">${isWildberries ? "Wildberries" : "Ozon"}</span></td><td>${escapeHtml(row.offer_id || "—")}</td><td>${!isWildberries || wbStocksUsable ? (Number(row.available || 0) > 0 ? "Да" : "Нет") : "—"}</td><td>${!isWildberries || wbStocksUsable ? `${escapeHtml(row.available || 0)} шт.` : "—"}</td></tr>`).join("")}</tbody></table></div>` : itemEmpty(isWildberries && !wbCatalogUsable ? "Текущий каталог Wildberries не подтверждён." : "Товары появятся после синхронизации выбранной площадки.")}</section>
+        <section class="card field-card marketplace-sales-detail"><div class="section-title"><b>Аналитика продаж</b><button type="button" class="small-button secondary" data-marketplace-view="analytics">Открыть аналитику ›</button></div>${salesChart}</section>
+        <div class="marketplace-overview-grid"><div class="card field-card"><div class="section-title"><b>Поставки маркетплейсов</b><button type="button" class="small-button secondary" data-marketplace-view="supplies">Открыть ›</button></div>${suppliesBlock}</div><div class="card field-card"><div class="section-title"><b>Задания складу</b><button type="button" class="small-button secondary" data-marketplace-view="warehouse-shipments">Открыть ›</button></div>${warehouseShipmentsBlock}</div></div>`;
+      const financeTableRows = isWildberries ? verifiedPeriodFinance : financeDaily;
+      const financeBlock = financeTableRows.length && (financeConfirmed || financePartiallyUsable || !isWildberries) ? `<div class="card field-card"><div class="section-title"><b>Начисления ${escapeHtml(providerName)} по дням</b><span>${financeTableRows.length} дней${isWildberries && !financeConfirmed ? " · частично" : ""}</span></div><div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Дата</th><th>Положительные начисления</th><th>Итог после удержаний</th><th>Операций</th></tr></thead><tbody>${[...financeTableRows].reverse().map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${marketplaceMoney(row.revenue || 0)}</td><td>${marketplaceMoney(row.net || 0)}</td><td>${escapeHtml(row.records || 0)}</td></tr>`).join("")}</tbody></table></div></div>` : itemEmpty(financeConfirmed ? "Финансовый источник доступен; операций в выбранном диапазоне нет." : "Финансовый источник или выбранный период не подтверждён.");
+      const reviewsRating = isWildberries ? wbHistoricalRating : effectiveRating;
+      const reviewsBlock = `<div class="marketplace-wide-grid"><div class="card field-card"><div class="section-title"><b>Рейтинг ${escapeHtml(providerName)}</b><span>${isWildberries && !wbFeedbacksCurrent ? "сохранённая история" : reviewsRating != null ? "актуально" : "нет данных"}</span></div><div class="marketplace-empty-metric"><b>${reviewsRating == null ? "—" : Number(reviewsRating).toFixed(2)}</b><span>${isWildberries ? `${escapeHtml(wbReviewSummary.total || 0)} отзывов · без ответа ${escapeHtml(wbReviewSummary.unanswered || 0)}${wbFeedbacksCurrent ? "" : " · не подтверждено текущим API"}` : "Актуальная сводка рейтинга магазина"}</span></div></div>${isWildberries ? `<div class="card field-card"><div class="section-title"><b>Отзывы покупателей</b><span>${wbReviews.length}</span></div>${!wbFeedbacksCurrent && wbReviews.length ? `<div class="analytics-overview-notice warn"><div><b>Отзывы показаны из сохранённой истории</b><span>${escapeHtml(wbFeedbacksCapability.safe_message || "Текущий API отзывов WB недоступен.")}</span></div></div>` : ""}${wbReviews.length ? `<div class="op-list">${wbReviews.map((row) => `<div class="report-row"><div><b>${escapeHtml(row.product_name || `Артикул WB ${row.nm_id || "—"}`)}</b><span>${escapeHtml(row.text || "Отзыв без текста")}<br>${escapeHtml(row.created_at || "дата не указана")}${row.answer_text ? ` · ответ продавца: ${escapeHtml(row.answer_text)}` : ""}</span></div><span class="status-chip ${row.answered ? "gray" : "warn"}">★ ${escapeHtml(row.rating || "—")}</span></div>`).join("")}</div>` : itemEmpty(wbFeedbacksCurrent ? "Источник отзывов доступен; отзывов нет." : "Отзывы ещё не подтверждены.")}</div>` : ""}<div class="card field-card"><div class="section-title"><b>Возвраты</b><span>${allReturns.length}</span></div>${allReturns.length ? `<div class="op-list">${allReturns.slice(0, 100).map((row) => `<div class="report-row"><div><b>${escapeHtml(row.product_name || row.posting_number || "Возврат")}</b><span>${escapeHtml(row.scheme || providerName)} · ${escapeHtml(row.status || "статус не указан")} · ${escapeHtml(row.returned_at || "дата не указана")}</span></div><span class="status-chip gray">${escapeHtml(row.quantity || 1)} шт.</span></div>`).join("")}</div>` : itemEmpty("Возвратов не найдено.")}</div></div>`;
+      const qualityEnvelope = state.marketplaceQuality.payload || {};
+      const quality = qualityEnvelope.phase1a || {};
+      const qualityDatasets = Array.isArray(quality.datasets) ? quality.datasets : [];
+      const qualityCapabilities = Array.isArray(quality.capabilities) ? quality.capabilities : [];
+      const qualityTotals = quality.totals || {};
+      const qualityProductsEnvelope = state.marketplaceQuality.products || {};
+      const qualityStateLabel = {disabled:"выключен",unavailable:"недоступен",no_data:"нет данных",ready:"готов",attention:"нужна проверка",success:"успешно",partial:"частично",error:"ошибка",failed:"ошибка",running:"выполняется",stale:"устарело",fresh:"актуально",unknown:"неизвестно",zero:"реальный ноль",value:"есть данные"};
+      const qualityDatasetLabel = {catalog:"Каталог",prices:"Цены",stocks:"Остатки"};
+      const qualityChipClass = (value) => ["success","fresh","ready","available","value","zero"].includes(String(value || "")) ? "" : (["disabled","no_data","unknown"].includes(String(value || "")) ? "gray" : "warn");
+      const qualityDataset = (dataset) => qualityDatasets.find((row) => row.dataset === dataset) || null;
+      const qualityDatasetUsable = (dataset) => {
+        const row = qualityDataset(dataset);
+        if (!row) return false;
+        return row.status === "success"
+          || Boolean(row.last_success_at)
+          || (dataset === "stocks" && row.termination_reason === "fbo_stock_scope_unavailable");
+      };
+      const qualityProductsAvailable = qualityProductsEnvelope.available === true && qualityDatasetUsable("catalog");
+      const qualityProducts = qualityProductsAvailable && Array.isArray(qualityProductsEnvelope.items) ? qualityProductsEnvelope.items : [];
+      const qualityMetric = (key, dataset) => qualityDatasetUsable(dataset) && Object.prototype.hasOwnProperty.call(qualityTotals, key) ? escapeHtml(qualityTotals[key]) : "—";
+      const qualityWorkerRunning = Boolean(quality.worker?.running);
+      const qualityBusy = state.marketplaceQuality.loading || state.marketplaceQuality.syncing || qualityWorkerRunning;
+      const qualityMoment = (value) => value ? escapeHtml(String(value).replace("T", " ").replace("Z", " UTC")) : "никогда";
+      const qualityError = state.marketplaceQuality.error ? `<div class="task-note"><b>Ошибка экрана качества</b><br>${escapeHtml(state.marketplaceQuality.error)}</div>` : "";
+      const qualityIntro = quality.state === "disabled"
+        ? `<div class="task-note"><b>PostgreSQL shadow выключен</b><br>Рабочий SQLite-контур продолжает обслуживать сайт. Для запуска миграции и worker нужен флаг MARKETPLACE_PHASE1A_ENABLED=1.</div>`
+        : quality.state === "unavailable"
+          ? `<div class="task-note"><b>PostgreSQL marketplace недоступен</b><br>Примените migration 005 и проверьте WMS_DATABASE_URL. На текущий SQLite экран это не влияет.</div>`
+          : `<div class="task-note"><b>Read-only PostgreSQL shadow</b><br>Данные идут только Ozon → система. Нули, отсутствие данных, partial и ошибки показываются раздельно.</div>`;
+      const qualityDatasetCards = qualityDatasets.length ? qualityDatasets.map((row) => `<div class="card field-card"><div class="section-title"><b>${escapeHtml(qualityDatasetLabel[row.dataset] || row.dataset)}</b><span class="status-chip ${qualityChipClass(row.status)}">${escapeHtml(qualityStateLabel[row.status] || row.status)}</span></div><div class="marketplace-mini-list"><div class="marketplace-mini-row"><span>Последний пригодный sync</span><b>${qualityMoment(row.last_usable_at || row.last_success_at || (row.status === "success" ? row.finished_at : ""))}</b></div><div class="marketplace-mini-row"><span>Свежесть</span><b>${escapeHtml(qualityStateLabel[row.freshness] || row.freshness || "неизвестно")}</b></div><div class="marketplace-mini-row"><span>Строки: получено / уникально / ожидалось</span><b>${escapeHtml(row.received_count == null ? "—" : row.received_count)} / ${escapeHtml(row.unique_count == null ? "—" : row.unique_count)} / ${escapeHtml(row.expected_count == null ? "—" : row.expected_count)}</b></div><div class="marketplace-mini-row"><span>Страницы / retry</span><b>${escapeHtml(row.page_count == null ? "—" : row.page_count)} / ${escapeHtml(row.retry_count == null ? "—" : row.retry_count)}</b></div><div class="marketplace-mini-row"><span>Завершение</span><b>${escapeHtml(row.termination_reason || "—")}</b></div></div>${row.error_summary ? `<div class="task-note"><b>Диагностика</b><br>${escapeHtml(row.error_summary)}</div>` : ""}</div>`).join("") : `<div class="card field-card">${itemEmpty("Запусков Phase 1A ещё нет.")}</div>`;
+      const capabilityRows = qualityCapabilities.length ? qualityCapabilities.map((row) => `<tr><td>${escapeHtml(row.capability)}</td><td><span class="status-chip ${qualityChipClass(row.status)}">${escapeHtml(qualityStateLabel[row.status] || row.status)}</span></td><td>${qualityMoment(row.checked_at)}</td><td>${escapeHtml(row.safe_message || "—")}</td></tr>`).join("") : `<tr><td colspan="4">Capabilities ещё не проверены.</td></tr>`;
+      const qualityProductsState = qualityProductsEnvelope.available !== true
+        ? "Каталог PostgreSQL сейчас недоступен: это не нулевой остаток."
+        : !qualityDatasetUsable("catalog")
+          ? "Каталог ещё не прошёл полную сверку: неполные строки не показываются как итог."
+          : state.marketplaceQuality.query
+            ? "По запросу ничего не найдено."
+            : "Подтверждённый каталог пуст: это реальный ноль.";
+      const qualityProductRows = qualityProducts.length ? qualityProducts.map((row) => `<tr><td><b>${escapeHtml(row.name || "Без названия")}</b><br><small>${escapeHtml(row.external_product_id || "—")}</small></td><td>${escapeHtml(row.offer_id || "—")}</td><td>${!qualityDatasetUsable("prices") ? "не подтверждено" : row.current_price == null ? "нет данных" : marketplaceMoney(row.current_price)}</td><td>${!qualityDatasetUsable("stocks") ? "не подтверждено" : row.stock == null ? "нет данных" : escapeHtml(row.stock)}</td><td>${!qualityDatasetUsable("stocks") ? "не подтверждено" : row.reserved == null ? "нет данных" : escapeHtml(row.reserved)}</td><td>${!qualityDatasetUsable("stocks") ? "не подтверждено" : row.available == null ? "нет данных" : escapeHtml(row.available)}</td></tr>`).join("") : `<tr><td colspan="6">${qualityProductsState}</td></tr>`;
+      const qualityProductPage = Math.max(1, Number(qualityProductsEnvelope.page || state.marketplaceQuality.page || 1));
+      const qualityProductPages = Math.max(0, Number(qualityProductsEnvelope.pages || 0));
+      const qualityProductTotal = qualityProductsAvailable && qualityProductsEnvelope.total != null ? qualityProductsEnvelope.total : null;
+      const qualityBlock = `
+        <div class="button-row">
+          <button type="button" class="small-button" data-marketplace-action="phase1a-sync" ${qualityBusy ? "disabled" : ""}>Запустить read-only sync</button>
+          <button type="button" class="small-button secondary" data-marketplace-action="quality-refresh" ${state.marketplaceQuality.loading ? "disabled" : ""}>Обновить состояние</button>
+          <span class="status-chip ${qualityChipClass(qualityWorkerRunning ? "running" : quality.state)}">${state.marketplaceQuality.loading ? "загрузка" : qualityWorkerRunning ? "sync выполняется" : escapeHtml(qualityStateLabel[quality.state] || quality.state || "не загружено")}</span>
+        </div>
+        ${qualityError}${qualityIntro}
+        <div class="marketplace-dashboard-kpis">
+          <div class="marketplace-dashboard-kpi"><span>Товары current</span><strong>${qualityMetric("products", "catalog")}</strong><small>неархивные</small></div>
+          <div class="marketplace-dashboard-kpi"><span>Цены current</span><strong>${qualityMetric("prices", "prices")}</strong><small>точный NUMERIC</small></div>
+          <div class="marketplace-dashboard-kpi"><span>Строки остатков</span><strong>${qualityMetric("stock_rows", "stocks")}</strong><small>seller-схемы</small></div>
+          <div class="marketplace-dashboard-kpi"><span>Доступно</span><strong>${qualityMetric("stock_available", "stocks")}</strong><small>0 только после sync</small></div>
+        </div>
+        <div class="marketplace-wide-grid">${qualityDatasetCards}</div>
+        <section class="card field-card">
+          <div class="section-title"><b>Capabilities Ozon</b><span>${qualityCapabilities.length}</span></div>
+          <div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Набор данных</th><th>Состояние</th><th>Проверено</th><th>Сообщение</th></tr></thead><tbody>${capabilityRows}</tbody></table></div>
+          <div class="task-note"><b>FBO не подменяется нулём.</b><br>Подтверждённый /v4 покрывает seller-схемы FBS/rFBS/FBP. Полный FBO ledger остаётся unavailable до отдельного проверенного адаптера.</div>
+        </section>
+        <section class="card field-card">
+          <div class="section-title"><b>Проверка current-товаров Ozon в PostgreSQL</b><span>${escapeHtml(qualityProductTotal == null ? "—" : qualityProductTotal)}</span></div>
+          <div class="marketplace-filter-bar">
+            <label><span>Название, артикул, SKU или штрихкод</span><input id="marketplaceQualitySearch" type="search" maxlength="200" value="${escapeHtml(state.marketplaceQuality.query || "")}" placeholder="Найти товар"></label>
+            <button type="button" class="small-button secondary" data-marketplace-action="quality-search" ${state.marketplaceQuality.loading ? "disabled" : ""}>Найти</button>
+            <div class="marketplace-period-label">Страница ${qualityProductsAvailable ? qualityProductPage : "—"} из ${qualityProductsAvailable ? Math.max(1, qualityProductPages) : "—"}</div>
+            <div class="button-row"><button type="button" class="small-button secondary" data-marketplace-action="quality-prev" ${state.marketplaceQuality.loading || !qualityProductsAvailable || qualityProductPage <= 1 ? "disabled" : ""}>← Назад</button><button type="button" class="small-button secondary" data-marketplace-action="quality-next" ${state.marketplaceQuality.loading || !qualityProductsAvailable || qualityProductPages === 0 || qualityProductPage >= qualityProductPages ? "disabled" : ""}>Вперёд →</button></div>
+          </div>
+          <div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Товар</th><th>Offer ID</th><th>Цена</th><th>Present</th><th>Reserved</th><th>Available</th></tr></thead><tbody>${qualityProductRows}</tbody></table></div>
+        </section>`;
+      const placeholderSection = (name, description) => `<div class="card field-card marketplace-placeholder"><div class="marketplace-placeholder-icon">◇</div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(description)}</p><span class="status-chip gray">Раздел подготовлен</span></div>`;
+      const safeProductsBlock = isWildberries && !wbCatalogUsable ? itemEmpty("Текущий snapshot каталога Wildberries не подтверждён.") : productsBlock;
+      const safeStocksBlock = isWildberries && !wbStocksUsable ? itemEmpty("Текущий snapshot остатков Wildberries не подтверждён; исторический ноль скрыт.") : stocksBlock;
+      const sectionContent = {overview: overviewBlock, orders: ordersBlock, supplies: suppliesBlock, "warehouse-shipments": warehouseShipmentsBlock, sync: runsBlock, stocks: safeStocksBlock, analytics: analyticsBlock, products: safeProductsBlock, finance: financeBlock, reviews: reviewsBlock, "data-quality": qualityBlock, settings: placeholderSection("Настройки", "Подключение работает в режиме только чтения. Расписание синхронизации управляется на сервере.")};
+      const content = sectionContent[state.marketplaceView] || safeProductsBlock;
+      const sectionTitles = {overview:"Обзор", orders:"Заказы", supplies:"Поставки", "warehouse-shipments":"Отгрузки на склад", sync:"Журнал синхронизации", stocks:"Остатки", analytics:"Аналитика", products:"Товары", finance:"Финансы", reviews:"Отзывы", "data-quality":"Качество данных", settings:"Настройки"};
+      const title = sectionTitles[state.marketplaceView] || "Товары";
       const detail = renderMarketplaceDetail(products, orders, runs);
-      const marketplaceMenu = `<div class="marketplace-menu-strip">${[["overview","Обзор"],["products","Товары"],["stocks","Остатки"],["orders","Заказы"],["supplies","Поставки"],["warehouse-shipments","Отгрузки на склад"],["analytics","Аналитика"],["sync","Синхронизация"]].map(([id,label]) => `<button type="button" class="marketplace-menu-link ${state.marketplaceView === id ? "active" : ""}" data-marketplace-view="${id}">${label}</button>`).join("")}</div>`;
-      mount.innerHTML = `${marketplaceMenu}
-        <div class="screen-head"><div><h2>Управление ${providerTitle}</h2><p>Выберите площадку — содержимое разделов изменится под выбранный маркетплейс.</p></div><div class="marketplace-provider-inline"><div class="marketplace-provider-switch" role="tablist" aria-label="Выбор маркетплейса"><button type="button" class="marketplace-provider-button marketplace-provider-all ${isAll ? "active" : ""}" data-marketplace-provider="all" role="tab" aria-selected="${isAll}"><b>Общая</b><span>Все площадки</span></button><button type="button" class="marketplace-provider-button marketplace-provider-ozon ${isOzon ? "active" : ""}" data-marketplace-provider="ozon" role="tab" aria-selected="${isOzon}"><b>Ozon</b><span>${escapeHtml(payload.configured ? (account.account_name || "Подключён") : "Не подключён")}</span></button><button type="button" class="marketplace-provider-button marketplace-provider-wb ${isWildberries ? "active" : ""}" data-marketplace-provider="wildberries" role="tab" aria-selected="${isWildberries}"><b>Wildberries</b><span>${escapeHtml(wildberries.configured ? "Подключён" : "Не подключён")}</span></button></div><div class="marketplace-provider-status"><b>${isAll ? "Общий обзор" : providerName}</b><span>${escapeHtml(providerStatus)}</span></div></div></div>
+      const marketplaceMenuItems = [["overview","⌂","Обзор"],["products","▤","Товары"],["stocks","▦","Остатки"],["orders","▣","Заказы"],["supplies","⇧","Поставки"],["finance","₽","Финансы"],["analytics","⌁","Аналитика"],["reviews","☆","Отзывы"],["data-quality","◉","Качество данных"],["settings","⚙","Настройки"]];
+      const marketplaceMenu = `<nav class="marketplace-menu-strip" aria-label="Разделы маркетплейсов"><div class="marketplace-menu-label">Площадки</div><button type="button" class="marketplace-provider-menu-button ${isAll ? "active" : ""}" data-marketplace-provider="all"><span class="marketplace-menu-icon">∞</span><span>Все площадки</span></button><button type="button" class="marketplace-provider-menu-button ${isOzon ? "active" : ""}" data-marketplace-provider="ozon"><span class="marketplace-menu-icon">O</span><span>Ozon</span><small>${payload.configured ? "подключён" : "нет связи"}</small></button><button type="button" class="marketplace-provider-menu-button ${isWildberries ? "active" : ""}" data-marketplace-provider="wildberries" ${wildberriesConnected ? "" : "disabled"}><span class="marketplace-menu-icon">W</span><span>Wildberries</span><small>${wildberriesConnected ? "подключён" : "не подключён"}</small></button><div class="marketplace-menu-label">Разделы</div>${marketplaceMenuItems.map(([id,icon,label]) => `<button type="button" class="marketplace-menu-link ${state.marketplaceView === id ? "active" : ""}" data-marketplace-view="${id}"><span class="marketplace-menu-icon">${icon}</span><span>${label}</span></button>`).join("")}</nav>`;
+      mount.innerHTML = `<div class="marketplace-layout">${marketplaceMenu}<div class="marketplace-main">
+        <div class="screen-head marketplace-v2-head"><div><h2>${isAll ? "Маркетплейсы" : providerName}</h2><p>${isAll ? "Общая статистика и управление продажами на маркетплейсах" : (isOzon ? "Продажи, заказы, остатки и показатели магазина Ozon" : "Продажи, заказы, остатки и показатели магазина Wildberries")}</p></div><div class="marketplace-brand-mark ${isWildberries ? "wb" : isOzon ? "ozon" : "all"}">${isWildberries ? "WB" : isOzon ? "OZON" : "Ozon + WB"}</div></div><div class="marketplace-provider-status"><b>${isAll ? "Общий обзор" : providerName}</b><span>${escapeHtml(providerStatus)}</span></div>
         ${errorNotice}${notConfigured}
-        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? orders.length : state.marketplaceView === "supplies" ? supplies.length : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? products.length : state.marketplaceView === "analytics" ? "" : groups.length}</span></div>${content}`}
-      `;
+        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? (isWildberries && !verifiedOrdersAvailable ? "—" : orders.length) : state.marketplaceView === "supplies" ? (isWildberries && !wbSuppliesCurrent ? "—" : supplies.length) : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? (isWildberries && !wbStocksUsable ? "—" : products.length) : state.marketplaceView === "data-quality" ? qualityDatasets.length : state.marketplaceView === "analytics" ? "" : (isWildberries && !wbCatalogUsable ? "—" : groups.length)}</span></div>${content}`}
+      </div></div>`;
     }
 
     function renderWarehouse() {
@@ -9882,6 +11736,7 @@ MINIAPP_HTML = """<!doctype html>
         <option value="${escapeHtml(employee.id)}" ${String(employee.id) === String(state.adminEmployeeId) ? "selected" : ""}>${escapeHtml(employee.full_name)} · ${escapeHtml(employee.position)}</option>
       `).join("");
       const isEmployeeReport = state.adminReportType === "employee";
+      const isTimesheetReport = state.adminReportType === "timesheet";
       const summaryHtml = report && report.type === "employee" ? `
         ${report.employee_summary ? `
           <div class="card report-row"><div><b>${escapeHtml(report.employee_summary.full_name)}</b><span>${escapeHtml(report.employee_summary.position)} · ${escapeHtml(report.employee_summary.shift_count)} смен · ${escapeHtml(report.employee_summary.total_time)}</span></div><span class="status-chip">сотрудник</span></div>
@@ -9900,16 +11755,17 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.textContent = "Выгрузить отчёт";
 
       return `
-        <div class="screen-head"><div><h2>Админ отчёты</h2><p>Сегодня, период или конкретный сотрудник.</p></div><div class="date">${escapeHtml(report ? `${report.start_date} — ${report.end_date}` : "период")}</div></div>
+        <div class="screen-head"><div><h2>Админ отчёты</h2><p>Общий табель, производственный отчёт или данные конкретного сотрудника.</p></div><div class="date">${escapeHtml(report ? `${report.start_date} — ${report.end_date}` : "период")}</div></div>
         ${renderAdminTabs()}
         <div class="card field-card">
           <div class="form-grid">
-            <div class="field full"><label>Тип отчёта</label><select id="adminReportType"><option value="today" ${state.adminReportType === "today" ? "selected" : ""}>Сегодня</option><option value="period" ${state.adminReportType === "period" ? "selected" : ""}>Период</option><option value="employee" ${isEmployeeReport ? "selected" : ""}>Сотрудник</option></select></div>
+            <div class="field full"><label>Тип отчёта</label><select id="adminReportType"><option value="timesheet" ${isTimesheetReport ? "selected" : ""}>Табель — все сотрудники</option><option value="today" ${state.adminReportType === "today" ? "selected" : ""}>Сегодня</option><option value="period" ${state.adminReportType === "period" ? "selected" : ""}>Производственный отчёт за период</option><option value="employee" ${isEmployeeReport ? "selected" : ""}>Один сотрудник</option></select></div>
             <div class="field"><label>Начало</label><input id="adminStartDate" type="date" value="${escapeHtml(state.adminStartDate)}"></div>
             <div class="field"><label>Окончание</label><input id="adminEndDate" type="date" value="${escapeHtml(state.adminEndDate)}"></div>
-            <div class="field full"><label>Сотрудник</label><select id="adminEmployeeId">${employeeOptions || `<option value="">Нет сотрудников</option>`}</select></div>
+            ${isEmployeeReport ? `<div class="field full"><label>Сотрудник</label><select id="adminEmployeeId">${employeeOptions || `<option value="">Нет сотрудников</option>`}</select></div>` : ""}
           </div>
-          <div class="button-row"><button class="small-button secondary" data-admin-action="load-report">Показать</button><button class="small-button" data-admin-action="export-report">Выгрузить</button></div>
+          ${isTimesheetReport ? `<div class="task-note">В Excel попадут все сотрудники, включая тех, у кого за период не было смен. Дни показаны отдельными колонками, итоги — в часах.</div>` : ""}
+          <div class="button-row"><button class="small-button secondary" data-admin-action="load-report">Показать</button><button class="small-button" data-admin-action="export-report">Скачать Excel</button></div>
         </div>
         <div class="kpi-grid">
           <div class="card kpi"><div class="kpi-top"><span>Смены</span><div class="kpi-ico">${uiIcon("clock")}</div></div><strong>${totals.shifts}<small> шт</small></strong><span>Закрытые смены</span></div>
@@ -9925,8 +11781,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="card report-row"><div><b>${escapeHtml(shift.employee || "Сотрудник")}</b><span>${escapeHtml(shift.date)} · ${escapeHtml(shift.start_time || "-")} — ${escapeHtml(shift.end_time || "-")}</span></div><span class="status-chip gray">${escapeHtml(shift.total_time || "-")}</span></div>
           `).join("") : itemEmpty("Смен за выбранный период нет.")}
         </div>
-        <div class="section-title"><b>Операции</b><span>${operations.length}</span></div>
-        <div class="op-list">${operationsHtml}</div>
+        ${isTimesheetReport ? "" : `<div class="section-title"><b>Операции</b><span>${operations.length}</span></div><div class="op-list">${operationsHtml}</div>`}
       `;
     }
 
@@ -10002,7 +11857,7 @@ MINIAPP_HTML = """<!doctype html>
       `).join("") : itemEmpty("Новых заявок нет.");
 
       return `
-        <div class="screen-head"><div><h2>Пользователи</h2><p>Заявки, роли, статусы и должности.</p></div><div class="date">${employees.length} всего</div></div>
+        <div class="screen-head"><div><h2>Сотрудники</h2><p>Управление персоналом, ролями, доступами и сменами.</p></div><div class="date">${employees.length} всего</div></div>
         ${renderAdminTabs()}
         <div class="kpi-grid">
           <div class="card kpi"><div class="kpi-top"><span>Заявки</span><div class="kpi-ico">${uiIcon("inbox")}</div></div><strong>${pending.length}<small> шт</small></strong><span>Ожидают решения</span></div>
@@ -10140,6 +11995,382 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
+    function analyticsHubTabs() {
+      const tabs = [
+        ["general", "Общая"],
+        ["production", "Производство"],
+        ["ozon", "Ozon"],
+        ["wildberries", "Wildberries"],
+      ];
+      return `<div class="top-tabs analytics-hub-tabs" role="tablist" aria-label="Раздел аналитики">${tabs.map(([id, label]) => `<button type="button" role="tab" aria-selected="${state.analyticsHubTab === id ? "true" : "false"}" class="${state.analyticsHubTab === id ? "active" : ""}" onclick="state.analyticsHubTab='${id}';state.marketplaceView='overview';state.marketplaceDetail=null;render()">${label}</button>`).join("")}</div>`;
+    }
+
+    function analyticsHubHas(row, key) {
+      return Boolean(row && Object.prototype.hasOwnProperty.call(row, key));
+    }
+
+    function analyticsHubDate(row, keys) {
+      for (const key of keys) {
+        const value = String((row && row[key]) || "").slice(0, 10);
+        if (/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return value;
+      }
+      return "";
+    }
+
+    function analyticsHubPeriodRows(rows, keys, periodMeta) {
+      return (Array.isArray(rows) ? rows : []).filter((row) => {
+        const value = analyticsHubDate(row, keys);
+        return value ? marketplaceDateInPeriod(value, periodMeta) : false;
+      });
+    }
+
+    function analyticsHubFreshness(value) {
+      if (!value) return {key: "unknown", label: "время sync неизвестно", age: ""};
+      const raw = String(value);
+      const parsed = new Date(raw.includes("T") ? raw : raw.replace(" ", "T"));
+      if (Number.isNaN(parsed.getTime())) return {key: "unknown", label: "время sync неизвестно", age: raw};
+      const ageMs = Math.max(0, Date.now() - parsed.getTime());
+      const ageHours = ageMs / 3600000;
+      const age = ageHours < 1
+        ? `${Math.max(0, Math.round(ageMs / 60000))} мин назад`
+        : ageHours < 48
+          ? `${Math.round(ageHours)} ч назад`
+          : `${Math.round(ageHours / 24)} дн назад`;
+      return ageHours > 6 ? {key: "stale", label: "данные устарели", age} : {key: "fresh", label: "актуально", age};
+    }
+
+    function analyticsHubQualityModel() {
+      const envelope = state.analyticsQuality.payload || state.marketplaceQuality.payload || {};
+      const phase = envelope.phase1a || {};
+      const datasets = Array.isArray(phase.datasets) ? phase.datasets : [];
+      const totals = phase.totals && typeof phase.totals === "object" ? phase.totals : {};
+      const dataset = (key) => datasets.find((row) => row.dataset === key) || null;
+      const usable = (key) => {
+        const row = dataset(key);
+        return Boolean(row && (row.status === "success" || row.last_success_at || row.last_usable_at || (row.status === "partial" && row.termination_reason === "fbo_stock_scope_unavailable")));
+      };
+      const latest = datasets.map((row) => row.last_usable_at || row.last_success_at || row.finished_at || "").filter(Boolean).sort().pop() || "";
+      return {
+        known: Boolean(state.analyticsQuality.loaded || envelope.phase1a),
+        loading: Boolean(state.analyticsQuality.loading),
+        error: state.analyticsQuality.error || "",
+        enabled: phase.enabled === true,
+        state: phase.state || "unknown",
+        datasets,
+        totals,
+        latest,
+        catalogUsable: usable("catalog"),
+        pricesUsable: usable("prices"),
+        stocksUsable: usable("stocks"),
+      };
+    }
+
+    function analyticsHubProviderModel(key, providerPayload, rootPayload, periodMeta, marketplaceReady, pgQuality) {
+      const provider = providerPayload && typeof providerPayload === "object" ? providerPayload : {};
+      const analytics = provider.analytics && typeof provider.analytics === "object" ? provider.analytics : {};
+      const summary = provider.summary && typeof provider.summary === "object" ? provider.summary : {};
+      const products = Array.isArray(provider.products_rows) ? provider.products_rows : [];
+      const orderRows = Array.isArray(provider.orders_rows) ? provider.orders_rows : [];
+      const runs = Array.isArray(provider.sync_runs) ? provider.sync_runs : [];
+      const account = Array.isArray(provider.accounts) ? (provider.accounts[0] || {}) : {};
+      const capabilities = analytics.capabilities && typeof analytics.capabilities === "object" ? analytics.capabilities : {};
+      const latestRun = runs[0] || {};
+      const configured = key === "ozon"
+        ? Boolean(rootPayload.configured || provider.configured)
+        : Boolean(provider.configured || (rootPayload.connectors || []).some((row) => row.marketplace === "wildberries" && row.configured));
+      const financeAll = Array.isArray(analytics.finance_daily) ? analytics.finance_daily : [];
+      const financeAvailable = key === "wildberries"
+        ? capabilities.finance === true
+        : Boolean(analytics.finance_available === true || financeAll.length);
+      const finance = analyticsHubPeriodRows(financeAll, ["date"], periodMeta);
+      const recognized = financeAvailable ? finance.reduce((sum, row) => sum + Number(row.revenue || 0), 0) : null;
+      const net = financeAvailable ? finance.reduce((sum, row) => sum + Number(row.net || 0), 0) : null;
+      const funnelAll = key === "wildberries" && Array.isArray(analytics.sales_funnel_daily) ? analytics.sales_funnel_daily : [];
+      const funnel = analyticsHubPeriodRows(funnelAll, ["date"], periodMeta);
+      const gmvAvailable = key === "wildberries" && (capabilities.sales_funnel === true || funnelAll.length > 0);
+      const gmv = gmvAvailable ? funnel.reduce((sum, row) => sum + Number(row.order_sum || 0), 0) : null;
+      const datedOrders = analyticsHubPeriodRows(orderRows, ["shipment_date", "created_at", "updated_at"], periodMeta);
+      let ordersAvailable = configured && marketplaceReady && Array.isArray(provider.orders_rows);
+      let orders = null;
+      if (key === "wildberries" && capabilities.orders === false) ordersAvailable = false;
+      if (gmvAvailable) {
+        ordersAvailable = true;
+        orders = funnel.reduce((sum, row) => sum + Number(row.order_count || 0), 0);
+      } else if (ordersAvailable) {
+        if (!orderRows.length) orders = 0;
+        else if (datedOrders.length) orders = datedOrders.length;
+        else ordersAvailable = false;
+      }
+      const pgActive = key === "ozon" && pgQuality.known && pgQuality.enabled && !["disabled", "unavailable"].includes(pgQuality.state);
+      let stockAvailable = false;
+      let stock = null;
+      let stockSource = "";
+      let stockDetailAvailable = false;
+      if (pgActive) {
+        stockAvailable = pgQuality.stocksUsable && analyticsHubHas(pgQuality.totals, "stock_available");
+        stock = stockAvailable ? Number(pgQuality.totals.stock_available || 0) : null;
+        stockSource = "PostgreSQL current";
+        // The aggregate quality endpoint does not expose all current product
+        // rows. Legacy per-product values must not be presented as PG-fresh.
+        stockDetailAvailable = false;
+      } else if (key === "wildberries") {
+        stockAvailable = capabilities.stocks === true || (Array.isArray(provider.warehouses) && provider.warehouses.length > 0);
+        stock = stockAvailable ? products.reduce((sum, row) => sum + Number(row.available || 0), 0) : null;
+        stockSource = stockAvailable ? "склады Wildberries" : "нет разрешения API";
+        stockDetailAvailable = stockAvailable;
+      } else if (!pgQuality.loading && pgQuality.known && !pgQuality.enabled) {
+        stockAvailable = configured && marketplaceReady && (Number(summary.stock_rows || 0) > 0 || products.some((row) => analyticsHubHas(row, "available")));
+        stock = stockAvailable ? products.reduce((sum, row) => sum + Number(row.available || 0), 0) : null;
+        stockSource = stockAvailable ? "SQLite fallback" : "остатки не подтверждены";
+        stockDetailAvailable = stockAvailable;
+      }
+      const pgLastSync = pgActive ? pgQuality.latest : "";
+      const lastSync = pgLastSync || account.last_sync_at || latestRun.finished_at || latestRun.started_at || "";
+      const freshness = analyticsHubFreshness(lastSync);
+      const capabilityValues = Object.values(capabilities).filter((value) => typeof value === "boolean");
+      const missingCapabilities = Object.entries(capabilities).filter(([, value]) => value === false).map(([name]) => name);
+      const runStatus = String(latestRun.status || "").toLowerCase();
+      const lastError = String(account.last_error || latestRun.error_message || "");
+      let status = "ready";
+      if (!marketplaceReady) status = state.marketplaceData.loading ? "loading" : "unknown";
+      else if (!configured) status = "disconnected";
+      else if (lastError || ["error", "failed"].includes(runStatus)) status = "error";
+      else if (freshness.key === "stale") status = "stale";
+      else if (["partial", "attention"].includes(runStatus) || missingCapabilities.length || (pgActive && pgQuality.state !== "ready")) status = "partial";
+      else if (!lastSync) status = "partial";
+      const commercialRows = key === "wildberries" && gmvAvailable
+        ? funnel.map((row) => ({date: analyticsHubDate(row, ["date"]), value: Number(row.order_sum || 0)}))
+        : financeAvailable
+          ? finance.map((row) => ({date: analyticsHubDate(row, ["date"]), value: Number(row.revenue || 0)}))
+          : [];
+      return {
+        key,
+        label: key === "wildberries" ? "Wildberries" : "Ozon",
+        configured,
+        status,
+        lastSync,
+        freshness,
+        lastError,
+        capabilities,
+        capabilityCount: capabilityValues.filter(Boolean).length,
+        capabilityTotal: capabilityValues.length,
+        missingCapabilities,
+        summary,
+        products,
+        orderRows,
+        analytics,
+        financeAvailable,
+        recognized,
+        net,
+        gmvAvailable,
+        gmv,
+        ordersAvailable,
+        orders,
+        stockAvailable,
+        stock,
+        stockSource,
+        stockDetailAvailable,
+        commercialAvailable: key === "wildberries" ? gmvAvailable || financeAvailable : financeAvailable,
+        commercialLabel: key === "wildberries" && gmvAvailable ? "GMV заказов" : "начислено",
+        commercialRows,
+      };
+    }
+
+    function analyticsHubMetricCard(label, value, suffix, hint, status = "ready") {
+      const unavailable = value === null || value === undefined;
+      const classes = ["analytics-overview-kpi", unavailable ? "unavailable" : "", status].filter(Boolean).join(" ");
+      return `<div class="card ${classes}"><span>${escapeHtml(label)}</span><strong>${unavailable ? "—" : escapeHtml(value)}${!unavailable && suffix ? `<small>${escapeHtml(suffix)}</small>` : ""}</strong><small>${escapeHtml(unavailable ? hint || "Источник не предоставляет показатель" : hint)}</small></div>`;
+    }
+
+    function analyticsHubCombinedChart(models) {
+      const colors = {ozon: "#1764e8", wildberries: "#9c27b0"};
+      const series = models.filter((model) => model.commercialAvailable).map((model) => ({
+        key: model.key,
+        label: `${model.label} · ${model.commercialLabel}`,
+        rows: model.commercialRows,
+        color: colors[model.key],
+        status: model.status,
+      }));
+      if (!series.length) return `<div class="marketplace-chart-empty"><b>Финансовая динамика недоступна</b><span>Ни одна площадка не предоставила подтверждённые операции после удержаний за выбранный период.</span></div>`;
+      const dates = [...new Set(series.flatMap((item) => item.rows.map((row) => row.date).filter(Boolean)))].sort();
+      if (!dates.length) return `<div class="marketplace-chart-empty"><b>За выбранный период операций нет</b><span>Источники доступны, но в диапазоне нет финансовых операций или заказов.</span></div><div class="analytics-chart-legend">${series.map((item) => `<span><i style="--legend-color:${item.color}"></i>${escapeHtml(item.label)}</span>`).join("")}</div>`;
+      const width = 760, height = 250, left = 54, right = 20, top = 20, bottom = 36;
+      const chartWidth = width - left - right, chartHeight = height - top - bottom;
+      const allValues = series.flatMap((item) => item.rows.map((row) => Number(row.value || 0)));
+      const minimum = Math.min(0, ...allValues);
+      const maximum = Math.max(minimum + 1, 0, ...allValues);
+      const valueRange = maximum - minimum;
+      const x = (date) => dates.length === 1 ? left + chartWidth / 2 : left + chartWidth * dates.indexOf(date) / (dates.length - 1);
+      const y = (value) => top + chartHeight * (maximum - Number(value || 0)) / valueRange;
+      const compact = (value) => { const number = Number(value || 0); const absolute = Math.abs(number); return absolute >= 1000000 ? `${(number / 1000000).toFixed(1)}м` : absolute >= 1000 ? `${Math.round(number / 1000)}к` : String(Math.round(number)); };
+      const labels = [...new Set([0, Math.floor((dates.length - 1) / 2), dates.length - 1])];
+      const svgSeries = series.map((item) => {
+        const points = item.rows.filter((row) => row.date && dates.includes(row.date)).map((row) => `${x(row.date).toFixed(1)},${y(row.value).toFixed(1)}`).join(" ");
+        const dash = ["partial", "stale"].includes(item.status) ? ` stroke-dasharray="7 5"` : "";
+        const line = item.rows.length > 1 ? `<polyline fill="none" stroke="${item.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"${dash} points="${points}"/>` : "";
+        const dots = item.rows.filter((row) => row.date && dates.includes(row.date)).map((row) => { const pointLabel = `${item.label} · ${row.date} · ${marketplaceMoney(row.value)}`; return `<circle cx="${x(row.date)}" cy="${y(row.value)}" r="4" fill="${item.color}"/><circle class="chart-point-hit" cx="${x(row.date)}" cy="${y(row.value)}" r="13" tabindex="0" role="button" aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(row.date)}" data-chart-value="${escapeHtml(row.value)}" onmouseenter="showMarketplaceChartTooltip(this)" onmouseleave="hideMarketplaceChartTooltip(this)" onfocus="showMarketplaceChartTooltip(this)" onblur="hideMarketplaceChartTooltip(this)" onclick="showMarketplaceChartTooltip(this)" ontouchstart="showMarketplaceChartTooltip(this)"><title>${escapeHtml(pointLabel)}</title></circle>`; }).join("");
+        return line + dots;
+      }).join("");
+      return `<div class="marketplace-line-chart analytics-combined-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Коммерческая динамика Ozon и Wildberries">${[0,.25,.5,.75,1].map((ratio) => { const gridY = top + chartHeight * ratio; const tickValue = maximum - valueRange * ratio; return `<line class="chart-grid" x1="${left}" y1="${gridY}" x2="${width-right}" y2="${gridY}"/><text class="chart-axis-label" x="${left-8}" y="${gridY+4}" text-anchor="end">${compact(tickValue)}</text>`; }).join("")}${minimum < 0 && maximum > 0 ? `<line x1="${left}" y1="${y(0)}" x2="${width-right}" y2="${y(0)}" stroke="#7d8799" stroke-width="1.5"/>` : ""}${svgSeries}${labels.map((index) => `<text class="chart-axis-label" x="${x(dates[index])}" y="${height-9}" text-anchor="middle">${escapeHtml(dates[index].slice(5))}</text>`).join("")}</svg><div class="marketplace-point-tooltip" hidden></div></div><div class="analytics-chart-legend">${series.map((item) => `<span><i style="--legend-color:${item.color}"></i>${escapeHtml(item.label)}</span>`).join("")}</div>`;
+    }
+
+    function renderAnalyticsOverviewFromApi(hubHead) {
+      const overviewState = state.analyticsOverview;
+      const payload = overviewState.payload && typeof overviewState.payload === "object" ? overviewState.payload : {};
+      const periodMeta = marketplacePeriodMeta(state.marketplacePeriod);
+      const periodLabel = payload.period && payload.period.label ? payload.period.label : periodMeta.label;
+      const rows = Array.isArray(payload.metrics) ? payload.metrics : [];
+      const metric = (code) => rows.find((row) => row.code === code || row.key === code) || {value: null, status: "unavailable", meta: {warnings: []}};
+      const providers = Array.isArray(payload.providers) ? payload.providers : [];
+      const risks = Array.isArray(payload.risks) ? payload.risks : [];
+      const suppliesEnvelope = payload.supplies && typeof payload.supplies === "object" ? payload.supplies : {};
+      const supplies = Array.isArray(suppliesEnvelope.shipments) ? suppliesEnvelope.shipments : [];
+      const production = payload.production && typeof payload.production === "object" ? payload.production : {};
+      const quality = payload.data_quality && typeof payload.data_quality === "object" ? payload.data_quality : {};
+      const qualityStatusLabels = {ready:"готово",fresh:"актуально",partial:"частично",attention:"нужна проверка",stale:"устарело",error:"ошибка",loading:"загрузка",unknown:"нет данных",disconnected:"не подключён",disabled:"выключено",unavailable:"недоступно",no_data:"нет данных",success:"успешно",permission_required:"нужны права"};
+      const providerStatusClass = (status) => ["ready", "fresh", "success"].includes(status) ? "" : (["unknown", "disconnected", "disabled", "no_data", "unavailable"].includes(status) ? "gray" : "warn");
+      const formatInteger = (value) => Number(value || 0).toLocaleString("ru-RU", {maximumFractionDigits: 0});
+      const moneyValue = (value) => value === null || value === undefined ? null : marketplaceMoney(Number(value));
+      const metricHint = (row, fallback) => {
+        const meta = row && row.meta && typeof row.meta === "object" ? row.meta : {};
+        const warnings = Array.isArray(meta.warnings) ? meta.warnings.filter(Boolean) : [];
+        if (warnings.length) return warnings[0];
+        return qualityStatusLabels[row.status] || row.source_hint || meta.source_hint || fallback || "Источник не подтверждён";
+      };
+      const displayMetric = (code, format, fallback) => {
+        const row = metric(code);
+        const value = row.value === null || row.value === undefined ? null : format(row.value);
+        return analyticsHubMetricCard(row.label || fallback, value, "", metricHint(row, fallback), row.status || "unavailable");
+      };
+      const highRisks = risks.filter((row) => String(row.severity || "").toLowerCase() === "high");
+      const planKnown = production.plan !== null && production.plan !== undefined;
+      const factKnown = production.fact !== null && production.fact !== undefined;
+      const productionDisplay = planKnown && factKnown ? `${formatInteger(production.plan)} / ${formatInteger(production.fact)}` : null;
+      const sourceLoading = overviewState.loading || (!overviewState.loaded && !overviewState.error);
+      const calendarMax = marketplaceLocalIsoDate();
+      const periodOptions = [["today","Сегодня"],["yesterday","Вчера"],["7d","Последние 7 дней"],["30d","Последние 30 дней"],["month","Текущий месяц"],["previous-month","Предыдущий месяц"],["custom","Произвольный диапазон"]];
+      const periodBar = `<div class="analytics-period-bar"><label><span>Период</span><select id="analyticsHubPeriod">${periodOptions.map(([value,label]) => `<option value="${value}" ${state.marketplacePeriod === value ? "selected" : ""}>${label}</option>`).join("")}</select></label><div class="analytics-period-dates"><label><span>С даты</span><input id="analyticsHubDateFrom" type="date" max="${calendarMax}" value="${escapeHtml(state.marketplaceDateFrom)}"></label><label><span>По дату</span><input id="analyticsHubDateTo" type="date" max="${calendarMax}" value="${escapeHtml(state.marketplaceDateTo)}"></label></div><div class="analytics-period-current">${escapeHtml(periodLabel)}</div></div>`;
+      if (sourceLoading) {
+        mainButton.hidden = true;
+        mount.innerHTML = `${hubHead}<div class="analytics-overview">${periodBar}<div class="analytics-overview-notice"><div><b>Собираем единую аналитику</b><span>Проверяем PostgreSQL Ozon, Wildberries, производство и поставки.</span></div><span class="status-chip gray">загрузка</span></div><div class="analytics-overview-kpis">${Array.from({length: 7}, () => `<div class="card analytics-overview-kpi analytics-loading-card"></div>`).join("")}</div></div>`;
+        return;
+      }
+      if (overviewState.error || !payload.ok) {
+        mainButton.hidden = true;
+        mount.innerHTML = `${hubHead}<div class="analytics-overview">${periodBar}<div class="analytics-overview-notice error"><div><b>Общая аналитика временно недоступна</b><span>${escapeHtml(overviewState.error || payload.message || "Источники не ответили.")}</span></div><button type="button" class="small-button secondary" data-analytics-overview-action="refresh">Повторить</button></div></div>`;
+        return;
+      }
+
+      const overallMeta = payload.meta && typeof payload.meta === "object" ? payload.meta : {};
+      const overallWarnings = Array.isArray(overallMeta.warnings) ? overallMeta.warnings.filter(Boolean) : [];
+      const productionMeta = production.meta && typeof production.meta === "object" ? production.meta : {};
+      const suppliesMeta = suppliesEnvelope.meta && typeof suppliesEnvelope.meta === "object" ? suppliesEnvelope.meta : {};
+      const providerCoverageComplete = providers.length > 0 && providers.every((provider) => provider.status === "fresh");
+      const supplyCoverageComplete = suppliesMeta.status === "fresh";
+      const riskCoverageComplete = overallMeta.status === "fresh" && productionMeta.status === "fresh" && supplyCoverageComplete && providerCoverageComplete;
+      const riskCountValue = highRisks.length ? formatInteger(highRisks.length) : (riskCoverageComplete ? "0" : null);
+      const riskCountStatus = highRisks.length ? "danger" : (riskCoverageComplete ? "ready" : "partial");
+      const riskCountHint = highRisks.length
+        ? `${riskCoverageComplete ? "Подтверждено" : "Не менее"} ${highRisks.length}: данные, производство и поставки`
+        : (riskCoverageComplete ? "Все источники проверены" : "Проверены не все источники — ноль не подтверждён");
+      const notice = overallMeta.status && overallMeta.status !== "fresh"
+        ? `<div class="analytics-overview-notice warn"><div><b>Данные доступны частично</b><span>${escapeHtml(overallWarnings.slice(0, 3).join(" · ") || "Некоторые источники недоступны или устарели; они не подменены нулями.")}</span></div><button type="button" class="small-button secondary" data-analytics-overview-action="refresh">Обновить</button></div>`
+        : "";
+      const kpis = `<div class="analytics-overview-kpis">
+        ${displayMetric("recognized_sales", moneyValue, "Продажи / GMV")}
+        ${displayMetric("contribution_margin", moneyValue, "Маржинальный доход")}
+        ${displayMetric("net_payout", moneyValue, "После удержаний")}
+        ${displayMetric("orders", formatInteger, "Заказы")}
+        ${displayMetric("stock_available", formatInteger, "Остатки на площадках")}
+        ${analyticsHubMetricCard("Производство: план / факт", productionDisplay, "", planKnown && factKnown ? `${production.start_date || ""} — ${production.end_date || ""}` : "Производственный источник недоступен", production.meta && production.meta.status || "unavailable")}
+        ${analyticsHubMetricCard("Критические сигналы", riskCountValue, "", riskCountHint, riskCountStatus)}
+      </div>`;
+
+      const financeRows = payload.series && Array.isArray(payload.series.finance) ? payload.series.finance : [];
+      const chartModels = providers.map((provider) => {
+        const key = provider.marketplace === "wildberries" ? "wildberries" : "ozon";
+        const metricStatuses = provider.metric_status && typeof provider.metric_status === "object" ? provider.metric_status : {};
+        const financeStatus = metricStatuses.net_payout || "unknown";
+        const commercialRows = financeRows
+          .filter((row) => row[key] !== null && row[key] !== undefined)
+          .map((row) => ({date: row.date, value: Number(row[key])}));
+        const blockedStatuses = new Set(["error", "permission_required", "unavailable", "no_data", "unknown", "disconnected"]);
+        const statusSuffix = ["fresh", "ready", "success"].includes(financeStatus) ? "" : ` · ${qualityStatusLabels[financeStatus] || financeStatus}`;
+        return {key, label: provider.label || key, status: financeStatus, commercialAvailable: commercialRows.length > 0 && !blockedStatuses.has(financeStatus), commercialLabel: `после удержаний${statusSuffix}`, commercialRows};
+      });
+      const providerCards = providers.map((provider) => {
+        const status = provider.status || "unknown";
+        const providerMeta = provider.meta && typeof provider.meta === "object" ? provider.meta : {};
+        const metricStatuses = provider.metric_status && typeof provider.metric_status === "object" ? provider.metric_status : {};
+        const warnings = Array.isArray(providerMeta.warnings) ? providerMeta.warnings.filter(Boolean) : [];
+        const freshness = analyticsHubFreshness(provider.last_sync_at || providerMeta.last_successful_sync_at);
+        const fields = [
+          ["products", "Товары", provider.products, "шт."],
+          ["net_payout", "После удержаний", provider.net_payout, "₽"],
+          ["orders", "Заказы", provider.orders, "шт."],
+          ["stock_available", "Остаток", provider.stock_available, "шт."],
+        ];
+        return `<div class="analytics-provider-card"><div class="analytics-provider-head"><b>${escapeHtml(provider.label || provider.marketplace || "Площадка")}</b><span class="status-chip ${providerStatusClass(status)}">${escapeHtml(qualityStatusLabels[status] || status)}</span></div><div class="analytics-provider-metrics">${fields.map(([key,label,value,unit]) => { const valueStatus = metricStatuses[key] || (value === null || value === undefined ? "no_data" : status); const statusText = ["fresh", "ready", "success"].includes(valueStatus) ? "подтверждено" : (qualityStatusLabels[valueStatus] || valueStatus); return `<div class="analytics-provider-metric"><span>${escapeHtml(label)}</span><b>${value === null || value === undefined ? "—" : unit === "₽" ? escapeHtml(marketplaceMoney(Number(value))) : `${escapeHtml(formatInteger(value))} ${unit}`}</b><small>${escapeHtml(statusText)}</small></div>`; }).join("")}</div><div class="analytics-chart-source">${provider.last_sync_at ? `Sync: ${escapeHtml(freshness.age || provider.last_sync_at)}.` : "Время успешной синхронизации не получено."}${warnings.length ? ` ${escapeHtml(warnings.slice(0, 2).join(" · "))}` : ""}</div></div>`;
+      }).join("");
+
+      const riskRows = risks.slice(0, 8);
+      const risksBlock = riskRows.length
+        ? `<div class="analytics-risk-list">${riskRows.map((row) => `<div class="analytics-risk-row"><div class="analytics-risk-copy"><b>${escapeHtml(row.title || "Риск")}</b><span>${escapeHtml(row.reason || row.detail || "Требуется проверка")}${row.action ? ` · ${escapeHtml(row.action)}` : ""}</span></div><span class="status-chip ${String(row.severity).toLowerCase() === "high" ? "warn" : "gray"}">${escapeHtml(row.marketplace || row.type || row.entity_type || "контроль")}</span></div>`).join("")}</div>`
+        : riskCoverageComplete
+          ? `<div class="marketplace-chart-empty"><b>Критичных рисков не найдено</b><span>Все источники проверены; подтверждённых отклонений нет.</span></div>`
+          : `<div class="marketplace-chart-empty"><b>Проверка рисков неполная</b><span>Часть источников недоступна или устарела, поэтому ноль рисков не подтверждён.</span></div>`;
+      const matrixBlock = `<div class="marketplace-chart-empty"><b>SKU-матрица пока недоступна</b><span>Действия «пополнить / в производство» появятся после server-side сопоставления current-остатков с производственными SKU. Старые строки не используются.</span></div>`;
+      const criticalSupplyStatuses = new Set(["SHORTAGE", "SYNC_ERROR", "PARTIALLY_ACCEPTED", "DOCUMENTS_REQUIRED"]);
+      const supplyStatusLabels = {EXTERNAL_DRAFT:"Черновик",PLANNED:"Запланирована",WAITING_RESERVATION:"Ожидает резерв",SHORTAGE:"Дефицит",READY_TO_PICK:"Готова к отбору",PICKING:"Отбор",PICKED:"Отобрана",PACKING:"Упаковка",DOCUMENTS_REQUIRED:"Нужны документы",READY_TO_HANDOVER:"К передаче",HANDED_OVER:"Передана",ACCEPTING:"Приёмка",ACCEPTED:"Принята",PARTIALLY_ACCEPTED:"Принята частично",CANCELLED:"Отменена",SYNC_ERROR:"Ошибка sync"};
+      const suppliesBlock = supplies.length
+        ? `<div class="analytics-supply-list">${supplies.slice(0, 8).map((row) => { const status = String(row.canonical_status || row.status || "UNKNOWN"); return `<div class="analytics-supply-row"><div class="analytics-supply-copy"><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id || row.number || "без номера")}</b><span>${escapeHtml(row.destination_name || "направление не указано")}${row.total_quantity !== null && row.total_quantity !== undefined ? ` · ${escapeHtml(row.total_quantity)} шт.` : ""}${row.unmatched_count ? ` · не сопоставлено ${escapeHtml(row.unmatched_count)}` : ""}</span></div><span class="status-chip ${criticalSupplyStatuses.has(status) ? "warn" : "gray"}">${escapeHtml(supplyStatusLabels[status] || status)}</span></div>`; }).join("")}</div>`
+        : supplyCoverageComplete
+          ? `<div class="marketplace-chart-empty"><b>Активных поставок нет</b><span>Источник поставок проверен; подтверждён пустой список.</span></div>`
+          : `<div class="marketplace-chart-empty"><b>Поставки не подтверждены</b><span>Пустая локальная таблица не считается доказательством нулевого количества у площадок.</span></div>`;
+
+      const qualityRows = providers.map((provider) => {
+        const status = provider.status || "unknown";
+        const providerMeta = provider.meta && typeof provider.meta === "object" ? provider.meta : {};
+        const warning = Array.isArray(providerMeta.warnings) ? providerMeta.warnings[0] : "";
+        return `<div class="analytics-quality-row"><div class="analytics-quality-copy"><b>${escapeHtml(provider.label || provider.marketplace)}</b><span>${escapeHtml(provider.last_sync_at || providerMeta.last_successful_sync_at || "Нет подтверждённого времени sync")}${warning ? ` · ${escapeHtml(warning)}` : ""}</span></div><span class="status-chip ${providerStatusClass(status)}">${escapeHtml(qualityStatusLabels[status] || status)}</span></div>`;
+      }).join("");
+      const ozonDatasets = quality.ozon && Array.isArray(quality.ozon.datasets) ? quality.ozon.datasets : [];
+      const wbCapabilities = quality.wildberries && Array.isArray(quality.wildberries.capabilities) ? quality.wildberries.capabilities : [];
+      const datasetChips = [
+        ...ozonDatasets.map((row) => `<span class="status-chip ${providerStatusClass(row.freshness || row.status)}">Ozon ${escapeHtml({catalog:"каталог",prices:"цены",stocks:"остатки"}[row.dataset] || row.dataset)} · ${escapeHtml(qualityStatusLabels[row.freshness] || qualityStatusLabels[row.status] || row.status || "unknown")}</span>`),
+        ...wbCapabilities.map((row) => `<span class="status-chip ${providerStatusClass(row.status === "available" ? "fresh" : row.status)}">WB ${escapeHtml(row.capability || "источник")} · ${escapeHtml(qualityStatusLabels[row.status] || (row.status === "available" ? "актуально" : row.status) || "unknown")}</span>`),
+      ].join("");
+
+      mainButton.hidden = true;
+      mount.innerHTML = `${hubHead}<div class="analytics-overview">${periodBar}${notice}${kpis}
+        <div class="analytics-overview-grid"><section class="card analytics-overview-section"><div class="section-title"><b>После удержаний: динамика</b><span>${escapeHtml(periodLabel)}</span></div>${analyticsHubCombinedChart(chartModels)}<div class="analytics-chart-source">Серии строятся сервером из Decimal-значений. Если источник недоступен, линия отсутствует, а не становится нулевой.</div></section><section class="card analytics-overview-section"><div class="section-title"><b>Площадки</b><span>${providers.filter((row) => row.configured).length} подключено</span></div><div class="analytics-provider-list">${providerCards || `<div class="marketplace-chart-empty"><b>Площадки не настроены</b><span>Нет доступных коннекторов.</span></div>`}</div></section></div>
+        <div class="analytics-three-grid"><section class="card analytics-overview-section"><div class="section-title"><b>Критические и товарные риски</b><span>${riskCoverageComplete || risks.length ? escapeHtml(risks.length) : "—"}</span></div>${risksBlock}</section><section class="card analytics-overview-section"><div class="section-title"><b>Остатки → производство</b><span>fail-closed</span></div>${matrixBlock}</section><section class="card analytics-overview-section"><div class="section-title"><b>Поставки</b><span>${supplyCoverageComplete || supplies.length ? escapeHtml(supplies.length) : "—"}</span></div>${suppliesBlock}</section></div>
+        <section class="card analytics-overview-section"><div class="section-title"><b>Качество и свежесть данных</b><span>${escapeHtml(qualityStatusLabels[overallMeta.status] || overallMeta.status || "источники")}</span></div><div class="analytics-quality-list">${qualityRows}</div>${datasetChips ? `<div class="analytics-chart-legend">${datasetChips}</div>` : ""}</section>
+      </div>`;
+    }
+
+    function renderAnalyticsHub() {
+      const tab = ["general", "production", "ozon", "wildberries"].includes(state.analyticsHubTab) ? state.analyticsHubTab : "general";
+      const hubHead = `<div class="screen-head"><div><h2>Аналитика</h2><p>Производство, продажи, реклама, остатки и финансовые показатели в одном разделе.</p></div><div class="date">единая система</div></div>${analyticsHubTabs()}`;
+      if (tab === "production") {
+        renderAnalytics();
+        mount.insertAdjacentHTML("afterbegin", hubHead);
+        mainButton.hidden = true;
+        return;
+      }
+      if (tab === "ozon" || tab === "wildberries") {
+        const previousProvider = state.marketplaceProvider;
+        state.marketplaceProvider = tab;
+        renderMarketplaces();
+        state.marketplaceProvider = previousProvider;
+        mount.insertAdjacentHTML("afterbegin", hubHead);
+        mainButton.hidden = true;
+        return;
+      }
+      renderAnalyticsOverviewFromApi(hubHead);
+      return;
+    }
+
     function render() {
       if (!state.data) return;
       if (state.screen === "wms") {
@@ -10150,17 +12381,18 @@ MINIAPP_HTML = """<!doctype html>
         state.workspace = "production";
         state.screen = "shift";
       }
-      if (!canAccessMarketplaces() && state.workspace === "marketplaces") {
+      if (!canAccessMarketplaces() && ["marketplaces", "analytics"].includes(state.workspace)) {
         state.workspace = "production";
         state.screen = "shift";
       }
-      if (!['production', 'warehouse', 'marketplaces'].includes(state.workspace)) {
+      if (!['production', 'warehouse', 'marketplaces', 'analytics'].includes(state.workspace)) {
         state.workspace = state.screen === "warehouse" ? "warehouse" : "production";
       }
       if (state.workspace === "warehouse" && !["warehouse", "profile"].includes(state.screen)) {
         state.screen = "warehouse";
       }
       if (state.workspace === "marketplaces") state.screen = "marketplaces";
+      if (state.workspace === "analytics") state.screen = "analytics";
 
       const allowedProductionScreens = state.data.is_admin
         ? ["shift", "analytics", "orders", "admin", "passport", "profile"]
@@ -10171,17 +12403,19 @@ MINIAPP_HTML = """<!doctype html>
       document.getElementById("roleLabel").textContent = roleLabel();
       const isWarehouseWorkspace = state.workspace === "warehouse";
       const isMarketplaceWorkspace = state.workspace === "marketplaces";
+      const isAnalyticsWorkspace = state.workspace === "analytics";
       if (!isMarketplaceWorkspace) mainButton.hidden = false;
       document.body.classList.toggle("warehouse-workspace", isWarehouseWorkspace);
       document.body.classList.toggle("warehouse-v2-enabled", Boolean(isWarehouseWorkspace && state.data.features && state.data.features.warehouse_ui_v2));
       document.body.classList.toggle("marketplace-workspace", isMarketplaceWorkspace);
       document.body.classList.toggle("has-wms-access", canAccessWms());
       const mobileWorkspaceNav = document.getElementById("mobileWorkspaceNav");
-      mobileWorkspaceNav.hidden = !canAccessWms();
+      mobileWorkspaceNav.hidden = !canAccessWms() && !canAccessMarketplaces();
       document.querySelectorAll("[data-workspace]").forEach((button) => {
         if (button.dataset.workspace === "warehouse") button.hidden = !canAccessWms();
         if (button.dataset.workspace === "marketplaces") button.hidden = !canAccessMarketplaces();
-        const isActive = button.dataset.workspace === "warehouse" ? isWarehouseWorkspace : button.dataset.workspace === "marketplaces" ? isMarketplaceWorkspace : !isWarehouseWorkspace && !isMarketplaceWorkspace;
+        if (button.dataset.workspace === "analytics") button.hidden = !canAccessMarketplaces();
+        const isActive = button.dataset.workspace === "warehouse" ? isWarehouseWorkspace : button.dataset.workspace === "marketplaces" ? isMarketplaceWorkspace : button.dataset.workspace === "analytics" ? isAnalyticsWorkspace : !isWarehouseWorkspace && !isMarketplaceWorkspace && !isAnalyticsWorkspace;
         button.classList.toggle("active", isActive);
         if (isActive) button.setAttribute("aria-current", "page");
         else button.removeAttribute("aria-current");
@@ -10192,7 +12426,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "warehouse") renderWarehouse();
       if (state.screen === "marketplaces") renderMarketplaces();
       if (state.screen === "wms") renderWms();
-      if (state.screen === "analytics") renderAnalytics();
+      if (state.screen === "analytics") state.workspace === "analytics" ? renderAnalyticsHub() : renderAnalytics();
       if (state.screen === "orders") renderOrders();
       if (state.screen === "admin") renderAdmin();
       if (state.screen === "passport") renderPassport();
@@ -10206,10 +12440,53 @@ MINIAPP_HTML = """<!doctype html>
       if (isWarehouseWorkspace && state.wmsView === "products" && !state.wmsCatalog.loaded && !state.wmsCatalog.loading && !state.wmsCatalog.error) {
         window.setTimeout(() => refreshWmsCatalog({silent: true}), 0);
       }
-      if (isMarketplaceWorkspace && !state.marketplaceData.loaded && !state.marketplaceData.loading && !state.marketplaceData.error) {
+      if ((isMarketplaceWorkspace || isAnalyticsWorkspace) && !state.marketplaceData.loaded && !state.marketplaceData.loading && !state.marketplaceData.error) {
         window.setTimeout(() => refreshMarketplaces({silent: true}), 0);
       }
+      if (isAnalyticsWorkspace && state.analyticsHubTab === "general") {
+        const overviewRequest = analyticsOverviewRequest();
+        const overviewNeedsLoad = state.analyticsOverview.requestKey !== overviewRequest.key
+          || (!state.analyticsOverview.loaded && !state.analyticsOverview.error);
+        if (overviewNeedsLoad && !state.analyticsOverview.loading) {
+          window.setTimeout(() => refreshAnalyticsOverview({silent: true}), 0);
+        }
+      }
+      if (isMarketplaceWorkspace && state.marketplaceView === "data-quality" && !state.marketplaceQuality.loaded && !state.marketplaceQuality.loading && !state.marketplaceQuality.error) {
+        window.setTimeout(() => refreshMarketplaceQuality({silent: true}), 0);
+      }
       if (state.data.is_admin && state.workspace === "production" && state.screen === "shift") window.setTimeout(syncWebPushDeviceState, 0);
+    }
+
+    function safeRenderAfterState() {
+      if (
+        isStandaloneWeb
+        && !state.marketplaceLocationInitialized
+        && window.location.pathname.startsWith("/app/marketplaces")
+        && canAccessMarketplaces()
+      ) {
+        applyMarketplaceLocation();
+        state.marketplaceLocationInitialized = true;
+        state.workspace = "marketplaces";
+        state.screen = "marketplaces";
+      }
+      try {
+        render();
+        return;
+      } catch (error) {
+        console.error("Render failed", error);
+      }
+
+      state.workspace = "production";
+      if (state.data && state.data.is_admin) {
+        state.screen = "admin";
+        state.productionScreen = "admin";
+        state.adminSection = "employees";
+      } else {
+        state.screen = "orders";
+        state.productionScreen = "orders";
+      }
+      render();
+      showToast("Интерфейс", "Открыт безопасный раздел после ошибки экрана.");
     }
 
     function setScreen(screen) {
@@ -10248,8 +12525,19 @@ MINIAPP_HTML = """<!doctype html>
         if (state.workspace === "production" && !["profile", "passport"].includes(state.screen) && productionScreens.has(state.screen)) {
           state.productionScreen = state.screen;
         }
+        applyMarketplaceLocation();
+        state.marketplaceLocationInitialized = true;
         state.workspace = "marketplaces";
         state.screen = "marketplaces";
+        syncMarketplaceLocation();
+      } else if (workspace === "analytics") {
+        if (!canAccessMarketplaces()) {
+          showToast("Аналитика", "Раздел доступен только администратору.");
+          return;
+        }
+        if (state.workspace === "production" && !["profile", "passport"].includes(state.screen) && productionScreens.has(state.screen)) state.productionScreen = state.screen;
+        state.workspace = "analytics";
+        state.screen = "analytics";
       } else {
         state.workspace = "production";
         const allowed = state.data && state.data.is_admin
@@ -10290,7 +12578,7 @@ MINIAPP_HTML = """<!doctype html>
 
         state.data = data;
         if (message) showToast("Готово", message);
-        render();
+        safeRenderAfterState();
         if (getCompletionQueue().length && navigator.onLine) window.setTimeout(() => flushCompletionQueue(true), 0);
       } catch (error) {
         state.data = null;
@@ -10420,12 +12708,32 @@ MINIAPP_HTML = """<!doctype html>
         }
       }
 
+      const operationsAction = event.target.closest("[data-operations-action]");
+      if (operationsAction && state.data && state.data.is_admin) {
+        const action = operationsAction.dataset.operationsAction;
+        if (action === "create-order") {
+          resetOrderDraft();
+          setScreen("orders");
+          return;
+        }
+        if (action === "employees" || action === "alerts") {
+          state.adminSection = action === "employees" ? "employees" : "feedback";
+          setScreen("admin");
+          return;
+        }
+        if (action === "scan") {
+          setScreen("orders");
+          window.setTimeout(() => openQrScanner("route"), 0);
+          return;
+        }
+      }
+
       const orderMode = event.target.closest("[data-order-mode]");
       if (orderMode && state.data && state.data.is_admin) {
         if (orderMode.dataset.orderMode === "create") {
           resetOrderDraft();
         } else {
-          state.orderMode = "list";
+          state.orderMode = orderMode.dataset.orderMode === "board" ? "board" : "list";
         }
         render();
         return;
@@ -10617,8 +12925,26 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       const wmsShipmentAction = event.target.closest("[data-wms-shipment-action]");
-      if (wmsShipmentAction && wmsShipmentAction.dataset.wmsShipmentAction === "back") {
-        state.wmsShipmentDetail = null;
+      if (wmsShipmentAction) {
+        const action = wmsShipmentAction.dataset.wmsShipmentAction;
+        if (action === "back") state.wmsShipmentDetail = null;
+        if (action === "new") { state.wmsShipmentCreate = true; state.wmsShipmentDetail = null; }
+        if (action === "cancel") { state.wmsShipmentCreate = false; state.wmsShipmentDraft = {destination: "", comment: "", lines: {}}; }
+        if (action === "add") {
+          syncWmsShipmentDraft();
+          const picker = document.getElementById("wmsShipmentProduct");
+          if (!picker || !picker.value) { showToast("Отгрузка", "Выберите товар для добавления."); return; }
+          state.wmsShipmentDraft.lines[picker.value] = "1";
+        }
+        if (action === "submit") { createWmsShipment(); return; }
+        render();
+        return;
+      }
+
+      const wmsShipmentRemove = event.target.closest("[data-wms-shipment-remove]");
+      if (wmsShipmentRemove) {
+        syncWmsShipmentDraft();
+        delete state.wmsShipmentDraft.lines[wmsShipmentRemove.dataset.wmsShipmentRemove];
         render();
         return;
       }
@@ -10734,7 +13060,23 @@ MINIAPP_HTML = """<!doctype html>
       const marketplaceView = event.target.closest("[data-marketplace-view]");
       if (marketplaceView) {
         state.marketplaceView = marketplaceView.dataset.marketplaceView || "overview";
+        if (state.marketplaceView === "data-quality") state.marketplaceProvider = "ozon";
         state.marketplaceDetail = null;
+        syncMarketplaceLocation();
+        render();
+        if (state.marketplaceView === "data-quality") refreshMarketplaceQuality({silent: true});
+        return;
+      }
+
+      const marketplaceFilterAction = event.target.closest("[data-marketplace-filter-action]");
+      if (marketplaceFilterAction) {
+        const action = marketplaceFilterAction.dataset.marketplaceFilterAction;
+        if (action === "toggle") state.marketplaceFiltersOpen = !state.marketplaceFiltersOpen;
+        if (action === "apply" || action === "cancel") state.marketplaceFiltersOpen = false;
+        if (action === "reset") {
+          state.marketplaceFilters = {onlyProblems: false, inStockOnly: false, orderStatus: "all"};
+          state.marketplaceFiltersOpen = false;
+        }
         render();
         return;
       }
@@ -10746,6 +13088,7 @@ MINIAPP_HTML = """<!doctype html>
           : "all";
         state.marketplaceView = "overview";
         state.marketplaceDetail = null;
+        syncMarketplaceLocation();
         render();
         return;
       }
@@ -10796,6 +13139,20 @@ MINIAPP_HTML = """<!doctype html>
         }
         if (marketplaceAction.dataset.marketplaceAction === "refresh") refreshMarketplaces();
         if (marketplaceAction.dataset.marketplaceAction === "sync") syncMarketplaces();
+        if (marketplaceAction.dataset.marketplaceAction === "quality-refresh") refreshMarketplaceQuality();
+        if (marketplaceAction.dataset.marketplaceAction === "phase1a-sync") syncMarketplacePhase1A();
+        if (marketplaceAction.dataset.marketplaceAction === "quality-search") searchMarketplaceQualityProducts();
+        if (marketplaceAction.dataset.marketplaceAction === "quality-prev") changeMarketplaceQualityPage(-1);
+        if (marketplaceAction.dataset.marketplaceAction === "quality-next") changeMarketplaceQualityPage(1);
+        return;
+      }
+
+      const analyticsOverviewAction = event.target.closest("[data-analytics-overview-action]");
+      if (analyticsOverviewAction) {
+        if (analyticsOverviewAction.dataset.analyticsOverviewAction === "refresh") {
+          state.analyticsOverview.error = "";
+          refreshAnalyticsOverview();
+        }
         return;
       }
 
@@ -11004,6 +13361,21 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const boardOrder = event.target.closest("[data-board-order-key]");
+      if (boardOrder && state.data && state.data.is_admin) {
+        const boardKey = boardOrder.dataset.boardOrderKey || "";
+        const allRows = [...currentOrderRows(), ...getCompletedOrderRows()];
+        const current = allRows.find((task) => taskIdentity(task) === boardKey);
+        if (!current) return;
+        state.orderCategory = adminOrderCategoryForTask(current);
+        state.adminTaskStatus = orderTaskStatusBucket(current) === "done" ? "done" : "all";
+        state.orderMode = "list";
+        state.selectedOrder = 0;
+        state.selectedOrderKey = boardKey;
+        render();
+        return;
+      }
+
       const order = event.target.closest("[data-select-order]");
       if (order) {
         state.selectedOrder = Number(order.dataset.selectOrder);
@@ -11089,7 +13461,8 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       if (state.screen === "marketplaces") {
-        syncMarketplaces();
+        if (state.marketplaceView === "data-quality") syncMarketplacePhase1A();
+        else syncMarketplaces();
         return;
       }
       if (state.screen === "analytics") {
@@ -11129,6 +13502,12 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("keydown", (event) => {
+      const qualitySearch = event.target.closest("#marketplaceQualitySearch");
+      if (qualitySearch && event.key === "Enter") {
+        event.preventDefault();
+        searchMarketplaceQualityProducts();
+        return;
+      }
       const scannerInput = event.target.closest("#wmsHardwareScannerInput");
       if (!scannerInput || event.key !== "Enter") return;
       event.preventDefault();
@@ -11151,6 +13530,9 @@ MINIAPP_HTML = """<!doctype html>
       }
       if (event.target.closest("#wmsMaterialName, #wmsMaterialColor, #wmsMaterialUnit, #wmsMaterialQuantity, #wmsMaterialComment")) {
         syncWmsMaterialReceiptForm();
+      }
+      if (event.target.closest("#wmsShipmentDestination, #wmsShipmentComment, [data-wms-shipment-qty]")) {
+        syncWmsShipmentDraft();
       }
 
       const routeTask = getDisplayedRouteTask();
@@ -11193,6 +13575,7 @@ MINIAPP_HTML = """<!doctype html>
 
       if (event.target.id === "feedbackCategory") state.feedbackDraft.category = event.target.value;
       if (event.target.id === "feedbackMessage") state.feedbackDraft.message = event.target.value;
+      if (event.target.id === "marketplaceQualitySearch") state.marketplaceQuality.query = event.target.value.slice(0, 200);
 
       if (event.target.closest("#adminStartDate, #adminEndDate, #adminEmployeeId, #adminShiftEndTime")) {
         syncAdminForm();
@@ -11203,6 +13586,44 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
+      if (event.target.id === "analyticsHubPeriod") {
+        state.marketplacePeriod = event.target.value || "7d";
+        state.analyticsOverview.loaded = false;
+        state.analyticsOverview.payload = null;
+        state.analyticsOverview.error = "";
+        state.analyticsOverview.requestKey = "";
+        render();
+        return;
+      }
+      if (["analyticsHubDateFrom", "analyticsHubDateTo"].includes(event.target.id)) {
+        if (event.target.id === "analyticsHubDateFrom") state.marketplaceDateFrom = event.target.value || "";
+        if (event.target.id === "analyticsHubDateTo") state.marketplaceDateTo = event.target.value || "";
+        if (state.marketplaceDateFrom && state.marketplaceDateTo) state.marketplacePeriod = "custom";
+        state.analyticsOverview.loaded = false;
+        state.analyticsOverview.payload = null;
+        state.analyticsOverview.error = "";
+        state.analyticsOverview.requestKey = "";
+        render();
+        return;
+      }
+      if (event.target.id === "marketplacePeriod") {
+        state.marketplacePeriod = event.target.value || "7d";
+        syncMarketplaceLocation();
+        render();
+        return;
+      }
+      if (event.target.id === "marketplaceOrderStatus") {
+        state.marketplaceFilters.orderStatus = event.target.value || "all";
+        return;
+      }
+      if (event.target.id === "marketplaceInStockOnly") {
+        state.marketplaceFilters.inStockOnly = Boolean(event.target.checked);
+        return;
+      }
+      if (event.target.id === "marketplaceOnlyProblems") {
+        state.marketplaceFilters.onlyProblems = Boolean(event.target.checked);
+        return;
+      }
       if (event.target.closest("#wmsProductName")) {
         readWmsDraftFromForm();
         state.wmsDraft.productScanned = false;
@@ -11356,6 +13777,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       if (state.workspace === "marketplaces" && state.screen === "marketplaces") {
+        if (isStandaloneWeb) window.history.replaceState(null, "", "/app");
         switchWorkspace("production");
         return;
       }

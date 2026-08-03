@@ -79,6 +79,28 @@ def reset_connection() -> None:
     _thread_connections.cache = {}
 
 
+def close_thread_connections() -> None:
+    """Close PostgreSQL connections cached by the current request thread.
+
+    ``ThreadingHTTPServer`` creates short-lived worker threads.  Without an
+    explicit teardown, their thread-local caches disappear while the global
+    registry keeps the underlying connections alive until process shutdown.
+    """
+    cache = getattr(_thread_connections, "cache", None) or {}
+    connections = list(cache.values())
+    _thread_connections.cache = {}
+    if not connections:
+        return
+    connection_ids = {id(conn) for conn in connections}
+    with _connection_registry_lock:
+        _connection_registry[:] = [
+            conn for conn in _connection_registry if id(conn) not in connection_ids
+        ]
+    for conn in connections:
+        if conn is not None and not conn.closed:
+            conn.close()
+
+
 def dict_cursor(conn):
     """Return a cursor yielding RealDictRows."""
     return conn.cursor(cursor_factory=DictCursor)

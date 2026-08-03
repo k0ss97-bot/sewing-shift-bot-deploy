@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -113,6 +114,7 @@ CREATE TABLE IF NOT EXISTS marketplace_production_links (
     production_size TEXT NOT NULL DEFAULT '',
     production_color TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'unmatched',
+    route_configured INTEGER NOT NULL DEFAULT 0,
     source TEXT NOT NULL DEFAULT 'auto',
     updated_at TEXT NOT NULL,
     FOREIGN KEY(marketplace_product_id) REFERENCES marketplace_products(id) ON DELETE CASCADE
@@ -120,6 +122,8 @@ CREATE TABLE IF NOT EXISTS marketplace_production_links (
 CREATE INDEX IF NOT EXISTS idx_marketplace_products_account ON marketplace_products(account_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_production_links_status ON marketplace_production_links(status, production_product_name);
 CREATE INDEX IF NOT EXISTS idx_marketplace_stocks_product ON marketplace_stocks(product_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_marketplace_stocks_latest ON marketplace_stocks(product_id, warehouse_type, warehouse_name, id DESC);
+CREATE INDEX IF NOT EXISTS idx_marketplace_prices_latest ON marketplace_prices(product_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_orders_account ON marketplace_orders(account_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_sync_runs_account ON marketplace_sync_runs(account_id, started_at DESC);
 CREATE TABLE IF NOT EXISTS marketplace_supplies (
@@ -234,6 +238,16 @@ def ensure_schema(conn: sqlite3.Connection | None = None) -> None:
         if connection.row_factory is None:
             connection.row_factory = sqlite3.Row
         connection.executescript(SCHEMA_SQL)
+        link_columns = {
+            row[1] for row in connection.execute(
+                "PRAGMA table_info(marketplace_production_links)"
+            ).fetchall()
+        }
+        if "route_configured" not in link_columns:
+            connection.execute(
+                "ALTER TABLE marketplace_production_links "
+                "ADD COLUMN route_configured INTEGER NOT NULL DEFAULT 0"
+            )
         connection.commit()
     finally:
         if owned:
@@ -467,6 +481,14 @@ def product_group_for(*values: object) -> tuple[str, str]:
     text = " ".join(_text(value) for value in values if _text(value)).lower().replace("ё", "е")
     sizes = [int(value) for value in re.findall(r"(?<!\d)(?:8[6-9]|9\d|1[0-7]\d|18\d)(?!\d)", text)]
 
+    if "костюм" in text:
+        if "классическ" in text and "трикотаж" in text:
+            return "suits-classic-knitted", "Костюм классический трикотажный"
+        if "трикотаж" in text and "детск" in text:
+            return "suits-knitted-children", "Костюм трикотажный детский"
+        if "детск" in text:
+            return "suits-children", "Костюм детский"
+        return "suits", "Костюмы"
     if "кардиган" in text:
         has_child = any(token in text for token in ("детск", "дет.", "kids", "child"))
         has_teen = any(token in text for token in ("подрост", "подр.", "teen", "junior"))
@@ -581,11 +603,33 @@ def _production_color(value: object, allowed: list[str]) -> str:
 
 def production_target_for_marketplace_product(row: dict) -> tuple[str, str, str] | None:
     """Map one marketplace variant to one existing factory route, if safe."""
-    from catalog import PRODUCT_OPTIONS
+    from catalog import COMMON_COLORS, PRODUCT_OPTIONS
 
     group_key, _ = product_group_for(
         row.get("name"), row.get("offer_id"), row.get("sku"), row.get("barcode"), row.get("size"),
     )
+    if group_key.startswith("suits"):
+        allowed_sizes = sorted(
+            {
+                str(size)
+                for product in ("Брюки со стрелками детские", "Брюки со стрелками подростковые", "Кардиган")
+                for size in PRODUCT_OPTIONS.get(product, {}).get("sizes", [])
+            },
+            key=lambda value: int(value),
+        )
+        allowed_colors = list(dict.fromkeys([
+            *COMMON_COLORS,
+            *(
+                color
+                for product in ("Брюки со стрелками детские", "Брюки со стрелками подростковые", "Кардиган")
+                for color in PRODUCT_OPTIONS.get(product, {}).get("colors", [])
+            ),
+        ]))
+        size = _production_size(row.get("size"), allowed_sizes)
+        color = _production_color(row.get("color"), allowed_colors)
+        if not size or not color:
+            return None
+        return "Костюм: брюки + кардиган", size, color
     if group_key == "trousers-arrows":
         raw_size = _production_size(row.get("size"), [str(size) for size in range(80, 170)])
         if raw_size and int(raw_size) <= 128:
@@ -607,39 +651,69 @@ def production_target_for_marketplace_product(row: dict) -> tuple[str, str, str]
 
 
 def sync_production_links(conn: sqlite3.Connection, account_id: int) -> dict[str, int]:
-    """Refresh deterministic Ozon-to-production links without touching stock."""
+    """Refresh the unified Ozon, production and WMS product catalogue.
+
+    Every Ozon variant receives a stable internal product identity.  Supported
+    factory products point to their real route identity; catalogue-only and
+    historical products remain usable by WMS without pretending that a
+    production route exists for them.
+    """
     rows = conn.execute(
         "SELECT id,name,offer_id,sku,barcode,size,color FROM marketplace_products WHERE account_id=?",
         (account_id,),
     ).fetchall()
     linked = 0
-    unmatched = 0
+    route_linked = 0
+    catalog_only = 0
     now = _now()
     for source_row in rows:
         row = dict(source_row)
         target = production_target_for_marketplace_product(row)
         if target:
             product_name, size, color = target
-            status = "linked"
-            linked += 1
+            route_configured = 1
+            source = "auto_route"
+            route_linked += 1
         else:
-            product_name = size = color = ""
-            status = "unmatched"
-            unmatched += 1
+            group_key, group_name = product_group_for(
+                row.get("name"), row.get("offer_id"), row.get("sku"),
+                row.get("barcode"), row.get("size"),
+            )
+            product_name = (
+                _text(row.get("name"))
+                if group_key == "other"
+                else _text(group_name)
+            ) or _text(row.get("offer_id") or row.get("sku")) or "Товар Ozon"
+            size = _text(row.get("size")) or _production_size(
+                row.get("offer_id"), [str(value) for value in range(40, 200)]
+            ) or "Не указан"
+            color = _text(row.get("color")) or "Не указан"
+            route_configured = 0
+            source = "ozon_catalog"
+            catalog_only += 1
+        status = "linked"
+        linked += 1
         conn.execute(
             """INSERT INTO marketplace_production_links
-               (marketplace_product_id,production_product_name,production_size,production_color,status,source,updated_at)
-               VALUES (?,?,?,?,?,'auto',?)
+               (marketplace_product_id,production_product_name,production_size,production_color,
+                status,route_configured,source,updated_at)
+               VALUES (?,?,?,?,?,?,?,?)
                ON CONFLICT(marketplace_product_id) DO UPDATE SET
                  production_product_name=excluded.production_product_name,
                  production_size=excluded.production_size,
                  production_color=excluded.production_color,
                  status=excluded.status,
+                 route_configured=excluded.route_configured,
                  source=excluded.source,
                  updated_at=excluded.updated_at""",
-            (row["id"], product_name, size, color, status, now),
+            (row["id"], product_name, size, color, status, route_configured, source, now),
         )
-    return {"linked": linked, "unmatched": unmatched}
+    return {
+        "linked": linked,
+        "route_linked": route_linked,
+        "catalog_only": catalog_only,
+        "unmatched": 0,
+    }
 
 
 def resolve_production_product_by_barcode(barcode: str) -> dict | None:
@@ -883,6 +957,39 @@ class OzonClient:
     def stocks(self) -> list[dict]:
         return self._paged_with_fallback(("/v4/product/info/stocks", "/v3/product/info/stocks"))
 
+    def warehouse_stocks(self) -> list[dict]:
+        """Return FBO balances split by the actual Ozon warehouse."""
+        rows: list[dict] = []
+        limit = 100
+        offset = 0
+        for page_index in range(200):
+            if page_index:
+                time.sleep(1.1)
+            response = None
+            for attempt in range(4):
+                try:
+                    response = self.post_readonly(
+                        "/v2/analytics/stock_on_warehouses",
+                        {"limit": limit, "offset": offset, "warehouse_type": "ALL"},
+                    )
+                    break
+                except MarketplaceError as error:
+                    if "HTTP 429" not in str(error) or attempt == 3:
+                        if rows:
+                            return rows
+                        raise
+                    time.sleep(2.0 * (attempt + 1))
+            if response is None:
+                break
+            result = response.get("result") if isinstance(response.get("result"), dict) else {}
+            page = result.get("rows") if isinstance(result.get("rows"), list) else []
+            page = [item for item in page if isinstance(item, dict)]
+            rows.extend(page)
+            if len(page) < limit:
+                break
+            offset += limit
+        return rows
+
     def fbs_postings(self) -> list[dict]:
         now = datetime.now(timezone.utc)
         response = self.post_readonly(
@@ -969,7 +1076,14 @@ def sync_ozon() -> dict:
     ensure_schema(conn)
     ensure_extended_schema(conn)
     account_name = os.getenv("OZON_ACCOUNT_NAME", "Основной Ozon").strip() or "Основной Ozon"
-    account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
+    existing_account = conn.execute(
+        "SELECT id FROM marketplace_accounts WHERE marketplace='ozon' ORDER BY id LIMIT 1"
+    ).fetchone()
+    account_id = int(existing_account[0]) if existing_account else _account(
+        conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip()
+    )
+    sync_production_links(conn, account_id)
+    conn.commit()
     started = _now()
     run = conn.execute(
         "INSERT INTO marketplace_sync_runs (account_id, status, started_at) VALUES (?, 'running', ?)",
@@ -986,6 +1100,10 @@ def sync_ozon() -> dict:
         products = _enrich_catalog_products(products, details, attributes)
         prices = client.prices()
         stocks = client.stocks()
+        try:
+            warehouse_stocks = client.warehouse_stocks()
+        except MarketplaceError:
+            warehouse_stocks = []
         try:
             postings = client.fbs_postings()
         except MarketplaceError:
@@ -1018,6 +1136,26 @@ def sync_ozon() -> dict:
                     "INSERT INTO marketplace_stocks (product_id,warehouse_type,warehouse_name,stock,reserved,available,payload_json,observed_at) VALUES (?,?,?,?,?,?,?,?)",
                     (pid, _text(stock.get("type") or stock.get("warehouse_type")), _text(stock.get("warehouse_name") or stock.get("warehouse_name")), stock_qty, reserved, max(0, stock_qty - reserved), _json(stock), _now()),
                 )
+        product_identity_rows = conn.execute(
+            "SELECT id,sku,offer_id FROM marketplace_products WHERE account_id=?",
+            (account_id,),
+        ).fetchall()
+        product_by_identity = {}
+        for product_row in product_identity_rows:
+            for identity in (product_row["sku"], product_row["offer_id"]):
+                if _text(identity):
+                    product_by_identity[_text(identity)] = int(product_row["id"])
+        for stock in warehouse_stocks:
+            pid = product_by_identity.get(_text(stock.get("sku"))) or product_by_identity.get(_text(stock.get("item_code")))
+            warehouse_name = _text(stock.get("warehouse_name"))
+            if pid is None or not warehouse_name:
+                continue
+            available = max(0, _int(stock.get("free_to_sell_amount")))
+            reserved = max(0, _int(stock.get("reserved_amount")))
+            conn.execute(
+                "INSERT INTO marketplace_stocks (product_id,warehouse_type,warehouse_name,stock,reserved,available,payload_json,observed_at) VALUES (?,?,?,?,?,?,?,?)",
+                (pid, "ozon_warehouse", warehouse_name, available + reserved, reserved, available, _json(stock), _now()),
+            )
         for posting in postings:
             external_id = _text(posting.get("order_id") or posting.get("posting_number") or posting.get("order_number"))
             if not external_id:
@@ -1060,36 +1198,211 @@ def sync_ozon() -> dict:
         conn.close()
 
 
-def dashboard() -> dict:
+def _marketplace_product_image(payload_json: object) -> str:
+    """Return the first usable product image saved in an Ozon product payload."""
+    try:
+        payload = json.loads(str(payload_json or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    for field in ("primary_image", "images", "color_image", "images360"):
+        value = payload.get(field)
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.startswith("https://"):
+                return candidate
+    return ""
+
+
+def dashboard(*, read_only: bool = False) -> dict:
     from marketplace_extended import dashboard_extension, ensure_schema as ensure_extended_schema
 
-    conn = get_db_connection()
-    ensure_schema(conn)
-    ensure_extended_schema(conn)
+    conn = get_db_connection(timeout=2 if read_only else 30)
+    if not read_only:
+        ensure_schema(conn)
+        ensure_extended_schema(conn)
+    conn.row_factory = sqlite3.Row
     account_name = os.getenv("OZON_ACCOUNT_NAME", "Основной Ozon").strip() or "Основной Ozon"
-    account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
+    if read_only:
+        account_row = conn.execute(
+            "SELECT id FROM marketplace_accounts WHERE marketplace='ozon' ORDER BY id LIMIT 1"
+        ).fetchone()
+        account_id = int(account_row[0]) if account_row else 0
+    else:
+        account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
     rows = conn.execute("SELECT id,marketplace,account_name,seller_id,enabled,last_sync_at,last_error FROM marketplace_accounts ORDER BY marketplace,id").fetchall()
     products = conn.execute("SELECT COUNT(*) FROM marketplace_products WHERE account_id=?", (account_id,)).fetchone()[0]
     stocks = conn.execute("SELECT COUNT(*) FROM marketplace_stocks WHERE product_id IN (SELECT id FROM marketplace_products WHERE account_id=?)", (account_id,)).fetchone()[0]
     orders = conn.execute("SELECT COUNT(*) FROM marketplace_orders WHERE account_id=? AND status NOT IN ('cancelled','delivered')", (account_id,)).fetchone()[0]
     product_rows = conn.execute(
-        """SELECT p.id,p.name,p.offer_id,p.sku,p.barcode,p.size,p.color,
+        """SELECT p.id,p.external_product_id,p.name,p.offer_id,p.sku,p.barcode,p.size,p.color,p.payload_json,
                   (SELECT current_price FROM marketplace_prices WHERE product_id=p.id ORDER BY id DESC LIMIT 1) AS current_price,
                   (SELECT old_price FROM marketplace_prices WHERE product_id=p.id ORDER BY id DESC LIMIT 1) AS old_price,
-                  (SELECT SUM(available) FROM marketplace_stocks WHERE product_id=p.id AND id IN (SELECT MAX(id) FROM marketplace_stocks GROUP BY product_id,warehouse_type,warehouse_name)) AS available,
+                  (SELECT SUM(available) FROM marketplace_stocks WHERE product_id=p.id AND LOWER(warehouse_type) IN ('fbo','fbs') AND id IN (SELECT MAX(id) FROM marketplace_stocks GROUP BY product_id,warehouse_type,warehouse_name)) AS available,
                   p.updated_at
            FROM marketplace_products p WHERE p.account_id=? ORDER BY p.updated_at DESC""",
         (account_id,),
     ).fetchall()
+    warehouse_stock_rows = conn.execute(
+        """SELECT s.product_id,LOWER(s.warehouse_type) AS warehouse_type,s.warehouse_name,SUM(s.available) AS available
+             FROM marketplace_stocks s
+            WHERE s.product_id IN (SELECT id FROM marketplace_products WHERE account_id=?)
+              AND LOWER(s.warehouse_type) IN ('ozon_warehouse','fbs')
+              AND s.id IN (SELECT MAX(id) FROM marketplace_stocks GROUP BY product_id,warehouse_type,warehouse_name)
+            GROUP BY s.product_id,LOWER(s.warehouse_type),s.warehouse_name""",
+        (account_id,),
+    ).fetchall()
+    stock_by_product: dict[int, dict[str, int]] = {}
+    for stock_row in warehouse_stock_rows:
+        warehouse_key = (
+            f"ozon:{_text(stock_row['warehouse_name'])}"
+            if stock_row["warehouse_type"] == "ozon_warehouse"
+            else "fbs"
+        )
+        stock_by_product.setdefault(int(stock_row["product_id"]), {})[warehouse_key] = int(stock_row["available"] or 0)
+    production_link_rows = conn.execute(
+        """SELECT marketplace_product_id,production_product_name,production_size,production_color,
+                  route_configured
+             FROM marketplace_production_links
+            WHERE marketplace_product_id IN (SELECT id FROM marketplace_products WHERE account_id=?)
+              AND status='linked'""",
+        (account_id,),
+    ).fetchall()
+    wms_finished_stock: dict[tuple[str, str, str], int] = {}
+    wms_finished_rows: list[dict[str, object]] = []
+    wms_stock_available = True
+    try:
+        from wms.connection import get_pg_connection
+        from wms.repository import get_stock_rows
+
+        wms_conn = get_pg_connection()
+        for stock_row in get_stock_rows(wms_conn):
+            key = stock_row.product_key
+            if key.item_type != "finished" or stock_row.item_state != "SELLABLE":
+                continue
+            identity = (key.product_name, key.product_size, key.product_color)
+            available_quantity = max(
+                0, int(stock_row.quantity or 0) - int(stock_row.reserved_quantity or 0),
+            )
+            wms_finished_stock[identity] = wms_finished_stock.get(identity, 0) + available_quantity
+            wms_finished_rows.append({"name": key.product_name, "available": available_quantity})
+        wms_conn.rollback()
+    except Exception:
+        wms_stock_available = False
+    production_stock_by_product = {}
+    for row in production_link_rows:
+        identity = (
+            _text(row["production_product_name"]),
+            _text(row["production_size"]),
+            _text(row["production_color"]),
+        )
+        production_stock_by_product[int(row["marketplace_product_id"])] = {
+            "available": wms_finished_stock.get(identity, 0),
+            "key": "|".join(identity),
+        }
+    warehouse_names = [
+        _text(row[0]) for row in conn.execute(
+            """SELECT s.warehouse_name
+                 FROM marketplace_stocks s
+                WHERE LOWER(s.warehouse_type)='ozon_warehouse'
+                  AND s.product_id IN (SELECT id FROM marketplace_products WHERE account_id=?)
+                  AND s.id IN (SELECT MAX(id) FROM marketplace_stocks GROUP BY product_id,warehouse_type,warehouse_name)
+             GROUP BY s.warehouse_name ORDER BY s.warehouse_name""",
+            (account_id,),
+        ).fetchall() if _text(row[0])
+    ]
+    warehouse_options = [
+        {"key": f"ozon:{name}", "name": name} for name in warehouse_names
+    ]
+    if any("fbs" in stocks for stocks in stock_by_product.values()):
+        warehouse_options.append({"key": "fbs", "name": "FBS — собственный склад"})
+    if not warehouse_options:
+        warehouse_options = [
+            {"key": "fbo", "name": "FBO — склады Ozon"},
+            {"key": "fbs", "name": "FBS — собственный склад"},
+        ]
+    product_history: dict[str, dict[str, dict[str, object]]] = {}
+
+    def history_day(identity: str, day: str) -> dict[str, object] | None:
+        identity = _text(identity)
+        day = _text(day)[:10]
+        if not identity or not day:
+            return None
+        return product_history.setdefault(identity, {}).setdefault(
+            day, {"date": day, "orders": set(), "units": 0, "returns": 0, "accruals": 0.0},
+        )
+
+    for history_row in conn.execute(
+        """SELECT oi.external_product_id,oi.offer_id,oi.sku,oi.quantity,o.posting_number,
+                  substr(CASE WHEN trim(o.shipment_date)<>'' THEN o.shipment_date ELSE o.updated_at END,1,10) AS day
+             FROM marketplace_order_items oi
+             JOIN marketplace_orders o ON o.id=oi.order_id
+            WHERE o.account_id=?""",
+        (account_id,),
+    ):
+        for identity in {history_row["external_product_id"], history_row["offer_id"], history_row["sku"]}:
+            bucket = history_day(identity, history_row["day"])
+            if bucket is not None:
+                bucket["orders"].add(_text(history_row["posting_number"]))
+                bucket["units"] += int(history_row["quantity"] or 0)
+    for history_row in conn.execute(
+        """SELECT offer_id,sku,quantity,substr(returned_at,1,10) AS day
+             FROM marketplace_returns WHERE account_id=? AND trim(returned_at)<>''""",
+        (account_id,),
+    ):
+        for identity in {history_row["offer_id"], history_row["sku"]}:
+            bucket = history_day(identity, history_row["day"])
+            if bucket is not None:
+                bucket["returns"] += max(1, int(history_row["quantity"] or 0))
+    for history_row in conn.execute(
+        """SELECT sku,amount,accrual_date AS day
+             FROM marketplace_finance_accruals WHERE account_id=? AND trim(sku)<>''""",
+        (account_id,),
+    ):
+        bucket = history_day(history_row["sku"], history_row["day"])
+        if bucket is not None:
+            bucket["accruals"] += float(history_row["amount"] or 0)
     products_payload = []
     groups = {}
     for row in product_rows:
         item = dict(row)
+        item["image_url"] = _marketplace_product_image(item.pop("payload_json", ""))
         group_key, group_name = product_group_for(
             item.get("name"), item.get("offer_id"), item.get("sku"), item.get("barcode"),
         )
         item["group_key"] = group_key
         item["group_name"] = group_name
+        item["warehouse_stocks"] = stock_by_product.get(int(item["id"]), {})
+        direct_stock_rows = [
+            row for row in wms_finished_rows
+            if (_text(item.get("offer_id")) and _text(item.get("offer_id")).casefold() in _text(row.get("name")).casefold())
+            or (_text(item.get("sku")) and _text(item.get("sku")).casefold() in _text(row.get("name")).casefold())
+        ]
+        if direct_stock_rows:
+            production_stock = {
+                "available": sum(int(row.get("available") or 0) for row in direct_stock_rows),
+                "key": f"ozon|{_text(item.get('offer_id') or item.get('sku'))}",
+            }
+        else:
+            production_stock = production_stock_by_product.get(int(item["id"]), {})
+        item["production_available"] = int(production_stock.get("available", 0))
+        item["production_linked"] = bool(production_stock)
+        item["production_stock_available"] = wms_stock_available
+        merged_history: dict[str, dict[str, object]] = {}
+        for identity in {item.get("external_product_id"), item.get("offer_id"), item.get("sku")}:
+            for day, source in product_history.get(_text(identity), {}).items():
+                target = merged_history.setdefault(
+                    day, {"date": day, "orders": set(), "units": 0, "returns": 0, "accruals": 0.0},
+                )
+                target["orders"].update(source["orders"])
+                target["units"] = max(int(target["units"]), int(source["units"]))
+                target["returns"] = max(int(target["returns"]), int(source["returns"]))
+                target["accruals"] = source["accruals"] if abs(float(source["accruals"])) > abs(float(target["accruals"])) else target["accruals"]
+        item["history"] = [
+            {**entry, "orders": len({value for value in entry["orders"] if value})}
+            for entry in sorted(merged_history.values(), key=lambda value: str(value["date"]))
+        ]
         products_payload.append(item)
         group = groups.setdefault(
             group_key,
@@ -1099,19 +1412,32 @@ def dashboard() -> dict:
                 "products": 0,
                 "articles": set(),
                 "available": 0,
+                "production_available": 0,
+                "production_keys": set(),
+                "production_linked_products": 0,
+                "production_stock_available": wms_stock_available,
                 "prices": [],
             },
         )
+        if not group.get("image_url") and item.get("image_url"):
+            group["image_url"] = item["image_url"]
         group["products"] += 1
         article = _text(item.get("offer_id") or item.get("sku"))
         if article:
             group["articles"].add(article)
         group["available"] += int(item.get("available") or 0)
+        production_key = _text(production_stock.get("key"))
+        if production_key and production_key not in group["production_keys"]:
+            group["production_keys"].add(production_key)
+            group["production_available"] += int(item.get("production_available") or 0)
+        if item["production_linked"]:
+            group["production_linked_products"] += 1
         if item.get("current_price") is not None:
             group["prices"].append(float(item["current_price"]))
     group_payload = []
     for group in groups.values():
         prices = group.pop("prices")
+        group.pop("production_keys", None)
         group["articles"] = len(group.pop("articles"))
         group["price_min"] = min(prices) if prices else None
         group["price_max"] = max(prices) if prices else None
@@ -1130,8 +1456,13 @@ def dashboard() -> dict:
         supply_counts[status_row[0]] = int(status_row[1])
     warehouse_shipments = [dict(row) for row in conn.execute("SELECT id,number,marketplace,external_supply_id,status,destination_name,total_quantity,reserved_quantity,picked_quantity,packed_quantity,planned_at,updated_at FROM warehouse_shipments ORDER BY updated_at DESC LIMIT 20")]
     sync_events = [dict(row) for row in conn.execute("SELECT id,marketplace,event_type,severity,external_id,message,created_at FROM marketplace_sync_events ORDER BY id DESC LIMIT 20")]
-    extended = dashboard_extension(conn, account_id)
+    extended = dashboard_extension(conn, account_id, ensure_schema_first=not read_only)
     conn.close()
+    try:
+        from wildberries import dashboard as wildberries_dashboard
+        wildberries_payload = wildberries_dashboard(read_only=read_only)
+    except Exception as error:
+        wildberries_payload = {"ok": False, "configured": wildberries_configured, "error": str(error)}
     return {
         "ok": True,
         "configured": configured,
@@ -1144,6 +1475,7 @@ def dashboard() -> dict:
         "summary": {"products": products, "stock_rows": stocks, "open_orders": orders, "supplies": len(supply_rows), "warehouse_shipments": len(warehouse_shipments)},
         "product_groups": group_payload,
         "products_rows": products_payload,
+        "warehouses": warehouse_options,
         "orders_rows": [dict(row) for row in order_rows],
         "sync_runs": [dict(row) for row in recent],
         "supplies": supply_rows,
@@ -1151,6 +1483,7 @@ def dashboard() -> dict:
         "warehouse_shipments": warehouse_shipments,
         "sync_events": sync_events,
         "analytics": extended,
+        "wildberries": wildberries_payload,
     }
 
 
@@ -1173,6 +1506,7 @@ def warehouse_catalog() -> dict:
     rows = conn.execute(
         """SELECT p.id,p.name,p.offer_id,p.sku,p.barcode,p.size,p.color,p.updated_at,
                   COALESCE(l.status,'unmatched') AS production_status,
+                  COALESCE(l.route_configured,0) AS route_configured,
                   COALESCE(l.production_product_name,'') AS production_product_name,
                   COALESCE(l.production_size,'') AS production_size,
                   COALESCE(l.production_color,'') AS production_color
@@ -1201,5 +1535,81 @@ def warehouse_catalog() -> dict:
     }
 
 
+def marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) -> list[dict | None]:
+    """Resolve WMS finished-goods identities to their read-only Ozon cards."""
+    conn = get_db_connection()
+    ensure_schema(conn)
+    rows = conn.execute(
+        """SELECT p.id,p.name,p.offer_id,p.sku,p.barcode,p.size,p.color,p.payload_json,
+                  COALESCE(l.status,'unmatched') AS production_status,
+                  COALESCE(l.route_configured,0) AS route_configured,
+                  COALESCE(l.production_product_name,'') AS production_product_name,
+                  COALESCE(l.production_size,'') AS production_size,
+                  COALESCE(l.production_color,'') AS production_color
+             FROM marketplace_products p
+             LEFT JOIN marketplace_production_links l ON l.marketplace_product_id=p.id
+            ORDER BY p.updated_at DESC,p.id DESC"""
+    ).fetchall()
+    products = []
+    for source in rows:
+        product = dict(source)
+        product["image_url"] = _marketplace_product_image(product.pop("payload_json", ""))
+        group_key, group_name = product_group_for(
+            product.get("name"), product.get("offer_id"), product.get("sku"), product.get("barcode"),
+        )
+        product["group_key"] = group_key
+        product["group_name"] = group_name
+        products.append(product)
+    resolved: list[dict | None] = []
+    for product_key in product_keys:
+        if _text(product_key.get("item_type")) != "finished":
+            resolved.append(None)
+            continue
+        wms_name = _text(product_key.get("product_name")).casefold()
+        wms_size = _text(product_key.get("product_size")).casefold()
+        wms_color = _text(product_key.get("product_color")).casefold()
+        direct = next(
+            (
+                product for product in products
+                if (_text(product.get("offer_id")) and _text(product.get("offer_id")).casefold() in wms_name)
+                or (_text(product.get("sku")) and _text(product.get("sku")).casefold() in wms_name)
+            ),
+            None,
+        )
+        linked = direct or next(
+            (
+                product for product in products
+                if product.get("production_status") == "linked"
+                and _text(product.get("production_product_name")).casefold() == wms_name
+                and _text(product.get("production_size")).casefold() == wms_size
+                and _text(product.get("production_color")).casefold() == wms_color
+            ),
+            None,
+        )
+        if linked:
+            resolved.append({
+                key: linked.get(key)
+                for key in (
+                    "id", "name", "group_name", "offer_id", "sku", "barcode",
+                    "size", "color", "image_url", "route_configured",
+                )
+            })
+        else:
+            resolved.append(None)
+    conn.close()
+    return resolved
+
+
 def sync_for_admin() -> dict:
-    return sync_ozon()
+    try:
+        from wildberries import sync_wildberries
+        wildberries = sync_wildberries()
+    except Exception as error:
+        wildberries = {"ok": False, "message": str(error)}
+    ozon = sync_ozon()
+    return {
+        "ok": bool(ozon.get("ok")) and bool(wildberries.get("ok")),
+        "message": "Ozon и Wildberries синхронизированы." if ozon.get("ok") and wildberries.get("ok") else "Синхронизация завершена с ошибками.",
+        "ozon": ozon,
+        "wildberries": wildberries,
+    }
