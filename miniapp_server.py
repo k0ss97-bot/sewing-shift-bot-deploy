@@ -5233,6 +5233,35 @@ def make_handler(bot_token: str, debug: bool):
                 except Exception:
                     pass
 
+        def send_error(self, code, message=None, explain=None):
+            """Return a small safe error response for malformed HTTP requests.
+
+            ``BaseHTTPRequestHandler`` includes the complete request line in its
+            default 400 HTML page.  Internet scanners often send SOAP/XML
+            probes to ordinary HTTP ports; echoing that payload makes the
+            browser show a confusing page and can expose attacker-controlled
+            data.  Keep normal request handling unchanged, but make malformed
+            requests terse and close the connection so a poisoned keep-alive
+            stream cannot be reused.
+            """
+            if code != 400:
+                return super().send_error(code, message, explain)
+
+            self.close_connection = True
+            body = b"Bad Request\n"
+            try:
+                self.send_response(400, "Bad Request")
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_security_headers()
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                # A scanner commonly closes the socket immediately after the
+                # malformed probe.  There is nothing useful left to send.
+                pass
+
         def _send_error_500(self):
             body = json.dumps(
                 {"ok": False, "message": "Внутренняя ошибка сервера."},
