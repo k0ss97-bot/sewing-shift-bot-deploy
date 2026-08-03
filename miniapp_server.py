@@ -28,6 +28,7 @@ from database import (
     cancel_production_task,
     cancel_route_batch_and_restore_inputs,
     close_shift,
+    canonical_route_product_name,
     complete_route_batch_step_atomic,
     create_cutting_contour_batch_for_task,
     create_production_task,
@@ -990,11 +991,12 @@ def stock_sizes_overlap(first_value: str, second_value: str):
 
 
 def route_map_to_dict(product_name: str):
+    options_product_name = canonical_route_product_name(product_name)
     return {
         "product_name": product_name,
-        "sizes": get_product_sizes(product_name),
-        "colors": [format_color_label(color) for color in get_product_colors(product_name)],
-        "raw_colors": get_product_colors(product_name),
+        "sizes": get_product_sizes(options_product_name),
+        "colors": [format_color_label(color) for color in get_product_colors(options_product_name)],
+        "raw_colors": get_product_colors(options_product_name),
         "steps": [
             {
                 "number": index,
@@ -1886,11 +1888,12 @@ def production_catalog_to_dict():
     catalog = []
 
     for product_name in PRODUCT_ROUTE_MAPS:
-        colors = get_product_colors(product_name)
+        options_product_name = canonical_route_product_name(product_name)
+        colors = get_product_colors(options_product_name)
         catalog.append(
             {
                 "product_name": product_name,
-                "sizes": get_product_sizes(product_name),
+                "sizes": get_product_sizes(options_product_name),
                 "colors": colors,
                 "color_labels": [format_color_label(color) for color in colors],
             }

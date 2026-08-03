@@ -436,6 +436,34 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 self.assertIn(route_step["position"], {"Раскройщик", "Упаковщик", "Швея"}, product_name)
                 self.assertTrue(route_step["status_after"], product_name)
 
+    def test_legacy_cardigan_route_names_keep_catalog_options(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+
+        catalog = {
+            item["product_name"]: item
+            for item in miniapp_server.production_catalog_to_dict()
+        }
+
+        self.assertEqual(
+            catalog["Кардиган детский"]["sizes"],
+            catalog["Кардиган"]["sizes"],
+        )
+        self.assertEqual(
+            catalog["Кардиган детский"]["colors"],
+            catalog["Кардиган"]["colors"],
+        )
+        self.assertTrue(catalog["Брюки со стрелками детские"]["sizes"])
+        self.assertTrue(catalog["Брюки со стрелками детские"]["colors"])
+
+        route_catalog = {
+            item["product_name"]: item
+            for item in miniapp_server.get_route_catalog()
+        }
+        self.assertEqual(
+            route_catalog["Кардиган подростковый"]["sizes"],
+            catalog["Кардиган"]["sizes"],
+        )
+
     def test_route_batch_flow_advances_and_writes_history(self):
         route_maps = importlib.import_module("route_maps")
         self.database.create_employee(4004, "Тест Маршрут", "Раскройщик")
