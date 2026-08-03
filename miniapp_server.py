@@ -5244,7 +5244,7 @@ def make_handler(bot_token: str, debug: bool):
             requests terse and close the connection so a poisoned keep-alive
             stream cannot be reused.
             """
-            if code != 400:
+            if code not in {400, 501, 505}:
                 return super().send_error(code, message, explain)
 
             self.close_connection = True
@@ -6083,6 +6083,10 @@ def make_handler(bot_token: str, debug: bool):
             self.wfile.write(content)
 
         def log_message(self, format_string, *args):
+            # Do not persist attacker-controlled SOAP/XML request lines from
+            # malformed probes in the application log.
+            if args and isinstance(args[0], str) and args[0].lstrip().startswith("<"):
+                args = ("[malformed request]",) + args[1:]
             logging.info("Miniapp: " + format_string, *args)
 
     return MiniAppRequestHandler
