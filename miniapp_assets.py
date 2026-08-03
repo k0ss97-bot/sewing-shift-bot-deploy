@@ -4,7 +4,7 @@ MINIAPP_HTML = """<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Шагаем вместе</title>
   <style>
     :root {
@@ -3895,654 +3895,6 @@ MINIAPP_HTML = """<!doctype html>
       color: var(--muted, #888);
       font-style: italic;
     }
-
-    /* Operations center: desktop-first control room built on the existing data. */
-    .operations-center { display: grid; gap: 18px; }
-    .profile-btn svg { width: 21px; height: 21px; display: block; }
-    .operations-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
-    .operations-head h2 { margin: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.045em; }
-    .operations-head p { margin: 8px 0 0; color: var(--muted); }
-    .live-indicator { display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px; border-radius: 999px; background: rgba(49,168,107,.10); color: var(--sage-dark); font-size: 12px; font-weight: 800; white-space: nowrap; }
-    .live-indicator::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px rgba(49,168,107,.11); }
-    .operations-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
-    .operations-kpi { min-height: 142px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.88); box-shadow: var(--inset-shadow), 0 10px 24px rgba(16,23,34,.06); text-align: left; }
-    .operations-kpi span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
-    .operations-kpi strong { display: block; margin: 16px 0 7px; color: var(--text); font-size: 31px; line-height: 1; letter-spacing: -.05em; }
-    .operations-kpi small { display: block; color: var(--muted); font-size: 13px; font-weight: 600; }
-    .operations-kpi.risk { border-color: rgba(242,162,58,.34); background: linear-gradient(135deg, rgba(255,247,232,.94), rgba(255,255,255,.92)); }
-    .operations-kpi.overdue { border-color: rgba(221,79,93,.30); background: linear-gradient(135deg, rgba(255,239,242,.94), rgba(255,255,255,.92)); }
-    .operations-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(290px, .65fr); gap: 18px; }
-    .operations-panel { padding: 19px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.84); box-shadow: var(--inset-shadow), 0 10px 24px rgba(16,23,34,.05); }
-    .operations-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 17px; }
-    .operations-panel-head b { font-size: 16px; }
-    .operations-panel-head span { color: var(--muted); font-size: 12px; }
-    .shift-progress-value { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; margin-bottom: 12px; }
-    .shift-progress-value strong { font-size: 28px; letter-spacing: -.045em; }
-    .shift-progress-value small { color: var(--muted); font-size: 12px; font-weight: 700; }
-    .stage-stack { display: grid; gap: 13px; }
-    .stage-row { display: grid; grid-template-columns: minmax(128px, 1fr) minmax(92px, 2.4fr) auto; align-items: center; gap: 11px; }
-    .stage-row b { font-size: 13px; }
-    .stage-row .progress { margin: 0; }
-    .stage-row .status-chip { min-width: 76px; justify-content: center; }
-    .operations-alerts { display: grid; gap: 9px; }
-    .operations-alert { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 11px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
-    .operations-alert:last-child { border-bottom: 0; padding-bottom: 0; }
-    .operations-alert i { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--warning); }
-    .operations-alert.critical i { background: var(--danger); }
-    .operations-alert b { display: block; font-size: 13px; }
-    .operations-alert span { color: var(--muted); font-size: 12px; line-height: 1.35; }
-    .operations-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-    .operations-actions button { min-height: 44px; border: 1px solid var(--line); border-radius: 11px; background: rgba(245,248,255,.88); color: var(--text); font-size: 12px; font-weight: 800; text-align: left; padding: 10px 12px; }
-    .operations-actions button.primary { color: #fff; border-color: var(--accent); background: var(--accent); box-shadow: var(--blue-shadow); }
-    .key-orders { display: grid; gap: 9px; }
-    .key-order { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(250,251,253,.94); cursor: pointer; }
-    .key-order b { display: block; font-size: 13px; }
-    .key-order span { color: var(--muted); font-size: 12px; }
-    .orders-board { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 8px; }
-    .orders-column { min-width: 220px; min-height: 290px; padding: 12px; border: 1px solid var(--line); border-radius: 15px; background: rgba(236,240,247,.62); }
-    .orders-column-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 11px; font-size: 13px; font-weight: 800; }
-    .orders-column-head span { display: grid; place-items: center; min-width: 24px; height: 24px; border-radius: 8px; background: #fff; color: var(--muted); font-size: 12px; }
-    .board-order-card { display: grid; gap: 9px; margin-bottom: 10px; padding: 13px; border: 1px solid rgba(109,124,158,.15); border-radius: 12px; background: #fff; box-shadow: 0 6px 14px rgba(16,23,34,.05); cursor: pointer; }
-    .board-order-card b { font-size: 13px; line-height: 1.3; }
-    .board-order-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
-    @media (max-width: 820px) {
-      .operations-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .operations-layout { grid-template-columns: 1fr; }
-      .operations-head { display: grid; }
-    }
-    @media (max-width: 720px) {
-      .operations-actions { grid-template-columns: 1fr; }
-      .orders-board { grid-template-columns: 1fr; overflow: visible; }
-      .orders-column { min-width: 0; min-height: 0; }
-    }
-    @media (min-width: 900px) and (max-width: 1100px) {
-      body.web-mode .appbar {
-        grid-template-columns: 185px minmax(300px, 1fr) auto;
-        gap: 12px;
-      }
-      body.web-mode .appbar-profile { display: none; }
-      body.web-mode .workspace-nav button { font-size: 10px; }
-    }
-    /* Marketplace dashboard v2: one adaptive component for all providers. */
-    body.marketplace-workspace {
-      --marketplace-primary: #2563eb;
-      --marketplace-soft: #eef4ff;
-      --ozon-color: #005bff;
-      --wildberries-color: #a100ff;
-    }
-
-    .marketplace-layout {
-      display: grid;
-      grid-template-columns: 220px minmax(0, 1fr);
-      gap: 18px;
-      width: min(100%, 1600px);
-      margin: 0 auto;
-    }
-
-    .marketplace-main { min-width: 0; }
-
-    .marketplace-layout .marketplace-menu-strip {
-      position: sticky;
-      top: 92px;
-      align-self: start;
-      display: flex;
-      flex-direction: column;
-      flex-wrap: nowrap;
-      gap: 5px;
-      margin: 0;
-      padding: 12px;
-      max-height: calc(100dvh - 116px);
-      overflow-y: auto;
-      border-radius: 18px;
-    }
-
-    .marketplace-layout .marketplace-menu-link {
-      min-height: 44px;
-      padding: 11px 13px;
-      text-align: left;
-      font-size: 13px;
-      font-weight: 700;
-    }
-
-    .marketplace-layout .marketplace-menu-link.active {
-      color: #1746b6;
-      background: var(--marketplace-soft);
-      box-shadow: inset 3px 0 0 var(--marketplace-primary);
-    }
-
-    .marketplace-v2-head { margin-bottom: 14px; }
-    .marketplace-v2-head h2 { font-size: clamp(28px, 3vw, 34px); }
-
-    .marketplace-brand-mark {
-      min-width: 92px;
-      padding: 10px 14px;
-      border: 1px solid rgba(37,99,235,.18);
-      border-radius: 13px;
-      color: #1b4db5;
-      background: #eef4ff;
-      font-size: 14px;
-      font-weight: 900;
-      text-align: center;
-      letter-spacing: .04em;
-    }
-
-    .marketplace-brand-mark.ozon { color: #005bff; background: #eaf1ff; }
-    .marketplace-brand-mark.wb { color: #8d0aa5; background: #f7eaff; }
-
-    .marketplace-filter-bar {
-      display: grid;
-      grid-template-columns: minmax(220px, 300px) 1fr auto;
-      align-items: end;
-      gap: 12px;
-      margin: 14px 0;
-      padding: 13px;
-      border: 1px solid var(--line);
-      border-radius: 15px;
-      background: rgba(255,255,255,.86);
-      box-shadow: var(--inset-shadow);
-    }
-
-    .marketplace-filter-bar label { display: grid; gap: 6px; }
-    .marketplace-filter-bar label > span { color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
-    .marketplace-filter-bar select { min-height: 44px; border: 1px solid var(--line); border-radius: 11px; padding: 8px 36px 8px 11px; background: #fff; }
-    .marketplace-period-label { align-self: center; color: var(--muted); font-size: 13px; font-weight: 700; }
-
-    .marketplace-filter-panel { margin-bottom: 14px; padding: 16px; }
-    .marketplace-check { display: flex; align-items: center; gap: 9px; min-height: 44px; color: var(--text); font-size: 13px; font-weight: 700; }
-    .marketplace-check input { width: 18px; height: 18px; }
-
-    .marketplace-v2-kpis {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 10px;
-      margin: 14px 0;
-    }
-
-    .marketplace-v2-kpi {
-      min-height: 118px;
-      padding: 16px;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: rgba(255,255,255,.92);
-      color: var(--text);
-      text-align: left;
-      box-shadow: var(--inset-shadow), 0 8px 22px rgba(16,23,34,.05);
-    }
-
-    .marketplace-v2-kpi > span { display: block; min-height: 30px; color: var(--muted); font-size: 12px; font-weight: 750; }
-    .marketplace-v2-kpi strong { display: block; margin: 7px 0 8px; font-size: clamp(23px, 2vw, 30px); line-height: 1; letter-spacing: -.04em; }
-    .marketplace-v2-kpi strong small { font-size: 12px; letter-spacing: 0; }
-    .marketplace-v2-kpi > small { display: block; color: #237e52; font-size: 11px; line-height: 1.3; }
-    .marketplace-v2-kpi.unavailable { cursor: default; background: rgba(248,250,252,.9); }
-    .marketplace-v2-kpi.unavailable strong, .marketplace-v2-kpi.unavailable > small { color: var(--muted); }
-
-    .marketplace-v2-analytics {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin: 14px 0;
-    }
-
-    .marketplace-analytic-card { min-height: 286px; padding: 16px; }
-    .marketplace-chart-empty, .marketplace-empty-metric { min-height: 210px; display: grid; align-content: center; justify-items: center; gap: 7px; padding: 20px; border-radius: 13px; background: linear-gradient(180deg,#f7f9fd,#fff); color: var(--muted); text-align: center; }
-    .marketplace-chart-empty b, .marketplace-empty-metric b { color: var(--text); font-size: 14px; }
-    .marketplace-chart-empty span, .marketplace-empty-metric span { max-width: 260px; font-size: 12px; line-height: 1.45; }
-    .marketplace-empty-metric { min-height: 210px; }
-
-    .marketplace-order-bars { height: 210px; display: flex; align-items: flex-end; gap: 7px; padding: 16px 4px 4px; }
-    .marketplace-order-bars i { flex: 1; min-width: 7px; height: var(--bar-height); border-radius: 6px 6px 2px 2px; background: linear-gradient(180deg,var(--marketplace-primary),#1647ca); }
-
-    .marketplace-product-detail, .marketplace-sales-detail { margin-top: 14px; }
-    .marketplace-table-scroll { max-width: 100%; overflow-x: auto; }
-    .marketplace-table { font-size: 13px; }
-    .marketplace-source { display: inline-flex; align-items: center; min-height: 25px; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; }
-    .marketplace-source.ozon { color: #005bff; background: #eaf1ff; }
-    .marketplace-source.wb { color: #8d0aa5; background: #f7eaff; }
-
-    .marketplace-placeholder { min-height: 330px; display: grid; align-content: center; justify-items: center; gap: 10px; text-align: center; }
-    .marketplace-placeholder-icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 16px; color: var(--marketplace-primary); background: var(--marketplace-soft); font-size: 26px; }
-    .marketplace-placeholder h3, .marketplace-placeholder p { margin: 0; }
-    .marketplace-placeholder p { max-width: 540px; color: var(--muted); line-height: 1.5; }
-
-    @media (max-width: 1280px) {
-      .marketplace-layout { grid-template-columns: 190px minmax(0, 1fr); }
-      .marketplace-v2-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      .marketplace-v2-analytics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-
-    @media (max-width: 899px) {
-      body.web-mode main button { min-height: 44px; }
-      .marketplace-layout { display: block; width: 100%; }
-      .marketplace-layout .marketplace-menu-strip { position: sticky; top: 0; z-index: 18; flex-direction: row; overflow-x: auto; overflow-y: hidden; max-height: none; margin-bottom: 12px; padding: 5px; border-radius: 13px; scrollbar-width: none; }
-      .marketplace-layout .marketplace-menu-strip::-webkit-scrollbar { display: none; }
-      .marketplace-layout .marketplace-menu-link { flex: 0 0 auto; min-width: 104px; text-align: center; }
-      .marketplace-layout .marketplace-menu-link.active { box-shadow: inset 0 -3px 0 var(--marketplace-primary); }
-      .marketplace-provider-inline { display: block; }
-      .marketplace-provider-inline .marketplace-provider-switch { display: grid; grid-template-columns: 1fr; }
-      .marketplace-filter-bar { grid-template-columns: 1fr; align-items: stretch; }
-      .marketplace-period-label { min-height: 24px; }
-      .marketplace-v2-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .marketplace-v2-analytics { grid-template-columns: 1fr; }
-      .marketplace-analytic-card { min-height: 250px; }
-      .marketplace-v2-head { align-items: flex-start; }
-      .marketplace-brand-mark { min-width: 74px; padding: 8px 10px; }
-    }
-
-    @media (max-width: 430px) {
-      .marketplace-v2-kpis { gap: 8px; }
-      .marketplace-v2-kpi { min-height: 112px; padding: 12px; }
-      .marketplace-v2-kpi strong { font-size: 22px; }
-    }
-
-    /* Prototype analytics center. The center is intentionally self-contained so
-       marketplace loading and the rest of the Mini App keep their existing UI. */
-    .analytics-center-shell {
-      display: grid;
-      grid-template-columns: 238px minmax(0, 1fr);
-      min-height: 720px;
-      width: 100%;
-      max-width: none;
-      margin: 0;
-      overflow: hidden;
-      border: 1px solid rgba(16,23,34,.08);
-      border-radius: 22px;
-      background: #f5f7fb;
-      box-shadow: 0 18px 44px rgba(16,23,34,.10);
-    }
-    .analytics-center-sidebar {
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-      padding: 22px 14px 16px;
-      color: #e9efff;
-      background: linear-gradient(165deg,#0e1b33,#152b52 72%,#0d1a30);
-    }
-    .analytics-center-brand { display: flex; align-items: center; gap: 10px; padding: 0 9px 12px; }
-    .analytics-center-brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: #fff; background: #1b62ff; font-size: 18px; font-weight: 900; }
-    .analytics-center-brand b { font-size: 14px; letter-spacing: .04em; }
-    .analytics-center-brand span { display: block; margin-top: 2px; color: #9bb1d9; font-size: 10px; }
-    .analytics-center-nav { display: grid; gap: 4px; }
-    .analytics-center-nav button { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 9px 11px; border: 0; border-radius: 10px; color: #bdc9df; background: transparent; text-align: left; font-size: 12px; font-weight: 750; }
-    .analytics-center-nav button:hover { color: #fff; background: rgba(255,255,255,.08); }
-    .analytics-center-nav button.active { color: #fff; background: linear-gradient(90deg,#2065ff,#2b7bff); box-shadow: 0 9px 18px rgba(16,84,235,.32); }
-    .analytics-center-nav button span:first-child { width: 18px; text-align: center; font-size: 15px; }
-    .analytics-center-connector { margin-top: auto; padding: 13px; border: 1px solid rgba(181,204,243,.22); border-radius: 13px; background: rgba(255,255,255,.07); }
-    .analytics-center-connector b { display: block; font-size: 12px; }
-    .analytics-center-connector span { display: block; margin-top: 5px; color: #aabbd8; font-size: 11px; line-height: 1.4; }
-    .analytics-center-connector .status-chip { margin-top: 10px; color: #0f6a40; background: #c9f4df; }
-    .analytics-center-main { min-width: 0; padding: 20px 24px 30px; background: linear-gradient(145deg,#f7f9fd,#eef2f8); }
-    .analytics-center-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 18px; }
-    .analytics-center-toolbar h2 { margin: 0; font-size: clamp(25px, 3vw, 36px); letter-spacing: -.045em; }
-    .analytics-center-toolbar p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-    .analytics-center-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-    .analytics-center-controls select, .analytics-center-controls button { min-height: 36px; padding: 7px 11px; border: 1px solid rgba(16,23,34,.10); border-radius: 9px; background: rgba(255,255,255,.85); color: var(--text); font-size: 12px; font-weight: 750; }
-    .analytics-center-controls button.active { color: #fff; border-color: #2262ef; background: #2262ef; }
-    .analytics-center-status { display: inline-flex; align-items: center; gap: 7px; min-height: 31px; padding: 6px 10px; border-radius: 999px; color: #246443; background: #daf5e6; font-size: 11px; font-weight: 800; }
-    .analytics-center-status.partial { color: #8a5b0b; background: #fff0cf; }
-    .analytics-center-status.delayed, .analytics-center-status.unavailable { color: #9b3545; background: #ffe2e7; }
-    .analytics-center-grid { display: grid; gap: 14px; }
-    .analytics-center-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-    .analytics-center-card { min-width: 0; padding: 16px; border: 1px solid rgba(25,89,243,.10); border-radius: 16px; background: rgba(255,255,255,.9); box-shadow: 0 12px 24px rgba(16,23,34,.055); }
-    .analytics-center-kpi { min-height: 124px; }
-    .analytics-center-kpi > span { display: block; min-height: 31px; color: var(--muted); font-size: 11px; font-weight: 800; }
-    .analytics-center-kpi strong { display: block; margin: 7px 0 8px; font-size: clamp(25px,2.2vw,34px); line-height: 1; letter-spacing: -.05em; overflow-wrap: anywhere; }
-    .analytics-center-kpi small { display: block; color: var(--muted); font-size: 11px; line-height: 1.35; }
-    .analytics-center-kpi.unavailable strong { color: #6f7b8f; }
-    .analytics-center-section-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 23px 0 10px; }
-    .analytics-center-section-title b { font-size: 16px; }
-    .analytics-center-section-title span { color: #245bd4; font-size: 12px; font-weight: 800; }
-    .analytics-center-two { grid-template-columns: minmax(0,1.45fr) minmax(280px,.75fr); }
-    .analytics-center-three { grid-template-columns: repeat(3, minmax(0,1fr)); }
-    .analytics-center-card h3 { margin: 0; font-size: 15px; }
-    .analytics-center-card p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
-    .analytics-center-chart { min-height: 238px; margin-top: 15px; padding: 12px 4px 0; border-radius: 12px; background: repeating-linear-gradient(0deg,rgba(51,83,139,.08) 0 1px,transparent 1px 46px); }
-    .analytics-center-chart svg { display: block; width: 100%; height: 210px; overflow: visible; }
-    .analytics-center-chart-empty { display: grid; place-items: center; min-height: 210px; color: var(--muted); text-align: center; }
-    .analytics-center-chart-empty b { color: var(--text); }
-    .analytics-center-list { display: grid; gap: 0; margin-top: 10px; }
-    .analytics-center-list-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 11px 0; border-bottom: 1px solid rgba(16,23,34,.08); }
-    .analytics-center-list-row:last-child { border-bottom: 0; }
-    .analytics-center-list-row > div { min-width: 0; }
-    .analytics-center-list-row b, .analytics-center-list-row span { display: block; overflow-wrap: anywhere; }
-    .analytics-center-list-row b { font-size: 12px; }
-    .analytics-center-list-row span { margin-top: 3px; color: var(--muted); font-size: 11px; }
-    .analytics-center-list-row strong { flex: 0 0 auto; font-size: 13px; }
-    .analytics-center-ring { display: grid; place-items: center; min-height: 170px; margin-top: 10px; border-radius: 14px; background: radial-gradient(circle at 50% 45%,#fff 0 36%,transparent 37%), conic-gradient(#2765f2 0 64%,#b9c9ef 64% 100%); }
-    .analytics-center-ring span { display: grid; place-items: center; width: 110px; height: 110px; border-radius: 50%; background: #fff; color: var(--text); font-size: 18px; font-weight: 900; }
-    .analytics-center-table-wrap { overflow-x: auto; margin-top: 9px; }
-    .analytics-center-table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 12px; }
-    .analytics-center-table th { padding: 10px 9px; color: var(--muted); font-size: 10px; text-align: left; text-transform: uppercase; letter-spacing: .04em; }
-    .analytics-center-table td { padding: 11px 9px; border-top: 1px solid rgba(16,23,34,.08); vertical-align: top; overflow-wrap: anywhere; }
-    .analytics-center-empty { display: grid; place-items: center; min-height: 180px; padding: 24px; border-radius: 13px; background: linear-gradient(180deg,#f5f8fd,#fff); color: var(--muted); text-align: center; }
-    .analytics-center-empty b { color: var(--text); }
-    .analytics-center-empty span { max-width: 430px; margin-top: 6px; font-size: 12px; line-height: 1.45; }
-    .analytics-center-map { min-height: 360px; display: grid; place-items: center; border-radius: 14px; background: radial-gradient(circle at 58% 45%,rgba(55,107,229,.23),transparent 42%), linear-gradient(145deg,#e4ebfa,#f8fbff); color: #7183a4; }
-    .analytics-center-map .map-outline { width: min(78%,500px); aspect-ratio: 1.45; border: 4px solid rgba(42,96,217,.42); border-radius: 48% 54% 42% 53% / 52% 44% 58% 46%; transform: rotate(-10deg); }
-    .analytics-center-recommendation { border-left: 4px solid #2563eb; background: linear-gradient(110deg,#edf3ff,#fff); }
-    .analytics-center-recommendation.warn { border-left-color: #f0a43a; }
-    .analytics-center-recommendation strong { display: block; font-size: 13px; }
-    .analytics-center-recommendation span { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .analytics-center-shell :where(button, a) { text-decoration: none; }
-    .analytics-center-shell :where(*, *::before, *::after) { text-overflow: clip; white-space: normal; }
-    .analytics-center-shell :where(button, a):focus-visible { outline: 3px solid rgba(37,99,235,.30); outline-offset: 2px; }
-    @media (max-width: 1300px) { .analytics-center-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); } }
-    @media (max-width: 980px) { .analytics-center-shell { grid-template-columns: 1fr; } .analytics-center-sidebar { padding: 10px; } .analytics-center-brand { padding: 4px 8px; } .analytics-center-nav { display: flex; overflow-x: auto; } .analytics-center-nav button { flex: 0 0 auto; } .analytics-center-connector { display: none; } .analytics-center-main { padding: 16px; } .analytics-center-two { grid-template-columns: 1fr; } }
-    @media (max-width: 680px) { .analytics-center-kpis, .analytics-center-three { grid-template-columns: repeat(2,minmax(0,1fr)); } .analytics-center-toolbar { align-items: stretch; } .analytics-center-controls { width: 100%; } .analytics-center-controls > * { flex: 1 1 auto; } .analytics-center-kpi { min-height: 112px; padding: 13px; } }
-    @media (max-width: 430px) { .analytics-center-kpis, .analytics-center-three { grid-template-columns: 1fr; } .analytics-center-main { padding: 12px; } }
-
-    /* Canonical responsive layer. Keep this block last so legacy rules cannot
-       silently override the desktop and mobile application shells. */
-    :where(button, [role="button"], .tab, .nav-item, .workspace-tab) {
-      touch-action: manipulation;
-    }
-
-    :where(.tab, .nav-item, .workspace-tab, .bottom-nav button) {
-      min-height: 44px;
-    }
-
-    :where(button, input, select, textarea):focus-visible {
-      outline: 3px solid rgba(25, 89, 243, .28);
-      outline-offset: 2px;
-    }
-
-    @media (max-width: 899px) {
-      body.web-mode .app-shell,
-      body.web-mode .screen,
-      body.web-mode .screen-content {
-        min-width: 0;
-        max-width: 100%;
-      }
-
-      body.web-mode .screen {
-        padding-left: 14px;
-        padding-right: 14px;
-      }
-
-      body.web-mode .page-heading h1,
-      body.web-mode .screen-title {
-        font-size: clamp(26px, 8vw, 34px);
-        line-height: 1.05;
-      }
-
-      body.web-mode .tabs,
-      body.web-mode .segmented,
-      body.web-mode .workspace-tabs {
-        gap: 4px;
-        padding: 4px;
-      }
-
-      body.web-mode .tab,
-      body.web-mode .segmented button,
-      body.web-mode .workspace-tab {
-        min-height: 44px;
-        padding: 9px 10px;
-        font-size: 12px;
-        line-height: 1.15;
-      }
-
-      body.web-mode .operations-kpis {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 9px;
-      }
-
-      body.web-mode .operations-kpi {
-        min-height: 116px;
-        padding: 14px;
-        border-radius: 14px;
-      }
-
-      body.web-mode .operations-kpi span {
-        font-size: 10px;
-        letter-spacing: .045em;
-      }
-
-      body.web-mode .operations-kpi strong {
-        margin: 11px 0 6px;
-        font-size: 27px;
-      }
-
-      body.web-mode .operations-kpi small {
-        font-size: 11px;
-        line-height: 1.3;
-      }
-
-      body.web-mode .operations-actions {
-        grid-template-columns: 1fr;
-      }
-
-      body.web-mode .operations-actions button {
-        min-height: 48px;
-        font-size: 13px;
-      }
-
-      body.web-mode .orders-board {
-        display: grid;
-        grid-template-columns: none;
-        grid-auto-flow: column;
-        grid-auto-columns: min(86vw, 390px);
-        gap: 12px;
-        width: calc(100% + 14px);
-        margin-right: -14px;
-        padding: 2px 14px 14px 1px;
-        overflow-x: auto;
-        overflow-y: visible;
-        scroll-snap-type: x mandatory;
-        scroll-padding-left: 1px;
-        overscroll-behavior-inline: contain;
-        -webkit-overflow-scrolling: touch;
-      }
-
-      body.web-mode .orders-board > * {
-        min-width: 0;
-        scroll-snap-align: start;
-        scroll-snap-stop: always;
-      }
-
-      body.web-mode .form-grid,
-      body.web-mode .details-grid,
-      body.web-mode .admin-grid,
-      body.web-mode .analytics-grid {
-        grid-template-columns: minmax(0, 1fr);
-      }
-
-      body.web-mode .card,
-      body.web-mode .panel,
-      body.web-mode .form-card {
-        max-width: 100%;
-        border-radius: 16px;
-      }
-
-      body.web-mode .table-wrap,
-      body.web-mode .data-table-wrap {
-        max-width: 100%;
-        overflow-x: auto;
-        overscroll-behavior-inline: contain;
-        -webkit-overflow-scrolling: touch;
-      }
-    }
-
-    @media (max-width: 430px) {
-      body.web-mode .operations-kpi {
-        min-height: 108px;
-        padding: 12px;
-      }
-
-      body.web-mode .operations-kpi strong {
-        font-size: 24px;
-      }
-
-      body.web-mode .orders-board {
-        grid-auto-columns: calc(100vw - 42px);
-      }
-    }
-
-    /* Shared loading and connection states. */
-    #connectionView[hidden] { display: none !important; }
-    #connectionView:not([hidden]) {
-      min-height: 100dvh;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-    }
-
-    #connectionView:not([hidden]) .connection-card,
-    #connectionView:not([hidden]) [role="status"] {
-      width: min(100%, 460px);
-      padding: 22px;
-      border: 1px solid var(--line);
-      border-radius: 20px;
-      background: rgba(255,255,255,.92);
-      box-shadow: var(--shadow-soft), var(--inset-shadow);
-    }
-
-    #connectionView:not([hidden]) [role="status"]::before {
-      content: "";
-      display: block;
-      width: 42px;
-      height: 4px;
-      margin-bottom: 16px;
-      border-radius: 999px;
-      background: linear-gradient(90deg, var(--accent), #8eb2ff, var(--accent));
-      background-size: 200% 100%;
-      animation: connection-progress 1.2s linear infinite;
-    }
-
-    @keyframes connection-progress {
-      to { background-position: -200% 0; }
-    }
-
-    /* Consistent semantic statuses across production, warehouse and reports. */
-    :where(.status, .status-pill, .badge)[data-status="free"],
-    :where(.status, .status-pill, .badge).free {
-      color: #1746b6;
-      border-color: rgba(25,89,243,.24);
-      background: #edf3ff;
-    }
-
-    :where(.status, .status-pill, .badge)[data-status="active"],
-    :where(.status, .status-pill, .badge).active,
-    :where(.status, .status-pill, .badge).in-progress {
-      color: #8c5300;
-      border-color: rgba(242,162,58,.32);
-      background: #fff5e6;
-    }
-
-    :where(.status, .status-pill, .badge)[data-status="done"],
-    :where(.status, .status-pill, .badge).done,
-    :where(.status, .status-pill, .badge).completed {
-      color: #176b43;
-      border-color: rgba(49,168,107,.28);
-      background: #eaf8f1;
-    }
-
-    :where(.status, .status-pill, .badge)[data-status="blocked"],
-    :where(.status, .status-pill, .badge).blocked,
-    :where(.status, .status-pill, .badge).overdue {
-      color: #a92d3a;
-      border-color: rgba(221,79,93,.30);
-      background: #fff0f2;
-    }
-
-    @media (max-width: 899px) {
-      body.web-mode .web-appbar {
-        min-height: 58px;
-        gap: 8px;
-        padding: max(8px, env(safe-area-inset-top)) 12px 8px;
-      }
-
-      body.web-mode .web-role-block {
-        display: none !important;
-      }
-
-      body.web-mode .workspace-tabs {
-        position: sticky;
-        top: 0;
-        z-index: 20;
-        display: flex;
-        width: 100%;
-        overflow-x: auto;
-        scroll-snap-type: x proximity;
-        scrollbar-width: none;
-        background: rgba(247,249,253,.94);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-      }
-
-      body.web-mode .workspace-tabs::-webkit-scrollbar { display: none; }
-
-      body.web-mode .workspace-tab {
-        flex: 0 0 auto;
-        min-width: 148px;
-        scroll-snap-align: start;
-      }
-
-      body.web-mode .bottom-nav {
-        padding-bottom: max(8px, env(safe-area-inset-bottom));
-        background: rgba(255,255,255,.95);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-      }
-
-      body.web-mode :where(.form-actions, .create-actions, .wizard-actions, .action-row):has(.primary) {
-        position: sticky;
-        bottom: calc(68px + env(safe-area-inset-bottom));
-        z-index: 12;
-        padding: 8px;
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        background: rgba(255,255,255,.94);
-        box-shadow: 0 10px 30px rgba(16,23,34,.14);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-      }
-
-      body.web-mode :where(.warehouse-map, .storage-map, .location-grid) {
-        max-width: 100%;
-        overflow-x: auto;
-        overscroll-behavior-inline: contain;
-        scroll-snap-type: x proximity;
-        -webkit-overflow-scrolling: touch;
-      }
-
-      body.web-mode :where(.warehouse-cell, .storage-cell, [data-location-code]) {
-        min-width: 116px;
-        min-height: 82px;
-        scroll-snap-align: start;
-      }
-
-      body.web-mode :where(.employee-card, .staff-card) {
-        padding: 14px;
-        border-radius: 15px;
-      }
-
-      body.web-mode :where(.employee-card, .staff-card) :where(button, .button) {
-        min-height: 44px;
-      }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        scroll-behavior: auto !important;
-        animation-duration: .01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: .01ms !important;
-      }
-    }
-
-    @media (min-width: 900px) and (max-width: 1100px) {
-      body.web-mode .web-role-block {
-        display: none !important;
-      }
-
-      body.web-mode .web-appbar,
-      body.web-mode .workspace-tabs {
-        min-width: 0;
-      }
-
-      body.web-mode .operations-kpis {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-    }
   </style>
   <script src="/assets/jsqr.js"></script>
 </head>
@@ -4617,7 +3969,7 @@ MINIAPP_HTML = """<!doctype html>
       <div class="appbar-profile"><span>Должность на проекте</span><small id="roleLabel">Загрузка</small></div>
       <div class="appbar-actions">
         <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
-        <button class="icon-btn profile-btn" id="menuBtn" aria-label="Открыть профиль" title="Профиль"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.1 4.1 0 1 0 0-8.2A4.1 4.1 0 0 0 12 12Zm0 2.1c-4.4 0-8 2.3-8 5.2 0 .5.4.9.9.9h14.2c.5 0 .9-.4.9-.9 0-2.9-3.6-5.2-8-5.2Z" fill="currentColor"/></svg></button>
+        <button class="icon-btn" id="menuBtn" aria-label="Меню">⋯</button>
       </div>
     </div>
 
@@ -4898,7 +4250,6 @@ MINIAPP_HTML = """<!doctype html>
       "orderCategory",
       "adminTaskStatus",
       "orderMode",
-      "ordersPresentationVersion",
       "orderProductFilter",
       "orderSizeFilter",
       "orderColorFilter",
@@ -4948,9 +4299,6 @@ MINIAPP_HTML = """<!doctype html>
       "analyticsStage",
       "analyticsTaskId",
       "analyticsReturnView",
-      "analyticsCenterView",
-      "analyticsCenterProvider",
-      "analyticsCenterPeriod",
       "employeeHomeView",
       "userStartDate",
       "userEndDate",
@@ -4973,16 +4321,10 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     const state = {
-      workspace: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "production",
-      // The marketplace workspace opens on the prototype analytics center.
-      // Legacy overview remains available at /app/marketplaces/overview.
-      marketplaceView: "analytics",
+      workspace: "production",
+      marketplaceView: "overview",
       marketplaceProvider: "all",
-      marketplacePeriod: "7d",
-      marketplaceFiltersOpen: false,
-      marketplaceFilters: {onlyProblems: false, inStockOnly: false, orderStatus: "all"},
-      marketplaceLocationInitialized: false,
-      screen: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "shift",
+      screen: "shift",
       productionScreen: "shift",
       selectedOperation: 0,
       selectedOrder: 0,
@@ -4994,8 +4336,7 @@ MINIAPP_HTML = """<!doctype html>
       orderCategory: "",
       adminTaskStatus: "all",
       reportSection: "work",
-      orderMode: "board",
-      ordersPresentationVersion: "2",
+      orderMode: "list",
       orderProductFilter: "",
       orderSizeFilter: "",
       orderColorFilter: "",
@@ -5036,9 +4377,6 @@ MINIAPP_HTML = """<!doctype html>
       analyticsStage: "",
       analyticsTaskId: "",
       analyticsReturnView: "overview",
-      analyticsCenterView: "overview",
-      analyticsCenterProvider: "all",
-      analyticsCenterPeriod: "7d",
       employeeHomeView: "overview",
       userStartDate: "",
       userEndDate: "",
@@ -5075,10 +4413,6 @@ MINIAPP_HTML = """<!doctype html>
     };
 
     if (!state.taskCompletionDrafts || typeof state.taskCompletionDrafts !== "object") state.taskCompletionDrafts = {};
-    if (state.ordersPresentationVersion !== "2") {
-      state.ordersPresentationVersion = "2";
-      if (state.orderMode === "list") state.orderMode = "board";
-    }
     if (!state.cuttingStageDrafts || typeof state.cuttingStageDrafts !== "object") state.cuttingStageDrafts = {};
     if (!state.feedbackDraft || typeof state.feedbackDraft !== "object") state.feedbackDraft = {category: "Производство", message: ""};
     if (!Array.isArray(state.orderSizes)) state.orderSizes = [];
@@ -5436,18 +4770,6 @@ MINIAPP_HTML = """<!doctype html>
         "\\nПосле подтверждения задание закрепится за вами.",
       ].join("\\n");
       return window.confirm(`Взять это задание?\\n\\n${details}`);
-    }
-
-    function requestTaskQuantity(task) {
-      const total = Math.max(1, Number(task && task.quantity) || 0);
-      const entered = window.prompt(`Сколько изделий взять в работу? Доступно: ${total} шт.`, String(total));
-      if (entered === null) return null;
-      const quantity = Number.parseInt(String(entered).trim(), 10);
-      if (!Number.isInteger(quantity) || quantity <= 0 || quantity > total) {
-        showToast("Количество", `Введите целое число от 1 до ${total}.`);
-        return null;
-      }
-      return quantity;
     }
 
     function getReportOperations() {
@@ -6389,76 +5711,6 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = renderAdminHomeOverview(period);
     }
 
-    function renderOperationsCenter() {
-      const admin = getAdmin() || {};
-      const control = admin.production_control || {};
-      const period = getAdminHomePeriod();
-      const stages = control.stages || [];
-      const alerts = control.alerts || [];
-      const routeTasks = getRouteTasks().filter((task) => task.work_state !== "cancelled");
-      const openShifts = admin.open_shifts || [];
-      const plan = Number(control.plan || 0);
-      const fact = Number(control.fact || 0);
-      const activeTasks = Number(control.active_tasks || routeTasks.filter((task) => task.work_state === "in_work").length);
-      const overdue = Number(control.overdue_tasks || alerts.filter((alert) => alert.type === "overdue").length);
-      const riskCount = alerts.filter((alert) => alert.type === "overdue" || alert.type === "defect" || alert.type === "shortage").length;
-      const maxStage = Math.max(1, ...stages.map((stage) => Number(stage.quantity || 0)));
-      const planPercent = plan > 0 ? Math.min(100, Math.round(fact / plan * 100)) : 0;
-      const keyOrders = [...routeTasks]
-        .sort((left, right) => Number(Boolean(right.due_date)) - Number(Boolean(left.due_date)) || Number(right.priority === "urgent") - Number(left.priority === "urgent"))
-        .slice(0, 5);
-
-      mainButton.textContent = "Обновить центр";
-      mainButton.disabled = false;
-      mount.innerHTML = `
-        <div class="operations-center">
-          <div class="operations-head">
-            <div><h2>Операционный центр</h2><p>Производство сейчас · ${escapeHtml(periodDateLabel(period) || "текущий период")}</p></div>
-            <div class="live-indicator">Данные актуальны</div>
-          </div>
-          <div class="operations-kpis">
-            <button class="operations-kpi" data-go="analytics"><span>План / факт</span><strong>${escapeHtml(fact)} / ${escapeHtml(plan)}</strong><small>${plan ? `${planPercent}% выполнения плана` : "План пока не задан"}</small></button>
-            <button class="operations-kpi" data-go="orders"><span>В работе</span><strong>${escapeHtml(activeTasks)}</strong><small>активных заданий в потоке</small></button>
-            <button class="operations-kpi risk" data-go="analytics"><span>Риск срыва</span><strong>${escapeHtml(riskCount)}</strong><small>сигналов требуют внимания</small></button>
-            <button class="operations-kpi overdue" data-go="orders"><span>Просрочено</span><strong>${escapeHtml(overdue)}</strong><small>заданий требуют решения</small></button>
-          </div>
-          <div class="operations-layout">
-            <div class="operations-panel">
-              <div class="operations-panel-head"><b>Ход смены</b><span>${escapeHtml(openShifts.length)} сотрудников на смене</span></div>
-              <div class="shift-progress-value"><div><strong>${escapeHtml(planPercent)}%</strong><small>факт ${escapeHtml(fact)} из ${escapeHtml(plan || 0)} шт</small></div><span class="status-chip ${openShifts.length ? "" : "gray"}">${openShifts.length ? "смена идёт" : "нет открытых смен"}</span></div>
-              <div class="progress sage"><i style="--w:${planPercent}%"></i></div>
-              <div class="operations-panel-head" style="margin-top:23px"><b>Производственные этапы</b><span>WIP и загрузка</span></div>
-              <div class="stage-stack">${stages.length ? stages.map((stage) => {
-                const quantity = Number(stage.quantity || 0);
-                const percent = Math.min(100, Math.round(quantity / maxStage * 100));
-                const delayed = Number(stage.overdue || 0) > 0;
-                const waiting = !quantity && Number(stage.free || 0) > 0;
-                const status = delayed ? "отстаёт" : waiting ? "ожидает" : quantity ? "в работе" : "норма";
-                return `<div class="stage-row"><b>${escapeHtml(stage.stage)}</b><div class="progress ${delayed ? "" : "sage"}"><i style="--w:${percent}%"></i></div><span class="status-chip ${delayed ? "warn" : waiting ? "gray" : ""}">${status}</span></div>`;
-              }).join("") : itemEmpty("Активных этапов пока нет.")}</div>
-            </div>
-            <div class="operations-panel">
-              <div class="operations-panel-head"><b>Быстрые действия</b><span>управление</span></div>
-              <div class="operations-actions">
-                <button class="primary" data-operations-action="create-order">Создать заказ</button>
-                <button data-go="orders">Перераспределить задачи</button>
-                <button data-go="analytics">Открыть аналитику</button>
-                <button data-go="admin" data-operations-action="employees">Назначить сотрудника</button>
-                <button data-operations-action="scan">Сканировать QR</button>
-                <button data-go="admin" data-operations-action="alerts">Оповещения</button>
-              </div>
-              <div class="operations-panel-head" style="margin-top:24px"><b>Оповещения</b><span>${alerts.length}</span></div>
-              <div class="operations-alerts">${alerts.length ? alerts.slice(0, 5).map((alert) => `<div class="operations-alert ${alert.type === "overdue" || alert.type === "defect" ? "critical" : ""}" ${alert.batch_id ? `data-analytics-task-id="${escapeHtml(alert.batch_id)}"` : `data-go="analytics"`}><i></i><div><b>${escapeHtml(alert.title)}</b><span>${escapeHtml(alert.detail)}</span></div><span>›</span></div>`).join("") : itemEmpty("Критичных отклонений не найдено.")}</div>
-            </div>
-          </div>
-          <div class="operations-panel">
-            <div class="operations-panel-head"><b>Ключевые заказы</b><button type="button" class="small-button secondary" data-go="orders">Все заказы</button></div>
-            <div class="key-orders">${keyOrders.length ? keyOrders.map((task) => `<div class="key-order" data-go="orders"><div><b>${escapeHtml(task.product_name || "Изделие")}: ${escapeHtml(task.operation || "Операция")}</b><span>${escapeHtml(task.product_size || "-")} · ${escapeHtml(task.product_color || "-")} · ${escapeHtml(task.quantity || 0)} шт${task.due_date ? ` · срок ${escapeHtml(task.due_date)}` : ""}</span></div><span class="status-chip ${task.work_state === "free" ? "gray" : task.work_state === "blocked" ? "warn" : ""}">${escapeHtml(task.status_text || "в работе")}</span></div>`).join("") : itemEmpty("Ключевых производственных заданий пока нет.")}</div>
-          </div>
-        </div>
-      `;
-    }
-
     async function loadHistory() {
       const actionKey = "load-history";
       if (!beginAction(actionKey)) return;
@@ -6543,7 +5795,7 @@ MINIAPP_HTML = """<!doctype html>
         state.marketplaceData.error = error.apiMessage || error.message || "Не удалось загрузить маркетплейсы.";
       } finally {
         state.marketplaceData.loading = false;
-        if (state.workspace === "marketplaces" || state.screen === "analytics") render();
+        if (state.workspace === "marketplaces") render();
       }
     }
 
@@ -6954,7 +6206,7 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderShift() {
       if (state.data && state.data.is_admin) {
-        renderOperationsCenter();
+        renderAdminHome();
         return;
       }
 
@@ -8346,16 +7598,13 @@ MINIAPP_HTML = """<!doctype html>
 
       if (!confirmTaskTake(current)) return;
 
-      const quantity = requestTaskQuantity(current);
-      if (quantity === null) return;
-
       const actionKey = `start-operation-task:${current.id}`;
       if (!beginAction(actionKey)) return;
 
       mainButton.disabled = true;
 
       try {
-        const data = await api("/api/routes/start", {batch_id: current.id, quantity});
+        const data = await api("/api/routes/start", {batch_id: current.id});
 
         if (!data.ok) {
           showToast("Задание", data.message || "Не удалось взять задание.");
@@ -8972,7 +8221,7 @@ MINIAPP_HTML = """<!doctype html>
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Создать задание на раскрой</h2><p>Дальнейшие операции система создаст по маршруту автоматически.</p></div><div class="date">админ</div></div>
-        <div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="board">Канбан</button><button type="button" class="tab" data-order-mode="list" role="tab" aria-selected="false">Список</button><button type="button" class="tab active" data-order-mode="create" role="tab" aria-selected="true">Создать задание</button></div>
+        <div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="list" role="tab" aria-selected="false">Текущие задания</button><button type="button" class="tab active" data-order-mode="create" role="tab" aria-selected="true">Создать задание</button></div>
         <div class="card field-card">
           <div class="form-grid">
             <div class="field full"><label>Изделия в одном настиле</label>${renderChoiceChips("product", catalog.map((item) => item.product_name), state.orderProducts)}<p class="empty">Выберите одно или несколько изделий. Для выбранных изделий применяются общие размеры, цвета и настил.</p></div>
@@ -9072,55 +8321,9 @@ MINIAPP_HTML = """<!doctype html>
       `;
     }
 
-    function renderOrdersBoard() {
-      const seenTasks = new Set();
-      const allTasks = [...currentOrderRows(), ...getCompletedOrderRows()].filter((task) => {
-        const key = taskIdentity(task);
-        if (seenTasks.has(key) || !orderTaskMatchesFilters(task)) return false;
-        seenTasks.add(key);
-        return true;
-      });
-      const filterRows = allTasks;
-      const columns = [
-        ["in_work", "В работе"],
-        ["free", "Ожидают"],
-        ["blocked", "Ожидают материалы / проблема"],
-        ["done", "Завершённые"],
-      ];
-      const bucketFor = (task) => {
-        if (task.work_state === "blocked" || task.work_state === "paused") return "blocked";
-        return orderTaskStatusBucket(task);
-      };
-      mainButton.textContent = "Обновить заказы";
-      mainButton.disabled = false;
-      mount.innerHTML = `
-        <div class="screen-head"><div><h2>Заказы</h2><p>Поток производственных заданий по этапам и статусам.</p></div><div class="date">${allTasks.length} заданий</div></div>
-        <div class="tabs order-mode-tabs" role="tablist" aria-label="Представление заказов">
-          <button type="button" class="tab active" data-order-mode="board">Канбан</button>
-          <button type="button" class="tab" data-order-mode="list">Список</button>
-          <button type="button" class="tab" data-order-mode="create">Создать заказ</button>
-        </div>
-        ${renderOrderFilters(filterRows)}
-        <div class="orders-board">${columns.map(([id, label]) => {
-          const rows = allTasks.filter((task) => bucketFor(task) === id);
-          return `<section class="orders-column"><div class="orders-column-head"><b>${label}</b><span>${rows.length}</span></div>${rows.length ? rows.map((task) => {
-            const title = task.task_kind === "route" ? task.operation : (task.stage_title || `Задание #${task.id}`);
-            const product = task.product_name || task.product || "Изделие";
-            const quantity = task.quantity || task.total_quantity || 0;
-            return `<article class="board-order-card" data-board-order-key="${escapeHtml(taskIdentity(task))}"><b>${escapeHtml(title)}</b><span>${escapeHtml(product)}</span><div class="progress ${id === "blocked" ? "" : "sage"}"><i style="--w:${progressForTask(task)}%"></i></div><div class="board-order-meta"><span>${escapeHtml(quantity)} шт · ${escapeHtml(task.product_size || "-")}</span><span>${escapeHtml(priorityLabel(task.priority))}</span></div></article>`;
-          }).join("") : `<div class="empty">Нет заданий</div>`}</section>`;
-        }).join("")}</div>
-      `;
-    }
-
     function renderOrders() {
       if (state.data && state.data.is_admin && state.orderMode === "create") {
         renderOrderCreate();
-        return;
-      }
-
-      if (state.data && state.data.is_admin && state.orderMode === "board") {
-        renderOrdersBoard();
         return;
       }
 
@@ -9141,7 +8344,7 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>${state.data && state.data.is_admin ? "Заказы" : "Задания"}</h2><p>${state.data && state.data.is_admin ? "Создавайте задания на раскрой и контролируйте маршрут производства." : "Выберите свободное задание, чтобы взять его в работу."}</p></div><div class="date">${allTasks.length} заданий</div></div>
         <div class="scan-row"><button type="button" class="small-button secondary" data-task-action="scan">Сканировать QR</button></div>
-        ${state.data && state.data.is_admin ? `<div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="board">Канбан</button><button type="button" class="tab ${state.orderMode === "list" ? "active" : ""}" data-order-mode="list" role="tab" aria-selected="${state.orderMode === "list" ? "true" : "false"}">Список</button><button type="button" class="tab ${state.orderMode === "create" ? "active" : ""}" data-order-mode="create" role="tab" aria-selected="${state.orderMode === "create" ? "true" : "false"}">Создать задание</button></div>` : ""}
+        ${state.data && state.data.is_admin ? `<div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab ${state.orderMode === "list" ? "active" : ""}" data-order-mode="list" role="tab" aria-selected="${state.orderMode === "list" ? "true" : "false"}">Текущие задания</button><button type="button" class="tab ${state.orderMode === "create" ? "active" : ""}" data-order-mode="create" role="tab" aria-selected="${state.orderMode === "create" ? "true" : "false"}">Создать задание</button></div>` : ""}
         <div class="tabs admin-task-status-tabs" role="tablist" aria-label="Статус заданий">${["all", "free", "in_work", "done"].map((status) => `<button type="button" class="tab ${state.adminTaskStatus === status ? "active" : ""}" data-admin-task-status="${status}" role="tab" aria-selected="${state.adminTaskStatus === status ? "true" : "false"}">${adminTaskStatusLabel(status)}</button>`).join("")}</div>
         ${renderOrderFilters(filterRows)}
         <div class="op-list">
@@ -9308,111 +8511,6 @@ MINIAPP_HTML = """<!doctype html>
       `).join("") : itemEmpty("Отклонений не найдено.")}</div>`;
     }
 
-    function analyticsCenterPayload() {
-      return state.marketplaceData && state.marketplaceData.payload ? state.marketplaceData.payload : {};
-    }
-
-    function analyticsCenterProviderRows(payload, provider) {
-      if (provider === "wildberries") return [];
-      return Array.isArray(payload.products_rows) ? payload.products_rows : [];
-    }
-
-    function analyticsCenterStatus(payload, provider) {
-      const lastRun = (payload.sync_runs || [])[0] || {};
-      const configured = provider === "wildberries"
-        ? Boolean((payload.connectors || []).find((item) => item.marketplace === "wildberries")?.configured)
-        : Boolean(payload.configured);
-      if (!configured) return {className: "unavailable", label: "Показатель пока недоступен"};
-      if (lastRun.status && lastRun.status !== "success") return {className: "delayed", label: "Обновление задерживается"};
-      if (provider === "all" && !(payload.analytics || {}).finance_available) return {className: "partial", label: "Данные загружены частично"};
-      return {className: "", label: "Данные актуальны"};
-    }
-
-    function analyticsCenterNumber(value, suffix = "") {
-      if (value === null || value === undefined || value === "") return "—";
-      const number = Number(value);
-      return Number.isFinite(number) ? `${number.toLocaleString("ru-RU")}${suffix}` : escapeHtml(value);
-    }
-
-    function analyticsCenterChart(rows) {
-      const values = (rows || []).map((row) => Number(row.revenue)).filter((value) => Number.isFinite(value) && value >= 0);
-      if (!values.length) return `<div class="analytics-center-chart-empty"><div><b>График пока недоступен</b><div>После синхронизации появится динамика начислений.</div></div></div>`;
-      const max = Math.max(...values, 1);
-      const width = 720;
-      const points = values.map((value, index) => `${(index / Math.max(values.length - 1, 1)) * width},${190 - (value / max) * 160}`).join(" ");
-      return `<div class="analytics-center-chart"><svg viewBox="0 0 ${width} 210" preserveAspectRatio="none" role="img" aria-label="Динамика продаж"><polyline points="${points}" fill="none" stroke="#2563eb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>${values.map((value, index) => `<circle cx="${(index / Math.max(values.length - 1, 1)) * width}" cy="${190 - (value / max) * 160}" r="5" fill="#fff" stroke="#2563eb" stroke-width="3"><title>${escapeHtml(rows[index].date || "")} · ${escapeHtml(marketplaceMoney(value))}</title></circle>`).join("")}</svg></div>`;
-    }
-
-    function analyticsCenterEmpty(title, text, action = "") {
-      return `<div class="analytics-center-empty"><div><b>${escapeHtml(title)}</b><span>${escapeHtml(text)}</span>${action ? `<button type="button" class="small-button secondary" data-analytics-center-action="${escapeHtml(action)}">Настроить интеграцию</button>` : ""}</div></div>`;
-    }
-
-    function analyticsCenterNav(active) {
-      const items = [["overview", "⌂", "Обзор"], ["sales", "↗", "Продажи"], ["products", "▤", "Товары"], ["inventory", "▦", "Остатки"], ["production", "⚙", "Производство"], ["supplies", "↓", "Поставки"], ["finance", "₽", "Финансы"], ["geography", "◌", "Карта"], ["data", "✓", "Качество данных"]];
-      return `<nav class="analytics-center-nav" aria-label="Аналитика">${items.map(([id, icon, label]) => `<button type="button" class="${active === id ? "active" : ""}" data-analytics-center-view="${id}"><span>${icon}</span><span>${label}</span></button>`).join("")}</nav>`;
-    }
-
-    function renderAdminIntegrations() {
-      const payload = analyticsCenterPayload();
-      const runs = Array.isArray(payload.sync_runs) ? payload.sync_runs : [];
-      const events = Array.isArray(payload.sync_events) ? payload.sync_events : [];
-      const status = analyticsCenterStatus(payload, "ozon");
-      return `<div class="screen-head"><div><h2>Диагностика интеграций</h2><p>Технические ответы API и журнал синхронизации доступны только администратору.</p></div><div class="date">${runs.length} запусков</div></div>${renderAdminTabs()}<div class="kpi-grid"><div class="card kpi"><div class="kpi-top"><span>Ozon</span><span class="kpi-ico">↻</span></div><strong>${escapeHtml(status.label)}</strong><span>Последний запуск: ${escapeHtml(runs[0]?.started_at || "нет данных")}</span></div><div class="card kpi"><div class="kpi-top"><span>Ошибки API</span><span class="kpi-ico">!</span></div><strong>${events.filter((row) => row.level === "error" || row.status === "error").length}</strong><span>Только технический журнал</span></div></div><div class="section-title"><b>Последние события</b><span>${events.length}</span></div><div class="op-list">${events.length ? events.slice(0, 30).map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.event_type || row.marketplace || "Событие")}</b><span>${escapeHtml(row.message || row.error_message || "Без деталей")}</span></div><span class="status-chip ${row.level === "error" || row.status === "error" ? "warn" : "gray"}">${escapeHtml(row.status || row.level || "info")}</span></div>`).join("") : itemEmpty("Технических событий пока нет.")}</div>`;
-    }
-
-    function renderAnalyticsCenter() {
-      const payload = analyticsCenterPayload();
-      const provider = ["all", "ozon", "wildberries"].includes(state.analyticsCenterProvider) ? state.analyticsCenterProvider : "all";
-      const view = state.analyticsCenterView || "overview";
-      const products = analyticsCenterProviderRows(payload, provider);
-      const summary = provider === "wildberries" ? {} : (payload.summary || {});
-      const analytics = provider === "wildberries" ? {} : (payload.analytics || {});
-      const financeDaily = Array.isArray(analytics.finance_daily) ? analytics.finance_daily : [];
-      const supplies = Array.isArray(payload.supplies) ? payload.supplies.filter((row) => provider === "all" || row.marketplace === provider) : [];
-      const warehouseShipments = Array.isArray(payload.warehouse_shipments) ? payload.warehouse_shipments : [];
-      const orders = provider === "wildberries" ? [] : (payload.orders_rows || []);
-      const status = analyticsCenterStatus(payload, provider);
-      const control = state.data?.admin?.production_control || {};
-      const topProducts = [...products].sort((a, b) => Number(b.available || 0) - Number(a.available || 0)).slice(0, 5);
-      const titleMap = {overview: "Обзор", sales: "Продажи", products: "Товары", inventory: "Остатки", production: "Производство", supplies: "Поставки", finance: "Финансы", geography: "Карта", data: "Качество данных"};
-      const kpi = (label, value, hint, unavailable = false) => `<div class="analytics-center-card analytics-center-kpi ${unavailable ? "unavailable" : ""}"><span>${escapeHtml(label)}</span><strong>${value}</strong><small>${escapeHtml(hint)}</small></div>`;
-      const productRows = products.slice(0, 60).map((row) => `<tr><td>${escapeHtml(row.name || "Без названия")}</td><td>${escapeHtml(row.offer_id || "—")}</td><td>${escapeHtml(row.color || "—")}</td><td>${escapeHtml(row.size || "—")}</td><td>${escapeHtml(row.barcode || "—")}</td><td>${analyticsCenterNumber(row.available, " шт.")}</td></tr>`).join("");
-      const productTable = products.length ? `<div class="analytics-center-table-wrap"><table class="analytics-center-table"><thead><tr><th>Товар</th><th>Артикул</th><th>Цвет</th><th>Размер</th><th>Штрихкод</th><th>Остаток</th></tr></thead><tbody>${productRows}</tbody></table></div>` : analyticsCenterEmpty("Каталог не загружен", "Выполните синхронизацию маркетплейса, чтобы получить карточки товаров.", "sync");
-      const supplyRows = supplies.slice(0, 60).map((row) => `<tr><td>${escapeHtml(row.external_supply_id || "Поставка")}</td><td>${escapeHtml(row.marketplace || "—")}</td><td>${escapeHtml(row.destination_name || "—")}</td><td>${analyticsCenterNumber(row.total_quantity, " шт.")}</td><td>${escapeHtml(row.canonical_status || "—")}</td></tr>`).join("");
-      const orderRows = orders.slice(0, 5).map((row) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(row.posting_number || row.external_order_id || "Заказ")}</b><span>${escapeHtml(row.status || "Статус не указан")} · ${escapeHtml(row.shipment_date || "Дата не указана")}</span></div><strong>${escapeHtml(row.total_price || "—")}</strong></div>`).join("");
-      const attention = [...(control.alerts || []).slice(0, 3), ...(payload.sync_events || []).slice(0, 2)];
-      let body = "";
-      if (view === "overview") {
-        body = `<div class="analytics-center-section-title"><b>Ключевые показатели</b><span>${escapeHtml(status.label)}</span></div><div class="analytics-center-grid analytics-center-kpis">${kpi("Карточки товаров", analyticsCenterNumber(summary.products, " поз."), provider === "wildberries" ? "Wildberries пока не подключён" : "Каталог маркетплейса", provider === "wildberries")}${kpi("Остатки", analyticsCenterNumber(summary.stock_rows, " строк"), "FBO и FBS", provider === "wildberries")}${kpi("Открытые заказы", analyticsCenterNumber(summary.open_orders, " шт."), "Требуют контроля", provider === "wildberries")}${kpi("Поставки", analyticsCenterNumber(supplies.length, " шт."), "Внешние поставки", false)}${kpi("Задания складу", analyticsCenterNumber(warehouseShipments.length, " шт."), "Внутренние документы", false)}${kpi("План производства", control.plan == null ? "—" : analyticsCenterNumber(control.plan, " шт."), control.plan == null ? "Показатель пока недоступен" : `Факт: ${analyticsCenterNumber(control.fact, " шт.")}`, control.plan == null)}</div><div class="analytics-center-section-title"><b>Продажи и операционный индекс</b></div><div class="analytics-center-grid analytics-center-two"><section class="analytics-center-card"><h3>Динамика начислений</h3><p>Фактические данные из синхронизации Ozon.</p>${analyticsCenterChart(financeDaily)}</section><section class="analytics-center-card"><h3>Операционный индекс</h3><p>Сводка по доступным производственным показателям.</p>${control.plan != null ? `<div class="analytics-center-ring"><span>${Math.round(Number(control.plan) ? Number(control.fact || 0) / Number(control.plan) * 100 : 0)}%</span></div>` : analyticsCenterEmpty("Индекс пока недоступен", "Нужны данные плана и факта производства.")}</section></div><div class="analytics-center-section-title"><b>Сравнение площадок</b><span>только чтение</span></div><div class="analytics-center-grid analytics-center-three"><div class="analytics-center-card"><h3>Ozon</h3><p>${payload.configured ? "Подключён" : "Не подключён"}</p><strong>${analyticsCenterNumber(summary.products, " поз.")}</strong></div><div class="analytics-center-card"><h3>Wildberries</h3><p>${(payload.connectors || []).find((row) => row.marketplace === "wildberries")?.configured ? "Подключён" : "Пока недоступен"}</p><strong>${(payload.connectors || []).find((row) => row.marketplace === "wildberries")?.configured ? "—" : "—"}</strong></div><div class="analytics-center-card analytics-center-recommendation"><strong>Рекомендация</strong><span>${attention.length ? "Проверьте записи, требующие внимания, в соответствующих разделах." : "Система не обнаружила критичных событий."}</span></div></div><div class="analytics-center-section-title"><b>Топ товары</b><span>${topProducts.length}</span></div><section class="analytics-center-card"><div class="analytics-center-list">${topProducts.length ? topProducts.map((row) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(row.name || row.offer_id || "Товар")}</b><span>${escapeHtml(row.color || "Цвет не указан")} · ${escapeHtml(row.size || "Размер не указан")}</span></div><strong>${analyticsCenterNumber(row.available, " шт.")}</strong></div>`).join("") : analyticsCenterEmpty("Топ товаров пока нет", "Синхронизируйте каталог, чтобы заполнить этот блок.")}</div></section><div class="analytics-center-section-title"><b>Требует внимания</b><span>${attention.length}</span></div><section class="analytics-center-card">${attention.length ? `<div class="analytics-center-list">${attention.slice(0, 5).map((row) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(row.title || row.event_type || "Событие")}</b><span>${escapeHtml(row.detail || row.message || "Без деталей")}</span></div><span class="status-chip warn">проверить</span></div>`).join("")}</div>` : analyticsCenterEmpty("Всё спокойно", "Нет записей, требующих внимания.")}</section>`;
-      } else if (view === "sales") {
-        body = `<div class="analytics-center-section-title"><b>Продажи</b><span>${orders.length} заказов</span></div><div class="analytics-center-grid analytics-center-kpis">${kpi("Заказы", analyticsCenterNumber(orders.length, " шт."), "За выбранный период")}${kpi("Начисления", analytics.finance_available ? marketplaceMoney(financeDaily.reduce((sum, row) => sum + Number(row.revenue || 0), 0)) : "—", analytics.finance_available ? "Из финансового API" : "Показатель пока недоступен", !analytics.finance_available)}${kpi("Возвраты", analytics.returns_available ? analyticsCenterNumber((analytics.returns_rows || []).length, " шт.") : "—", analytics.returns_available ? "Из API возвратов" : "Показатель пока недоступен", !analytics.returns_available)}</div><div class="analytics-center-grid analytics-center-two"><section class="analytics-center-card"><h3>График продаж</h3><p>Без синхронизированной динамики график не заполняется.</p>${analyticsCenterChart(financeDaily)}</section><section class="analytics-center-card"><h3>Последние заказы</h3><div class="analytics-center-list">${orderRows || analyticsCenterEmpty("Заказов нет", "Новые заказы появятся после синхронизации.")}</div></section></div>`;
-      } else if (view === "products") {
-        body = `<div class="analytics-center-section-title"><b>Товарный каталог</b><span>${products.length} позиций</span></div><section class="analytics-center-card"><p>Карточки сгруппированы по данным маркетплейса. Пустые поля не заполняются автоматически.</p>${productTable}</section>`;
-      } else if (view === "inventory") {
-        const stockTotal = products.reduce((sum, row) => sum + Number(row.available || 0), 0);
-        body = `<div class="analytics-center-section-title"><b>Остатки</b><span>FBO и FBS</span></div><div class="analytics-center-grid analytics-center-kpis">${kpi("Строк остатков", analyticsCenterNumber(summary.stock_rows), "Данные маркетплейса")}${kpi("Доступный остаток", analyticsCenterNumber(stockTotal, " шт."), "Сумма по карточкам")}${kpi("Риск дефицита", "—", "Нужна история спроса", true)}</div><section class="analytics-center-card"><h3>Остатки → производство</h3><p>Связка с производственными заданиями появится после сопоставления спроса и маршрутов.</p>${analyticsCenterEmpty("Пока нет расчёта риска", "Недостающие показатели не заменяются фиктивными числами.")}</section>`;
-      } else if (view === "production") {
-        const stages = control.stages || [];
-        body = `<div class="analytics-center-section-title"><b>Производство</b><span>${escapeHtml(control.start_date || "текущий период")}</span></div><div class="analytics-center-grid analytics-center-kpis">${kpi("План", analyticsCenterNumber(control.plan, " шт."), "План выпуска", control.plan == null)}${kpi("Факт", analyticsCenterNumber(control.fact, " шт."), "Фактически выполнено", control.fact == null)}${kpi("В работе", analyticsCenterNumber(control.active_quantity, " шт."), "Активные операции", control.active_quantity == null)}${kpi("FPY", control.fpy == null ? "—" : `${analyticsCenterNumber(control.fpy)}%`, "Первый проход", control.fpy == null)}</div><section class="analytics-center-card"><h3>Пульс производства</h3><div class="analytics-center-list">${stages.length ? stages.slice(0, 12).map((stage) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(stage.stage)}</b><span>${escapeHtml(stage.tasks)} заданий · свободно ${escapeHtml(stage.free)}</span></div><strong>${analyticsCenterNumber(stage.quantity, " шт.")}</strong></div>`).join("") : analyticsCenterEmpty("Активных этапов нет", "Производственные этапы появятся после создания заданий.")}</div></section>`;
-      } else if (view === "supplies") {
-        body = `<div class="analytics-center-section-title"><b>Поставки</b><span>${supplies.length} записей</span></div><section class="analytics-center-card">${supplies.length ? `<div class="analytics-center-table-wrap"><table class="analytics-center-table"><thead><tr><th>Поставка</th><th>Площадка</th><th>Направление</th><th>Количество</th><th>Состояние</th></tr></thead><tbody>${supplyRows}</tbody></table></div>` : analyticsCenterEmpty("Поставок нет", "После синхронизации маркетплейса здесь появятся поставки.")}</section>`;
-      } else if (view === "finance") {
-        const financeAvailable = Boolean(analytics.finance_available && financeDaily.length);
-        body = `<div class="analytics-center-section-title"><b>Финансы</b><span>${financeAvailable ? `${financeDaily.length} дней` : "данные недоступны"}</span></div><section class="analytics-center-card"><h3>Финансовый waterfall</h3><p>Показываем только фактические начисления. Комиссии и себестоимость не выдумываем.</p>${financeAvailable ? analyticsCenterChart(financeDaily) : analyticsCenterEmpty("Waterfall пока недоступен", "Нужны начисления, комиссии и себестоимость из источников.")}</section><section class="analytics-center-card"><h3>Начисления по дням</h3>${financeAvailable ? `<div class="analytics-center-table-wrap"><table class="analytics-center-table"><thead><tr><th>Дата</th><th>Начисления</th><th>Итог</th></tr></thead><tbody>${[...financeDaily].reverse().map((row) => `<tr><td>${escapeHtml(row.date || "—")}</td><td>${marketplaceMoney(row.revenue || 0)}</td><td>${marketplaceMoney(row.net || 0)}</td></tr>`).join("")}</tbody></table></div>` : analyticsCenterEmpty("Данных нет", "Выполните синхронизацию финансового раздела.")}</section>`;
-      } else if (view === "geography") {
-        body = `<div class="analytics-center-section-title"><b>Карта России</b><span>региональные показатели</span></div><div class="analytics-center-grid analytics-center-two"><section class="analytics-center-card"><div class="analytics-center-map"><div class="map-outline" aria-label="Карта пока без данных"></div></div></section><section class="analytics-center-card"><h3>Рейтинг регионов</h3><p>География заказов и остатков будет показана после загрузки региональных данных.</p>${analyticsCenterEmpty("Карта пока недоступна", "В текущем API нет региональной разбивки.")}</section></div>`;
-      } else {
-        const runs = payload.sync_runs || [];
-        const events = payload.sync_events || [];
-        body = `<div class="analytics-center-section-title"><b>Качество данных</b><span>${escapeHtml(status.label)}</span></div><div class="analytics-center-grid analytics-center-three">${kpi("Синхронизации", analyticsCenterNumber(runs.length), "Журнал запусков")}${kpi("События", analyticsCenterNumber(events.length), "Технические уведомления")}${kpi("Цвет и размер", products.length ? "загружены" : "—", products.length ? "Проверяйте карточки товаров" : "Показатель пока недоступен", !products.length)}</div><section class="analytics-center-card"><h3>Контроль источников</h3><p>Технические ошибки вынесены в Админ → Интеграции → Диагностика.</p>${runs.length ? `<div class="analytics-center-list">${runs.slice(0, 8).map((row) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(row.started_at || "Запуск")}</b><span>${escapeHtml(row.error_message || "Синхронизация завершена")}</span></div><span class="status-chip ${row.status === "success" ? "" : "warn"}">${escapeHtml(row.status || "—")}</span></div>`).join("")}</div>` : analyticsCenterEmpty("Журнал пуст", "После первого запуска синхронизации появится история.", "sync")}</section><button type="button" class="small-button secondary" data-analytics-center-action="diagnostics">Открыть диагностику администратора</button>`;
-      }
-      mainButton.hidden = false;
-      mainButton.textContent = state.marketplaceData.loading ? "Обновление…" : "Обновить данные";
-      mainButton.disabled = state.marketplaceData.loading;
-      const centerPeriod = state.analyticsCenterPeriod || "7d";
-      mount.innerHTML = `<div class="analytics-center-shell"><aside class="analytics-center-sidebar"><div class="analytics-center-brand"><span class="analytics-center-brand-mark">◈</span><div><b>АНАЛИТИКА</b><span>центр управления</span></div></div>${analyticsCenterNav(view)}<div class="analytics-center-connector"><b>${provider === "wildberries" ? "Wildberries" : provider === "ozon" ? "Ozon" : "Маркетплейсы"}</b><span>Режим только чтение. Изменения на площадки не отправляются.</span><span class="status-chip">${escapeHtml(status.label)}</span></div></aside><main class="analytics-center-main"><div class="analytics-center-toolbar"><div><h2>${escapeHtml(titleMap[view] || "Обзор")}</h2><p>Показатели продаж, остатков, производства и качества данных.</p></div><div class="analytics-center-controls"><select data-analytics-center-period aria-label="Период"><option value="7d" ${centerPeriod === "7d" ? "selected" : ""}>Последние 7 дней</option><option value="30d" ${centerPeriod === "30d" ? "selected" : ""}>Последние 30 дней</option><option value="month" ${centerPeriod === "month" ? "selected" : ""}>Текущий месяц</option></select><button type="button" class="${provider === "all" ? "active" : ""}" data-analytics-center-provider="all">Все</button><button type="button" class="${provider === "ozon" ? "active" : ""}" data-analytics-center-provider="ozon">Ozon</button><button type="button" class="${provider === "wildberries" ? "active" : ""}" data-analytics-center-provider="wildberries">WB</button><button type="button" data-analytics-center-action="sync">↻</button></div></div>${body}</main></div>`;
-    }
-
     function renderAnalytics() {
       const operations = getReportOperations();
       const feedback = getFeedbackRows();
@@ -9451,10 +8549,6 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      if (state.data && state.data.is_admin) {
-        renderAnalyticsCenter();
-        return;
-      }
       const control = state.data.admin && state.data.admin.production_control ? state.data.admin.production_control : {};
       const stages = control.stages || [];
       const alerts = control.alerts || [];
@@ -9465,7 +8559,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Аналитика производства</h2><p>План, качество, загрузка и риски по текущему периоду.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
+        <div class="screen-head"><div><h2>Контроль производства</h2><p>План, качество, незавершёнка и отклонения.</p></div><div class="date">${escapeHtml(control.start_date === control.end_date ? control.start_date || "" : `${control.start_date || ""} — ${control.end_date || ""}`)}</div></div>
         <div class="kpi-grid">
           <button type="button" class="card kpi analytics-card" data-analytics-view="planfact"><span class="kpi-top"><span>План / факт</span><span class="kpi-ico">${uiIcon("target")}</span></span><strong>${escapeHtml(control.fact || 0)}<small> / ${escapeHtml(control.plan || 0)}</small></strong><span>Подробнее ›</span></button>
           <button type="button" class="card kpi good analytics-card" data-analytics-view="fpy"><span class="kpi-top"><span>FPY</span><span class="kpi-ico">${uiIcon("quality")}</span></span><strong>${escapeHtml(control.fpy || 0)}<small>%</small></strong><span>Подробнее ›</span></button>
@@ -9497,7 +8591,6 @@ MINIAPP_HTML = """<!doctype html>
         ["employees", "Сотрудники"],
         ["shifts", "Смены"],
         ["feedback", "Связь"],
-        ["integrations", "Интеграции"],
       ];
 
       return `<div class="segment-row">${sections.map(([id, label]) => `
@@ -10452,83 +9545,11 @@ MINIAPP_HTML = """<!doctype html>
       return "";
     }
 
-    const marketplaceRouteMap = {
-      overview: "", products: "/products", orders: "/orders", supplies: "/supplies",
-      finance: "/finance", analytics: "/analytics", reviews: "/reviews", settings: "/settings",
-      stocks: "/products", "warehouse-shipments": "/supplies", sync: "/settings",
-    };
-
-    function marketplaceViewFromPath(pathname) {
-      const path = String(pathname || "");
-      const marker = "/app/marketplaces";
-      const suffix = path.startsWith(marker) ? path.slice(marker.length).split("/").filter(Boolean)[0] || "" : "";
-      // The bare marketplace entry point is the new analytics center. Keep
-      // the legacy overview reachable through its explicit route so old
-      // bookmarks continue to work without becoming the default UI.
-      if (!suffix) return "analytics";
-      const found = Object.entries(marketplaceRouteMap).find(([, route]) => route === `/${suffix}`);
-      return found ? found[0] : "overview";
-    }
-
-    function applyMarketplaceLocation() {
-      if (!isStandaloneWeb || !window.location.pathname.startsWith("/app/marketplaces")) return;
-      const params = new URLSearchParams(window.location.search);
-      const scope = params.get("scope");
-      const period = params.get("period");
-      state.marketplaceProvider = ["all", "ozon", "wildberries"].includes(scope) ? scope : "all";
-      state.marketplaceView = marketplaceViewFromPath(window.location.pathname);
-      state.marketplacePeriod = ["today", "yesterday", "7d", "30d", "month", "previous-month"].includes(period) ? period : "7d";
-    }
-
-    function syncMarketplaceLocation() {
-      if (!isStandaloneWeb || !window.history || typeof window.history.replaceState !== "function") return;
-      const route = marketplaceRouteMap[state.marketplaceView] || "";
-      const params = new URLSearchParams();
-      params.set("scope", ["all", "ozon", "wildberries"].includes(state.marketplaceProvider) ? state.marketplaceProvider : "all");
-      params.set("period", state.marketplacePeriod || "7d");
-      window.history.replaceState(null, "", `/app/marketplaces${route}?${params.toString()}`);
-    }
-
-    function marketplacePeriodMeta(period) {
-      const end = new Date();
-      end.setHours(0, 0, 0, 0);
-      const start = new Date(end);
-      const key = period || "7d";
-      if (key === "yesterday") { start.setDate(start.getDate() - 1); end.setDate(end.getDate() - 1); }
-      if (key === "7d") start.setDate(start.getDate() - 6);
-      if (key === "30d") start.setDate(start.getDate() - 29);
-      if (key === "month") start.setDate(1);
-      if (key === "previous-month") { start.setMonth(start.getMonth() - 1, 1); end.setDate(0); }
-      const format = (value) => value.toLocaleDateString("ru-RU", {day: "2-digit", month: "2-digit", year: "numeric"});
-      return {start, end, label: `${format(start)} — ${format(end)}`};
-    }
-
-    function marketplaceDateInPeriod(value, meta) {
-      if (!value) return true;
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return true;
-      date.setHours(0, 0, 0, 0);
-      return date >= meta.start && date <= meta.end;
-    }
-
-    function marketplaceUnavailable(label) {
-      return `<div class="marketplace-empty-metric"><b>${escapeHtml(label)}</b><span>Нет данных от API</span></div>`;
-    }
-
     function renderMarketplaces() {
       if (!canAccessMarketplaces()) {
         mainButton.textContent = "Обновить";
         mainButton.disabled = false;
         mount.innerHTML = `<div class="screen-head"><div><h2>Маркетплейсы</h2><p>Раздел доступен администратору.</p></div></div><div class="card field-card">${itemEmpty("Нет прав администратора.")}</div>`;
-        return;
-      }
-      if (!state.marketplaceLocationInitialized) {
-        applyMarketplaceLocation();
-        state.marketplaceLocationInitialized = true;
-      }
-      if (state.marketplaceView === "analytics") {
-        if (["ozon", "wildberries"].includes(state.marketplaceProvider)) state.analyticsCenterProvider = state.marketplaceProvider;
-        renderAnalyticsCenter();
         return;
       }
       const payload = state.marketplaceData.payload || {};
@@ -10537,21 +9558,8 @@ MINIAPP_HTML = """<!doctype html>
       const isWildberries = selectedProvider === "wildberries";
       const isAll = selectedProvider === "all";
       const summary = isWildberries ? {} : (payload.summary || {});
-      const periodMeta = marketplacePeriodMeta(state.marketplacePeriod);
-      const allProducts = isWildberries ? [] : (payload.products_rows || []);
-      const allOrders = isWildberries ? [] : (payload.orders_rows || []);
-      const analytics = isWildberries ? {} : (payload.analytics || {});
-      const financeDaily = analytics.finance_daily || [];
-      const periodFinance = financeDaily.filter((row) => marketplaceDateInPeriod(row.date, periodMeta));
-      const periodRevenue = periodFinance.reduce((sum, row) => sum + Number(row.revenue || 0), 0);
-      const periodNet = periodFinance.reduce((sum, row) => sum + Number(row.net || 0), 0);
-      const allReturns = analytics.returns_rows || [];
-      const periodReturnDays = (analytics.returns_daily || []).filter((row) => marketplaceDateInPeriod(row.date, periodMeta));
-      const periodReturnRecords = periodReturnDays.reduce((sum, row) => sum + Number(row.records || 0), 0);
-      const returnQuantity = periodReturnDays.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-      const ratingValue = analytics.rating;
-      const products = allProducts.filter((row) => !state.marketplaceFilters.inStockOnly || Number(row.available || 0) > 0);
-      const orders = allOrders.filter((row) => marketplaceDateInPeriod(row.shipment_date || row.created_at, periodMeta)).filter((row) => state.marketplaceFilters.orderStatus === "all" || String(row.status || "") === state.marketplaceFilters.orderStatus).filter((row) => !state.marketplaceFilters.onlyProblems || !["delivering", "awaiting_packaging"].includes(String(row.status || "")));
+      const products = isWildberries ? [] : (payload.products_rows || []);
+      const orders = isWildberries ? [] : (payload.orders_rows || []);
       const runs = isWildberries ? [] : (payload.sync_runs || []);
       const supplies = isWildberries ? (payload.supplies || []).filter((row) => row.marketplace === "wildberries") : (payload.supplies || []).filter((row) => isAll || row.marketplace === "ozon");
       const warehouseShipments = (payload.warehouse_shipments || []).filter((row) => isAll || row.marketplace === selectedProvider);
@@ -10600,37 +9608,26 @@ MINIAPP_HTML = """<!doctype html>
         return `<section class="marketplace-provider-dashboard ${wb ? "wb-panel" : "ozon-panel"}"><div class="provider-heading"><div><h3>${label}</h3><span>${configured ? "Подключён · только чтение" : "Не подключён"}</span></div><span class="status-chip">${configured ? "готов" : "настроить"}</span></div><div class="marketplace-dashboard-kpis"><div class="marketplace-dashboard-kpi"><span>Заказы</span><strong>${escapeHtml(providerSummary.open_orders || 0)}</strong><small>открыто</small></div><div class="marketplace-dashboard-kpi"><span>Товары</span><strong>${escapeHtml(providerSummary.products || 0)}</strong><small>позиций</small></div><div class="marketplace-dashboard-kpi"><span>Остатки</span><strong>${escapeHtml(providerSummary.stock_rows || 0)}</strong><small>строк</small></div></div><div class="marketplace-dashboard-lower"><div><div class="section-title"><b>Показатели</b><span>из синхронизации</span></div><div class="marketplace-chart">${configured ? chartBars(chartValues) : itemEmpty("Нет данных")}</div></div><div><div class="section-title"><b>Топ товары</b><span>${providerProducts.length}</span></div>${wb ? itemEmpty("Нет синхронизированных товаров.") : topProductsBlock}</div></div></section>`;
       };
       const runsBlock = runs.length ? `<div class="op-list">${runs.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-sync-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.started_at || "Синхронизация")}</b><span>Товары ${escapeHtml(row.products_count)} · цены ${escapeHtml(row.prices_count)} · остатки ${escapeHtml(row.stocks_count)} · отгрузки ${escapeHtml(row.orders_count)}${row.error_message ? `<br>${escapeHtml(row.error_message)}` : ""}</span></div><span class="status-chip ${row.status === "success" ? "" : "warn"}">${escapeHtml(row.status)} ›</span></button>`).join("")}</div>` : itemEmpty("Синхронизаций ещё не было.");
-      const sourceLabel = isAll ? "Ozon и Wildberries" : (isOzon ? "Ozon" : "Wildberries");
-      const financeMax = Math.max(1, ...periodFinance.map((row) => Number(row.revenue || 0)));
-      const salesChart = periodFinance.length ? `<div class="marketplace-order-bars marketplace-revenue-bars">${periodFinance.map((row) => `<i style="--bar-height:${Math.max(8, Number(row.revenue || 0) / financeMax * 100)}%" title="${escapeHtml(row.date)} · ${escapeHtml(marketplaceMoney(row.revenue || 0))}"></i>`).join("")}</div><div class="marketplace-chart-caption"><span>Начислено ${marketplaceMoney(periodRevenue)}</span><span>Итог ${marketplaceMoney(periodNet)}</span></div>` : `<div class="marketplace-chart-empty"><b>За период начислений нет</b><span>Выберите другой период или выполните синхронизацию Ozon.</span></div>`;
-      const kpiUnavailable = (label, hint) => `<div class="card marketplace-v2-kpi unavailable" title="${escapeHtml(hint)}"><span>${escapeHtml(label)}</span><strong>—</strong><small>Нет данных от API</small></div>`;
-      const kpiValue = (label, value, suffix, hint, view = "") => `${view ? `<button type="button" class="card marketplace-v2-kpi" data-marketplace-view="${view}">` : `<div class="card marketplace-v2-kpi">`}<span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}<small>${escapeHtml(suffix)}</small></strong><small>${escapeHtml(hint)}</small>${view ? "</button>" : "</div>"}`;
-      const revenueKpi = analytics.finance_available ? kpiValue("Начисления", marketplaceMoney(periodRevenue), "", `Итог после удержаний: ${marketplaceMoney(periodNet)}`, "finance") : kpiUnavailable("Начисления", "Финансовые начисления ещё не синхронизированы");
-      const returnsKpi = analytics.returns_available ? kpiValue("Возвраты", returnQuantity, " шт.", `${periodReturnRecords} записей за период`, "reviews") : kpiUnavailable("Возвраты", "Возвраты ещё не синхронизированы");
-      const ratingKpi = analytics.rating_available ? kpiValue("Рейтинг магазина", ratingValue == null ? "получен" : Number(ratingValue).toFixed(2), "", "Актуальная сводка Ozon", "reviews") : kpiUnavailable("Рейтинг магазина", "Рейтинг ещё не синхронизирован");
       const overviewBlock = `
-        <div class="marketplace-filter-bar"><label><span>Период</span><select id="marketplacePeriod"><option value="today" ${state.marketplacePeriod === "today" ? "selected" : ""}>Сегодня</option><option value="yesterday" ${state.marketplacePeriod === "yesterday" ? "selected" : ""}>Вчера</option><option value="7d" ${state.marketplacePeriod === "7d" ? "selected" : ""}>Последние 7 дней</option><option value="30d" ${state.marketplacePeriod === "30d" ? "selected" : ""}>Последние 30 дней</option><option value="month" ${state.marketplacePeriod === "month" ? "selected" : ""}>Текущий месяц</option><option value="previous-month" ${state.marketplacePeriod === "previous-month" ? "selected" : ""}>Предыдущий месяц</option></select></label><div class="marketplace-period-label">${escapeHtml(periodMeta.label)}</div><button type="button" class="small-button secondary" data-marketplace-filter-action="toggle">Фильтры${state.marketplaceFilters.onlyProblems || state.marketplaceFilters.inStockOnly || state.marketplaceFilters.orderStatus !== "all" ? " · активны" : ""}</button></div>
-        ${state.marketplaceFiltersOpen ? `<div class="card marketplace-filter-panel"><div class="form-grid"><div class="field"><label>Статус заказа</label><select id="marketplaceOrderStatus"><option value="all">Все статусы</option>${[...new Set(allOrders.map((row) => String(row.status || "")).filter(Boolean))].map((status) => `<option value="${escapeHtml(status)}" ${state.marketplaceFilters.orderStatus === status ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}</select></div><label class="marketplace-check"><input id="marketplaceInStockOnly" type="checkbox" ${state.marketplaceFilters.inStockOnly ? "checked" : ""}> Только товары в наличии</label><label class="marketplace-check"><input id="marketplaceOnlyProblems" type="checkbox" ${state.marketplaceFilters.onlyProblems ? "checked" : ""}> Только проблемные позиции</label></div><div class="button-row"><button type="button" class="small-button" data-marketplace-filter-action="apply">Применить</button><button type="button" class="small-button secondary" data-marketplace-filter-action="reset">Сбросить</button><button type="button" class="small-button secondary" data-marketplace-filter-action="cancel">Отмена</button></div></div>` : ""}
-        <div class="marketplace-v2-kpis"><button type="button" class="card marketplace-v2-kpi" data-marketplace-view="orders"><span>Заказы</span><strong>${escapeHtml(orders.length)}<small> шт.</small></strong><small>${escapeHtml(sourceLabel)} · выбранный период</small></button>${revenueKpi}<button type="button" class="card marketplace-v2-kpi" data-marketplace-view="products"><span>Товары в продаже</span><strong>${escapeHtml(products.length)}<small> шт.</small></strong><small>${escapeHtml(sourceLabel)} · синхронизировано</small></button>${returnsKpi}${isAll ? `<button type="button" class="card marketplace-v2-kpi" data-marketplace-view="stocks"><span>Остаток на складах</span><strong>${escapeHtml(products.reduce((sum, row) => sum + Number(row.available || 0), 0))}<small> шт.</small></strong><small>Сумма доступных остатков</small></button>${kpiUnavailable("Упущенная выручка", "Расчёт упущенной выручки требует данных о спросе")}` : `${ratingKpi}<button type="button" class="card marketplace-v2-kpi" data-marketplace-view="stocks"><span>Остатки на складах</span><strong>${escapeHtml(products.reduce((sum, row) => sum + Number(row.available || 0), 0))}<small> шт.</small></strong><small>${escapeHtml(sourceLabel)}</small></button>`}</div>
-        <div class="marketplace-v2-analytics"><section class="card marketplace-analytic-card"><div class="section-title"><b>Начисления</b><span>${escapeHtml(periodMeta.label)}</span></div>${salesChart}</section><section class="card marketplace-analytic-card"><div class="section-title"><b>Заказы</b><span>${escapeHtml(orders.length)} шт.</span></div>${orders.length ? `<div class="marketplace-order-bars">${orders.slice(0, 12).map((row, index) => `<i style="--bar-height:${Math.max(18, 100 - index * 6)}%" title="${escapeHtml(row.posting_number || row.external_order_id || "Заказ")}"></i>`).join("")}</div>` : itemEmpty("Заказов за выбранный период нет.")}</section><section class="card marketplace-analytic-card"><div class="section-title"><b>Возвраты</b><span>${escapeHtml(periodReturnRecords)}</span></div>${periodReturnRecords ? `<div class="marketplace-empty-metric"><b>${escapeHtml(returnQuantity)} шт.</b><span>Возвратов за выбранный период</span></div>` : itemEmpty("Возвратов за выбранный период нет.")}</section><section class="card marketplace-analytic-card"><div class="section-title"><b>${isAll ? "Финансовый итог" : "Рейтинг и итог"}</b><span>${escapeHtml(sourceLabel)}</span></div><div class="marketplace-empty-metric"><b>${marketplaceMoney(periodNet)}</b><span>${ratingValue == null ? "Итог начислений после удержаний" : `Рейтинг: ${Number(ratingValue).toFixed(2)}`}</span></div></section></div>
+        <div class="kpi-grid">
+          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="products"><div class="kpi-top"><span>Товары</span><span class="kpi-ico">▤</span></div><strong>${escapeHtml(summary.products || 0)}<small> поз.</small></strong><span>Каталог ${providerName} · открыть товары ›</span></button>
+          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="stocks"><div class="kpi-top"><span>Остатки</span><span class="kpi-ico">▦</span></div><strong>${escapeHtml(summary.stock_rows || 0)}<small> строк</small></strong><span>FBO и FBS · открыть остатки ›</span></button>
+          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="orders"><div class="kpi-top"><span>Отгрузки</span><span class="kpi-ico">↑</span></div><strong>${escapeHtml(summary.open_orders || 0)}<small> открыто</small></strong><span>Данные ${providerName} · открыть список ›</span></button>
+          <button type="button" class="card kpi marketplace-clickable" data-marketplace-view="supplies"><div class="kpi-top"><span>Поставки МП</span><span class="kpi-ico">⇢</span></div><strong>${escapeHtml(supplies.length)}<small> поставок</small></strong><span>Внутренние задания для склада ›</span></button>
+        </div>
+        <div class="marketplace-dashboard-grid ${isAll ? "" : "single"}">${isAll ? providerDashboard("ozon", "Ozon", Boolean(payload.configured)) + providerDashboard("wildberries", "Wildberries", Boolean(wildberries.configured), true) : providerDashboard(selectedProvider, providerName, providerConfigured, isWildberries)}</div>
+        <div class="marketplace-overview-grid"><div class="card field-card"><div class="section-title"><b>Поставки маркетплейсов</b><button type="button" class="small-button secondary" data-marketplace-view="supplies">Открыть ›</button></div>${suppliesBlock}</div><div class="card field-card"><div class="section-title"><b>Задания складу</b><button type="button" class="small-button secondary" data-marketplace-view="warehouse-shipments">Открыть ›</button></div>${warehouseShipmentsBlock}</div></div>
         <div class="marketplace-wide-grid"><div class="card field-card"><div class="section-title"><b>Последние заказы</b><button type="button" class="small-button secondary" data-marketplace-view="orders">Все заказы ›</button></div>${recentOrdersBlock}</div><div class="card field-card"><div class="section-title"><b>Уведомления</b><span>${(payload.sync_events || []).length}</span></div>${notificationsBlock}</div></div>
-        <section class="card field-card marketplace-product-detail"><div class="section-title"><b>Детализация по товарам</b><button type="button" class="small-button secondary" data-marketplace-view="products">Все товары ›</button></div>${products.length ? `<div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Товар</th><th>Маркетплейс</th><th>Артикул</th><th>В продаже</th><th>Остаток</th></tr></thead><tbody>${products.slice(0, 12).map((row) => `<tr><td>${escapeHtml(row.name || "Без названия")}</td><td><span class="marketplace-source ozon">Ozon</span></td><td>${escapeHtml(row.offer_id || "—")}</td><td>${Number(row.available || 0) > 0 ? "Да" : "Нет"}</td><td>${escapeHtml(row.available || 0)} шт.</td></tr>`).join("")}</tbody></table></div>` : itemEmpty("Товары появятся после синхронизации выбранной площадки.")}</section>
-        <section class="card field-card marketplace-sales-detail"><div class="section-title"><b>Аналитика продаж</b><button type="button" class="small-button secondary" data-marketplace-view="analytics">Открыть аналитику ›</button></div>${salesChart}</section>
-        <div class="marketplace-overview-grid"><div class="card field-card"><div class="section-title"><b>Поставки маркетплейсов</b><button type="button" class="small-button secondary" data-marketplace-view="supplies">Открыть ›</button></div>${suppliesBlock}</div><div class="card field-card"><div class="section-title"><b>Задания складу</b><button type="button" class="small-button secondary" data-marketplace-view="warehouse-shipments">Открыть ›</button></div>${warehouseShipmentsBlock}</div></div>`;
-      const financeBlock = financeDaily.length ? `<div class="card field-card"><div class="section-title"><b>Начисления Ozon по дням</b><span>${financeDaily.length} дней</span></div><div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Дата</th><th>Положительные начисления</th><th>Итог после удержаний</th><th>Операций</th></tr></thead><tbody>${[...financeDaily].reverse().map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${marketplaceMoney(row.revenue || 0)}</td><td>${marketplaceMoney(row.net || 0)}</td><td>${escapeHtml(row.records || 0)}</td></tr>`).join("")}</tbody></table></div></div>` : itemEmpty("Финансовые начисления ещё не синхронизированы.");
-      const reviewsBlock = `<div class="marketplace-wide-grid"><div class="card field-card"><div class="section-title"><b>Рейтинг Ozon</b><span>${analytics.rating_available ? "получен" : "нет данных"}</span></div><div class="marketplace-empty-metric"><b>${ratingValue == null ? "—" : Number(ratingValue).toFixed(2)}</b><span>Актуальная сводка рейтинга магазина</span></div></div><div class="card field-card"><div class="section-title"><b>Возвраты</b><span>${allReturns.length}</span></div>${allReturns.length ? `<div class="op-list">${allReturns.slice(0, 100).map((row) => `<div class="report-row"><div><b>${escapeHtml(row.product_name || row.posting_number || "Возврат")}</b><span>${escapeHtml(row.scheme || "Ozon")} · ${escapeHtml(row.status || "статус не указан")} · ${escapeHtml(row.returned_at || "дата не указана")}</span></div><span class="status-chip gray">${escapeHtml(row.quantity || 1)} шт.</span></div>`).join("")}</div>` : itemEmpty("Возвратов не найдено.")}</div></div>`;
-      const placeholderSection = (name, description) => `<div class="card field-card marketplace-placeholder"><div class="marketplace-placeholder-icon">◇</div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(description)}</p><span class="status-chip gray">Раздел подготовлен</span></div>`;
-      const sectionContent = {overview: overviewBlock, orders: ordersBlock, supplies: suppliesBlock, "warehouse-shipments": warehouseShipmentsBlock, sync: runsBlock, stocks: stocksBlock, analytics: analyticsBlock, products: productsBlock, finance: financeBlock, reviews: reviewsBlock, settings: placeholderSection("Настройки", "Подключение работает в режиме только чтения. Расписание синхронизации управляется на сервере.")};
-      const content = sectionContent[state.marketplaceView] || productsBlock;
-      const sectionTitles = {overview:"Обзор", orders:"Заказы", supplies:"Поставки", "warehouse-shipments":"Отгрузки на склад", sync:"Журнал синхронизации", stocks:"Остатки", analytics:"Аналитика", products:"Товары", finance:"Финансы", reviews:"Отзывы", settings:"Настройки"};
-      const title = sectionTitles[state.marketplaceView] || "Товары";
+      `;
+      const content = state.marketplaceView === "overview" ? overviewBlock : state.marketplaceView === "orders" ? ordersBlock : state.marketplaceView === "supplies" ? suppliesBlock : state.marketplaceView === "warehouse-shipments" ? warehouseShipmentsBlock : state.marketplaceView === "sync" ? runsBlock : state.marketplaceView === "stocks" ? stocksBlock : state.marketplaceView === "analytics" ? analyticsBlock : productsBlock;
+      const title = state.marketplaceView === "overview" ? "Обзор" : state.marketplaceView === "orders" ? "Заказы" : state.marketplaceView === "supplies" ? "Поставки" : state.marketplaceView === "warehouse-shipments" ? "Отгрузки на склад" : state.marketplaceView === "sync" ? "Журнал синхронизации" : state.marketplaceView === "stocks" ? "Остатки" : state.marketplaceView === "analytics" ? "Аналитика" : "Товары";
       const detail = renderMarketplaceDetail(products, orders, runs);
-      const marketplaceMenu = `<nav class="marketplace-menu-strip" aria-label="Разделы маркетплейсов">${[["overview","Обзор"],["products","Товары"],["orders","Заказы"],["supplies","Поставки"],["finance","Финансы"],["analytics","Аналитика"],["reviews","Отзывы"],["settings","Настройки"]].map(([id,label]) => `<button type="button" class="marketplace-menu-link ${state.marketplaceView === id ? "active" : ""}" data-marketplace-view="${id}">${label}</button>`).join("")}</nav>`;
-      mount.innerHTML = `<div class="marketplace-layout">${marketplaceMenu}<div class="marketplace-main">
-        <div class="screen-head marketplace-v2-head"><div><h2>${isAll ? "Маркетплейсы" : providerName}</h2><p>${isAll ? "Общая статистика и управление продажами на маркетплейсах" : (isOzon ? "Продажи, заказы, остатки и показатели магазина Ozon" : "Продажи, заказы, остатки и показатели магазина Wildberries")}</p></div><div class="marketplace-brand-mark ${isWildberries ? "wb" : isOzon ? "ozon" : "all"}">${isWildberries ? "WB" : isOzon ? "OZON" : "Ozon + WB"}</div></div><div class="marketplace-provider-inline"><div class="marketplace-provider-switch" role="tablist" aria-label="Выбор маркетплейса"><button type="button" class="marketplace-provider-button marketplace-provider-all ${isAll ? "active" : ""}" data-marketplace-provider="all" role="tab" aria-selected="${isAll}"><b>Все маркетплейсы</b><span>Общий обзор</span></button><button type="button" class="marketplace-provider-button marketplace-provider-ozon ${isOzon ? "active" : ""}" data-marketplace-provider="ozon" role="tab" aria-selected="${isOzon}"><b>Ozon</b><span>${escapeHtml(payload.configured ? (account.account_name || "Подключён") : "Не подключён")}</span></button><button type="button" class="marketplace-provider-button marketplace-provider-wb ${isWildberries ? "active" : ""}" data-marketplace-provider="wildberries" role="tab" aria-selected="${isWildberries}"><b>Wildberries</b><span>${escapeHtml(wildberries.configured ? "Подключён" : "Не подключён")}</span></button></div><div class="marketplace-provider-status"><b>${isAll ? "Общий обзор" : providerName}</b><span>${escapeHtml(providerStatus)}</span></div></div>
+      const marketplaceMenu = `<div class="marketplace-menu-strip">${[["overview","Обзор"],["products","Товары"],["stocks","Остатки"],["orders","Заказы"],["supplies","Поставки"],["warehouse-shipments","Отгрузки на склад"],["analytics","Аналитика"],["sync","Синхронизация"]].map(([id,label]) => `<button type="button" class="marketplace-menu-link ${state.marketplaceView === id ? "active" : ""}" data-marketplace-view="${id}">${label}</button>`).join("")}</div>`;
+      mount.innerHTML = `${marketplaceMenu}
+        <div class="screen-head"><div><h2>Управление ${providerTitle}</h2><p>Выберите площадку — содержимое разделов изменится под выбранный маркетплейс.</p></div><div class="marketplace-provider-inline"><div class="marketplace-provider-switch" role="tablist" aria-label="Выбор маркетплейса"><button type="button" class="marketplace-provider-button marketplace-provider-all ${isAll ? "active" : ""}" data-marketplace-provider="all" role="tab" aria-selected="${isAll}"><b>Общая</b><span>Все площадки</span></button><button type="button" class="marketplace-provider-button marketplace-provider-ozon ${isOzon ? "active" : ""}" data-marketplace-provider="ozon" role="tab" aria-selected="${isOzon}"><b>Ozon</b><span>${escapeHtml(payload.configured ? (account.account_name || "Подключён") : "Не подключён")}</span></button><button type="button" class="marketplace-provider-button marketplace-provider-wb ${isWildberries ? "active" : ""}" data-marketplace-provider="wildberries" role="tab" aria-selected="${isWildberries}"><b>Wildberries</b><span>${escapeHtml(wildberries.configured ? "Подключён" : "Не подключён")}</span></button></div><div class="marketplace-provider-status"><b>${isAll ? "Общий обзор" : providerName}</b><span>${escapeHtml(providerStatus)}</span></div></div></div>
         ${errorNotice}${notConfigured}
         ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? orders.length : state.marketplaceView === "supplies" ? supplies.length : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? products.length : state.marketplaceView === "analytics" ? "" : groups.length}</span></div>${content}`}
-      </div></div>`;
+      `;
     }
 
     function renderWarehouse() {
@@ -11005,7 +10002,7 @@ MINIAPP_HTML = """<!doctype html>
       `).join("") : itemEmpty("Новых заявок нет.");
 
       return `
-        <div class="screen-head"><div><h2>Сотрудники</h2><p>Управление персоналом, ролями, доступами и сменами.</p></div><div class="date">${employees.length} всего</div></div>
+        <div class="screen-head"><div><h2>Пользователи</h2><p>Заявки, роли, статусы и должности.</p></div><div class="date">${employees.length} всего</div></div>
         ${renderAdminTabs()}
         <div class="kpi-grid">
           <div class="card kpi"><div class="kpi-top"><span>Заявки</span><div class="kpi-ico">${uiIcon("inbox")}</div></div><strong>${pending.length}<small> шт</small></strong><span>Ожидают решения</span></div>
@@ -11110,10 +10107,6 @@ MINIAPP_HTML = """<!doctype html>
         mount.innerHTML = renderAdminFeedback(admin);
         return;
       }
-      if (state.adminSection === "integrations") {
-        mount.innerHTML = renderAdminIntegrations();
-        return;
-      }
 
       mount.innerHTML = renderAdminReports(admin);
     }
@@ -11213,42 +10206,10 @@ MINIAPP_HTML = """<!doctype html>
       if (isWarehouseWorkspace && state.wmsView === "products" && !state.wmsCatalog.loaded && !state.wmsCatalog.loading && !state.wmsCatalog.error) {
         window.setTimeout(() => refreshWmsCatalog({silent: true}), 0);
       }
-      if ((isMarketplaceWorkspace || state.screen === "analytics") && !state.marketplaceData.loaded && !state.marketplaceData.loading && !state.marketplaceData.error) {
+      if (isMarketplaceWorkspace && !state.marketplaceData.loaded && !state.marketplaceData.loading && !state.marketplaceData.error) {
         window.setTimeout(() => refreshMarketplaces({silent: true}), 0);
       }
       if (state.data.is_admin && state.workspace === "production" && state.screen === "shift") window.setTimeout(syncWebPushDeviceState, 0);
-    }
-
-    function safeRenderAfterState() {
-      if (
-        isStandaloneWeb
-        && !state.marketplaceLocationInitialized
-        && window.location.pathname.startsWith("/app/marketplaces")
-        && canAccessMarketplaces()
-      ) {
-        applyMarketplaceLocation();
-        state.marketplaceLocationInitialized = true;
-        state.workspace = "marketplaces";
-        state.screen = "marketplaces";
-      }
-      try {
-        render();
-        return;
-      } catch (error) {
-        console.error("Render failed", error);
-      }
-
-      state.workspace = "production";
-      if (state.data && state.data.is_admin) {
-        state.screen = "admin";
-        state.productionScreen = "admin";
-        state.adminSection = "employees";
-      } else {
-        state.screen = "orders";
-        state.productionScreen = "orders";
-      }
-      render();
-      showToast("Интерфейс", "Открыт безопасный раздел после ошибки экрана.");
     }
 
     function setScreen(screen) {
@@ -11287,11 +10248,8 @@ MINIAPP_HTML = """<!doctype html>
         if (state.workspace === "production" && !["profile", "passport"].includes(state.screen) && productionScreens.has(state.screen)) {
           state.productionScreen = state.screen;
         }
-        applyMarketplaceLocation();
-        state.marketplaceLocationInitialized = true;
         state.workspace = "marketplaces";
         state.screen = "marketplaces";
-        syncMarketplaceLocation();
       } else {
         state.workspace = "production";
         const allowed = state.data && state.data.is_admin
@@ -11332,7 +10290,7 @@ MINIAPP_HTML = """<!doctype html>
 
         state.data = data;
         if (message) showToast("Готово", message);
-        safeRenderAfterState();
+        render();
         if (getCompletionQueue().length && navigator.onLine) window.setTimeout(() => flushCompletionQueue(true), 0);
       } catch (error) {
         state.data = null;
@@ -11462,32 +10420,12 @@ MINIAPP_HTML = """<!doctype html>
         }
       }
 
-      const operationsAction = event.target.closest("[data-operations-action]");
-      if (operationsAction && state.data && state.data.is_admin) {
-        const action = operationsAction.dataset.operationsAction;
-        if (action === "create-order") {
-          resetOrderDraft();
-          setScreen("orders");
-          return;
-        }
-        if (action === "employees" || action === "alerts") {
-          state.adminSection = action === "employees" ? "employees" : "feedback";
-          setScreen("admin");
-          return;
-        }
-        if (action === "scan") {
-          setScreen("orders");
-          window.setTimeout(() => openQrScanner("route"), 0);
-          return;
-        }
-      }
-
       const orderMode = event.target.closest("[data-order-mode]");
       if (orderMode && state.data && state.data.is_admin) {
         if (orderMode.dataset.orderMode === "create") {
           resetOrderDraft();
         } else {
-          state.orderMode = orderMode.dataset.orderMode === "board" ? "board" : "list";
+          state.orderMode = "list";
         }
         render();
         return;
@@ -11793,56 +10731,10 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      const analyticsCenterView = event.target.closest("[data-analytics-center-view]");
-      if (analyticsCenterView) {
-        state.analyticsCenterView = analyticsCenterView.dataset.analyticsCenterView || "overview";
-        if (state.workspace === "marketplaces") state.marketplaceView = "analytics";
-        render();
-        return;
-      }
-
-      const analyticsCenterProvider = event.target.closest("[data-analytics-center-provider]");
-      if (analyticsCenterProvider) {
-        state.analyticsCenterProvider = ["all", "ozon", "wildberries"].includes(analyticsCenterProvider.dataset.analyticsCenterProvider)
-          ? analyticsCenterProvider.dataset.analyticsCenterProvider : "all";
-        if (state.workspace === "marketplaces") state.marketplaceProvider = state.analyticsCenterProvider;
-        render();
-        return;
-      }
-
-      const analyticsCenterAction = event.target.closest("[data-analytics-center-action]");
-      if (analyticsCenterAction) {
-        const action = analyticsCenterAction.dataset.analyticsCenterAction;
-        if (action === "sync") { syncMarketplaces(); return; }
-        if (action === "diagnostics") {
-          state.workspace = "production";
-          state.screen = "admin";
-          state.adminSection = "integrations";
-          render();
-          return;
-        }
-        if (action === "refresh") { refreshMarketplaces(); return; }
-        if (action === "open") { state.analyticsCenterView = "overview"; render(); return; }
-      }
-
       const marketplaceView = event.target.closest("[data-marketplace-view]");
       if (marketplaceView) {
         state.marketplaceView = marketplaceView.dataset.marketplaceView || "overview";
         state.marketplaceDetail = null;
-        syncMarketplaceLocation();
-        render();
-        return;
-      }
-
-      const marketplaceFilterAction = event.target.closest("[data-marketplace-filter-action]");
-      if (marketplaceFilterAction) {
-        const action = marketplaceFilterAction.dataset.marketplaceFilterAction;
-        if (action === "toggle") state.marketplaceFiltersOpen = !state.marketplaceFiltersOpen;
-        if (action === "apply" || action === "cancel") state.marketplaceFiltersOpen = false;
-        if (action === "reset") {
-          state.marketplaceFilters = {onlyProblems: false, inStockOnly: false, orderStatus: "all"};
-          state.marketplaceFiltersOpen = false;
-        }
         render();
         return;
       }
@@ -11852,9 +10744,8 @@ MINIAPP_HTML = """<!doctype html>
         state.marketplaceProvider = ["all", "ozon", "wildberries"].includes(marketplaceProvider.dataset.marketplaceProvider)
           ? marketplaceProvider.dataset.marketplaceProvider
           : "all";
-        state.marketplaceView = "analytics";
+        state.marketplaceView = "overview";
         state.marketplaceDetail = null;
-        syncMarketplaceLocation();
         render();
         return;
       }
@@ -12113,21 +11004,6 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
-      const boardOrder = event.target.closest("[data-board-order-key]");
-      if (boardOrder && state.data && state.data.is_admin) {
-        const boardKey = boardOrder.dataset.boardOrderKey || "";
-        const allRows = [...currentOrderRows(), ...getCompletedOrderRows()];
-        const current = allRows.find((task) => taskIdentity(task) === boardKey);
-        if (!current) return;
-        state.orderCategory = adminOrderCategoryForTask(current);
-        state.adminTaskStatus = orderTaskStatusBucket(current) === "done" ? "done" : "all";
-        state.orderMode = "list";
-        state.selectedOrder = 0;
-        state.selectedOrderKey = boardKey;
-        render();
-        return;
-      }
-
       const order = event.target.closest("[data-select-order]");
       if (order) {
         state.selectedOrder = Number(order.dataset.selectOrder);
@@ -12327,29 +11203,6 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
-      if (event.target.id === "marketplacePeriod") {
-        state.marketplacePeriod = event.target.value || "7d";
-        syncMarketplaceLocation();
-        render();
-        return;
-      }
-      if (event.target.matches("[data-analytics-center-period]")) {
-        state.analyticsCenterPeriod = event.target.value || "7d";
-        render();
-        return;
-      }
-      if (event.target.id === "marketplaceOrderStatus") {
-        state.marketplaceFilters.orderStatus = event.target.value || "all";
-        return;
-      }
-      if (event.target.id === "marketplaceInStockOnly") {
-        state.marketplaceFilters.inStockOnly = Boolean(event.target.checked);
-        return;
-      }
-      if (event.target.id === "marketplaceOnlyProblems") {
-        state.marketplaceFilters.onlyProblems = Boolean(event.target.checked);
-        return;
-      }
       if (event.target.closest("#wmsProductName")) {
         readWmsDraftFromForm();
         state.wmsDraft.productScanned = false;
@@ -12503,7 +11356,6 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       if (state.workspace === "marketplaces" && state.screen === "marketplaces") {
-        if (isStandaloneWeb) window.history.replaceState(null, "", "/app");
         switchWorkspace("production");
         return;
       }
