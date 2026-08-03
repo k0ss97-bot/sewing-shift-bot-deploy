@@ -1994,6 +1994,13 @@ def production_task_to_dict(row, viewer_employee=None):
         "formed": "готовый крой сформирован",
         "cancelled": "отменено",
     }.get(status, status)
+    stage_title = {
+        "active": "Нанесение контуров лекал на ткань",
+        "contours_done": "Формирование настила",
+        "in_cutting": "Раскрой",
+        "formed": "Формирование готового кроя",
+        "cancelled": "Задание отменено",
+    }.get(status, "Раскрой")
     status_text = {
         "formed": "Завершено",
         "cancelled": "Отменено",
@@ -2005,6 +2012,7 @@ def production_task_to_dict(row, viewer_employee=None):
         "status": status,
         "status_text": status_text,
         "process_status_text": process_status_text,
+        "stage_title": stage_title,
         "work_status": "free" if is_free else "in_work",
         "created_at": created_at,
         "priority": priority or "normal",

@@ -1730,6 +1730,54 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(self.database.get_route_batch_by_id(route_id)["status"], "cancelled")
         self.assertEqual(self.database.get_active_route_batches(), [])
 
+    def test_admin_cancels_cutting_in_progress_and_restores_fabric(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9020, "Тест Раскройщик Отмена", "Раскройщик")
+        cutter = self.database.get_employee_by_telegram_id(9020)
+        self.database.update_employee_status(cutter[0], "active")
+        self.database.create_shift(cutter[0])
+        self.database.add_fabric_receipt("Ткань", "Брауни", 3, None)
+
+        created = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Футболки",
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["86"],
+                "colors": ["Брауни"],
+                "fabric_rolls": {"Брауни": "1"},
+            },
+        )
+        self.assertTrue(created["ok"], created)
+        task_id = self.database.get_active_production_tasks()[0][0]
+        self.assertTrue(miniapp_server.start_cutting_task_for_telegram(9020, task_id)["ok"])
+        contours = miniapp_server.submit_cutting_stage_for_telegram(
+            9020,
+            {"stage": "contours", "task_id": task_id, "quantities": {"86|Брауни": "5"}},
+        )
+        self.assertTrue(contours["ok"], contours)
+        batch_id = self.database.get_cutting_batches_for_layout("Футболки")[0][0]
+        layout = miniapp_server.submit_cutting_stage_for_telegram(
+            9020,
+            {"stage": "layout", "batch_id": batch_id, "color_layers": {"Брауни": "2"}},
+        )
+        self.assertTrue(layout["ok"], layout)
+        cutting = miniapp_server.submit_cutting_stage_for_telegram(
+            9020,
+            {"stage": "cutting", "batch_id": batch_id, "progress": "50"},
+        )
+        self.assertTrue(cutting["ok"], cutting)
+
+        deleted = miniapp_server.delete_order_task_for_telegram(
+            9001, {"task_kind": "production", "task_id": task_id}
+        )
+        self.assertTrue(deleted["ok"], deleted)
+        self.assertEqual(self.database.get_production_task_by_id(task_id)["status"], "cancelled")
+        self.assertEqual(self.database.get_fabric_stock_rows()[0][2], 3)
+        self.assertEqual(self.database.get_active_production_tasks(), [])
+
     def test_zero_quantity_is_not_saved_or_reported(self):
         self.database.create_employee(2002, "Тест Швея", "Швея")
         employee = self.database.get_employee_by_telegram_id(2002)
@@ -2264,7 +2312,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         row = next(row for row in self.database.get_cutting_batches_for_cutting("Брюки-ползунки") if row[0] == batch_id)
         self.assertEqual(row[4], 75)
 
-    def test_started_cutting_task_cannot_be_cancelled_and_return_rolls(self):
+    def test_started_cutting_task_cannot_be_cancelled_by_employee(self):
+        miniapp_server = importlib.import_module("miniapp_server")
         self.database.add_fabric_receipt("Ткань", "Бежевый", 2, None)
         task = self.database.create_production_task(
             "Легинсы", ["86"], ["Бежевый"], None,
@@ -2281,7 +2330,12 @@ class IsolatedDatabaseTest(unittest.TestCase):
         )
 
         self.assertIsNotNone(batch_id)
-        self.assertIsNone(self.database.cancel_production_task(task["id"], employee[0]))
+        result = miniapp_server.delete_order_task_for_telegram(
+            1203,
+            {"task_kind": "production", "task_id": task["id"]},
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("администратора", result["message"].lower())
         self.assertEqual(self.database.get_fabric_stock_rows()[0][2], 1)
         self.assertEqual(self.database.get_production_task_by_id(task["id"])["status"], "contours_done")
 

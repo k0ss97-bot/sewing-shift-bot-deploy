@@ -8228,7 +8228,7 @@ def rename_fabric_stock_color(material_name: str, old_color: str, new_color: str
 
 def apply_kurasova_brownie_contour_migration():
     """Apply the explicitly requested one-time production correction."""
-    migration_key = "2026-08-03-kurasova-brownie-contours-v1"
+    migration_key = "2026-08-03-kurasova-brownie-contours-v2"
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -10193,9 +10193,9 @@ def cancel_production_task(task_id: int, employee_id: int | None = None):
         cursor.execute("BEGIN IMMEDIATE")
         cursor.execute(
             """
-            SELECT product_name
+            SELECT product_name, status
             FROM production_tasks
-            WHERE id = ? AND status = 'active'
+            WHERE id = ? AND status IN ('active', 'contours_done', 'in_cutting')
             """,
             (task_id,),
         )
@@ -10207,13 +10207,28 @@ def cancel_production_task(task_id: int, employee_id: int | None = None):
             return None
 
         cursor.execute(
-            "SELECT 1 FROM cutting_batches WHERE production_task_id = ? AND status != 'cancelled' LIMIT 1",
+            "SELECT id, status FROM cutting_batches WHERE production_task_id = ? AND status != 'cancelled'",
             (task_id,),
         )
-        if cursor.fetchone() is not None:
+        cutting_batches = cursor.fetchall()
+        if any(batch_status == "formed" for _batch_id, batch_status in cutting_batches):
             conn.rollback()
             conn.close()
             return None
+        for batch_id, _batch_status in cutting_batches:
+            cursor.execute(
+                "SELECT 1 FROM route_batches WHERE source_cutting_batch_id = ? AND status != 'cancelled' LIMIT 1",
+                (batch_id,),
+            )
+            if cursor.fetchone() is not None:
+                conn.rollback()
+                conn.close()
+                return None
+
+        cursor.execute(
+            "UPDATE cutting_batches SET status = 'cancelled', updated_at = ? WHERE production_task_id = ? AND status != 'cancelled'",
+            (now, task_id),
+        )
 
         cursor.execute(
             """
@@ -10221,7 +10236,7 @@ def cancel_production_task(task_id: int, employee_id: int | None = None):
             SET status = 'cancelled',
                 updated_at = ?,
                 completed_at = ?
-            WHERE id = ? AND status = 'active'
+            WHERE id = ? AND status IN ('active', 'contours_done', 'in_cutting')
             """,
             (now, now, task_id),
         )
