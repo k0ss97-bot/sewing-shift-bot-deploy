@@ -18,13 +18,16 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("WMS_DATABASE_URL", "postgresql://wms:wms@127.0.0.1:5432/wms_test")
 
 from wms.barcode import (  # noqa: E402
+    barcode_lookup_candidates,
     classify_barcode,
     is_location_barcode,
     location_code_from_barcode,
+    normalize_scanned_barcode,
     LOCATION_PREFIX,
     CONTAINER_PREFIX,
 )
 from wms.models import Location, OperationResult, ProductKey, WarehouseStock  # noqa: E402
+from marketplaces import _marketplace_payload_barcodes  # noqa: E402
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -75,9 +78,29 @@ class BarcodeClassifyTests(unittest.TestCase):
     def test_product_barcode_is_not_mistaken_for_location(self):
         self.assertFalse(is_location_barcode("4600000000012"))
 
+    def test_handheld_scanner_framing_is_removed_without_losing_zeroes(self):
+        self.assertEqual(normalize_scanned_barcode("]C10001234567890\r\n"), "0001234567890")
+        self.assertEqual(
+            barcode_lookup_candidates("]C14600000000012\r"),
+            ("]C14600000000012", "4600000000012"),
+        )
+
     def test_prefixes(self):
         self.assertTrue("LOC:A-01".startswith(LOCATION_PREFIX))
         self.assertTrue("LPN:1".startswith(CONTAINER_PREFIX))
+
+    def test_marketplace_payload_keeps_alternate_product_barcodes(self):
+        payload = {
+            "result": {
+                "barcode": "4600000000012",
+                "barcodes": ["4600000000029", "]C14600000000036\r"],
+            },
+            "unrelated_number": 123,
+        }
+        self.assertEqual(
+            _marketplace_payload_barcodes(payload),
+            {"4600000000012", "4600000000029", "4600000000036"},
+        )
 
 
 class OperationResultTests(unittest.TestCase):

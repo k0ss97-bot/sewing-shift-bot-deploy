@@ -716,9 +716,43 @@ def sync_production_links(conn: sqlite3.Connection, account_id: int) -> dict[str
     }
 
 
+def _normalized_marketplace_barcode(value: object) -> str:
+    barcode = "".join(character for character in _text(value) if ord(character) >= 32).strip()
+    if re.match(r"^\][A-Za-z][0-9]", barcode):
+        barcode = barcode[3:].strip()
+    return barcode
+
+
+def _marketplace_payload_barcodes(payload_json: object) -> set[str]:
+    """Collect primary and alternate barcodes retained in marketplace JSON."""
+    if isinstance(payload_json, str):
+        try:
+            payload_json = json.loads(payload_json or "{}")
+        except (TypeError, ValueError):
+            return set()
+    found: set[str] = set()
+
+    def visit(value: object, barcode_context: bool = False) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                visit(child, barcode_context or "barcode" in str(key).casefold())
+            return
+        if isinstance(value, list):
+            for child in value:
+                visit(child, barcode_context)
+            return
+        if barcode_context:
+            normalized = _normalized_marketplace_barcode(value)
+            if normalized:
+                found.add(normalized)
+
+    visit(payload_json)
+    return found
+
+
 def resolve_production_product_by_barcode(barcode: str) -> dict | None:
     """Resolve an Ozon barcode to a linked internal product key for WMS scans."""
-    value = _text(barcode)
+    value = _normalized_marketplace_barcode(barcode)
     if not value:
         return None
     conn = get_db_connection()
@@ -728,13 +762,29 @@ def resolve_production_product_by_barcode(barcode: str) -> dict | None:
         account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
         sync_production_links(conn, account_id)
         row = conn.execute(
-            """SELECT l.production_product_name,l.production_size,l.production_color
+            """SELECT l.production_product_name,l.production_size,l.production_color,p.payload_json,p.barcode
                  FROM marketplace_products p
                  JOIN marketplace_production_links l ON l.marketplace_product_id=p.id
                  WHERE p.account_id=? AND p.barcode=? AND l.status='linked'
                  LIMIT 1""",
             (account_id, value),
         ).fetchone()
+        if not row:
+            linked_rows = conn.execute(
+                """SELECT l.production_product_name,l.production_size,l.production_color,p.payload_json,p.barcode
+                     FROM marketplace_products p
+                     JOIN marketplace_production_links l ON l.marketplace_product_id=p.id
+                     WHERE p.account_id=? AND l.status='linked'""",
+                (account_id,),
+            ).fetchall()
+            row = next(
+                (
+                    candidate for candidate in linked_rows
+                    if value == _normalized_marketplace_barcode(candidate[4])
+                    or value in _marketplace_payload_barcodes(candidate[3])
+                ),
+                None,
+            )
         conn.commit()
         if not row:
             return None
@@ -1566,7 +1616,9 @@ def marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) -> list[
     products = []
     for source in rows:
         product = dict(source)
-        product["image_url"] = _marketplace_product_image(product.pop("payload_json", ""))
+        payload_json = product.pop("payload_json", "")
+        product["image_url"] = _marketplace_product_image(payload_json)
+        product["barcodes"] = sorted(_marketplace_payload_barcodes(payload_json))
         group_key, group_name = product_group_for(
             product.get("name"), product.get("offer_id"), product.get("sku"), product.get("barcode"),
         )
@@ -1600,13 +1652,17 @@ def marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) -> list[
             None,
         )
         if linked:
+            alternate_barcodes = set(linked.get("barcodes") or [])
+            primary_barcode = _normalized_marketplace_barcode(linked.get("barcode"))
+            if primary_barcode:
+                alternate_barcodes.add(primary_barcode)
             resolved.append({
                 key: linked.get(key)
                 for key in (
                     "id", "name", "group_name", "offer_id", "sku", "barcode",
                     "size", "color", "image_url", "route_configured",
                 )
-            })
+            } | {"barcodes": sorted(alternate_barcodes)})
         else:
             resolved.append(None)
     conn.close()

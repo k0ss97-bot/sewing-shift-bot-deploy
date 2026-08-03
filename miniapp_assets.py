@@ -5008,6 +5008,93 @@ MINIAPP_HTML = """<!doctype html>
       .marketplace-menu-icon { width: 21px; height: 21px; flex-basis: 21px; }
       .marketplace-line-chart, .marketplace-line-chart svg { min-height: 190px; height: 190px; }
     }
+    .wms-stock-product-balance {
+      display: grid;
+      justify-items: end;
+      gap: 6px;
+      min-width: 112px;
+      text-align: right;
+    }
+
+    .wms-stock-product-balance small {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    @media (max-width: 520px) {
+      .wms-stock-product-row {
+        grid-template-columns: minmax(0, 1fr);
+        align-items: stretch;
+        gap: 12px;
+        padding: 12px !important;
+      }
+
+      .wms-stock-product-row .wms-product-rich {
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .wms-stock-product-row .marketplace-product-avatar.large {
+        width: 64px;
+        height: 82px;
+        flex-basis: 64px;
+        border-radius: 11px;
+      }
+
+      .wms-stock-product-row .wms-product-rich-copy b {
+        font-size: 14px;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+      }
+
+      .wms-stock-product-row .wms-product-rich-copy span,
+      .wms-stock-product-row .wms-product-rich-copy small {
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
+
+      .wms-stock-product-balance {
+        width: 100%;
+        min-width: 0;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        justify-items: start;
+        text-align: left;
+      }
+
+      .wms-stock-product-balance small {
+        justify-self: end;
+        text-align: right;
+      }
+
+      .wms-guided-scanner .report-row {
+        grid-template-columns: minmax(0, 1fr) 34px;
+        padding: 10px 8px;
+      }
+
+      .wms-guided-scanner .button-row,
+      .wms-guided-scanner .small-button {
+        width: 100%;
+      }
+
+      .bottom-nav {
+        padding-left: 5px;
+        padding-right: 5px;
+        gap: 0;
+      }
+
+      .nav-btn {
+        padding-inline: 1px;
+        font-size: 9px;
+      }
+
+      .nav-btn span:last-child {
+        overflow-wrap: normal;
+        word-break: normal;
+        white-space: nowrap;
+      }
+    }
   </style>
   <script src="/assets/jsqr.js"></script>
 </head>
@@ -8352,6 +8439,17 @@ MINIAPP_HTML = """<!doctype html>
       };
     }
 
+    function setWmsDraftProductKey(productKey) {
+      const pk = productKey || {};
+      state.wmsDraft.itemType = pk.item_type || "finished";
+      state.wmsDraft.productName = pk.product_name || "";
+      state.wmsDraft.productSize = pk.product_size || "";
+      state.wmsDraft.productColor = pk.product_color || "";
+      state.wmsDraft.stageName = pk.stage_name || "Готово";
+      state.wmsDraft.readyForPosition = pk.ready_for_position || "Склад";
+      state.wmsDraft.productScanned = Boolean(state.wmsDraft.productName);
+    }
+
     async function wmsReceive() {
       const d = readWmsDraftFromForm();
       const qty = parseInt(d.quantity, 10);
@@ -8606,7 +8704,7 @@ MINIAPP_HTML = """<!doctype html>
       try {
         const data = await api("/api/wms/inventory", {
           location_code: locationCode,
-          counted: [{product_key: wmsProductKey(d), counted_quantity: countedQty}],
+          counted: [{product_key: stockRow.product_key, counted_quantity: countedQty}],
           request_key: `wms:inventory:${createRequestId()}`,
         });
         const ok = data.status === "ok" || data.status === "duplicate";
@@ -9271,8 +9369,14 @@ MINIAPP_HTML = """<!doctype html>
       promptRouteCode();
     }
 
+    function normalizeWmsScannedBarcode(rawValue) {
+      let value = String(rawValue || "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      if (value.startsWith("]") && /^[A-Za-z][0-9]/.test(value.slice(1, 3))) value = value.slice(3).trim();
+      return value;
+    }
+
     async function handleWmsScan(rawValue) {
-      const v = String(rawValue || "").trim();
+      const v = normalizeWmsScannedBarcode(rawValue);
       if (!v) return;
       clearWmsHardwareScannerInput();
       const field = state.wmsScanField || "product";
@@ -9312,7 +9416,8 @@ MINIAPP_HTML = """<!doctype html>
         showToast("ТСД", `Контейнер: ${v} (поддержка LPN — в разработке)`);
       } else {
         try {
-          const data = await api("/api/wms/barcode/resolve", {barcode: v});
+          const locationCode = state.wmsView === "putaway" ? state.wmsDraft.toLocation : state.wmsDraft.fromLocation;
+          const data = await api("/api/wms/barcode/resolve", {barcode: v, location_code: locationCode || ""});
           const pk = data.product_key || {};
           if (field === "lookup_product") {
             state.wmsLookup = {barcode: v, productKey: pk, error: ""};
@@ -9321,14 +9426,7 @@ MINIAPP_HTML = """<!doctype html>
             showToast("ТСД", `Товар найден: ${wmsProductLabel(pk)}.`);
             return;
           }
-          state.wmsDraft.itemType = pk.item_type || "finished";
-          state.wmsDraft.productName = pk.product_name || "";
-          state.wmsDraft.productSize = pk.product_size || "";
-          state.wmsDraft.productColor = pk.product_color || "";
-          state.wmsDraft.stageName = pk.stage_name || "Готово";
-          state.wmsDraft.readyForPosition = pk.ready_for_position || "Склад";
-          state.wmsDraft.productScanned = true;
-          const locationCode = state.wmsView === "putaway" ? state.wmsDraft.toLocation : state.wmsDraft.fromLocation;
+          setWmsDraftProductKey(pk);
           const requiresStockInCell = ["pick", "inventory"].includes(state.wmsView);
           const stockRow = requiresStockInCell && locationCode ? wmsFindScannedStock(locationCode, pk) : null;
           if (requiresStockInCell && locationCode && !stockRow) {
@@ -9339,6 +9437,7 @@ MINIAPP_HTML = """<!doctype html>
             render();
             showToast("Склад", "Этого товара нет в отсканированной ячейке.");
           } else {
+            if (stockRow) setWmsDraftProductKey(stockRow.product_key);
             if (state.wmsView === "inventory") state.wmsDraft.quantity = "0";
             render();
             showToast("ТСД", `Товар: ${state.wmsDraft.productName}`);
@@ -10397,8 +10496,14 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function wmsProductKeysEqual(first, second) {
-      const keys = ["item_type", "product_name", "product_size", "product_color", "stage_name", "ready_for_position"];
-      return keys.every((key) => String((first || {})[key] || "") === String((second || {})[key] || ""));
+      const normalize = (value) => String(value || "")
+        .normalize("NFKC")
+        .trim()
+        .replace(/\\s+/g, " ")
+        .replace(/ё/g, "е")
+        .toLocaleLowerCase("ru");
+      const identityKeys = ["item_type", "product_name", "product_size", "product_color"];
+      return identityKeys.every((key) => normalize((first || {})[key]) === normalize((second || {})[key]));
     }
 
     function wmsFindScannedStock(locationCode, productKey) {
@@ -10411,7 +10516,7 @@ MINIAPP_HTML = """<!doctype html>
       const expectedField = locationReady ? "product" : locationField;
       const expectedText = locationReady ? "Отсканируйте товар" : `Отсканируйте ${locationLabel.toLowerCase()}`;
       return `
-        <div class="card field-card">
+        <div class="card field-card wms-guided-scanner">
           <label>Порядок сканирования</label>
           <div class="op-list">
             <div class="report-row"><div><b>1. ${escapeHtml(locationLabel)}</b><span>${locationReady ? escapeHtml(locationCode) : "Наведите сканер на штрихкод ячейки"}</span></div><span class="status-chip ${locationReady ? "" : "gray"}">${locationReady ? "✓" : "1"}</span></div>
@@ -10458,7 +10563,7 @@ MINIAPP_HTML = """<!doctype html>
       const identity = product
         ? `<div class="wms-product-rich">${marketplaceProductAvatar(product, false, true)}<div class="wms-product-rich-copy"><b>${escapeHtml(product.group_name || product.name || "Товар Ozon")}</b><span>Артикул: ${escapeHtml(product.offer_id || "—")} · SKU: ${escapeHtml(product.sku || "—")}</span><small>Размер ${escapeHtml(product.size || row.product_key?.product_size || "—")} · цвет ${escapeHtml(product.color || row.product_key?.product_color || "—")}</small></div></div>`
         : `<div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>Складская номенклатура</span></div>`;
-      return `<div class="card report-row">${identity}<div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span><small>Доступно ${escapeHtml(free)} · резерв ${escapeHtml(row.reserved_quantity || 0)}</small></div></div>`;
+      return `<div class="card report-row wms-stock-product-row">${identity}<div class="wms-stock-product-balance"><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span><small>Доступно ${escapeHtml(free)} · резерв ${escapeHtml(row.reserved_quantity || 0)}</small></div></div>`;
     }
 
     function wmsMovementLabel(type) {

@@ -23,6 +23,27 @@ from .models import ProductKey
 LOCATION_PREFIX = "LOC:"
 CONTAINER_PREFIX = "LPN:"
 PHYSICAL_LOCATION_PATTERN = re.compile(r"^Z\d+-S\d+-P\d+-\d+$", re.IGNORECASE)
+SCANNER_SYMBOLOGY_PREFIX = re.compile(r"^\][A-Za-z][0-9]")
+
+
+def normalize_scanned_barcode(raw: str) -> str:
+    """Remove harmless framing added by handheld scanners.
+
+    CR/LF suffixes and three-character AIM symbology prefixes (for example
+    ``]C1``) are not part of the product code. Significant digits, including
+    leading zeroes, are preserved.
+    """
+    value = "".join(character for character in str(raw or "") if ord(character) >= 32).strip()
+    if SCANNER_SYMBOLOGY_PREFIX.match(value):
+        value = value[3:].strip()
+    return value
+
+
+def barcode_lookup_candidates(raw: str) -> tuple[str, ...]:
+    """Return safe exact-match candidates for a scanner payload."""
+    original = str(raw or "").strip()
+    normalized = normalize_scanned_barcode(original)
+    return tuple(dict.fromkeys(value for value in (original, normalized) if value))
 
 
 def is_location_barcode(raw: str) -> bool:
@@ -32,7 +53,7 @@ def is_location_barcode(raw: str) -> bool:
     (``Z1-S1-P1-1``) and must remain printable/scannable without a ``LOC:``
     prefix. Legacy prefixed labels stay supported for compatibility.
     """
-    value = raw.strip()
+    value = normalize_scanned_barcode(raw)
     return value.upper().startswith(LOCATION_PREFIX) or bool(
         PHYSICAL_LOCATION_PATTERN.fullmatch(value)
     )
@@ -40,7 +61,7 @@ def is_location_barcode(raw: str) -> bool:
 
 def classify_barcode(raw: str) -> str:
     """Return the kind of a scanned barcode string."""
-    s = raw.strip()
+    s = normalize_scanned_barcode(raw)
     if is_location_barcode(s):
         return "location"
     if s.startswith(CONTAINER_PREFIX):
@@ -50,7 +71,7 @@ def classify_barcode(raw: str) -> str:
 
 def location_code_from_barcode(raw: str) -> str:
     """Extract a normalized location code from a supported cell scan."""
-    value = raw.strip()
+    value = normalize_scanned_barcode(raw)
     if value.upper().startswith(LOCATION_PREFIX):
         return value[len(LOCATION_PREFIX) :].strip().upper()
     if PHYSICAL_LOCATION_PATTERN.fullmatch(value):
@@ -71,7 +92,7 @@ def register_product_barcode(
                 """INSERT INTO wms_barcodes (barcode, barcode_type, entity_type, entity_key)
                    VALUES (%s, 'product', 'warehouse_stock', %s)
                    ON CONFLICT (barcode) DO UPDATE SET entity_key = EXCLUDED.entity_key""",
-                (barcode.strip(), json.dumps(product_key.to_dict())),
+                (normalize_scanned_barcode(barcode), json.dumps(product_key.to_dict())),
             )
         conn.commit()
     except Exception:
@@ -83,9 +104,12 @@ def resolve_product_barcode(barcode: str) -> ProductKey | None:
     """Return the ProductKey linked to a product barcode, or None."""
     conn = get_pg_connection()
     with conn.cursor() as cur:
+        candidates = barcode_lookup_candidates(barcode)
+        if not candidates:
+            return None
         cur.execute(
-            "SELECT entity_key FROM wms_barcodes WHERE barcode = %s AND barcode_type = 'product'",
-            (barcode.strip(),),
+            "SELECT entity_key FROM wms_barcodes WHERE barcode = ANY(%s) AND barcode_type = 'product' LIMIT 1",
+            (list(candidates),),
         )
         row = cur.fetchone()
     if row is None or not row[0]:

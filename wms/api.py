@@ -29,6 +29,7 @@ from . import operations as ops
 from . import repository as repo
 from .barcode import (
     PHYSICAL_LOCATION_PATTERN,
+    normalize_scanned_barcode,
     register_product_barcode,
     resolve_product_barcode,
 )
@@ -275,8 +276,7 @@ def _stock(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         conn,
         location_id=location_id,
     )
-    return 200, {
-        "stock": [
+    stock_payload = [
             {
                 "id": r.id,
                 "product_key": r.product_key.to_dict(),
@@ -288,15 +288,56 @@ def _stock(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             }
             for r in rows
         ]
-    }
+    try:
+        from marketplaces import marketplace_metadata_for_wms_product_keys
+
+        marketplace_rows = marketplace_metadata_for_wms_product_keys(
+            [row["product_key"] for row in stock_payload]
+        )
+        for row, marketplace_product in zip(stock_payload, marketplace_rows):
+            row["marketplace_product"] = marketplace_product
+    except Exception:
+        logging.exception("WMS stock marketplace metadata enrichment failed")
+    return 200, {"stock": stock_payload}
 
 
 def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    barcode = str(payload.get("barcode") or "").strip()
+    barcode = normalize_scanned_barcode(str(payload.get("barcode") or ""))
     if not barcode:
         return 400, {"ok": False, "message": "Штрихкод не указан."}
     if len(barcode) > 128:
         return 400, {"ok": False, "message": "Штрихкод слишком длинный."}
+    location_code = str(payload.get("location_code") or "").replace("LOC:", "").strip().upper()
+    if location_code:
+        conn = get_pg_connection()
+        location = repo.get_location_by_code(conn, location_code)
+        if location is not None:
+            stock_rows = repo.get_stock_rows(conn, location_id=location.id)
+            try:
+                from marketplaces import marketplace_metadata_for_wms_product_keys
+
+                metadata = marketplace_metadata_for_wms_product_keys(
+                    [row.product_key.to_dict() for row in stock_rows]
+                )
+                for stock_row, marketplace_product in zip(stock_rows, metadata):
+                    if not marketplace_product:
+                        continue
+                    known_barcodes = {
+                        normalize_scanned_barcode(value)
+                        for value in (
+                            [marketplace_product.get("barcode")]
+                            + list(marketplace_product.get("barcodes") or [])
+                        )
+                        if value
+                    }
+                    if barcode in known_barcodes:
+                        return 200, {
+                            "ok": True,
+                            "product_key": stock_row.product_key.to_dict(),
+                            "matched_in_location": True,
+                        }
+            except Exception:
+                logging.exception("Location-aware marketplace barcode lookup failed")
     product_key = resolve_product_barcode(barcode)
     if product_key is None:
         # Marketplace cards are the master for finished-goods labels.  A safe
@@ -316,7 +357,7 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
 
 
 def _register_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    barcode = str(payload.get("barcode") or "").strip()
+    barcode = normalize_scanned_barcode(str(payload.get("barcode") or ""))
     if not barcode:
         return 400, {"ok": False, "message": "Штрихкод не указан."}
     if len(barcode) > 128:
