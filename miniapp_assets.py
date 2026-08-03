@@ -8438,12 +8438,17 @@ MINIAPP_HTML = """<!doctype html>
       const d = readWmsDraftFromForm();
       const countedQty = parseInt(d.quantity, 10);
       const locationCode = (d.fromLocation || "").replace(/^LOC:/i, "").trim();
-      if (!d.productName || Number.isNaN(countedQty) || countedQty < 0) {
-        showToast("ТСД", "Укажите изделие и фактическое количество (0 или больше).");
+      if (!d.productName || !d.productScanned || Number.isNaN(countedQty) || countedQty < 0) {
+        showToast("ТСД", "Сначала отсканируйте товар, затем укажите фактическое количество.");
         return;
       }
-      if (!locationCode) {
-        showToast("ТСД", "Отсканируйте или введите ячейку пересчёта.");
+      if (!locationCode || !d.fromLocationScanned) {
+        showToast("ТСД", "Сначала отсканируйте ячейку пересчёта.");
+        return;
+      }
+      const stockRow = wmsFindScannedStock(locationCode, wmsProductKey(d));
+      if (!stockRow) {
+        showToast("ТСД", "Этого товара нет в отсканированной ячейке.");
         return;
       }
       const actionKey = `wms:inventory:${locationCode}:${d.productName}`;
@@ -8457,7 +8462,15 @@ MINIAPP_HTML = """<!doctype html>
         });
         const ok = data.status === "ok" || data.status === "duplicate";
         showToast("ТСД", ok ? `Пересчёт сохранён: ${countedQty} шт.` : (data.reason || "Ошибка пересчёта."));
-        if (ok) { state.wmsDraft.quantity = ""; render(); refreshWmsWorkspace({silent: true}); }
+        if (ok) {
+          state.wmsDraft.quantity = "";
+          state.wmsDraft.productName = "";
+          state.wmsDraft.productSize = "";
+          state.wmsDraft.productColor = "";
+          state.wmsDraft.productScanned = false;
+          render();
+          refreshWmsWorkspace({silent: true});
+        }
         else mainButton.disabled = false;
       } catch (error) {
         showToast("Ошибка", error.apiMessage || "Не удалось сохранить пересчёт.");
@@ -9167,8 +9180,9 @@ MINIAPP_HTML = """<!doctype html>
           state.wmsDraft.readyForPosition = pk.ready_for_position || "Склад";
           state.wmsDraft.productScanned = true;
           const locationCode = state.wmsView === "putaway" ? state.wmsDraft.toLocation : state.wmsDraft.fromLocation;
-          const stockRow = state.wmsView === "pick" && locationCode ? wmsFindScannedStock(locationCode, pk) : null;
-          if (state.wmsView === "pick" && locationCode && !stockRow) {
+          const requiresStockInCell = ["pick", "inventory"].includes(state.wmsView);
+          const stockRow = requiresStockInCell && locationCode ? wmsFindScannedStock(locationCode, pk) : null;
+          if (requiresStockInCell && locationCode && !stockRow) {
             state.wmsDraft.productName = "";
             state.wmsDraft.productSize = "";
             state.wmsDraft.productColor = "";
@@ -9176,6 +9190,7 @@ MINIAPP_HTML = """<!doctype html>
             render();
             showToast("Склад", "Этого товара нет в отсканированной ячейке.");
           } else {
+            if (state.wmsView === "inventory") state.wmsDraft.quantity = "0";
             render();
             showToast("ТСД", `Товар: ${state.wmsDraft.productName}`);
           }
@@ -11676,23 +11691,31 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderWmsInventory() {
       const d = state.wmsDraft;
-      mainButton.textContent = "Сохранить пересчёт";
-      mainButton.disabled = false;
+      const locationCode = (d.fromLocation || "").replace(/^LOC:/i, "").trim();
+      const locationReady = Boolean(d.fromLocationScanned && locationCode && wmsLocationByCode(locationCode));
+      const productDetected = Boolean(locationReady && d.productScanned && d.productName);
+      const stockRow = productDetected ? wmsFindScannedStock(locationCode, wmsProductKey(d)) : null;
+      const systemQuantity = stockRow ? Number(stockRow.quantity || 0) : null;
+      const countedQuantity = String(d.quantity ?? "");
+      const canConfirm = Boolean(stockRow && /^\\d+$/.test(countedQuantity));
+      mainButton.hidden = true;
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Инвентаризация</h2><p>Сначала отсканируйте ячейку, затем товар и введите фактическое количество.</p></div></div>
-        <div class="card field-card">
-          <div class="form-grid">
-            <div class="field full"><label>Ячейка</label><input id="wmsFromLocation" value="${escapeHtml(d.fromLocation || "")}" placeholder="Z1-S1-P1-1"></div>
-            <div class="field full"><label>Изделие</label><select id="wmsProductName">${wmsProductOptions(d.productName)}</select></div>
-            <div class="field"><label>Размер</label><select id="wmsProductSize">${wmsSizeOptions(d.productName, d.productSize)}</select></div>
-            <div class="field"><label>Цвет</label><select id="wmsProductColor">${wmsColorOptions(d.productName, d.productColor)}</select></div>
-            <div class="field full"><label>Фактическое количество</label><input id="wmsQuantity" type="number" min="0" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>
+        ${renderWmsGuidedScanner("from_location", locationCode, productDetected, "Ячейка пересчёта")}
+        ${locationReady ? renderWmsLocationContents(locationCode) : ""}
+        ${productDetected ? `
+          <div class="card field-card">
+            <label>Пересчёт товара</label>
+            <div class="report-row"><div><b>${escapeHtml(wmsProductLabel(wmsProductKey(d)))}</b><span>Ячейка ${escapeHtml(locationCode)}</span></div><span class="status-chip">товар найден</span></div>
+            <div class="form-grid">
+              <div class="field"><label>В системе</label><input value="${escapeHtml(systemQuantity)}" readonly></div>
+              <div class="field"><label>Фактическое количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="0" step="1" value="${escapeHtml(countedQuantity)}" placeholder="0" autofocus></div>
+            </div>
           </div>
-        </div>
+        ` : ""}
         <div class="button-row">
-          <button class="small-button" data-wms-scan="from_location">📷 Ячейка</button>
-          <button class="small-button" data-wms-scan="product">📷 Товар</button>
-          <button class="small-button secondary" data-wms-action="inventory">Сохранить</button>
+          <button class="small-button secondary" data-wms-action="inventory_back">Назад</button>
+          ${productDetected ? `<button class="small-button" data-wms-action="inventory" ${canConfirm ? "" : "disabled"}>Подтвердить</button>` : ""}
         </div>
       `;
     }
@@ -12995,7 +13018,7 @@ MINIAPP_HTML = """<!doctype html>
       const wmsView = event.target.closest("[data-wms-view]");
       if (wmsView) {
         const nextView = wmsView.dataset.wmsView;
-        if (nextView !== state.wmsView && ["putaway", "pick"].includes(nextView)) {
+        if (nextView !== state.wmsView && ["putaway", "pick", "inventory"].includes(nextView)) {
           state.wmsDraft.quantity = "";
           state.wmsDraft.productName = "";
           state.wmsDraft.productSize = "";
@@ -13006,6 +13029,10 @@ MINIAPP_HTML = """<!doctype html>
             state.wmsDraft.toLocationScanned = false;
           }
           if (nextView === "pick") {
+            state.wmsDraft.fromLocation = "";
+            state.wmsDraft.fromLocationScanned = false;
+          }
+          if (nextView === "inventory") {
             state.wmsDraft.fromLocation = "";
             state.wmsDraft.fromLocationScanned = false;
           }
@@ -13049,6 +13076,21 @@ MINIAPP_HTML = """<!doctype html>
         else if (action === "putaway") wmsPutaway();
         else if (action === "transfer") wmsTransfer();
         else if (action === "pick") wmsPick();
+        else if (action === "inventory_back") {
+          if (state.wmsDraft.productScanned) {
+            state.wmsDraft.productName = "";
+            state.wmsDraft.productSize = "";
+            state.wmsDraft.productColor = "";
+            state.wmsDraft.productScanned = false;
+            state.wmsDraft.quantity = "";
+          } else if (state.wmsDraft.fromLocationScanned) {
+            state.wmsDraft.fromLocation = "";
+            state.wmsDraft.fromLocationScanned = false;
+          } else {
+            state.wmsView = "more";
+          }
+          render();
+        }
         else if (action === "inventory") wmsInventory();
         else if (action === "scrap") wmsScrap();
         else if (action === "register_barcode") wmsRegisterBarcode();
