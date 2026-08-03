@@ -4330,6 +4330,147 @@ MINIAPP_HTML = """<!doctype html>
       .analytics-matrix-values { justify-content: start; text-align: left; }
     }
 
+    /* Analytics center. The public application chrome remains shared, while
+       this workspace follows prototype/ as an independent dense SaaS UI. */
+    body.web-mode.analytics-mode .body {
+      padding: 22px 24px 46px !important;
+    }
+    body.web-mode.analytics-mode #mount { width: 100%; }
+    .ac-shell {
+      --ac-bg: #f4f6fb;
+      --ac-surface: #fff;
+      --ac-border: #e3e8f1;
+      --ac-text: #111827;
+      --ac-muted: #718096;
+      --ac-sidebar: #121a2c;
+      --ac-blue: #2563eb;
+      --ac-wb: #c915b8;
+      display: grid;
+      grid-template-columns: 236px minmax(0,1fr);
+      min-height: calc(100vh - 150px);
+      overflow: hidden;
+      color: var(--ac-text);
+      background: var(--ac-bg);
+      border: 1px solid var(--ac-border);
+      border-radius: 18px;
+      box-shadow: 0 14px 42px rgba(15,23,42,.08);
+    }
+    .ac-sidebar {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding: 20px 14px;
+      color: #a9b4c8;
+      background: radial-gradient(circle at 12% 0,rgba(79,70,229,.18),transparent 34%),linear-gradient(180deg,#141d33,#101827);
+    }
+    .ac-brand { display:flex; align-items:center; gap:11px; padding:2px 8px 21px; border-bottom:1px solid rgba(255,255,255,.07); }
+    .ac-brand-mark { width:36px; height:36px; display:grid; place-items:center; border-radius:10px; color:#fff; background:linear-gradient(135deg,#3867ff,#6f4ef6); font-weight:900; }
+    .ac-brand strong,.ac-brand span { display:block; }
+    .ac-brand strong { color:#fff; font-size:12px; letter-spacing:.12em; }
+    .ac-brand span { margin-top:2px; color:#7f8da5; font-size:9px; }
+    .ac-nav { display:grid; gap:4px; margin-top:18px; }
+    .ac-nav button {
+      position:relative; width:100%; min-height:42px; display:grid; grid-template-columns:22px minmax(0,1fr); align-items:center; gap:10px;
+      padding:0 11px; border:0; border-radius:10px; color:#9da9bc; background:transparent; text-align:left; cursor:pointer;
+      font-size:12px; font-weight:750;
+    }
+    .ac-nav button:hover { color:#fff; background:rgba(255,255,255,.055); }
+    .ac-nav button.active { color:#fff; background:rgba(91,96,246,.22); box-shadow:inset 0 0 0 1px rgba(129,140,248,.14); }
+    .ac-nav button.active::before { content:""; position:absolute; left:-14px; top:9px; width:3px; height:24px; border-radius:0 3px 3px 0; background:#818cf8; }
+    .ac-nav-icon { width:20px; height:20px; display:grid; place-items:center; color:inherit; font-size:14px; }
+    .ac-sidebar-status { margin-top:auto; padding:13px; border:1px solid rgba(255,255,255,.07); border-radius:12px; background:rgba(255,255,255,.045); }
+    .ac-sidebar-status b,.ac-sidebar-status span { display:block; }
+    .ac-sidebar-status b { color:#e7ebf4; font-size:10px; }
+    .ac-sidebar-status span { margin-top:5px; color:#8290a6; font-size:9px; line-height:1.45; }
+    .ac-main { min-width:0; }
+    .ac-topbar {
+      min-height:70px; display:flex; align-items:center; gap:12px; padding:14px 20px;
+      border-bottom:1px solid var(--ac-border); background:rgba(255,255,255,.92); backdrop-filter:blur(14px);
+    }
+    .ac-search { flex:1 1 300px; max-width:420px; height:40px; display:flex; align-items:center; gap:8px; padding:0 12px; border:1px solid var(--ac-border); border-radius:10px; background:#f7f9fc; }
+    .ac-search span { color:#98a3b5; }
+    .ac-search input { min-width:0; flex:1; border:0; outline:0; background:transparent; color:var(--ac-text); font-size:11px; }
+    .ac-market-switch { margin-left:auto; display:flex; gap:3px; padding:3px; border:1px solid var(--ac-border); border-radius:10px; background:#f3f5f9; }
+    .ac-market-switch button { min-height:32px; padding:0 10px; border:0; border-radius:7px; color:#748095; background:transparent; font-size:10px; font-weight:800; cursor:pointer; }
+    .ac-market-switch button.active { color:#111827; background:#fff; box-shadow:0 2px 8px rgba(15,23,42,.08); }
+    .ac-market-switch button[data-provider="ozon"].active { color:#fff; background:var(--ac-blue); }
+    .ac-market-switch button[data-provider="wildberries"].active { color:#fff; background:var(--ac-wb); }
+    .ac-sync { min-height:38px; padding:0 13px; border:0; border-radius:10px; color:#fff; background:linear-gradient(135deg,#2563eb,#5b45ee); font-size:10px; font-weight:800; cursor:pointer; white-space:nowrap; }
+    .ac-content { padding:22px; }
+    .ac-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; margin-bottom:18px; }
+    .ac-eyebrow { display:block; margin-bottom:5px; color:#4f46e5; font-size:9px; font-weight:900; letter-spacing:.13em; text-transform:uppercase; }
+    .ac-heading h1 { margin:0; color:#101827; font-size:clamp(25px,2.1vw,34px); line-height:1.08; letter-spacing:-.045em; }
+    .ac-heading p { margin:6px 0 0; color:var(--ac-muted); font-size:11px; }
+    .ac-business-state { display:inline-flex; align-items:center; gap:7px; min-height:30px; padding:0 10px; border:1px solid #cce8dd; border-radius:9px; color:#13795b; background:#edf9f4; font-size:9px; font-weight:800; white-space:nowrap; }
+    .ac-business-state.partial,.ac-business-state.stale { color:#9a6508; border-color:#f1ddb1; background:#fff8e9; }
+    .ac-business-state.unavailable,.ac-business-state.error { color:#9b3342; border-color:#f0cbd1; background:#fff2f4; }
+    .ac-filterbar { display:grid; grid-template-columns:minmax(190px,260px) minmax(260px,1fr) auto; gap:10px; align-items:end; margin-bottom:12px; padding:12px; border:1px solid var(--ac-border); border-radius:13px; background:#fff; }
+    .ac-filterbar label { display:grid; gap:5px; color:#8792a4; font-size:8px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
+    .ac-filterbar select,.ac-filterbar input { width:100%; min-height:38px; border:1px solid var(--ac-border); border-radius:9px; background:#fafbfd; color:var(--ac-text); padding:0 10px; font-size:11px; }
+    .ac-filter-range { align-self:center; color:#6f7b8e; font-size:10px; font-weight:750; }
+    .ac-kpis { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; margin-bottom:12px; }
+    .ac-kpi { position:relative; min-width:0; min-height:128px; padding:15px; border:1px solid var(--ac-border); border-radius:16px; background:#fff; box-shadow:0 3px 12px rgba(15,23,42,.035); }
+    .ac-kpi.accent { border-color:#d8ddff; background:linear-gradient(145deg,#fff,#f8f8ff); }
+    .ac-kpi-label { display:flex; align-items:flex-start; justify-content:space-between; gap:7px; min-height:27px; color:#758196; font-size:9px; font-weight:750; }
+    .ac-kpi-value { margin:11px 0 9px; color:#0f172a; font-size:clamp(20px,1.65vw,28px); font-weight:850; line-height:1.05; letter-spacing:-.045em; overflow-wrap:anywhere; }
+    .ac-kpi-meta { color:#909aaa; font-size:8px; line-height:1.4; }
+    .ac-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:12px; }
+    .ac-span-12 { grid-column:span 12; }.ac-span-8 { grid-column:span 8; }.ac-span-7 { grid-column:span 7; }.ac-span-6 { grid-column:span 6; }.ac-span-5 { grid-column:span 5; }.ac-span-4 { grid-column:span 4; }
+    .ac-panel { min-width:0; padding:16px; border:1px solid var(--ac-border); border-radius:16px; background:#fff; box-shadow:0 3px 12px rgba(15,23,42,.035); }
+    .ac-panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
+    .ac-panel-head small,.ac-panel-head strong { display:block; }
+    .ac-panel-head small { margin-bottom:3px; color:#9aa4b4; font-size:8px; font-weight:900; letter-spacing:.11em; text-transform:uppercase; }
+    .ac-panel-head strong { color:#172033; font-size:14px; }
+    .ac-panel-head span { color:#7a8699; font-size:9px; }
+    .ac-empty { min-height:190px; display:grid; align-content:center; justify-items:center; gap:7px; padding:22px; text-align:center; border:1px dashed #dce2ec; border-radius:12px; background:#fafbfd; }
+    .ac-empty b { font-size:12px; }.ac-empty span { max-width:440px; color:#7f8a9d; font-size:10px; line-height:1.5; }
+    .ac-empty button { min-height:34px; padding:0 11px; border:1px solid #dce2ec; border-radius:8px; color:#31569f; background:#fff; font-size:9px; font-weight:800; cursor:pointer; }
+    .ac-list { display:grid; }
+    .ac-list-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; min-height:54px; padding:9px 0; border-bottom:1px solid #edf0f5; }
+    .ac-list-row:last-child { border-bottom:0; }
+    .ac-list-row b,.ac-list-row span { display:block; overflow-wrap:anywhere; }
+    .ac-list-row b { font-size:10px; }.ac-list-row span { margin-top:3px; color:#7f8a9c; font-size:9px; line-height:1.4; }
+    .ac-pill { display:inline-flex; align-items:center; min-height:25px; padding:0 8px; border-radius:8px; color:#526075; background:#f0f3f8; font-size:8px; font-weight:850; white-space:nowrap; }
+    .ac-pill.risk { color:#a53745; background:#fff0f2; }.ac-pill.warning { color:#9a6508; background:#fff6df; }.ac-pill.good { color:#13795b; background:#eaf8f2; }
+    .ac-chart { min-height:300px; }.ac-chart .analytics-combined-chart { min-height:270px; margin-top:0; }.ac-chart .analytics-combined-chart svg { height:255px; }
+    .ac-provider-split { display:grid; gap:14px; padding-top:4px; }
+    .ac-provider-row { display:grid; grid-template-columns:104px minmax(0,1fr) auto; align-items:center; gap:10px; }
+    .ac-provider-row b { font-size:10px; }.ac-provider-row strong { font-size:10px; white-space:nowrap; }
+    .ac-track { height:6px; overflow:hidden; border-radius:99px; background:#edf0f5; }.ac-track i { display:block; height:100%; border-radius:inherit; background:var(--track,#2563eb); }
+    .ac-table-wrap { width:100%; overflow:auto; border:1px solid #e8ecf2; border-radius:12px; }
+    .ac-table { width:100%; min-width:820px; border-collapse:collapse; font-size:9px; }
+    .ac-table th { position:sticky; top:0; z-index:1; padding:10px 11px; color:#7a8698; background:#f7f9fc; text-align:left; font-size:8px; letter-spacing:.04em; text-transform:uppercase; white-space:nowrap; }
+    .ac-table td { padding:11px; border-top:1px solid #edf0f4; color:#5e6a7d; vertical-align:top; }
+    .ac-table td strong { display:block; color:#172033; font-size:9.5px; overflow-wrap:anywhere; }.ac-table td span { display:block; margin-top:2px; color:#8a95a6; }
+    .ac-waterfall { min-height:300px; display:flex; align-items:flex-end; gap:10px; padding:30px 8px 10px; }
+    .ac-waterfall-item { flex:1; min-width:64px; display:grid; align-content:end; gap:7px; text-align:center; }
+    .ac-waterfall-bar { min-height:18px; display:grid; align-items:start; padding-top:5px; border-radius:8px 8px 3px 3px; color:#fff; background:#2563eb; font-size:8px; font-weight:850; }
+    .ac-waterfall-item.negative .ac-waterfall-bar { background:#ee6478; }.ac-waterfall-item.total .ac-waterfall-bar { background:#18a979; }
+    .ac-waterfall-item span { color:#697589; font-size:8px; line-height:1.3; }
+    .ac-map { min-height:500px; position:relative; overflow:hidden; border:1px solid #e5eaf2; border-radius:14px; background:linear-gradient(180deg,#f6f8fc,#eef2fa); }
+    .ac-map-shape { position:absolute; inset:20% 8% 20%; border:2px solid #cdd7ec; border-radius:48% 35% 42% 31% / 37% 48% 32% 45%; transform:skewX(-8deg); background:linear-gradient(135deg,#eef2ff,#f5ebff); }
+    .ac-map-note { position:absolute; left:18px; right:18px; bottom:16px; padding:10px; border:1px solid #dce3ef; border-radius:9px; color:#728096; background:rgba(255,255,255,.88); font-size:9px; }
+    .ac-recommendations { display:grid; gap:8px; }.ac-recommendation { padding:11px; border:1px solid #e7ebf2; border-radius:11px; background:#fbfcfe; }.ac-recommendation b,.ac-recommendation span { display:block; }.ac-recommendation b { font-size:10px; }.ac-recommendation span { margin-top:4px; color:#7d889a; font-size:9px; line-height:1.45; }
+    .ac-skeleton { position:relative; min-height:118px; overflow:hidden; background:#eef2f7; }
+    .ac-skeleton::after { content:""; position:absolute; inset:0; transform:translateX(-100%); background:linear-gradient(90deg,transparent,rgba(255,255,255,.85),transparent); animation:analytics-shimmer 1.15s infinite; }
+    .ac-brand b,.ac-brand span{display:block}.ac-brand b{color:#fff;font-size:12px;letter-spacing:.12em}.ac-brand span{margin-top:3px;color:#7f8da5;font-size:9px}
+    .ac-nav i{width:20px;height:20px;display:grid;place-items:center;font-style:normal;color:inherit}
+    .ac-heading h2{margin:0;color:#101827;font-size:clamp(25px,2.1vw,34px);line-height:1.08;letter-spacing:-.045em}.ac-heading p{margin:6px 0 0}
+    .ac-business-state.ok{color:#13795b;border-color:#cce8dd;background:#edf9f4}.ac-business-state.unknown{color:#667085;border-color:#d8dee8;background:#f5f7fa}
+    .ac-market-switch button.active.ozon{color:#fff;background:var(--ac-blue)}.ac-market-switch button.active.wb{color:#fff;background:var(--ac-wb)}
+    .ac-filterbar button,.ac-toolbar button{min-height:38px;padding:0 14px;border:0;border-radius:9px;color:#fff;background:#2563eb;font-size:10px;font-weight:800;cursor:pointer}.ac-period-label{align-self:center;color:#6f7b8e;font-size:10px;font-weight:750}
+    .ac-kpi>span{display:block;min-height:27px;color:#758196;font-size:9px;font-weight:750}.ac-kpi>strong{display:block;margin:11px 0 9px;color:#0f172a;font-size:clamp(20px,1.65vw,28px);font-weight:850;line-height:1.05;letter-spacing:-.045em;overflow-wrap:anywhere}.ac-kpi>small{display:block;color:#909aaa;font-size:8px;line-height:1.4}
+    .ac-panel.span-12{grid-column:span 12}.ac-panel.span-8{grid-column:span 8}.ac-panel.span-6{grid-column:span 6}.ac-panel.span-4{grid-column:span 4}.ac-panel-head h3{margin:0;color:#172033;font-size:14px}
+    .ac-list-row>strong{color:#526075;font-size:9px;white-space:normal;text-align:right}.ac-panel-copy{color:#6f7b8e;font-size:10px;line-height:1.55}
+    .ac-toolbar{display:flex;align-items:end;gap:12px;margin-bottom:12px;padding:12px;border:1px solid var(--ac-border);border-radius:13px;background:#fff}.ac-toolbar>span{margin-left:auto;color:#6f7b8e;font-size:10px;font-weight:750}.ac-page-search{display:grid;gap:5px;flex:1;color:#8792a4;font-size:8px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}.ac-page-search input{min-height:40px;padding:0 11px;border:1px solid var(--ac-border);border-radius:9px;background:#fafbfd;color:#111827;font-size:11px}
+    .ac-waterfall>div{flex:1;min-width:72px;display:grid;align-content:end;gap:7px;text-align:center}.ac-waterfall>div i{display:block;height:var(--bar);min-height:18px;border-radius:8px 8px 3px 3px;background:#2563eb}.ac-waterfall>div.negative i{background:#ee6478}.ac-waterfall>div.total i{background:#18a979}.ac-waterfall>div span{color:#697589;font-size:8px}.ac-waterfall>div strong{font-size:9px;overflow-wrap:anywhere}
+    .ac-russia-shape{position:absolute;inset:15% 8% 25%;border:2px solid #cdd7ec;border-radius:48% 35% 42% 31% / 37% 48% 32% 45%;transform:skewX(-8deg);background:linear-gradient(135deg,#eef2ff,#f5ebff)}.ac-map>.ac-empty{position:absolute;left:18px;right:18px;bottom:16px;min-height:110px;background:rgba(255,255,255,.92)}
+    @media (max-width:1380px) { .ac-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}.ac-span-8,.ac-span-7,.ac-panel.span-8{grid-column:span 12}.ac-span-5,.ac-span-4,.ac-panel.span-4{grid-column:span 6} }
+    @media (max-width:899px) {
+      body.web-mode.analytics-mode .body{padding:12px 14px 90px!important}.ac-shell{display:block;min-height:0;border-radius:14px}.ac-sidebar{padding:10px}.ac-brand,.ac-sidebar-status{display:none}.ac-nav{display:flex;overflow-x:auto;margin:0;scrollbar-width:none}.ac-nav button{flex:0 0 auto;width:auto;grid-template-columns:18px auto;padding:0 12px}.ac-nav button.active::before{left:8px;right:8px;top:auto;bottom:-1px;width:auto;height:3px;border-radius:3px}.ac-topbar{flex-wrap:wrap;padding:10px}.ac-search{order:2;flex-basis:100%;max-width:none}.ac-market-switch{margin-left:0}.ac-content{padding:14px}.ac-heading{align-items:flex-start}.ac-filterbar{grid-template-columns:1fr}.ac-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ac-span-6,.ac-span-5,.ac-span-4,.ac-panel.span-8,.ac-panel.span-6,.ac-panel.span-4{grid-column:span 12}.ac-map{min-height:340px}
+    }
+    @media (max-width:520px) { .ac-kpis{grid-template-columns:1fr 1fr;gap:8px}.ac-kpi{min-height:116px;padding:12px}.ac-kpi-value{font-size:21px}.ac-heading{display:grid}.ac-business-state{width:max-content}.ac-sync{width:100%}.ac-topbar{display:grid;grid-template-columns:1fr}.ac-market-switch{width:100%}.ac-market-switch button{flex:1}.ac-search{order:initial}.ac-content{padding:12px}.ac-provider-row{grid-template-columns:86px minmax(0,1fr)}.ac-provider-row strong{grid-column:2}.ac-waterfall{overflow-x:auto}.ac-waterfall-item{flex:0 0 72px}}
+
     /* Canonical responsive layer. Keep this block last so legacy rules cannot
        silently override the desktop and mobile application shells. */
     :where(button, [role="button"], .tab, .nav-item, .workspace-tab) {
@@ -5274,6 +5415,7 @@ MINIAPP_HTML = """<!doctype html>
       "analyticsTaskId",
       "analyticsReturnView",
       "analyticsHubTab",
+      "analyticsSearch",
       "employeeHomeView",
       "userStartDate",
       "userEndDate",
@@ -5307,6 +5449,7 @@ MINIAPP_HTML = """<!doctype html>
       marketplaceFilters: {onlyProblems: false, inStockOnly: false, orderStatus: "all"},
       marketplaceLocationInitialized: false,
       analyticsHubTab: "general",
+      analyticsSearch: "",
       screen: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "shift",
       productionScreen: "shift",
       selectedOperation: 0,
@@ -6182,6 +6325,12 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderBottomNav() {
+      if (state.workspace === "analytics") {
+        bottomNav.hidden = true;
+        bottomNav.innerHTML = "";
+        return;
+      }
+      bottomNav.hidden = false;
       if (state.workspace === "warehouse") {
         const wmsItems = [
           {id: "overview", label: "Главная", icon: "⌂"},
@@ -6946,7 +7095,7 @@ MINIAPP_HTML = """<!doctype html>
           if (state.workspace === "analytics") render();
         } else {
           state.analyticsOverview.loading = false;
-          if (state.workspace === "analytics" && state.analyticsHubTab === "general") {
+          if (state.workspace === "analytics") {
             window.setTimeout(() => refreshAnalyticsOverview({silent: true}), 0);
           }
         }
@@ -9914,11 +10063,28 @@ MINIAPP_HTML = """<!doctype html>
         ["employees", "Сотрудники"],
         ["shifts", "Смены"],
         ["feedback", "Связь"],
+        ["integrations", "Интеграции"],
       ];
 
       return `<div class="segment-row">${sections.map(([id, label]) => `
         <button class="segment-button ${state.adminSection === id ? "active" : ""}" data-admin-section="${id}">${label}</button>
       `).join("")}</div>`;
+    }
+
+    function renderAdminIntegrations() {
+      const root = state.marketplaceData && state.marketplaceData.payload && typeof state.marketplaceData.payload === "object" ? state.marketplaceData.payload : {};
+      const runs = [
+        ...(Array.isArray(root.sync_runs) ? root.sync_runs.map((row) => ({...row, marketplace: row.marketplace || "ozon"})) : []),
+        ...(root.wildberries && Array.isArray(root.wildberries.sync_runs) ? root.wildberries.sync_runs.map((row) => ({...row, marketplace: row.marketplace || "wildberries"})) : []),
+      ].sort((a, b) => String(b.finished_at || b.started_at || "").localeCompare(String(a.finished_at || a.started_at || "")));
+      const events = [
+        ...(Array.isArray(root.sync_events) ? root.sync_events : []),
+        ...(root.wildberries && Array.isArray(root.wildberries.sync_events) ? root.wildberries.sync_events : []),
+      ];
+      const rows = runs.slice(0, 40).map((row) => `<tr><td>${escapeHtml(row.marketplace || "—")}</td><td>${escapeHtml(row.started_at || "—")}</td><td>${escapeHtml(row.finished_at || "—")}</td><td>${escapeHtml(row.status || "unknown")}</td><td>${escapeHtml(row.error_message || row.message || "—")}</td></tr>`).join("");
+      const eventRows = events.slice(0, 20).map((row) => `<div class="report-row"><div><b>${escapeHtml(row.code || row.event_type || "event")}</b><span>${escapeHtml(row.message || row.detail || "—")}</span></div><span class="status-chip gray">${escapeHtml(row.created_at || row.timestamp || "—")}</span></div>`).join("");
+      mainButton.hidden = true;
+      return `<div class="screen-head"><div><h2>Интеграции · Диагностика</h2><p>Технические статусы API и журнал синхронизации. Этот экран доступен только администратору.</p></div><div class="date">${runs.length} запусков</div></div>${renderAdminTabs()}<div class="card field-card"><div class="button-row"><button class="small-button" data-ac-action="sync">Синхронизировать площадки</button><button class="small-button secondary" data-ac-action="refresh">Обновить аналитику</button></div></div><div class="card field-card"><div class="section-title"><b>Журнал синхронизации</b><span>Технические статусы</span></div>${rows ? `<div class="ac-table-wrap"><table class="ac-table"><thead><tr><th>Площадка</th><th>Начало</th><th>Завершение</th><th>Статус</th><th>Ошибка / сообщение</th></tr></thead><tbody>${rows}</tbody></table></div>` : itemEmpty("Запусков синхронизации пока нет.")}</div><div class="card field-card"><div class="section-title"><b>События интеграций</b><span>${events.length}</span></div>${eventRows || itemEmpty("Технических событий нет.")}</div>`;
     }
 
     function renderAdminSizeMarkers(admin) {
@@ -11984,6 +12150,10 @@ MINIAPP_HTML = """<!doctype html>
         mount.innerHTML = renderAdminFeedback(admin);
         return;
       }
+      if (state.adminSection === "integrations") {
+        mount.innerHTML = renderAdminIntegrations();
+        return;
+      }
 
       mount.innerHTML = renderAdminReports(admin);
     }
@@ -12366,31 +12536,134 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.hidden = true;
       mount.innerHTML = `${hubHead}<div class="analytics-overview">${periodBar}${notice}${kpis}
         <div class="analytics-overview-grid"><section class="card analytics-overview-section"><div class="section-title"><b>После удержаний: динамика</b><span>${escapeHtml(periodLabel)}</span></div>${analyticsHubCombinedChart(chartModels)}<div class="analytics-chart-source">Серии строятся сервером из Decimal-значений. Если источник недоступен, линия отсутствует, а не становится нулевой.</div></section><section class="card analytics-overview-section"><div class="section-title"><b>Площадки</b><span>${providers.filter((row) => row.configured).length} подключено</span></div><div class="analytics-provider-list">${providerCards || `<div class="marketplace-chart-empty"><b>Площадки не настроены</b><span>Нет доступных коннекторов.</span></div>`}</div></section></div>
-        <div class="analytics-three-grid"><section class="card analytics-overview-section"><div class="section-title"><b>Критические и товарные риски</b><span>${riskCoverageComplete || risks.length ? escapeHtml(risks.length) : "—"}</span></div>${risksBlock}</section><section class="card analytics-overview-section"><div class="section-title"><b>Остатки → производство</b><span>fail-closed</span></div>${matrixBlock}</section><section class="card analytics-overview-section"><div class="section-title"><b>Поставки</b><span>${supplyCoverageComplete || supplies.length ? escapeHtml(supplies.length) : "—"}</span></div>${suppliesBlock}</section></div>
+        <div class="analytics-three-grid"><section class="card analytics-overview-section"><div class="section-title"><b>Критические и товарные риски</b><span>${riskCoverageComplete || risks.length ? escapeHtml(risks.length) : "—"}</span></div>${risksBlock}</section><section class="card analytics-overview-section"><div class="section-title"><b>Остатки → производство</b><span>по подтверждённым данным</span></div>${matrixBlock}</section><section class="card analytics-overview-section"><div class="section-title"><b>Поставки</b><span>${supplyCoverageComplete || supplies.length ? escapeHtml(supplies.length) : "—"}</span></div>${suppliesBlock}</section></div>
         <section class="card analytics-overview-section"><div class="section-title"><b>Качество и свежесть данных</b><span>${escapeHtml(qualityStatusLabels[overallMeta.status] || overallMeta.status || "источники")}</span></div><div class="analytics-quality-list">${qualityRows}</div>${datasetChips ? `<div class="analytics-chart-legend">${datasetChips}</div>` : ""}</section>
       </div>`;
     }
 
     function renderAnalyticsHub() {
-      const tab = ["general", "production", "ozon", "wildberries"].includes(state.analyticsHubTab) ? state.analyticsHubTab : "general";
-      const hubHead = `<div class="screen-head"><div><h2>Аналитический центр</h2><p>Производство, продажи, реклама, остатки и финансовые показатели в одном разделе.</p></div><div class="date">единая система</div></div>${analyticsHubTabs()}`;
-      if (tab === "production") {
-        renderAnalytics();
-        mount.insertAdjacentHTML("afterbegin", hubHead);
-        mainButton.hidden = true;
-        return;
+      const pages = [
+        ["general", "⌂", "Обзор"], ["sales", "↗", "Продажи"], ["products", "▤", "Товары"],
+        ["inventory", "▦", "Остатки"], ["production", "⚙", "Производство"], ["supplies", "↓", "Поставки"],
+        ["finance", "₽", "Финансы"], ["map", "○", "Карта"], ["data-quality", "✓", "Качество данных"],
+      ];
+      const allowed = new Set(pages.map(([id]) => id));
+      const page = allowed.has(state.analyticsHubTab) ? state.analyticsHubTab : "general";
+      state.analyticsHubTab = page;
+      const overviewState = state.analyticsOverview || {};
+      const payload = overviewState.payload && typeof overviewState.payload === "object" ? overviewState.payload : {};
+      const root = state.marketplaceData && state.marketplaceData.payload && typeof state.marketplaceData.payload === "object" ? state.marketplaceData.payload : {};
+      const marketplace = ["ozon", "wildberries"].includes(state.marketplaceProvider) ? state.marketplaceProvider : "all";
+      const providerRoot = marketplace === "wildberries" && root.wildberries && typeof root.wildberries === "object" ? root.wildberries : root;
+      const providers = Array.isArray(payload.providers) ? payload.providers : [];
+      const metricRows = Array.isArray(payload.metrics) ? payload.metrics : [];
+      const metric = (code) => metricRows.find((row) => row.code === code || row.key === code) || {value: null, status: "unavailable"};
+      const production = payload.production && typeof payload.production === "object" ? payload.production : {};
+      const suppliesEnvelope = payload.supplies && typeof payload.supplies === "object" ? payload.supplies : {};
+      const supplyRows = Array.isArray(suppliesEnvelope.shipments) ? suppliesEnvelope.shipments : Array.isArray(suppliesEnvelope.rows) ? suppliesEnvelope.rows : [];
+      const risks = Array.isArray(payload.risks) ? payload.risks : [];
+      const products = Array.isArray(providerRoot.products_rows) ? providerRoot.products_rows : [];
+      const orders = Array.isArray(providerRoot.orders_rows) ? providerRoot.orders_rows : [];
+      const period = payload.period && payload.period.label ? payload.period.label : marketplacePeriodMeta(state.marketplacePeriod).label;
+      const status = String((payload.meta && payload.meta.status) || (overviewState.loading ? "loading" : overviewState.error ? "error" : "unknown"));
+      const businessStatus = ["fresh", "ready", "success"].includes(status)
+        ? ["Данные актуальны", "ok"]
+        : ["partial", "attention"].includes(status) ? ["Данные загружены частично", "partial"]
+        : status === "stale" ? ["Обновление задерживается", "stale"]
+        : ["Показатель пока недоступен", "unknown"];
+      const fmt = (value) => value === null || value === undefined ? "—" : Number(value).toLocaleString("ru-RU", {maximumFractionDigits: 0});
+      const money = (value) => value === null || value === undefined ? "—" : `${Number(value).toLocaleString("ru-RU", {maximumFractionDigits: 0})} ₽`;
+      const safeValue = (row, formatter = fmt) => row && row.value !== null && row.value !== undefined ? formatter(row.value) : "—";
+      const kpi = (label, value, hint, tone = "") => `<article class="ac-kpi ${tone}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(hint || "Показатель пока недоступен")}</small></article>`;
+      const empty = (title, text, action = "") => `<div class="ac-empty"><b>${escapeHtml(title)}</b><span>${escapeHtml(text)}</span>${action ? `<button type="button" class="small-button secondary" data-ac-action="${escapeHtml(action)}">Перейти к настройке</button>` : ""}</div>`;
+      const panel = (title, meta, body, wide = "") => `<section class="ac-panel ${wide}"><div class="ac-panel-head"><h3>${escapeHtml(title)}</h3><span>${escapeHtml(meta || "")}</span></div>${body}</section>`;
+      const table = (headers, rows, emptyText) => rows.length ? `<div class="ac-table-wrap"><table class="ac-table"><thead><tr>${headers.map((head) => `<th>${escapeHtml(head)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>` : empty("Нет данных", emptyText);
+      const providerFilter = (row) => marketplace === "all" || String(row.marketplace || row.provider || "ozon").toLowerCase().includes(marketplace === "wildberries" ? "wild" : "ozon");
+      const filteredRisks = risks.filter(providerFilter);
+      const providerCards = providers.filter(providerFilter);
+      const search = String(state.analyticsSearch || "").trim().toLowerCase();
+      const filteredProducts = products.filter((row) => !search || [row.name, row.product_name, row.offer_id, row.article, row.sku, row.barcode, row.color, row.size].some((value) => String(value || "").toLowerCase().includes(search)));
+      const chartModels = providers.filter(providerFilter).map((provider) => {
+        const key = provider.marketplace === "wildberries" ? "wildberries" : "ozon";
+        const financeRows = payload.series && Array.isArray(payload.series.finance) ? payload.series.finance : [];
+        const rows = financeRows.filter((row) => row[key] !== null && row[key] !== undefined).map((row) => ({date: row.date, value: Number(row[key])}));
+        return {key, label: provider.label || key, status: provider.status || "unknown", commercialAvailable: rows.length > 0, commercialLabel: "после удержаний", commercialRows: rows};
+      });
+      const nav = pages.map(([id, icon, label]) => `<button type="button" class="${page === id ? "active" : ""}" data-ac-page="${id}"><i>${icon}</i><span>${label}</span></button>`).join("");
+      const marketplaceSwitch = `<div class="ac-market-switch" aria-label="Маркетплейс"><button data-ac-provider="all" class="${marketplace === "all" ? "active all" : ""}">Все</button><button data-ac-provider="ozon" class="${marketplace === "ozon" ? "active ozon" : ""}">Ozon</button><button data-ac-provider="wildberries" class="${marketplace === "wildberries" ? "active wb" : ""}">WB</button></div>`;
+      const periodOptions = [["7d","7 дней"],["30d","30 дней"],["month","Месяц"],["previous-month","Прошлый месяц"]];
+      const filterbar = `<div class="ac-filterbar"><label><span>Период</span><select id="analyticsHubPeriod">${periodOptions.map(([id,label]) => `<option value="${id}" ${state.marketplacePeriod === id ? "selected" : ""}>${label}</option>`).join("")}</select></label><span class="ac-period-label">${escapeHtml(period)}</span><button type="button" data-ac-action="refresh">Обновить</button></div>`;
+      const sourceState = overviewState.loading ? `<div class="ac-skeleton"></div>` : overviewState.error ? empty("Не удалось обновить данные", "Структура экрана сохранена. Повторите загрузку или откройте диагностику.", "diagnostics") : "";
+
+      function renderOverviewPage() {
+        const sales = metric("recognized_sales"), net = metric("net_payout"), margin = metric("contribution_margin"), orderMetric = metric("orders"), stock = metric("stock_available");
+        const productionValue = production.plan !== null && production.plan !== undefined && production.fact !== null && production.fact !== undefined ? `${fmt(production.fact)} / ${fmt(production.plan)}` : "—";
+        const cards = `<div class="ac-kpis">${kpi("Продажи", safeValue(sales, money), "Начисления за период")}${kpi("После удержаний", safeValue(net, money), "Чистые начисления")}${kpi("Маржинальный доход", safeValue(margin, money), "По доступным данным")}${kpi("Заказы", safeValue(orderMetric), "За выбранный период")}${kpi("Остатки", safeValue(stock), "На складах площадок")}${kpi("Производство", productionValue, "Факт / план")}</div>`;
+        const providerRows = providerCards.map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.label || row.marketplace || "Площадка")}</b><span>${escapeHtml(row.last_sync_at || "Время обновления не подтверждено")}</span></div><strong>${escapeHtml(row.status === "fresh" ? "Актуально" : row.status === "stale" ? "Задерживается" : "Частично")}</strong></div>`).join("");
+        const riskRows = filteredRisks.slice(0, 5).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.title || "Товарный риск")}</b><span>${escapeHtml(row.reason || row.detail || "Требует внимания")}</span></div><strong>${escapeHtml(row.severity === "high" ? "Важно" : "Проверить")}</strong></div>`).join("");
+        const supplyList = supplyRows.filter(providerFilter).slice(0, 5).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.name || row.supply_id || row.shipment_id || "Поставка")}</b><span>${escapeHtml(row.status_label || row.status || "Статус не указан")}</span></div><strong>${escapeHtml(row.quantity !== undefined ? fmt(row.quantity) : "")}</strong></div>`).join("");
+        const stages = Array.isArray(production.stages) ? production.stages.slice(0, 5) : [];
+        const stageRows = stages.map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.stage || row.name || "Этап")}</b><span>${fmt(row.tasks || 0)} заданий</span></div><strong>${fmt(row.quantity || 0)} шт.</strong></div>`).join("");
+        const recommendations = filteredRisks.slice(0, 3).map((row) => `<div class="ac-recommendation"><b>${escapeHtml(row.title || "Проверить товар")}</b><span>${escapeHtml(row.action || row.recommendation || row.reason || "Откройте детальную карточку и проверьте источник данных.")}</span></div>`).join("");
+        return `${filterbar}${cards}${sourceState}<div class="ac-grid">${panel("Продажи и финансы", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Сравнение площадок", `${providerCards.length} источника`, providerRows || empty("Нет подключённых площадок", "Подключите Ozon или Wildberries в настройках."), "span-4")}${panel("Товарные риски", `${filteredRisks.length} сигналов`, riskRows || empty("Критических рисков нет", "Новых подтверждённых рисков за период не найдено."), "span-4")}${panel("Остатки → производство", "Реальные этапы", stageRows || empty("Связь пока недоступна", "Производственные этапы не были получены."), "span-4")}${panel("Поставки", `${supplyRows.filter(providerFilter).length} записей`, supplyList || empty("Поставок нет", "За выбранный период поставки не найдены."), "span-4")}${panel("Рекомендации", "На основе рисков", recommendations || empty("Рекомендаций нет", "Данных достаточно или источники пока не сформировали рекомендации."), "span-12")}</div>`;
       }
-      if (tab === "ozon" || tab === "wildberries") {
-        const previousProvider = state.marketplaceProvider;
-        state.marketplaceProvider = tab;
-        renderMarketplaces();
-        state.marketplaceProvider = previousProvider;
-        mount.insertAdjacentHTML("afterbegin", hubHead);
-        mainButton.hidden = true;
-        return;
+
+      function renderSalesPage() {
+        const orderRows = orders.slice(0, 100).map((row) => `<tr><td>${escapeHtml(row.created_at || row.shipment_date || "—")}</td><td>${escapeHtml(row.order_id || row.posting_number || row.id || "—")}</td><td>${escapeHtml(row.product_name || row.name || row.offer_id || "—")}</td><td>${escapeHtml(row.status || "—")}</td><td>${escapeHtml(row.amount !== undefined ? money(row.amount) : row.price !== undefined ? money(row.price) : "—")}</td></tr>`);
+        return `${filterbar}<div class="ac-kpis">${kpi("Продажи", safeValue(metric("recognized_sales"), money), "Начисления")}${kpi("Заказы", safeValue(metric("orders")), "Подтверждённые заказы")}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению")}</div><div class="ac-grid">${panel("Динамика продаж", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Сравнение Ozon / Wildberries", "Реальные источники", providerCards.map((row) => `<div class="ac-list-row"><b>${escapeHtml(row.label || row.marketplace)}</b><strong>${escapeHtml(row.status === "fresh" ? "Актуально" : "Частично")}</strong></div>`).join("") || empty("Нет данных", "Площадки не вернули продажи."), "span-4")}${panel("Заказы", `${orders.length} записей`, table(["Дата","Заказ","Товар","Статус","Сумма"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
       }
-      renderAnalyticsOverviewFromApi(hubHead);
-      return;
+
+      function renderProductsPage() {
+        const rows = filteredProducts.slice(0, 300).map((row) => `<tr><td>${escapeHtml(row.name || row.product_name || "—")}</td><td>${escapeHtml(row.offer_id || row.article || "—")}</td><td>${escapeHtml(row.color || "—")}</td><td>${escapeHtml(row.size || "—")}</td><td>${escapeHtml(row.barcode || "—")}</td><td>${escapeHtml(row.available !== undefined ? fmt(row.available) : "—")}</td></tr>`);
+        return `<div class="ac-toolbar"><label class="ac-page-search"><span>Поиск по товару, артикулу или штрихкоду</span><input id="analyticsSearch" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Название, артикул, штрихкод"></label><span>${fmt(filteredProducts.length)} из ${fmt(products.length)}</span></div><div class="ac-grid">${panel("Каталог SKU", `${filteredProducts.length} позиций`, table(["Товар","Артикул","Цвет","Размер","Штрихкод","Остаток"], rows, "Каталог площадки пока не загружен."), "span-12")}</div>`;
+      }
+
+      function renderInventoryPage() {
+        const rows = filteredProducts.filter((row) => row.available !== undefined).slice(0, 300).map((row) => `<tr><td>${escapeHtml(row.name || row.product_name || "—")}</td><td>${escapeHtml(row.offer_id || row.article || "—")}</td><td>${escapeHtml(row.size || "—")}</td><td>${escapeHtml(row.color || "—")}</td><td>${fmt(row.available || 0)}</td><td>${fmt(row.reserved || 0)}</td></tr>`);
+        const riskList = filteredRisks.slice(0, 8).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.title || "Риск остатка")}</b><span>${escapeHtml(row.reason || "Требует проверки")}</span></div><strong>${escapeHtml(row.severity === "high" ? "Важно" : "Проверить")}</strong></div>`).join("");
+        return `<div class="ac-kpis">${kpi("Доступно", safeValue(metric("stock_available")), "На площадках")}${kpi("SKU", fmt(products.length), "Загружено из каталога")}${kpi("Риски", fmt(filteredRisks.length), "Товарные сигналы")}</div><div class="ac-grid">${panel("Остатки по SKU", `${rows.length} строк`, table(["Товар","Артикул","Размер","Цвет","Доступно","Резерв"], rows, "Остатки выбранной площадки пока недоступны."), "span-8")}${panel("Что передать в производство", "На основе подтверждённых рисков", riskList || empty("Заданий нет", "Недостаток товара не подтверждён или данные ещё загружаются."), "span-4")}</div>`;
+      }
+
+      function renderProductionPage() {
+        const stages = Array.isArray(production.stages) ? production.stages : [];
+        const alerts = Array.isArray(production.alerts) ? production.alerts : [];
+        const stageRows = stages.map((row) => `<tr><td>${escapeHtml(row.stage || row.name || "—")}</td><td>${fmt(row.tasks || 0)}</td><td>${fmt(row.free || 0)}</td><td>${fmt(row.quantity || 0)}</td><td>${fmt(row.overdue || 0)}</td></tr>`);
+        const alertRows = alerts.slice(0, 12).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.title || "Отклонение")}</b><span>${escapeHtml(row.detail || "Требует внимания")}</span></div><strong>${escapeHtml(row.type === "overdue" ? "Просрочено" : "Проверить")}</strong></div>`).join("");
+        return `<div class="ac-kpis">${kpi("План", production.plan !== undefined && production.plan !== null ? fmt(production.plan) : "—", "Изделий")}${kpi("Факт", production.fact !== undefined && production.fact !== null ? fmt(production.fact) : "—", "Изделий")}${kpi("В работе", production.active_quantity !== undefined && production.active_quantity !== null ? fmt(production.active_quantity) : "—", "Активный WIP")}${kpi("Брак", production.defect_quantity !== undefined && production.defect_quantity !== null ? fmt(production.defect_quantity) : "—", "Подтверждённые записи")}</div><div class="ac-grid">${panel("Этапы производства", `${stages.length} этапов`, table(["Этап","Задания","Свободно","Количество","Просрочено"], stageRows, "Активных производственных этапов нет."), "span-8")}${panel("Требует внимания", `${alerts.length} сигналов`, alertRows || empty("Отклонений нет", "Новых подтверждённых производственных отклонений не найдено."), "span-4")}</div>`;
+      }
+
+      function renderSuppliesPage() {
+        const rows = supplyRows.filter(providerFilter).map((row) => `<tr><td>${escapeHtml(row.marketplace || row.provider || "—")}</td><td>${escapeHtml(row.name || row.supply_id || row.shipment_id || "—")}</td><td>${escapeHtml(row.status_label || row.status || "—")}</td><td>${escapeHtml(row.destination || row.warehouse_name || "—")}</td><td>${escapeHtml(row.quantity !== undefined ? fmt(row.quantity) : "—")}</td><td>${escapeHtml(row.updated_at || row.date || "—")}</td></tr>`);
+        return `<div class="ac-kpis">${kpi("Поставки", fmt(rows.length), "За выбранный период")}${kpi("Площадка", marketplace === "all" ? "Все" : marketplace === "ozon" ? "Ozon" : "Wildberries", "Текущий фильтр")}</div><div class="ac-grid">${panel("Поставки", `${rows.length} записей`, table(["Площадка","Поставка","Статус","Склад","Количество","Обновлено"], rows, "Поставок за выбранный период нет."), "span-12")}</div>`;
+      }
+
+      function renderFinancePage() {
+        const recognized = metric("recognized_sales"), net = metric("net_payout"), margin = metric("contribution_margin");
+        const waterfall = [
+          ["Продажи", recognized.value, "positive"],
+          ["Удержания", recognized.value !== null && recognized.value !== undefined && net.value !== null && net.value !== undefined ? Number(net.value) - Number(recognized.value) : null, "negative"],
+          ["После удержаний", net.value, "total"],
+          ["Маржинальный доход", margin.value, "total"],
+        ].filter(([,value]) => value !== null && value !== undefined);
+        const max = Math.max(1, ...waterfall.map(([,value]) => Math.abs(Number(value))));
+        const bars = waterfall.length ? `<div class="ac-waterfall">${waterfall.map(([label,value,tone]) => `<div class="${tone}"><span>${escapeHtml(label)}</span><i style="--bar:${Math.max(5, Math.abs(Number(value)) / max * 100)}%"></i><strong>${escapeHtml(money(value))}</strong></div>`).join("")}</div>` : empty("Финансы пока недоступны", "Площадка не предоставила подтверждённые начисления и удержания.");
+        const compareRows = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace || "—")}</td><td>${escapeHtml(row.status === "fresh" ? "Данные актуальны" : row.status === "stale" ? "Обновление задерживается" : "Данные загружены частично")}</td><td>${escapeHtml(row.last_sync_at || "—")}</td></tr>`);
+        return `${filterbar}<div class="ac-kpis">${kpi("Продажи", safeValue(recognized, money), "За период")}${kpi("После удержаний", safeValue(net, money), "К перечислению")}${kpi("Маржинальный доход", safeValue(margin, money), "По доступным расходам")}</div><div class="ac-grid">${panel("Финансовая динамика", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Финансовый waterfall", "Только доступные компоненты", bars, "span-4")}${panel("Источники", `${providerCards.length} площадки`, table(["Площадка","Состояние","Обновлено"], compareRows, "Финансовые источники не подключены."), "span-12")}</div>`;
+      }
+
+      function renderMapPage() {
+        return `<div class="ac-grid">${panel("Карта России", "Склады и продажи по регионам", `<div class="ac-map"><div class="ac-russia-shape"></div>${empty("Региональные данные пока недоступны", "Карта готова к отображению складов и продаж, когда API передаст региональную разбивку.")}</div>`, "span-8")}${panel("Регионы", "Без выдуманных значений", empty("Нет региональной детализации", "Ozon и Wildberries пока не передали данные, необходимые для достоверного рейтинга регионов."), "span-4")}</div>`;
+      }
+
+      function renderQualityPage() {
+        const rows = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace || "—")}</td><td>${escapeHtml(row.status === "fresh" ? "Данные актуальны" : row.status === "stale" ? "Обновление задерживается" : row.status === "partial" ? "Данные загружены частично" : "Показатель пока недоступен")}</td><td>${escapeHtml(row.last_sync_at || "—")}</td></tr>`);
+        return `<div class="ac-kpis">${kpi("Источники", fmt(providerCards.length), "Подключённые площадки")}${kpi("Состояние", businessStatus[0], "Без технических кодов")}${kpi("Обновлено", payload.generated_at || payload.as_of || "—", "Время аналитического среза")}</div><div class="ac-grid">${panel("Качество данных", "Понятные бизнес-состояния", table(["Источник","Состояние","Последнее обновление"], rows, "Источники аналитики пока не подключены."), "span-8")}${panel("Диагностика", "Для администратора", `<p class="ac-panel-copy">Технические коды, ответы API и журнал синхронизации вынесены из аналитики.</p><button type="button" class="small-button" data-ac-action="diagnostics">Открыть диагностику</button>`, "span-4")}</div>`;
+      }
+
+      const renderers = {general: renderOverviewPage, sales: renderSalesPage, products: renderProductsPage, inventory: renderInventoryPage, production: renderProductionPage, supplies: renderSuppliesPage, finance: renderFinancePage, map: renderMapPage, "data-quality": renderQualityPage};
+      const title = pages.find(([id]) => id === page)[2];
+      mainButton.hidden = true;
+      mount.innerHTML = `<div class="ac-shell"><aside class="ac-sidebar"><div class="ac-brand"><b>АНАЛИТИКА</b><span>центр управления</span></div><nav class="ac-nav">${nav}</nav></aside><div class="ac-main"><header class="ac-topbar"><label class="ac-search"><span>⌕</span><input id="analyticsSearchTop" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Найти товар, артикул, поставку"></label>${marketplaceSwitch}<button type="button" class="ac-sync" data-ac-action="sync">↻ Синхронизировать</button></header><main class="ac-content"><div class="ac-heading"><div><h2>${escapeHtml(title)}</h2><p>Продажи, остатки, производство и качество данных в едином центре.</p></div><span class="ac-business-state ${businessStatus[1]}">${escapeHtml(businessStatus[0])}</span></div>${renderers[page]()}</main></div></div>`;
     }
 
     function render() {
@@ -12426,6 +12699,7 @@ MINIAPP_HTML = """<!doctype html>
       const isWarehouseWorkspace = state.workspace === "warehouse";
       const isMarketplaceWorkspace = state.workspace === "marketplaces";
       const isAnalyticsWorkspace = state.workspace === "analytics";
+      document.body.classList.toggle("analytics-mode", isAnalyticsWorkspace);
       if (!isMarketplaceWorkspace) mainButton.hidden = false;
       document.body.classList.toggle("warehouse-workspace", isWarehouseWorkspace);
       document.body.classList.toggle("warehouse-v2-enabled", Boolean(isWarehouseWorkspace && state.data.features && state.data.features.warehouse_ui_v2));
@@ -12465,7 +12739,7 @@ MINIAPP_HTML = """<!doctype html>
       if ((isMarketplaceWorkspace || isAnalyticsWorkspace) && !state.marketplaceData.loaded && !state.marketplaceData.loading && !state.marketplaceData.error) {
         window.setTimeout(() => refreshMarketplaces({silent: true}), 0);
       }
-      if (isAnalyticsWorkspace && state.analyticsHubTab === "general") {
+      if (isAnalyticsWorkspace) {
         const overviewRequest = analyticsOverviewRequest();
         const overviewNeedsLoad = state.analyticsOverview.requestKey !== overviewRequest.key
           || (!state.analyticsOverview.loaded && !state.analyticsOverview.error);
@@ -13197,6 +13471,35 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const analyticsCenterPage = event.target.closest("[data-ac-page]");
+      if (analyticsCenterPage) {
+        state.analyticsHubTab = analyticsCenterPage.dataset.acPage || "general";
+        render();
+        return;
+      }
+
+      const analyticsCenterProvider = event.target.closest("[data-ac-provider]");
+      if (analyticsCenterProvider) {
+        state.marketplaceProvider = analyticsCenterProvider.dataset.acProvider || "all";
+        render();
+        return;
+      }
+
+      const analyticsCenterAction = event.target.closest("[data-ac-action]");
+      if (analyticsCenterAction) {
+        const action = analyticsCenterAction.dataset.acAction;
+        if (action === "sync") syncMarketplaces();
+        if (action === "refresh") refreshAnalyticsOverview();
+        if (action === "diagnostics") {
+          state.workspace = "production";
+          state.screen = "admin";
+          state.productionScreen = "admin";
+          state.adminSection = "integrations";
+          render();
+        }
+        return;
+      }
+
       const adminHomePeriod = event.target.closest("[data-admin-home-period]");
       if (adminHomePeriod) {
         state.adminHomePeriod = adminHomePeriod.dataset.adminHomePeriod;
@@ -13617,6 +13920,7 @@ MINIAPP_HTML = """<!doctype html>
       if (event.target.id === "feedbackCategory") state.feedbackDraft.category = event.target.value;
       if (event.target.id === "feedbackMessage") state.feedbackDraft.message = event.target.value;
       if (event.target.id === "marketplaceQualitySearch") state.marketplaceQuality.query = event.target.value.slice(0, 200);
+      if (["analyticsSearch", "analyticsSearchTop"].includes(event.target.id)) state.analyticsSearch = event.target.value.slice(0, 200);
 
       if (event.target.closest("#adminStartDate, #adminEndDate, #adminEmployeeId, #adminShiftEndTime")) {
         syncAdminForm();
@@ -13627,6 +13931,12 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
+      if (["analyticsSearch", "analyticsSearchTop"].includes(event.target.id)) {
+        state.analyticsSearch = event.target.value.slice(0, 200);
+        if (state.analyticsHubTab !== "products") state.analyticsHubTab = "products";
+        render();
+        return;
+      }
       if (event.target.id === "analyticsHubPeriod") {
         state.marketplacePeriod = event.target.value || "7d";
         state.analyticsOverview.loaded = false;
