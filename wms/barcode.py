@@ -40,10 +40,26 @@ def normalize_scanned_barcode(raw: str) -> str:
 
 
 def barcode_lookup_candidates(raw: str) -> tuple[str, ...]:
-    """Return safe exact-match candidates for a scanner payload."""
+    """Return safe scanner candidates without changing registered labels.
+
+    Some handhelds return EAN-13 as a zero-padded GTIN-14, while GS1-128 may
+    prepend application identifier ``01`` to that GTIN. Exact values stay
+    first; only these lossless numeric representations are added.
+    """
     original = str(raw or "").strip()
     normalized = normalize_scanned_barcode(original)
-    return tuple(dict.fromkeys(value for value in (original, normalized) if value))
+    candidates = list(dict.fromkeys(value for value in (original, normalized) if value))
+    for value in list(candidates):
+        if value.isdigit() and value.startswith("01") and len(value) >= 16:
+            candidates.append(value[2:16])
+        if value.isdigit() and len(value) == 14 and value.startswith("0"):
+            candidates.append(value[1:])
+        if value.isdigit() and len(value) == 13:
+            candidates.append(f"0{value}")
+    for value in list(candidates):
+        if value.isdigit() and len(value) == 14 and value.startswith("0"):
+            candidates.append(value[1:])
+    return tuple(dict.fromkeys(candidates))
 
 
 def is_location_barcode(raw: str) -> bool:

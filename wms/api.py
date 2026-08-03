@@ -30,6 +30,7 @@ from . import operations as ops
 from . import repository as repo
 from .barcode import (
     PHYSICAL_LOCATION_PATTERN,
+    barcode_lookup_candidates,
     normalize_scanned_barcode,
     register_product_barcode,
     resolve_product_barcode,
@@ -331,9 +332,31 @@ def _marketplace_scan_codes(product: dict[str, Any] | None) -> set[str]:
         *list(product.get("barcodes") or []),
     ]
     return {
-        normalized
+        candidate
         for value in values
-        if value and (normalized := normalize_scanned_barcode(str(value)))
+        if value
+        for candidate in barcode_lookup_candidates(str(value))
+    }
+
+
+def _stock_row_payload(stock_row: Any) -> dict[str, Any]:
+    return {
+        "id": stock_row.id,
+        "product_key": stock_row.product_key.to_dict(),
+        "quantity": stock_row.quantity,
+        "reserved_quantity": stock_row.reserved_quantity,
+        "item_state": stock_row.item_state,
+        "location_id": stock_row.location_id,
+        "unit": stock_row.unit,
+    }
+
+
+def _matched_stock_response(stock_row: Any) -> tuple[int, dict[str, Any]]:
+    return 200, {
+        "ok": True,
+        "product_key": stock_row.product_key.to_dict(),
+        "matched_in_location": True,
+        "stock_row": _stock_row_payload(stock_row),
     }
 
 
@@ -367,6 +390,7 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         return 400, {"ok": False, "message": "Штрихкод не указан."}
     if len(barcode) > 128:
         return 400, {"ok": False, "message": "Штрихкод слишком длинный."}
+    scanned_codes = set(barcode_lookup_candidates(barcode))
     location_code = str(payload.get("location_code") or "").replace("LOC:", "").strip().upper()
     stock_rows: list[Any] = []
     marketplace_rows: list[dict[str, Any] | None] = []
@@ -382,12 +406,8 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
                     [row.product_key.to_dict() for row in stock_rows]
                 )
                 for stock_row, marketplace_product in zip(stock_rows, marketplace_rows):
-                    if barcode in _marketplace_scan_codes(marketplace_product):
-                        return 200, {
-                            "ok": True,
-                            "product_key": stock_row.product_key.to_dict(),
-                            "matched_in_location": True,
-                        }
+                    if scanned_codes & _marketplace_scan_codes(marketplace_product):
+                        return _matched_stock_response(stock_row)
             except Exception:
                 logging.exception("Location-aware marketplace barcode lookup failed")
     product_key = resolve_product_barcode(barcode)
@@ -408,11 +428,7 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             stock_rows, marketplace_rows, product_key
         )
         if stock_row is not None:
-            return 200, {
-                "ok": True,
-                "product_key": stock_row.product_key.to_dict(),
-                "matched_in_location": True,
-            }
+            return _matched_stock_response(stock_row)
     if product_key is None:
         return 404, {"ok": False, "message": "Штрихкод товара не зарегистрирован."}
     return 200, {"ok": True, "product_key": product_key.to_dict()}

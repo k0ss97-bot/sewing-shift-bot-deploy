@@ -80,10 +80,14 @@ class BarcodeClassifyTests(unittest.TestCase):
 
     def test_handheld_scanner_framing_is_removed_without_losing_zeroes(self):
         self.assertEqual(normalize_scanned_barcode("]C10001234567890\r\n"), "0001234567890")
-        self.assertEqual(
-            barcode_lookup_candidates("]C14600000000012\r"),
-            ("]C14600000000012", "4600000000012"),
-        )
+        candidates = barcode_lookup_candidates("]C14600000000012\r")
+        self.assertEqual(candidates[:2], ("]C14600000000012", "4600000000012"))
+        self.assertIn("04600000000012", candidates)
+
+    def test_gs1_gtin14_and_ean13_are_safe_lookup_candidates(self):
+        candidates = barcode_lookup_candidates("]C10104600000000012\r")
+        self.assertIn("04600000000012", candidates)
+        self.assertIn("4600000000012", candidates)
 
     def test_prefixes(self):
         self.assertTrue("LOC:A-01".startswith(LOCATION_PREFIX))
@@ -219,6 +223,8 @@ class WmsContractTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(body["matched_in_location"])
         self.assertEqual(body["product_key"], stock_key.to_dict())
+        self.assertEqual(body["stock_row"]["quantity"], 14)
+        self.assertEqual(body["stock_row"]["location_id"], location.id)
 
     def test_location_barcode_maps_linked_production_key_to_actual_stock_row(self):
         from wms import api

@@ -5620,7 +5620,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsLookup: {barcode: "", productKey: null, error: ""},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
-      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
+      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, matchedStock: null, matchedLocationCode: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
       wmsMaterialReceipt: {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""},
       marketplaceData: {loading: false, loaded: false, error: "", payload: null},
       marketplaceQuality: {loading: false, syncing: false, polling: false, loaded: false, error: "", payload: null, products: null, page: 1, query: ""},
@@ -8706,7 +8706,7 @@ MINIAPP_HTML = """<!doctype html>
         showToast("Склад", "Введите количество (1 или больше).");
         return;
       }
-      const stockRow = wmsFindScannedStock(fromLoc, wmsProductKey(d));
+      const stockRow = wmsResolvedStock(fromLoc, wmsProductKey(d));
       const available = stockRow ? Math.max(0, Number(stockRow.quantity || 0) - Number(stockRow.reserved_quantity || 0)) : 0;
       if (!stockRow || qty > available) {
         showToast("Склад", `В ячейке доступно ${available} шт.`);
@@ -8757,7 +8757,7 @@ MINIAPP_HTML = """<!doctype html>
         showToast("ТСД", "Сначала отсканируйте ячейку пересчёта.");
         return;
       }
-      const stockRow = wmsFindScannedStock(locationCode, wmsProductKey(d));
+      const stockRow = wmsResolvedStock(locationCode, wmsProductKey(d));
       if (!stockRow) {
         showToast("ТСД", "Этого товара нет в отсканированной ячейке.");
         return;
@@ -9474,6 +9474,8 @@ MINIAPP_HTML = """<!doctype html>
         if (el) el.value = code;
         state.wmsDraft[field === "from_location" ? "fromLocation" : "toLocation"] = code;
         state.wmsDraft[field === "from_location" ? "fromLocationScanned" : "toLocationScanned"] = true;
+        state.wmsDraft.matchedStock = null;
+        state.wmsDraft.matchedLocationCode = "";
         render();
         showToast("ТСД", `Ячейка: ${code}`);
       } else if (/^LPN:/i.test(v)) {
@@ -9492,16 +9494,22 @@ MINIAPP_HTML = """<!doctype html>
           }
           setWmsDraftProductKey(pk);
           const requiresStockInCell = ["pick", "inventory"].includes(state.wmsView);
-          const stockRow = requiresStockInCell && locationCode ? wmsFindScannedStock(locationCode, pk) : null;
+          const stockRow = requiresStockInCell && locationCode ? (data.stock_row || wmsFindScannedStock(locationCode, pk)) : null;
           if (requiresStockInCell && locationCode && !stockRow) {
             state.wmsDraft.productName = "";
             state.wmsDraft.productSize = "";
             state.wmsDraft.productColor = "";
             state.wmsDraft.productScanned = false;
+            state.wmsDraft.matchedStock = null;
+            state.wmsDraft.matchedLocationCode = "";
             render();
             showToast("Склад", "Этого товара нет в отсканированной ячейке.");
           } else {
-            if (stockRow) setWmsDraftProductKey(stockRow.product_key);
+            if (stockRow) {
+              setWmsDraftProductKey(stockRow.product_key);
+              state.wmsDraft.matchedStock = stockRow;
+              state.wmsDraft.matchedLocationCode = String(locationCode || "").replace(/^LOC:/i, "").trim().toUpperCase();
+            }
             if (state.wmsView === "inventory") state.wmsDraft.quantity = "0";
             render();
             showToast("ТСД", `Товар: ${state.wmsDraft.productName}`);
@@ -10572,6 +10580,18 @@ MINIAPP_HTML = """<!doctype html>
 
     function wmsFindScannedStock(locationCode, productKey) {
       return wmsStockAtLocation(locationCode).find((row) => wmsProductKeysEqual(row.product_key, productKey)) || null;
+    }
+
+    function wmsResolvedStock(locationCode, productKey) {
+      const normalizedLocation = String(locationCode || "").replace(/^LOC:/i, "").trim().toUpperCase();
+      const matched = state.wmsDraft.matchedStock;
+      if (
+        matched
+        && normalizedLocation
+        && normalizedLocation === String(state.wmsDraft.matchedLocationCode || "").toUpperCase()
+        && wmsProductKeysEqual(matched.product_key, productKey)
+      ) return matched;
+      return wmsFindScannedStock(locationCode, productKey);
     }
 
     function renderWmsGuidedScanner(locationField, locationCode, productDetected, locationLabel) {
@@ -11981,7 +12001,7 @@ MINIAPP_HTML = """<!doctype html>
       const d = state.wmsDraft;
       const locationCode = (d.fromLocation || "").replace(/^LOC:/i, "").trim();
       const productDetected = Boolean(d.productScanned && d.productName && d.productSize && d.productColor);
-      const stockRow = productDetected ? wmsFindScannedStock(locationCode, wmsProductKey(d)) : null;
+      const stockRow = productDetected ? wmsResolvedStock(locationCode, wmsProductKey(d)) : null;
       const available = stockRow ? Math.max(0, Number(stockRow.quantity || 0) - Number(stockRow.reserved_quantity || 0)) : 0;
       mainButton.textContent = "Подтвердить выдачу";
       mainButton.disabled = !locationCode || !stockRow;
@@ -12029,7 +12049,7 @@ MINIAPP_HTML = """<!doctype html>
       const locationCode = (d.fromLocation || "").replace(/^LOC:/i, "").trim();
       const locationReady = Boolean(d.fromLocationScanned && locationCode && wmsLocationByCode(locationCode));
       const productDetected = Boolean(locationReady && d.productScanned && d.productName);
-      const stockRow = productDetected ? wmsFindScannedStock(locationCode, wmsProductKey(d)) : null;
+      const stockRow = productDetected ? wmsResolvedStock(locationCode, wmsProductKey(d)) : null;
       const systemQuantity = stockRow ? Number(stockRow.quantity || 0) : null;
       const countedQuantity = String(d.quantity ?? "");
       const canConfirm = Boolean(stockRow && /^\\d+$/.test(countedQuantity));
