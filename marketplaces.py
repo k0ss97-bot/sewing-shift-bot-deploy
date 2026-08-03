@@ -1199,7 +1199,7 @@ def sync_ozon() -> dict:
 
 
 def _marketplace_product_image(payload_json: object) -> str:
-    """Return the first usable product image saved in an Ozon product payload."""
+    """Return the first usable product image saved by Ozon or Wildberries."""
     try:
         payload = json.loads(str(payload_json or "{}"))
     except (TypeError, ValueError, json.JSONDecodeError):
@@ -1212,6 +1212,19 @@ def _marketplace_product_image(payload_json: object) -> str:
         for candidate in candidates:
             if isinstance(candidate, str) and candidate.startswith("https://"):
                 return candidate
+
+    # Wildberries cards keep image variants inside ``photos``.  Prefer the
+    # medium portrait image: it is sharp enough for product cards without
+    # downloading the full-size original on every warehouse screen.
+    photos = payload.get("photos")
+    if isinstance(photos, list):
+        for photo in photos:
+            if not isinstance(photo, dict):
+                continue
+            for field in ("c516x688", "big", "square", "c246x328", "tm"):
+                candidate = photo.get(field)
+                if isinstance(candidate, str) and candidate.startswith("https://"):
+                    return candidate
     return ""
 
 

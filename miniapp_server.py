@@ -181,7 +181,7 @@ CONTENT_SECURITY_POLICY = (
     "font-src 'self' data:; "
     "form-action 'self'; "
     "frame-ancestors 'self'; "
-    "img-src 'self' data: blob: https://ir.ozone.ru https://cdn1.ozone.ru; "
+    "img-src 'self' data: blob: https://ir.ozone.ru https://cdn1.ozone.ru https://*.wbbasket.ru; "
     "media-src 'self' blob:; "
     "object-src 'none'; "
     "script-src 'self' 'unsafe-inline' https://telegram.org; "
