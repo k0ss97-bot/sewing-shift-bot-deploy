@@ -4974,7 +4974,9 @@ MINIAPP_HTML = """<!doctype html>
 
     const state = {
       workspace: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "production",
-      marketplaceView: "overview",
+      // The marketplace workspace opens on the prototype analytics center.
+      // Legacy overview remains available at /app/marketplaces/overview.
+      marketplaceView: "analytics",
       marketplaceProvider: "all",
       marketplacePeriod: "7d",
       marketplaceFiltersOpen: false,
@@ -10460,7 +10462,10 @@ MINIAPP_HTML = """<!doctype html>
       const path = String(pathname || "");
       const marker = "/app/marketplaces";
       const suffix = path.startsWith(marker) ? path.slice(marker.length).split("/").filter(Boolean)[0] || "" : "";
-      if (!suffix) return "overview";
+      // The bare marketplace entry point is the new analytics center. Keep
+      // the legacy overview reachable through its explicit route so old
+      // bookmarks continue to work without becoming the default UI.
+      if (!suffix) return "analytics";
       const found = Object.entries(marketplaceRouteMap).find(([, route]) => route === `/${suffix}`);
       return found ? found[0] : "overview";
     }
@@ -11847,7 +11852,7 @@ MINIAPP_HTML = """<!doctype html>
         state.marketplaceProvider = ["all", "ozon", "wildberries"].includes(marketplaceProvider.dataset.marketplaceProvider)
           ? marketplaceProvider.dataset.marketplaceProvider
           : "all";
-        state.marketplaceView = "overview";
+        state.marketplaceView = "analytics";
         state.marketplaceDetail = null;
         syncMarketplaceLocation();
         render();
