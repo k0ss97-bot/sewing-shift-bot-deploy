@@ -10168,7 +10168,7 @@ def close_shift(shift_id: int):
         SELECT shifts.shift_date, shifts.start_time, employees.lunch_start, employees.lunch_end
         FROM shifts
         JOIN employees ON employees.id = shifts.employee_id
-        WHERE id = ? AND status = 'open'
+        WHERE shifts.id = ? AND shifts.status = 'open'
         """,
         (shift_id,)
     )
