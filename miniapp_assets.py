@@ -4134,6 +4134,102 @@ MINIAPP_HTML = """<!doctype html>
       .marketplace-v2-kpi strong { font-size: 22px; }
     }
 
+    /* Prototype analytics center. The center is intentionally self-contained so
+       marketplace loading and the rest of the Mini App keep their existing UI. */
+    .analytics-center-shell {
+      display: grid;
+      grid-template-columns: 238px minmax(0, 1fr);
+      min-height: 720px;
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      overflow: hidden;
+      border: 1px solid rgba(16,23,34,.08);
+      border-radius: 22px;
+      background: #f5f7fb;
+      box-shadow: 0 18px 44px rgba(16,23,34,.10);
+    }
+    .analytics-center-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      padding: 22px 14px 16px;
+      color: #e9efff;
+      background: linear-gradient(165deg,#0e1b33,#152b52 72%,#0d1a30);
+    }
+    .analytics-center-brand { display: flex; align-items: center; gap: 10px; padding: 0 9px 12px; }
+    .analytics-center-brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: #fff; background: #1b62ff; font-size: 18px; font-weight: 900; }
+    .analytics-center-brand b { font-size: 14px; letter-spacing: .04em; }
+    .analytics-center-brand span { display: block; margin-top: 2px; color: #9bb1d9; font-size: 10px; }
+    .analytics-center-nav { display: grid; gap: 4px; }
+    .analytics-center-nav button { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 9px 11px; border: 0; border-radius: 10px; color: #bdc9df; background: transparent; text-align: left; font-size: 12px; font-weight: 750; }
+    .analytics-center-nav button:hover { color: #fff; background: rgba(255,255,255,.08); }
+    .analytics-center-nav button.active { color: #fff; background: linear-gradient(90deg,#2065ff,#2b7bff); box-shadow: 0 9px 18px rgba(16,84,235,.32); }
+    .analytics-center-nav button span:first-child { width: 18px; text-align: center; font-size: 15px; }
+    .analytics-center-connector { margin-top: auto; padding: 13px; border: 1px solid rgba(181,204,243,.22); border-radius: 13px; background: rgba(255,255,255,.07); }
+    .analytics-center-connector b { display: block; font-size: 12px; }
+    .analytics-center-connector span { display: block; margin-top: 5px; color: #aabbd8; font-size: 11px; line-height: 1.4; }
+    .analytics-center-connector .status-chip { margin-top: 10px; color: #0f6a40; background: #c9f4df; }
+    .analytics-center-main { min-width: 0; padding: 20px 24px 30px; background: linear-gradient(145deg,#f7f9fd,#eef2f8); }
+    .analytics-center-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 18px; }
+    .analytics-center-toolbar h2 { margin: 0; font-size: clamp(25px, 3vw, 36px); letter-spacing: -.045em; }
+    .analytics-center-toolbar p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .analytics-center-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+    .analytics-center-controls select, .analytics-center-controls button { min-height: 36px; padding: 7px 11px; border: 1px solid rgba(16,23,34,.10); border-radius: 9px; background: rgba(255,255,255,.85); color: var(--text); font-size: 12px; font-weight: 750; }
+    .analytics-center-controls button.active { color: #fff; border-color: #2262ef; background: #2262ef; }
+    .analytics-center-status { display: inline-flex; align-items: center; gap: 7px; min-height: 31px; padding: 6px 10px; border-radius: 999px; color: #246443; background: #daf5e6; font-size: 11px; font-weight: 800; }
+    .analytics-center-status.partial { color: #8a5b0b; background: #fff0cf; }
+    .analytics-center-status.delayed, .analytics-center-status.unavailable { color: #9b3545; background: #ffe2e7; }
+    .analytics-center-grid { display: grid; gap: 14px; }
+    .analytics-center-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .analytics-center-card { min-width: 0; padding: 16px; border: 1px solid rgba(25,89,243,.10); border-radius: 16px; background: rgba(255,255,255,.9); box-shadow: 0 12px 24px rgba(16,23,34,.055); }
+    .analytics-center-kpi { min-height: 124px; }
+    .analytics-center-kpi > span { display: block; min-height: 31px; color: var(--muted); font-size: 11px; font-weight: 800; }
+    .analytics-center-kpi strong { display: block; margin: 7px 0 8px; font-size: clamp(25px,2.2vw,34px); line-height: 1; letter-spacing: -.05em; overflow-wrap: anywhere; }
+    .analytics-center-kpi small { display: block; color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .analytics-center-kpi.unavailable strong { color: #6f7b8f; }
+    .analytics-center-section-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 23px 0 10px; }
+    .analytics-center-section-title b { font-size: 16px; }
+    .analytics-center-section-title span { color: #245bd4; font-size: 12px; font-weight: 800; }
+    .analytics-center-two { grid-template-columns: minmax(0,1.45fr) minmax(280px,.75fr); }
+    .analytics-center-three { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    .analytics-center-card h3 { margin: 0; font-size: 15px; }
+    .analytics-center-card p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .analytics-center-chart { min-height: 238px; margin-top: 15px; padding: 12px 4px 0; border-radius: 12px; background: repeating-linear-gradient(0deg,rgba(51,83,139,.08) 0 1px,transparent 1px 46px); }
+    .analytics-center-chart svg { display: block; width: 100%; height: 210px; overflow: visible; }
+    .analytics-center-chart-empty { display: grid; place-items: center; min-height: 210px; color: var(--muted); text-align: center; }
+    .analytics-center-chart-empty b { color: var(--text); }
+    .analytics-center-list { display: grid; gap: 0; margin-top: 10px; }
+    .analytics-center-list-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 11px 0; border-bottom: 1px solid rgba(16,23,34,.08); }
+    .analytics-center-list-row:last-child { border-bottom: 0; }
+    .analytics-center-list-row > div { min-width: 0; }
+    .analytics-center-list-row b, .analytics-center-list-row span { display: block; overflow-wrap: anywhere; }
+    .analytics-center-list-row b { font-size: 12px; }
+    .analytics-center-list-row span { margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .analytics-center-list-row strong { flex: 0 0 auto; font-size: 13px; }
+    .analytics-center-ring { display: grid; place-items: center; min-height: 170px; margin-top: 10px; border-radius: 14px; background: radial-gradient(circle at 50% 45%,#fff 0 36%,transparent 37%), conic-gradient(#2765f2 0 64%,#b9c9ef 64% 100%); }
+    .analytics-center-ring span { display: grid; place-items: center; width: 110px; height: 110px; border-radius: 50%; background: #fff; color: var(--text); font-size: 18px; font-weight: 900; }
+    .analytics-center-table-wrap { overflow-x: auto; margin-top: 9px; }
+    .analytics-center-table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 12px; }
+    .analytics-center-table th { padding: 10px 9px; color: var(--muted); font-size: 10px; text-align: left; text-transform: uppercase; letter-spacing: .04em; }
+    .analytics-center-table td { padding: 11px 9px; border-top: 1px solid rgba(16,23,34,.08); vertical-align: top; overflow-wrap: anywhere; }
+    .analytics-center-empty { display: grid; place-items: center; min-height: 180px; padding: 24px; border-radius: 13px; background: linear-gradient(180deg,#f5f8fd,#fff); color: var(--muted); text-align: center; }
+    .analytics-center-empty b { color: var(--text); }
+    .analytics-center-empty span { max-width: 430px; margin-top: 6px; font-size: 12px; line-height: 1.45; }
+    .analytics-center-map { min-height: 360px; display: grid; place-items: center; border-radius: 14px; background: radial-gradient(circle at 58% 45%,rgba(55,107,229,.23),transparent 42%), linear-gradient(145deg,#e4ebfa,#f8fbff); color: #7183a4; }
+    .analytics-center-map .map-outline { width: min(78%,500px); aspect-ratio: 1.45; border: 4px solid rgba(42,96,217,.42); border-radius: 48% 54% 42% 53% / 52% 44% 58% 46%; transform: rotate(-10deg); }
+    .analytics-center-recommendation { border-left: 4px solid #2563eb; background: linear-gradient(110deg,#edf3ff,#fff); }
+    .analytics-center-recommendation.warn { border-left-color: #f0a43a; }
+    .analytics-center-recommendation strong { display: block; font-size: 13px; }
+    .analytics-center-recommendation span { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .analytics-center-shell :where(button, a) { text-decoration: none; }
+    .analytics-center-shell :where(*, *::before, *::after) { text-overflow: clip; white-space: normal; }
+    .analytics-center-shell :where(button, a):focus-visible { outline: 3px solid rgba(37,99,235,.30); outline-offset: 2px; }
+    @media (max-width: 1300px) { .analytics-center-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+    @media (max-width: 980px) { .analytics-center-shell { grid-template-columns: 1fr; } .analytics-center-sidebar { padding: 10px; } .analytics-center-brand { padding: 4px 8px; } .analytics-center-nav { display: flex; overflow-x: auto; } .analytics-center-nav button { flex: 0 0 auto; } .analytics-center-connector { display: none; } .analytics-center-main { padding: 16px; } .analytics-center-two { grid-template-columns: 1fr; } }
+    @media (max-width: 680px) { .analytics-center-kpis, .analytics-center-three { grid-template-columns: repeat(2,minmax(0,1fr)); } .analytics-center-toolbar { align-items: stretch; } .analytics-center-controls { width: 100%; } .analytics-center-controls > * { flex: 1 1 auto; } .analytics-center-kpi { min-height: 112px; padding: 13px; } }
+    @media (max-width: 430px) { .analytics-center-kpis, .analytics-center-three { grid-template-columns: 1fr; } .analytics-center-main { padding: 12px; } }
+
     /* Canonical responsive layer. Keep this block last so legacy rules cannot
        silently override the desktop and mobile application shells. */
     :where(button, [role="button"], .tab, .nav-item, .workspace-tab) {
@@ -4852,6 +4948,9 @@ MINIAPP_HTML = """<!doctype html>
       "analyticsStage",
       "analyticsTaskId",
       "analyticsReturnView",
+      "analyticsCenterView",
+      "analyticsCenterProvider",
+      "analyticsCenterPeriod",
       "employeeHomeView",
       "userStartDate",
       "userEndDate",
@@ -4935,6 +5034,9 @@ MINIAPP_HTML = """<!doctype html>
       analyticsStage: "",
       analyticsTaskId: "",
       analyticsReturnView: "overview",
+      analyticsCenterView: "overview",
+      analyticsCenterProvider: "all",
+      analyticsCenterPeriod: "7d",
       employeeHomeView: "overview",
       userStartDate: "",
       userEndDate: "",
@@ -6439,7 +6541,7 @@ MINIAPP_HTML = """<!doctype html>
         state.marketplaceData.error = error.apiMessage || error.message || "Не удалось загрузить маркетплейсы.";
       } finally {
         state.marketplaceData.loading = false;
-        if (state.workspace === "marketplaces") render();
+        if (state.workspace === "marketplaces" || state.screen === "analytics") render();
       }
     }
 
@@ -9204,6 +9306,111 @@ MINIAPP_HTML = """<!doctype html>
       `).join("") : itemEmpty("Отклонений не найдено.")}</div>`;
     }
 
+    function analyticsCenterPayload() {
+      return state.marketplaceData && state.marketplaceData.payload ? state.marketplaceData.payload : {};
+    }
+
+    function analyticsCenterProviderRows(payload, provider) {
+      if (provider === "wildberries") return [];
+      return Array.isArray(payload.products_rows) ? payload.products_rows : [];
+    }
+
+    function analyticsCenterStatus(payload, provider) {
+      const lastRun = (payload.sync_runs || [])[0] || {};
+      const configured = provider === "wildberries"
+        ? Boolean((payload.connectors || []).find((item) => item.marketplace === "wildberries")?.configured)
+        : Boolean(payload.configured);
+      if (!configured) return {className: "unavailable", label: "Показатель пока недоступен"};
+      if (lastRun.status && lastRun.status !== "success") return {className: "delayed", label: "Обновление задерживается"};
+      if (provider === "all" && !(payload.analytics || {}).finance_available) return {className: "partial", label: "Данные загружены частично"};
+      return {className: "", label: "Данные актуальны"};
+    }
+
+    function analyticsCenterNumber(value, suffix = "") {
+      if (value === null || value === undefined || value === "") return "—";
+      const number = Number(value);
+      return Number.isFinite(number) ? `${number.toLocaleString("ru-RU")}${suffix}` : escapeHtml(value);
+    }
+
+    function analyticsCenterChart(rows) {
+      const values = (rows || []).map((row) => Number(row.revenue)).filter((value) => Number.isFinite(value) && value >= 0);
+      if (!values.length) return `<div class="analytics-center-chart-empty"><div><b>График пока недоступен</b><div>После синхронизации появится динамика начислений.</div></div></div>`;
+      const max = Math.max(...values, 1);
+      const width = 720;
+      const points = values.map((value, index) => `${(index / Math.max(values.length - 1, 1)) * width},${190 - (value / max) * 160}`).join(" ");
+      return `<div class="analytics-center-chart"><svg viewBox="0 0 ${width} 210" preserveAspectRatio="none" role="img" aria-label="Динамика продаж"><polyline points="${points}" fill="none" stroke="#2563eb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>${values.map((value, index) => `<circle cx="${(index / Math.max(values.length - 1, 1)) * width}" cy="${190 - (value / max) * 160}" r="5" fill="#fff" stroke="#2563eb" stroke-width="3"><title>${escapeHtml(rows[index].date || "")} · ${escapeHtml(marketplaceMoney(value))}</title></circle>`).join("")}</svg></div>`;
+    }
+
+    function analyticsCenterEmpty(title, text, action = "") {
+      return `<div class="analytics-center-empty"><div><b>${escapeHtml(title)}</b><span>${escapeHtml(text)}</span>${action ? `<button type="button" class="small-button secondary" data-analytics-center-action="${escapeHtml(action)}">Настроить интеграцию</button>` : ""}</div></div>`;
+    }
+
+    function analyticsCenterNav(active) {
+      const items = [["overview", "⌂", "Обзор"], ["sales", "↗", "Продажи"], ["products", "▤", "Товары"], ["inventory", "▦", "Остатки"], ["production", "⚙", "Производство"], ["supplies", "↓", "Поставки"], ["finance", "₽", "Финансы"], ["geography", "◌", "Карта"], ["data", "✓", "Качество данных"]];
+      return `<nav class="analytics-center-nav" aria-label="Аналитика">${items.map(([id, icon, label]) => `<button type="button" class="${active === id ? "active" : ""}" data-analytics-center-view="${id}"><span>${icon}</span><span>${label}</span></button>`).join("")}</nav>`;
+    }
+
+    function renderAdminIntegrations() {
+      const payload = analyticsCenterPayload();
+      const runs = Array.isArray(payload.sync_runs) ? payload.sync_runs : [];
+      const events = Array.isArray(payload.sync_events) ? payload.sync_events : [];
+      const status = analyticsCenterStatus(payload, "ozon");
+      return `<div class="screen-head"><div><h2>Диагностика интеграций</h2><p>Технические ответы API и журнал синхронизации доступны только администратору.</p></div><div class="date">${runs.length} запусков</div></div>${renderAdminTabs()}<div class="kpi-grid"><div class="card kpi"><div class="kpi-top"><span>Ozon</span><span class="kpi-ico">↻</span></div><strong>${escapeHtml(status.label)}</strong><span>Последний запуск: ${escapeHtml(runs[0]?.started_at || "нет данных")}</span></div><div class="card kpi"><div class="kpi-top"><span>Ошибки API</span><span class="kpi-ico">!</span></div><strong>${events.filter((row) => row.level === "error" || row.status === "error").length}</strong><span>Только технический журнал</span></div></div><div class="section-title"><b>Последние события</b><span>${events.length}</span></div><div class="op-list">${events.length ? events.slice(0, 30).map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.event_type || row.marketplace || "Событие")}</b><span>${escapeHtml(row.message || row.error_message || "Без деталей")}</span></div><span class="status-chip ${row.level === "error" || row.status === "error" ? "warn" : "gray"}">${escapeHtml(row.status || row.level || "info")}</span></div>`).join("") : itemEmpty("Технических событий пока нет.")}</div>`;
+    }
+
+    function renderAnalyticsCenter() {
+      const payload = analyticsCenterPayload();
+      const provider = ["all", "ozon", "wildberries"].includes(state.analyticsCenterProvider) ? state.analyticsCenterProvider : "all";
+      const view = state.analyticsCenterView || "overview";
+      const products = analyticsCenterProviderRows(payload, provider);
+      const summary = provider === "wildberries" ? {} : (payload.summary || {});
+      const analytics = provider === "wildberries" ? {} : (payload.analytics || {});
+      const financeDaily = Array.isArray(analytics.finance_daily) ? analytics.finance_daily : [];
+      const supplies = Array.isArray(payload.supplies) ? payload.supplies.filter((row) => provider === "all" || row.marketplace === provider) : [];
+      const warehouseShipments = Array.isArray(payload.warehouse_shipments) ? payload.warehouse_shipments : [];
+      const orders = provider === "wildberries" ? [] : (payload.orders_rows || []);
+      const status = analyticsCenterStatus(payload, provider);
+      const control = state.data?.admin?.production_control || {};
+      const topProducts = [...products].sort((a, b) => Number(b.available || 0) - Number(a.available || 0)).slice(0, 5);
+      const titleMap = {overview: "Обзор", sales: "Продажи", products: "Товары", inventory: "Остатки", production: "Производство", supplies: "Поставки", finance: "Финансы", geography: "Карта", data: "Качество данных"};
+      const kpi = (label, value, hint, unavailable = false) => `<div class="analytics-center-card analytics-center-kpi ${unavailable ? "unavailable" : ""}"><span>${escapeHtml(label)}</span><strong>${value}</strong><small>${escapeHtml(hint)}</small></div>`;
+      const productRows = products.slice(0, 60).map((row) => `<tr><td>${escapeHtml(row.name || "Без названия")}</td><td>${escapeHtml(row.offer_id || "—")}</td><td>${escapeHtml(row.color || "—")}</td><td>${escapeHtml(row.size || "—")}</td><td>${escapeHtml(row.barcode || "—")}</td><td>${analyticsCenterNumber(row.available, " шт.")}</td></tr>`).join("");
+      const productTable = products.length ? `<div class="analytics-center-table-wrap"><table class="analytics-center-table"><thead><tr><th>Товар</th><th>Артикул</th><th>Цвет</th><th>Размер</th><th>Штрихкод</th><th>Остаток</th></tr></thead><tbody>${productRows}</tbody></table></div>` : analyticsCenterEmpty("Каталог не загружен", "Выполните синхронизацию маркетплейса, чтобы получить карточки товаров.", "sync");
+      const supplyRows = supplies.slice(0, 60).map((row) => `<tr><td>${escapeHtml(row.external_supply_id || "Поставка")}</td><td>${escapeHtml(row.marketplace || "—")}</td><td>${escapeHtml(row.destination_name || "—")}</td><td>${analyticsCenterNumber(row.total_quantity, " шт.")}</td><td>${escapeHtml(row.canonical_status || "—")}</td></tr>`).join("");
+      const orderRows = orders.slice(0, 5).map((row) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(row.posting_number || row.external_order_id || "Заказ")}</b><span>${escapeHtml(row.status || "Статус не указан")} · ${escapeHtml(row.shipment_date || "Дата не указана")}</span></div><strong>${escapeHtml(row.total_price || "—")}</strong></div>`).join("");
+      const attention = [...(control.alerts || []).slice(0, 3), ...(payload.sync_events || []).slice(0, 2)];
+      let body = "";
+      if (view === "overview") {
+        body = `<div class="analytics-center-section-title"><b>Ключевые показатели</b><span>${escapeHtml(status.label)}</span></div><div class="analytics-center-grid analytics-center-kpis">${kpi("Карточки товаров", analyticsCenterNumber(summary.products, " поз."), provider === "wildberries" ? "Wildberries пока не подключён" : "Каталог маркетплейса", provider === "wildberries")}${kpi("Остатки", analyticsCenterNumber(summary.stock_rows, " строк"), "FBO и FBS", provider === "wildberries")}${kpi("Открытые заказы", analyticsCenterNumber(summary.open_orders, " шт."), "Требуют контроля", provider === "wildberries")}${kpi("Поставки", analyticsCenterNumber(supplies.length, " шт."), "Внешние поставки", false)}${kpi("Задания складу", analyticsCenterNumber(warehouseShipments.length, " шт."), "Внутренние документы", false)}${kpi("План производства", control.plan == null ? "—" : analyticsCenterNumber(control.plan, " шт."), control.plan == null ? "Показатель пока недоступен" : `Факт: ${analyticsCenterNumber(control.fact, " шт.")}`, control.plan == null)}</div><div class="analytics-center-section-title"><b>Продажи и операционный индекс</b></div><div class="analytics-center-grid analytics-center-two"><section class="analytics-center-card"><h3>Динамика начислений</h3><p>Фактические данные из синхронизации Ozon.</p>${analyticsCenterChart(financeDaily)}</section><section class="analytics-center-card"><h3>Операционный индекс</h3><p>Сводка по доступным производственным показателям.</p>${control.plan != null ? `<div class="analytics-center-ring"><span>${Math.round(Number(control.plan) ? Number(control.fact || 0) / Number(control.plan) * 100 : 0)}%</span></div>` : analyticsCenterEmpty("Индекс пока недоступен", "Нужны данные плана и факта производства.")}</section></div><div class="analytics-center-section-title"><b>Сравнение площадок</b><span>только чтение</span></div><div class="analytics-center-grid analytics-center-three"><div class="analytics-center-card"><h3>Ozon</h3><p>${payload.configured ? "Подключён" : "Не подключён"}</p><strong>${analyticsCenterNumber(summary.products, " поз.")}</strong></div><div class="analytics-center-card"><h3>Wildberries</h3><p>${(payload.connectors || []).find((row) => row.marketplace === "wildberries")?.configured ? "Подключён" : "Пока недоступен"}</p><strong>${(payload.connectors || []).find((row) => row.marketplace === "wildberries")?.configured ? "—" : "—"}</strong></div><div class="analytics-center-card analytics-center-recommendation"><strong>Рекомендация</strong><span>${attention.length ? "Проверьте записи, требующие внимания, в соответствующих разделах." : "Система не обнаружила критичных событий."}</span></div></div><div class="analytics-center-section-title"><b>Топ товары</b><span>${topProducts.length}</span></div><section class="analytics-center-card"><div class="analytics-center-list">${topProducts.length ? topProducts.map((row) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(row.name || row.offer_id || "Товар")}</b><span>${escapeHtml(row.color || "Цвет не указан")} · ${escapeHtml(row.size || "Размер не указан")}</span></div><strong>${analyticsCenterNumber(row.available, " шт.")}</strong></div>`).join("") : analyticsCenterEmpty("Топ товаров пока нет", "Синхронизируйте каталог, чтобы заполнить этот блок.")}</div></section><div class="analytics-center-section-title"><b>Требует внимания</b><span>${attention.length}</span></div><section class="analytics-center-card">${attention.length ? `<div class="analytics-center-list">${attention.slice(0, 5).map((row) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(row.title || row.event_type || "Событие")}</b><span>${escapeHtml(row.detail || row.message || "Без деталей")}</span></div><span class="status-chip warn">проверить</span></div>`).join("")}</div>` : analyticsCenterEmpty("Всё спокойно", "Нет записей, требующих внимания.")}</section>`;
+      } else if (view === "sales") {
+        body = `<div class="analytics-center-section-title"><b>Продажи</b><span>${orders.length} заказов</span></div><div class="analytics-center-grid analytics-center-kpis">${kpi("Заказы", analyticsCenterNumber(orders.length, " шт."), "За выбранный период")}${kpi("Начисления", analytics.finance_available ? marketplaceMoney(financeDaily.reduce((sum, row) => sum + Number(row.revenue || 0), 0)) : "—", analytics.finance_available ? "Из финансового API" : "Показатель пока недоступен", !analytics.finance_available)}${kpi("Возвраты", analytics.returns_available ? analyticsCenterNumber((analytics.returns_rows || []).length, " шт.") : "—", analytics.returns_available ? "Из API возвратов" : "Показатель пока недоступен", !analytics.returns_available)}</div><div class="analytics-center-grid analytics-center-two"><section class="analytics-center-card"><h3>График продаж</h3><p>Без синхронизированной динамики график не заполняется.</p>${analyticsCenterChart(financeDaily)}</section><section class="analytics-center-card"><h3>Последние заказы</h3><div class="analytics-center-list">${orderRows || analyticsCenterEmpty("Заказов нет", "Новые заказы появятся после синхронизации.")}</div></section></div>`;
+      } else if (view === "products") {
+        body = `<div class="analytics-center-section-title"><b>Товарный каталог</b><span>${products.length} позиций</span></div><section class="analytics-center-card"><p>Карточки сгруппированы по данным маркетплейса. Пустые поля не заполняются автоматически.</p>${productTable}</section>`;
+      } else if (view === "inventory") {
+        const stockTotal = products.reduce((sum, row) => sum + Number(row.available || 0), 0);
+        body = `<div class="analytics-center-section-title"><b>Остатки</b><span>FBO и FBS</span></div><div class="analytics-center-grid analytics-center-kpis">${kpi("Строк остатков", analyticsCenterNumber(summary.stock_rows), "Данные маркетплейса")}${kpi("Доступный остаток", analyticsCenterNumber(stockTotal, " шт."), "Сумма по карточкам")}${kpi("Риск дефицита", "—", "Нужна история спроса", true)}</div><section class="analytics-center-card"><h3>Остатки → производство</h3><p>Связка с производственными заданиями появится после сопоставления спроса и маршрутов.</p>${analyticsCenterEmpty("Пока нет расчёта риска", "Недостающие показатели не заменяются фиктивными числами.")}</section>`;
+      } else if (view === "production") {
+        const stages = control.stages || [];
+        body = `<div class="analytics-center-section-title"><b>Производство</b><span>${escapeHtml(control.start_date || "текущий период")}</span></div><div class="analytics-center-grid analytics-center-kpis">${kpi("План", analyticsCenterNumber(control.plan, " шт."), "План выпуска", control.plan == null)}${kpi("Факт", analyticsCenterNumber(control.fact, " шт."), "Фактически выполнено", control.fact == null)}${kpi("В работе", analyticsCenterNumber(control.active_quantity, " шт."), "Активные операции", control.active_quantity == null)}${kpi("FPY", control.fpy == null ? "—" : `${analyticsCenterNumber(control.fpy)}%`, "Первый проход", control.fpy == null)}</div><section class="analytics-center-card"><h3>Пульс производства</h3><div class="analytics-center-list">${stages.length ? stages.slice(0, 12).map((stage) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(stage.stage)}</b><span>${escapeHtml(stage.tasks)} заданий · свободно ${escapeHtml(stage.free)}</span></div><strong>${analyticsCenterNumber(stage.quantity, " шт.")}</strong></div>`).join("") : analyticsCenterEmpty("Активных этапов нет", "Производственные этапы появятся после создания заданий.")}</div></section>`;
+      } else if (view === "supplies") {
+        body = `<div class="analytics-center-section-title"><b>Поставки</b><span>${supplies.length} записей</span></div><section class="analytics-center-card">${supplies.length ? `<div class="analytics-center-table-wrap"><table class="analytics-center-table"><thead><tr><th>Поставка</th><th>Площадка</th><th>Направление</th><th>Количество</th><th>Состояние</th></tr></thead><tbody>${supplyRows}</tbody></table></div>` : analyticsCenterEmpty("Поставок нет", "После синхронизации маркетплейса здесь появятся поставки.")}</section>`;
+      } else if (view === "finance") {
+        const financeAvailable = Boolean(analytics.finance_available && financeDaily.length);
+        body = `<div class="analytics-center-section-title"><b>Финансы</b><span>${financeAvailable ? `${financeDaily.length} дней` : "данные недоступны"}</span></div><section class="analytics-center-card"><h3>Финансовый waterfall</h3><p>Показываем только фактические начисления. Комиссии и себестоимость не выдумываем.</p>${financeAvailable ? analyticsCenterChart(financeDaily) : analyticsCenterEmpty("Waterfall пока недоступен", "Нужны начисления, комиссии и себестоимость из источников.")}</section><section class="analytics-center-card"><h3>Начисления по дням</h3>${financeAvailable ? `<div class="analytics-center-table-wrap"><table class="analytics-center-table"><thead><tr><th>Дата</th><th>Начисления</th><th>Итог</th></tr></thead><tbody>${[...financeDaily].reverse().map((row) => `<tr><td>${escapeHtml(row.date || "—")}</td><td>${marketplaceMoney(row.revenue || 0)}</td><td>${marketplaceMoney(row.net || 0)}</td></tr>`).join("")}</tbody></table></div>` : analyticsCenterEmpty("Данных нет", "Выполните синхронизацию финансового раздела.")}</section>`;
+      } else if (view === "geography") {
+        body = `<div class="analytics-center-section-title"><b>Карта России</b><span>региональные показатели</span></div><div class="analytics-center-grid analytics-center-two"><section class="analytics-center-card"><div class="analytics-center-map"><div class="map-outline" aria-label="Карта пока без данных"></div></div></section><section class="analytics-center-card"><h3>Рейтинг регионов</h3><p>География заказов и остатков будет показана после загрузки региональных данных.</p>${analyticsCenterEmpty("Карта пока недоступна", "В текущем API нет региональной разбивки.")}</section></div>`;
+      } else {
+        const runs = payload.sync_runs || [];
+        const events = payload.sync_events || [];
+        body = `<div class="analytics-center-section-title"><b>Качество данных</b><span>${escapeHtml(status.label)}</span></div><div class="analytics-center-grid analytics-center-three">${kpi("Синхронизации", analyticsCenterNumber(runs.length), "Журнал запусков")}${kpi("События", analyticsCenterNumber(events.length), "Технические уведомления")}${kpi("Цвет и размер", products.length ? "загружены" : "—", products.length ? "Проверяйте карточки товаров" : "Показатель пока недоступен", !products.length)}</div><section class="analytics-center-card"><h3>Контроль источников</h3><p>Технические ошибки вынесены в Админ → Интеграции → Диагностика.</p>${runs.length ? `<div class="analytics-center-list">${runs.slice(0, 8).map((row) => `<div class="analytics-center-list-row"><div><b>${escapeHtml(row.started_at || "Запуск")}</b><span>${escapeHtml(row.error_message || "Синхронизация завершена")}</span></div><span class="status-chip ${row.status === "success" ? "" : "warn"}">${escapeHtml(row.status || "—")}</span></div>`).join("")}</div>` : analyticsCenterEmpty("Журнал пуст", "После первого запуска синхронизации появится история.", "sync")}</section><button type="button" class="small-button secondary" data-analytics-center-action="diagnostics">Открыть диагностику администратора</button>`;
+      }
+      mainButton.hidden = false;
+      mainButton.textContent = state.marketplaceData.loading ? "Обновление…" : "Обновить данные";
+      mainButton.disabled = state.marketplaceData.loading;
+      const centerPeriod = state.analyticsCenterPeriod || "7d";
+      mount.innerHTML = `<div class="analytics-center-shell"><aside class="analytics-center-sidebar"><div class="analytics-center-brand"><span class="analytics-center-brand-mark">◈</span><div><b>АНАЛИТИКА</b><span>центр управления</span></div></div>${analyticsCenterNav(view)}<div class="analytics-center-connector"><b>${provider === "wildberries" ? "Wildberries" : provider === "ozon" ? "Ozon" : "Маркетплейсы"}</b><span>Режим только чтение. Изменения на площадки не отправляются.</span><span class="status-chip">${escapeHtml(status.label)}</span></div></aside><main class="analytics-center-main"><div class="analytics-center-toolbar"><div><h2>${escapeHtml(titleMap[view] || "Обзор")}</h2><p>Показатели продаж, остатков, производства и качества данных.</p></div><div class="analytics-center-controls"><select data-analytics-center-period aria-label="Период"><option value="7d" ${centerPeriod === "7d" ? "selected" : ""}>Последние 7 дней</option><option value="30d" ${centerPeriod === "30d" ? "selected" : ""}>Последние 30 дней</option><option value="month" ${centerPeriod === "month" ? "selected" : ""}>Текущий месяц</option></select><button type="button" class="${provider === "all" ? "active" : ""}" data-analytics-center-provider="all">Все</button><button type="button" class="${provider === "ozon" ? "active" : ""}" data-analytics-center-provider="ozon">Ozon</button><button type="button" class="${provider === "wildberries" ? "active" : ""}" data-analytics-center-provider="wildberries">WB</button><button type="button" data-analytics-center-action="sync">↻</button></div></div>${body}</main></div>`;
+    }
+
     function renderAnalytics() {
       const operations = getReportOperations();
       const feedback = getFeedbackRows();
@@ -9242,6 +9449,10 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      if (state.data && state.data.is_admin) {
+        renderAnalyticsCenter();
+        return;
+      }
       const control = state.data.admin && state.data.admin.production_control ? state.data.admin.production_control : {};
       const stages = control.stages || [];
       const alerts = control.alerts || [];
@@ -9284,6 +9495,7 @@ MINIAPP_HTML = """<!doctype html>
         ["employees", "Сотрудники"],
         ["shifts", "Смены"],
         ["feedback", "Связь"],
+        ["integrations", "Интеграции"],
       ];
 
       return `<div class="segment-row">${sections.map(([id, label]) => `
@@ -10309,6 +10521,11 @@ MINIAPP_HTML = """<!doctype html>
         applyMarketplaceLocation();
         state.marketplaceLocationInitialized = true;
       }
+      if (state.marketplaceView === "analytics") {
+        if (["ozon", "wildberries"].includes(state.marketplaceProvider)) state.analyticsCenterProvider = state.marketplaceProvider;
+        renderAnalyticsCenter();
+        return;
+      }
       const payload = state.marketplaceData.payload || {};
       const selectedProvider = ["all", "ozon", "wildberries"].includes(state.marketplaceProvider) ? state.marketplaceProvider : "all";
       const isOzon = selectedProvider === "ozon";
@@ -10888,6 +11105,10 @@ MINIAPP_HTML = """<!doctype html>
         mount.innerHTML = renderAdminFeedback(admin);
         return;
       }
+      if (state.adminSection === "integrations") {
+        mount.innerHTML = renderAdminIntegrations();
+        return;
+      }
 
       mount.innerHTML = renderAdminReports(admin);
     }
@@ -10987,7 +11208,7 @@ MINIAPP_HTML = """<!doctype html>
       if (isWarehouseWorkspace && state.wmsView === "products" && !state.wmsCatalog.loaded && !state.wmsCatalog.loading && !state.wmsCatalog.error) {
         window.setTimeout(() => refreshWmsCatalog({silent: true}), 0);
       }
-      if (isMarketplaceWorkspace && !state.marketplaceData.loaded && !state.marketplaceData.loading && !state.marketplaceData.error) {
+      if ((isMarketplaceWorkspace || state.screen === "analytics") && !state.marketplaceData.loaded && !state.marketplaceData.loading && !state.marketplaceData.error) {
         window.setTimeout(() => refreshMarketplaces({silent: true}), 0);
       }
       if (state.data.is_admin && state.workspace === "production" && state.screen === "shift") window.setTimeout(syncWebPushDeviceState, 0);
@@ -11567,6 +11788,38 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const analyticsCenterView = event.target.closest("[data-analytics-center-view]");
+      if (analyticsCenterView) {
+        state.analyticsCenterView = analyticsCenterView.dataset.analyticsCenterView || "overview";
+        if (state.workspace === "marketplaces") state.marketplaceView = "analytics";
+        render();
+        return;
+      }
+
+      const analyticsCenterProvider = event.target.closest("[data-analytics-center-provider]");
+      if (analyticsCenterProvider) {
+        state.analyticsCenterProvider = ["all", "ozon", "wildberries"].includes(analyticsCenterProvider.dataset.analyticsCenterProvider)
+          ? analyticsCenterProvider.dataset.analyticsCenterProvider : "all";
+        if (state.workspace === "marketplaces") state.marketplaceProvider = state.analyticsCenterProvider;
+        render();
+        return;
+      }
+
+      const analyticsCenterAction = event.target.closest("[data-analytics-center-action]");
+      if (analyticsCenterAction) {
+        const action = analyticsCenterAction.dataset.analyticsCenterAction;
+        if (action === "sync") { syncMarketplaces(); return; }
+        if (action === "diagnostics") {
+          state.workspace = "production";
+          state.screen = "admin";
+          state.adminSection = "integrations";
+          render();
+          return;
+        }
+        if (action === "refresh") { refreshMarketplaces(); return; }
+        if (action === "open") { state.analyticsCenterView = "overview"; render(); return; }
+      }
+
       const marketplaceView = event.target.closest("[data-marketplace-view]");
       if (marketplaceView) {
         state.marketplaceView = marketplaceView.dataset.marketplaceView || "overview";
@@ -12072,6 +12325,11 @@ MINIAPP_HTML = """<!doctype html>
       if (event.target.id === "marketplacePeriod") {
         state.marketplacePeriod = event.target.value || "7d";
         syncMarketplaceLocation();
+        render();
+        return;
+      }
+      if (event.target.matches("[data-analytics-center-period]")) {
+        state.analyticsCenterPeriod = event.target.value || "7d";
         render();
         return;
       }
