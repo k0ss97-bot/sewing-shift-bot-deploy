@@ -16,7 +16,7 @@ from typing import Any, Iterable
 from wms.connection import get_pg_connection
 
 
-DATASETS = ("catalog", "prices", "stocks", "orders", "returns", "finance", "rating")
+DATASETS = ("catalog", "prices", "stocks", "orders", "returns", "finance", "rating", "supplies")
 FRESHNESS_SECONDS = {
     "catalog": 2 * 60 * 60,
     "prices": 45 * 60,
@@ -25,10 +25,12 @@ FRESHNESS_SECONDS = {
     "returns": 2 * 60 * 60,
     "finance": 2 * 60 * 60,
     "rating": 12 * 60 * 60,
+    "supplies": 30 * 60,
 }
 SYNC_CADENCE_SECONDS = {
     "catalog": 30 * 60, "prices": 15 * 60, "stocks": 5 * 60, "orders": 5 * 60,
     "returns": 30 * 60, "finance": 30 * 60, "rating": 6 * 60 * 60,
+    "supplies": 10 * 60,
 }
 
 OZON_COLOR_ATTRIBUTE_IDS = {10096}
@@ -57,6 +59,23 @@ def _truthy_flag(value: Any) -> bool:
     if value is True or (isinstance(value, int) and not isinstance(value, bool) and value == 1):
         return True
     return isinstance(value, str) and value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _canonical_supply_status(value: Any) -> str:
+    status = _text(value).upper()
+    if status in {"CANCELLED", "REJECTED_AT_SUPPLY_WAREHOUSE", "OVERDUE", "REPORT_REJECTED"}:
+        return "CANCELLED" if status == "CANCELLED" else "SYNC_ERROR"
+    if status == "COMPLETED":
+        return "ACCEPTED"
+    if status in {"ACCEPTANCE_AT_STORAGE_WAREHOUSE", "REPORTS_CONFIRMATION_AWAITING"}:
+        return "ACCEPTING"
+    if status in {"IN_TRANSIT", "ACCEPTED_AT_SUPPLY_WAREHOUSE"}:
+        return "HANDED_OVER"
+    if status == "READY_TO_SUPPLY":
+        return "READY_TO_PICK"
+    if status == "DATA_FILLING":
+        return "PLANNED"
+    return "EXTERNAL_DRAFT"
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -357,6 +376,57 @@ def normalize_finance(row: dict[str, Any]) -> dict[str, Any] | None:
         "delivery_charge": _money(row.get("delivery_charge")) or Decimal(0),
         "return_delivery_charge": _money(row.get("return_delivery_charge")) or Decimal(0),
         "currency": "RUB",
+        "payload": row,
+    }
+
+
+def normalize_supply(row: dict[str, Any]) -> dict[str, Any] | None:
+    external_supply_id = _text(row.get("external_supply_id") or row.get("supply_id"))
+    if not external_supply_id:
+        return None
+    dropoff = row.get("drop_off_warehouse") if isinstance(row.get("drop_off_warehouse"), dict) else {}
+    storage = row.get("storage_warehouse") if isinstance(row.get("storage_warehouse"), dict) else {}
+    timeslot_container = row.get("timeslot") if isinstance(row.get("timeslot"), dict) else {}
+    timeslot = timeslot_container.get("timeslot") if isinstance(timeslot_container.get("timeslot"), dict) else timeslot_container
+    items = [item for item in (row.get("items") or []) if isinstance(item, dict)]
+    total_quantity = sum((_decimal(item.get("quantity")) or Decimal(0)) for item in items)
+    normalized_items = []
+    for index, item in enumerate(items):
+        sku = _text(item.get("sku"))
+        offer_id = _text(item.get("offer_id"))
+        external_product_id = _text(item.get("product_id"))
+        item_key = sku or offer_id or external_product_id or hashlib.sha256(_json(item).encode()).hexdigest()
+        normalized_items.append({
+            "item_key": item_key,
+            "external_product_id": external_product_id,
+            "offer_id": offer_id,
+            "sku": sku,
+            "barcode": _text(item.get("barcode")),
+            "name": _text(item.get("name")),
+            "quantity": _decimal(item.get("quantity")) or Decimal(0),
+            "payload": item,
+            "index": index,
+        })
+    return {
+        "external_supply_id": external_supply_id,
+        "external_order_id": _text(row.get("external_order_id") or row.get("order_id")),
+        "order_number": _text(row.get("order_number")),
+        "state": _text(row.get("state") or row.get("order_state")),
+        "order_state": _text(row.get("order_state")),
+        "bundle_id": _text(row.get("bundle_id")),
+        "is_crossdock": bool(row.get("is_crossdock")),
+        "macrolocal_cluster_id": _text(row.get("macrolocal_cluster_id")),
+        "dropoff_warehouse_id": _text(dropoff.get("warehouse_id")),
+        "dropoff_warehouse_name": _text(dropoff.get("name")),
+        "storage_warehouse_id": _text(storage.get("warehouse_id")),
+        "storage_warehouse_name": _text(storage.get("name")),
+        "timeslot_from": _timestamp(timeslot.get("from")),
+        "timeslot_to": _timestamp(timeslot.get("to")),
+        "created_at_external": _timestamp(row.get("created_date")),
+        "state_updated_at": _timestamp(row.get("state_updated_date")),
+        "items": normalized_items,
+        "items_count": len(normalized_items),
+        "total_quantity": total_quantity,
         "payload": row,
     }
 
@@ -733,6 +803,8 @@ class MarketplacePGRepository:
                         outcome = self._upsert_return(cur, context, source)
                     elif context.dataset == "finance":
                         outcome = self._upsert_finance(cur, context, source)
+                    elif context.dataset == "supplies":
+                        outcome = self._upsert_supply(cur, context, source)
                     else:
                         outcome = self._upsert_rating(cur, context, source)
                     inserted += outcome == "inserted"
@@ -1060,6 +1132,69 @@ class MarketplacePGRepository:
         )
         return "inserted" if old is None else "updated"
 
+    def _upsert_supply(self, cur: Any, context: RunContext, source: dict[str, Any]) -> str:
+        item = normalize_supply(source)
+        if item is None:
+            return "skipped"
+        key = (context.account_id, item["external_supply_id"])
+        cur.execute(
+            "SELECT state,total_quantity FROM marketplace.supplies_current WHERE account_id=%s AND external_supply_id=%s",
+            key,
+        )
+        old = cur.fetchone()
+        cur.execute(
+            """INSERT INTO marketplace.supplies_current
+               (account_id,external_supply_id,external_order_id,order_number,state,order_state,
+                bundle_id,is_crossdock,macrolocal_cluster_id,dropoff_warehouse_id,
+                dropoff_warehouse_name,storage_warehouse_id,storage_warehouse_name,
+                timeslot_from,timeslot_to,created_at_external,state_updated_at,items_count,
+                total_quantity,payload_json,received_at,last_seen_run_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,now(),%s)
+               ON CONFLICT(account_id,external_supply_id) DO UPDATE SET
+                 external_order_id=excluded.external_order_id,order_number=excluded.order_number,
+                 state=excluded.state,order_state=excluded.order_state,bundle_id=excluded.bundle_id,
+                 is_crossdock=excluded.is_crossdock,macrolocal_cluster_id=excluded.macrolocal_cluster_id,
+                 dropoff_warehouse_id=excluded.dropoff_warehouse_id,
+                 dropoff_warehouse_name=excluded.dropoff_warehouse_name,
+                 storage_warehouse_id=excluded.storage_warehouse_id,
+                 storage_warehouse_name=excluded.storage_warehouse_name,
+                 timeslot_from=excluded.timeslot_from,timeslot_to=excluded.timeslot_to,
+                 created_at_external=excluded.created_at_external,state_updated_at=excluded.state_updated_at,
+                 items_count=excluded.items_count,total_quantity=excluded.total_quantity,
+                 payload_json=excluded.payload_json,received_at=now(),last_seen_run_id=excluded.last_seen_run_id""",
+            (*key, item["external_order_id"], item["order_number"], item["state"], item["order_state"],
+             item["bundle_id"], item["is_crossdock"], item["macrolocal_cluster_id"],
+             item["dropoff_warehouse_id"], item["dropoff_warehouse_name"],
+             item["storage_warehouse_id"], item["storage_warehouse_name"],
+             item["timeslot_from"], item["timeslot_to"], item["created_at_external"],
+             item["state_updated_at"], item["items_count"], item["total_quantity"],
+             _json(item["payload"]), context.run_id),
+        )
+        cur.execute(
+            "DELETE FROM marketplace.supply_items_current WHERE account_id=%s AND external_supply_id=%s",
+            key,
+        )
+        for supply_item in item["items"]:
+            cur.execute(
+                """INSERT INTO marketplace.supply_items_current
+                   (account_id,external_supply_id,item_key,external_product_id,offer_id,sku,
+                    barcode,name,quantity,payload_json,received_at,last_seen_run_id)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,now(),%s)""",
+                (*key, supply_item["item_key"], supply_item["external_product_id"],
+                 supply_item["offer_id"], supply_item["sku"], supply_item["barcode"],
+                 supply_item["name"], supply_item["quantity"], _json(supply_item["payload"]),
+                 context.run_id),
+            )
+        row_hash = _hash_fields(*key, item["state"], item["total_quantity"], _json(item["payload"]))
+        cur.execute(
+            """INSERT INTO marketplace.supplies_history
+               (account_id,external_supply_id,state,total_quantity,payload_json,observed_at,run_id,row_hash)
+               VALUES (%s,%s,%s,%s,%s::jsonb,now(),%s,%s)
+               ON CONFLICT(run_id,account_id,external_supply_id,row_hash) DO NOTHING""",
+            (*key, item["state"], item["total_quantity"], _json(item["payload"]), context.run_id, row_hash),
+        )
+        return "inserted" if old is None else "updated"
+
     def finish_run(
         self,
         context: RunContext,
@@ -1107,6 +1242,12 @@ class MarketplacePGRepository:
                            WHERE account_id=%s AND last_seen_run_id IS DISTINCT FROM %s""",
                         (context.account_id, context.run_id),
                     )
+                if context.dataset == "supplies" and status == "success":
+                    cur.execute(
+                        """DELETE FROM marketplace.supplies_current
+                           WHERE account_id=%s AND last_seen_run_id IS DISTINCT FROM %s""",
+                        (context.account_id, context.run_id),
+                    )
                 if termination_reason == "checkpoint_rejected":
                     cur.execute(
                         """UPDATE marketplace.sync_checkpoints
@@ -1147,6 +1288,7 @@ class MarketplacePGRepository:
             "returns": "marketplace.returns_current",
             "finance": "marketplace.finance_transactions",
             "rating": "marketplace.ratings_history",
+            "supplies": "marketplace.supplies_current",
         }[context.dataset]
         conn = self._connection()
         try:
@@ -1318,6 +1460,8 @@ class MarketplacePGRepository:
                 finance_count = int(cur.fetchone()[0])
                 cur.execute("SELECT COUNT(*) FROM marketplace.ratings_history WHERE account_id=%s", (account_id,))
                 rating_count = int(cur.fetchone()[0])
+                cur.execute("SELECT COUNT(*) FROM marketplace.supplies_current WHERE account_id=%s", (account_id,))
+                supplies_count = int(cur.fetchone()[0])
             conn.rollback()
             overall = "ready" if datasets and all(item["status"] == "success" for item in datasets) else (
                 "no_data" if all(item["status"] == "no_data" for item in datasets) else "attention"
@@ -1338,6 +1482,7 @@ class MarketplacePGRepository:
                     "returns": returns_count,
                     "finance": finance_count,
                     "ratings": rating_count,
+                    "supplies": supplies_count,
                 },
             })
         except MarketplacePGUnavailable:
@@ -1412,6 +1557,7 @@ class MarketplacePGRepository:
                         "accounts": [], "summary": {"products": 0, "stock_rows": 0, "open_orders": 0},
                         "products_rows": [], "product_groups": [], "warehouses": [],
                         "orders_rows": [], "sync_runs": [],
+                        "supplies": [],
                     }
                 account_id = int(account[0])
                 cur.execute(
@@ -1461,6 +1607,27 @@ class MarketplacePGRepository:
                     (account_id,),
                 )
                 orders = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT external_supply_id,external_order_id,order_number,state,order_state,
+                              bundle_id,is_crossdock,macrolocal_cluster_id,dropoff_warehouse_id,
+                              dropoff_warehouse_name,storage_warehouse_id,storage_warehouse_name,
+                              timeslot_from,timeslot_to,created_at_external,state_updated_at,
+                              items_count,total_quantity,received_at AS updated_at
+                         FROM marketplace.supplies_current WHERE account_id=%s
+                        ORDER BY COALESCE(state_updated_at,created_at_external,received_at) DESC""",
+                    (account_id,),
+                )
+                supplies = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT external_supply_id,external_product_id,offer_id,sku,barcode,name,quantity
+                         FROM marketplace.supply_items_current WHERE account_id=%s
+                        ORDER BY external_supply_id,name,sku""",
+                    (account_id,),
+                )
+                supply_items: dict[str, list[dict[str, Any]]] = {}
+                for supply_item_row in cur.fetchall():
+                    supply_item = _json_value(_row_dict(supply_item_row, cur))
+                    supply_items.setdefault(_text(supply_item.get("external_supply_id")), []).append(supply_item)
                 cur.execute(
                     """SELECT i.external_product_id,i.offer_id,i.sku,i.quantity,o.posting_number,
                               DATE(COALESCE(o.shipment_date,o.received_at)) AS day
@@ -1667,6 +1834,19 @@ class MarketplacePGRepository:
                 _text(row.get("status")).casefold() not in {"cancelled", "delivered"}
                 for row in orders
             )
+            for supply in supplies:
+                external_supply_id = _text(supply.get("external_supply_id"))
+                supply["marketplace"] = "ozon"
+                supply["external_preorder_id"] = _text(supply.get("order_number") or supply.get("external_order_id"))
+                supply["external_status"] = _text(supply.get("state"))
+                supply["canonical_status"] = _canonical_supply_status(supply.get("state"))
+                supply["destination_name"] = _text(
+                    supply.get("storage_warehouse_name") or supply.get("dropoff_warehouse_name")
+                )
+                supply["planned_at"] = supply.get("timeslot_from")
+                supply["item_count"] = int(supply.get("items_count") or 0)
+                supply["unmatched_count"] = 0
+                supply["items"] = supply_items.get(external_supply_id, [])
             return _json_value({
                 "ok": True,
                 "configured": True,
@@ -1679,11 +1859,13 @@ class MarketplacePGRepository:
                 "summary": {
                     "products": len(products), "stock_rows": len(stock_rows),
                     "open_orders": open_orders,
+                    "supplies": len(supplies),
                 },
                 "products_rows": products,
                 "product_groups": group_rows,
                 "warehouses": warehouses,
                 "orders_rows": orders,
+                "supplies": supplies,
                 "sync_runs": runs,
                 "analytics": {
                     "finance_daily": finance_daily,
@@ -1703,6 +1885,64 @@ class MarketplacePGRepository:
         except Exception as error:
             conn.rollback()
             raise MarketplacePGUnavailable("Could not read the PostgreSQL marketplace dashboard.") from error
+
+    def supplies_for_projection(self, account_id: int) -> list[dict[str, Any]]:
+        """Return the authoritative Ozon FBO supply snapshot for the WMS projection."""
+
+        conn = self._connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT external_supply_id,external_order_id,order_number,state,order_state,
+                              macrolocal_cluster_id,dropoff_warehouse_id,dropoff_warehouse_name,
+                              storage_warehouse_id,storage_warehouse_name,timeslot_from,timeslot_to,
+                              created_at_external,state_updated_at
+                         FROM marketplace.supplies_current
+                        WHERE account_id=%s ORDER BY external_supply_id""",
+                    (account_id,),
+                )
+                supplies = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT external_supply_id,external_product_id,offer_id,sku,barcode,name,quantity
+                         FROM marketplace.supply_items_current
+                        WHERE account_id=%s ORDER BY external_supply_id,item_key""",
+                    (account_id,),
+                )
+                items_by_supply: dict[str, list[dict[str, Any]]] = {}
+                for row in cur.fetchall():
+                    item = _json_value(_row_dict(row, cur))
+                    items_by_supply.setdefault(_text(item.get("external_supply_id")), []).append(item)
+            conn.rollback()
+        except Exception as error:
+            conn.rollback()
+            raise MarketplacePGUnavailable("Could not build the Ozon supply projection.") from error
+        finally:
+            conn.close()
+
+        rows: list[dict[str, Any]] = []
+        for supply in supplies:
+            external_supply_id = _text(supply.get("external_supply_id"))
+            storage_name = _text(supply.get("storage_warehouse_name"))
+            dropoff_name = _text(supply.get("dropoff_warehouse_name"))
+            rows.append({
+                "id": external_supply_id,
+                "preorder_id": _text(supply.get("order_number") or supply.get("external_order_id")),
+                "status": _text(supply.get("state") or supply.get("order_state")),
+                "type": "FBO",
+                "destination": {
+                    "type": "storage_warehouse" if storage_name else "dropoff_warehouse",
+                    "id": _text(supply.get("storage_warehouse_id") or supply.get("dropoff_warehouse_id")),
+                    "name": storage_name or dropoff_name,
+                },
+                "macrolocal_cluster_id": _text(supply.get("macrolocal_cluster_id")),
+                "planned_at": supply.get("timeslot_from"),
+                "timeslot": {"from": supply.get("timeslot_from"), "to": supply.get("timeslot_to")},
+                "created_at": supply.get("created_at_external"),
+                "updated_at": supply.get("state_updated_at"),
+                "items": items_by_supply.get(external_supply_id, []),
+                "source": "postgresql",
+            })
+        return rows
 
     def warehouse_catalog(self, account_key: str) -> dict[str, Any]:
         page = self.products_page(account_key, page=1, page_size=200, include_archived=False)

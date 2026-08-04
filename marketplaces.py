@@ -394,6 +394,36 @@ def upsert_marketplace_supply(conn: sqlite3.Connection, payload: dict, *, market
     return supply_id
 
 
+def project_ozon_supplies_from_postgres(rows: list[dict]) -> dict:
+    """Project PostgreSQL Ozon supplies into the local WMS operational model."""
+
+    conn = get_db_connection()
+    ensure_schema(conn)
+    account_name = os.getenv("OZON_ACCOUNT_NAME", "Основной Ozon").strip() or "Основной Ozon"
+    account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
+    projected = 0
+    try:
+        for payload in rows:
+            if not isinstance(payload, dict):
+                continue
+            upsert_marketplace_supply(conn, payload, marketplace="ozon", account_id=account_id)
+            projected += 1
+        _sync_event(
+            conn,
+            "ozon",
+            "supplies_projected",
+            f"Поставки FBO обновлены из PostgreSQL: {projected}.",
+            payload={"count": projected, "source": "postgresql"},
+        )
+        conn.commit()
+        return {"ok": True, "projected": projected}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str = "", search: str = "", limit: int = 100) -> list[dict]:
     clauses, args = [], []
     if marketplace and marketplace != "all":
@@ -451,6 +481,13 @@ def create_internal_shipment_for_supply(supply_id: int) -> dict:
         _sync_event(conn, supply["marketplace"], "mapping_required", "Поставка не передана на склад: есть не сопоставленные товары.", severity="critical", external_id=supply["external_supply_id"])
         conn.commit(); conn.close()
         return {"ok": False, "code": "mapping_required", "message": "Сначала сопоставьте все товары поставки с номенклатурой производства."}
+    item_count = conn.execute(
+        "SELECT COUNT(*) FROM marketplace_supply_items WHERE supply_id=?",
+        (int(supply_id),),
+    ).fetchone()[0]
+    if not item_count:
+        conn.close()
+        return {"ok": False, "code": "empty_supply", "message": "Ozon ещё не передал состав этой поставки."}
     existing = conn.execute("SELECT id,number,status FROM warehouse_shipments WHERE source_type='marketplace_supply' AND source_id=?", (int(supply_id),)).fetchone()
     if existing:
         conn.close(); return {"ok": True, "shipment": dict(existing), "created": False}

@@ -13,6 +13,7 @@ from marketplace_pg import (
     normalize_rating,
     normalize_return,
     normalize_stock_rows,
+    normalize_supply,
 )
 
 
@@ -88,6 +89,33 @@ class MarketplacePostgresReadModelTest(unittest.TestCase):
         self.assertEqual([row["operation_id"] for row in result.items], ["operation-1"])
         self.assertEqual(result.total, 1)
 
+    def test_ozon_fbo_supplies_include_order_details_and_bundle_items(self):
+        client = OzonReadOnlyClient("client", "secret", page_limit=100, min_interval=0)
+        responses = [
+            _RequestResult({"order_ids": [700], "last_id": "end"}, 0),
+            _RequestResult({"orders": [{
+                "order_id": 700, "order_number": "ORDER-700", "state": "DATA_FILLING",
+                "drop_off_warehouse": {"warehouse_id": 10, "name": "Тверь"},
+                "supplies": [{"supply_id": 900, "bundle_id": "bundle-900", "state": "DATA_FILLING"}],
+            }]}, 0),
+            _RequestResult({"items": [{
+                "sku": 123, "offer_id": "CARD-122-BLUE", "barcode": "460000000001",
+                "quantity": 4,
+            }], "has_next": False, "last_id": ""}, 0),
+        ]
+
+        with patch.object(client, "_request", side_effect=responses) as request:
+            result = client.iter_supply_pages()
+
+        self.assertTrue(result.complete)
+        self.assertEqual(result.total, 1)
+        self.assertEqual(result.items[0]["external_supply_id"], "900")
+        self.assertEqual(result.items[0]["external_order_id"], "700")
+        self.assertEqual(result.items[0]["items"][0]["quantity"], 4)
+        self.assertEqual([call.args[0] for call in request.call_args_list], [
+            "/v3/supply-order/list", "/v3/supply-order/get", "/v1/supply-order/bundle",
+        ])
+
     def test_fbo_stock_normalization_preserves_real_warehouse_scope(self):
         rows = normalize_stock_rows({
             "sku": "9001", "item_code": "CARD-122-BLUE", "offer_id": "CARD-122-BLUE",
@@ -123,6 +151,22 @@ class MarketplacePostgresReadModelTest(unittest.TestCase):
         self.assertEqual(finance["operation_id"], "99")
         self.assertEqual(str(finance["amount"]), "-150.25")
         self.assertEqual(str(rating["rating"]), "4.87")
+
+    def test_supply_normalization_preserves_destination_and_contents(self):
+        supply = normalize_supply({
+            "external_supply_id": "900",
+            "external_order_id": "700",
+            "order_number": "ORDER-700",
+            "state": "DATA_FILLING",
+            "drop_off_warehouse": {"warehouse_id": 10, "name": "Тверь"},
+            "items": [{"sku": 123, "offer_id": "CARD-122-BLUE", "quantity": 4}],
+        })
+
+        self.assertIsNotNone(supply)
+        self.assertEqual(supply["external_supply_id"], "900")
+        self.assertEqual(supply["dropoff_warehouse_name"], "Тверь")
+        self.assertEqual(str(supply["total_quantity"]), "4")
+        self.assertEqual(supply["items"][0]["sku"], "123")
 
     def test_rich_product_normalization_keeps_image_attributes_and_barcodes(self):
         product = normalize_product({

@@ -238,6 +238,9 @@ class OzonReadOnlyClient:
         "/v2/analytics/stock_on_warehouses": "POST",
         "/v1/returns/list": "POST",
         "/v1/rating/summary": "POST",
+        "/v3/supply-order/list": "POST",
+        "/v3/supply-order/get": "POST",
+        "/v1/supply-order/bundle": "POST",
         "/v3/finance/transaction/list": "POST",
     }
     _CATALOG = _PaginationSpec(
@@ -745,6 +748,188 @@ class OzonReadOnlyClient:
         item = {"observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "payload": response.payload}
         page = Page(endpoint, 1, "", "", (item,), 1, response.retries)
         return self._page_result(endpoint, (page,), (item,), 1, "single_snapshot", True, "", response.retries)
+
+    def iter_supply_pages(self, start_cursor: str = "", *, max_pages: int | None = None) -> PageResult:
+        """Read every FBO supply order, its supplies and complete bundle contents."""
+
+        endpoint = "/v3/supply-order/list"
+        states = [
+            "DATA_FILLING",
+            "READY_TO_SUPPLY",
+            "ACCEPTED_AT_SUPPLY_WAREHOUSE",
+            "IN_TRANSIT",
+            "ACCEPTANCE_AT_STORAGE_WAREHOUSE",
+            "REPORTS_CONFIRMATION_AWAITING",
+            "REPORT_REJECTED",
+            "COMPLETED",
+            "REJECTED_AT_SUPPLY_WAREHOUSE",
+            "CANCELLED",
+            "OVERDUE",
+        ]
+        page_cap = min(max_pages or self._pagination_page_cap, self._pagination_page_cap)
+        limit = min(100, self._page_limit)
+        cursor = _as_text(start_cursor)
+        seen_cursors: set[str] = set()
+        seen_supply_ids: set[str] = set()
+        pages: list[Page] = []
+        rows: list[JSONDict] = []
+        retries = 0
+
+        for page_number in range(1, page_cap + 1):
+            payload: JSONDict = {
+                "filter": {"states": states},
+                "limit": limit,
+                "sort_by": "ORDER_STATE_UPDATED_AT",
+                "sort_dir": "DESC",
+            }
+            if cursor:
+                payload["last_id"] = cursor
+            response = self._request(endpoint, payload, method="POST")
+            retries += response.retries
+            raw_order_ids = response.payload.get("order_ids")
+            if not isinstance(raw_order_ids, list):
+                raise OzonClientError(
+                    "Ozon returned an invalid supply-order list.",
+                    code="invalid_response",
+                    endpoint=endpoint,
+                )
+            order_ids = [int(value) for value in raw_order_ids if isinstance(value, int) and not isinstance(value, bool)]
+            if len(order_ids) != len(raw_order_ids):
+                raise OzonClientError(
+                    "Ozon returned an invalid supply-order identifier.",
+                    code="invalid_response",
+                    endpoint=endpoint,
+                )
+
+            page_rows: list[JSONDict] = []
+            if order_ids:
+                details_response = self._request(
+                    "/v3/supply-order/get",
+                    {"order_ids": order_ids},
+                    method="POST",
+                )
+                retries += details_response.retries
+                details = _extract_items_strict(
+                    details_response.payload,
+                    ("orders",),
+                    endpoint="/v3/supply-order/get",
+                )
+                details_by_id = {
+                    _as_text(item.get("order_id")): item
+                    for item in details
+                    if _as_text(item.get("order_id"))
+                }
+                if any(str(order_id) not in details_by_id for order_id in order_ids):
+                    raise OzonClientError(
+                        "Ozon returned incomplete supply-order details.",
+                        code="details_incomplete",
+                        endpoint="/v3/supply-order/get",
+                    )
+
+                for order_id in order_ids:
+                    order = details_by_id[str(order_id)]
+                    supplies = order.get("supplies") if isinstance(order.get("supplies"), list) else []
+                    if not supplies:
+                        supplies = [{"supply_id": order_id, "state": order.get("state"), "bundle_id": ""}]
+                    for supply in supplies:
+                        if not isinstance(supply, Mapping):
+                            continue
+                        supply_id = _as_text(supply.get("supply_id") or order_id)
+                        if not supply_id or supply_id in seen_supply_ids:
+                            continue
+                        seen_supply_ids.add(supply_id)
+                        bundle_id = _as_text(supply.get("bundle_id"))
+                        bundle_items, bundle_retries = self._supply_bundle_items(bundle_id)
+                        retries += bundle_retries
+                        page_rows.append({
+                            **dict(supply),
+                            "external_supply_id": supply_id,
+                            "external_order_id": str(order_id),
+                            "order_id": order_id,
+                            "order_number": order.get("order_number"),
+                            "order_state": order.get("state"),
+                            "created_date": order.get("created_date"),
+                            "state_updated_date": order.get("state_updated_date"),
+                            "data_filling_deadline": order.get("data_filling_deadline"),
+                            "drop_off_warehouse": order.get("drop_off_warehouse"),
+                            "order_tags": order.get("order_tags"),
+                            "timeslot": order.get("timeslot"),
+                            "items": bundle_items,
+                            "order_payload": order,
+                        })
+
+            provider_cursor = _extract_cursor(response.payload, ("last_id",))
+            has_next = len(order_ids) == limit
+            next_cursor = provider_cursor if has_next else ""
+            pages.append(Page(
+                endpoint,
+                page_number,
+                cursor,
+                next_cursor,
+                tuple(page_rows),
+                None,
+                response.retries,
+            ))
+            rows.extend(page_rows)
+            if not has_next:
+                reason = "empty_page" if not order_ids else "short_page"
+                return self._page_result(endpoint, pages, rows, len(rows), reason, True, "", retries)
+            if not provider_cursor or provider_cursor == cursor or provider_cursor in seen_cursors:
+                self._raise_partial(
+                    "invalid_next_cursor",
+                    endpoint,
+                    pages,
+                    rows,
+                    None,
+                    provider_cursor,
+                    retries,
+                )
+            seen_cursors.add(provider_cursor)
+            cursor = provider_cursor
+
+        self._raise_partial("safety_cap", endpoint, pages, rows, None, cursor, retries)
+
+    def _supply_bundle_items(self, bundle_id: str) -> tuple[list[JSONDict], int]:
+        if not bundle_id:
+            return [], 0
+        endpoint = "/v1/supply-order/bundle"
+        cursor = ""
+        rows: list[JSONDict] = []
+        retries = 0
+        seen: set[str] = set()
+        limit = min(100, self._page_limit)
+        for _page_number in range(1, self._pagination_page_cap + 1):
+            payload: JSONDict = {
+                "bundle_ids": [bundle_id],
+                "limit": limit,
+                "is_asc": True,
+                "sort_field": "SKU",
+            }
+            if cursor:
+                payload["last_id"] = cursor
+            response = self._request(endpoint, payload, method="POST")
+            retries += response.retries
+            items = _extract_items_strict(response.payload, ("items",), endpoint=endpoint)
+            rows.extend(items)
+            has_next = _extract_boolean(response.payload, "has_next")
+            next_cursor = _extract_cursor(response.payload, ("last_id",))
+            if not has_next:
+                return rows, retries
+            if not items or not next_cursor or next_cursor == cursor or next_cursor in seen:
+                raise OzonClientError(
+                    "Ozon returned an invalid supply bundle cursor.",
+                    code="invalid_next_cursor",
+                    endpoint=endpoint,
+                    retries=retries,
+                )
+            seen.add(next_cursor)
+            cursor = next_cursor
+        raise OzonClientError(
+            "Ozon supply bundle exceeded the safety page cap.",
+            code="safety_cap",
+            endpoint=endpoint,
+            retries=retries,
+        )
 
     @classmethod
     def _combine_results(cls, endpoint: str, results: Sequence[PageResult]) -> PageResult:

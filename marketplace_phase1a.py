@@ -137,6 +137,27 @@ VERIFIED_ENDPOINTS = (
         "official_url": "https://docs.ozon.ru/api/seller/#operation/RatingAPI_RatingSummaryV1",
         "notes": "Daily rating snapshots retained in PostgreSQL.",
     },
+    {
+        "dataset": "supplies", "method": "POST", "path": "/v3/supply-order/list",
+        "pagination_kind": "cursor", "request_limit": 100,
+        "verified_at": "2026-08-04T10:00:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/SupplyOrderAPI_GetSupplyOrderListV3",
+        "notes": "FBO supply-order identifiers; details and bundle contents are fetched before commit.",
+    },
+    {
+        "dataset": "supplies", "method": "POST", "path": "/v3/supply-order/get",
+        "pagination_kind": "batch", "request_limit": 100,
+        "verified_at": "2026-08-04T10:00:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/SupplyOrderAPI_GetSupplyOrderV3",
+        "notes": "Supply status, warehouses, timeslot and bundle identifiers.",
+    },
+    {
+        "dataset": "supplies", "method": "POST", "path": "/v1/supply-order/bundle",
+        "pagination_kind": "cursor", "request_limit": 100,
+        "verified_at": "2026-08-04T10:00:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/SupplyOrderAPI_GetSupplyOrderBundle",
+        "notes": "Complete SKU, article, barcode and quantity contents for each FBO supply.",
+    },
 )
 
 
@@ -289,6 +310,7 @@ def _dataset_result(
         "returns": "iter_return_pages",
         "finance": "iter_finance_pages",
         "rating": "iter_rating_pages",
+        "supplies": "iter_supply_pages",
     }[dataset])
     history_kwargs: dict[str, int] = {}
     if dataset == "orders":
@@ -348,12 +370,39 @@ def _dataset_result(
                 "" if status == "success" else reason,
             ),
         )
+        projection = None
+        if dataset == "supplies" and status == "success":
+            try:
+                from marketplaces import project_ozon_supplies_from_postgres
+
+                projection = project_ozon_supplies_from_postgres(
+                    repository.supplies_for_projection(account_id)
+                )
+                repository.upsert_capabilities(account_id, {
+                    "supplies_warehouse_projection": {
+                        "status": "available",
+                        "complete": True,
+                        "scope_complete": True,
+                        "message": f"projected:{projection.get('projected', 0)}",
+                    },
+                })
+            except Exception as projection_error:
+                projection = {"ok": False, "error": projection_error.__class__.__name__}
+                repository.upsert_capabilities(account_id, {
+                    "supplies_warehouse_projection": {
+                        "status": "error",
+                        "complete": False,
+                        "scope_complete": False,
+                        "message": projection_error.__class__.__name__,
+                    },
+                })
         return {
             "dataset": dataset,
             "ok": status == "success",
             "status": status,
             "usable": status == "success",
             "run": run,
+            "projection": projection,
         }
     except OzonPaginationError as error:
         result = error.partial_result

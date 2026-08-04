@@ -31,6 +31,51 @@ class FakeOzonClient:
 
 
 class MarketplaceTests(unittest.TestCase):
+    def test_postgres_supply_projection_preserves_internal_shipment_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "bot.db")
+
+            def connection(**_kwargs):
+                conn = sqlite3.connect(path)
+                conn.execute("PRAGMA foreign_keys = ON")
+                return conn
+
+            rows = [{
+                "id": "900",
+                "preorder_id": "ORDER-700",
+                "status": "DATA_FILLING",
+                "type": "FBO",
+                "destination": {"type": "storage_warehouse", "id": "10", "name": "Тверь"},
+                "items": [{
+                    "product_id": "100", "offer_id": "CARD-122-BLUE", "sku": "9001",
+                    "barcode": "460000000001", "name": "Кардиган", "quantity": 4,
+                }],
+            }]
+            with patch.dict(os.environ, {"OZON_CLIENT_ID": "client"}, clear=False):
+                with patch.object(marketplaces, "get_db_connection", side_effect=connection):
+                    with connection() as conn:
+                        marketplaces.ensure_schema(conn)
+                        account_id = marketplaces._account(conn, "ozon", "Основной Ozon", "client")
+                        conn.execute(
+                            """INSERT INTO marketplace_products
+                               (account_id,external_product_id,offer_id,sku,barcode,name,payload_json,updated_at)
+                               VALUES (?,?,?,?,?,?,?,?)""",
+                            (account_id, "100", "CARD-122-BLUE", "9001", "460000000001", "Кардиган", "{}", "2026-08-04"),
+                        )
+                        conn.commit()
+                    projected = marketplaces.project_ozon_supplies_from_postgres(rows)
+                    with connection() as conn:
+                        supply_id = conn.execute("SELECT id FROM marketplace_supplies WHERE external_supply_id='900'").fetchone()[0]
+                    shipment = marketplaces.create_internal_shipment_for_supply(supply_id)
+                    projected_again = marketplaces.project_ozon_supplies_from_postgres(rows)
+                    detail = marketplaces.marketplace_supply_detail(supply_id)
+
+            self.assertEqual(projected["projected"], 1)
+            self.assertTrue(shipment["created"])
+            self.assertEqual(projected_again["projected"], 1)
+            self.assertEqual(detail["warehouse_shipment_id"], shipment["shipment"]["id"])
+            self.assertEqual(detail["items"][0]["mapped_status"], "matched")
+
     def test_product_group_uses_article_and_name_without_variant_split(self):
         self.assertEqual(
             marketplaces.product_group_for("Брюки со стрелками детские", "BR-122-СИНИЕ"),
