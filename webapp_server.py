@@ -173,6 +173,20 @@ def main() -> None:
         def refresh_ozon_supplies() -> None:
             set_marketplace_health_state(supplies="syncing", reason="")
             try:
+                # A service restart must not download the complete Ozon supply
+                # history again when a usable PostgreSQL snapshot already
+                # exists. The scheduled worker owns freshness after startup.
+                try:
+                    from marketplace_phase1a import account_key
+                    from marketplace_pg import MarketplacePGRepository
+
+                    quality = MarketplacePGRepository().data_quality(account_key())
+                    if marketplace_supply_snapshot_ready(quality):
+                        set_marketplace_health_state(supplies="ready", reason="snapshot_ready")
+                        return
+                except Exception:
+                    pass
+
                 from marketplace_phase1a import run_phase1a_sync
 
                 # The PostgreSQL audit contract accepts scheduled/manual/
