@@ -306,11 +306,24 @@ def run_smoke() -> None:
                 'wmsSelectedLocationId',
                 'decodeCode128Image',
                 '+ Кладовщик',
-                'Готовая продукция появляется здесь автоматически после упаковки.',
+                '<h2>Зона приёмки</h2>',
             ):
                 require(
                     desktop_marker in html_text,
                     f"Desktop web workspace marker is missing: {desktop_marker}",
+                )
+            for auxiliary_marker in (
+                'Как работать',
+                'Приёмка и размещение — независимые операции',
+                'После каждого считывания поле очищается',
+                'Выгрузки формируются из текущих складских данных',
+                'Основной read-only PostgreSQL-контур',
+                'Диагностика Wildberries',
+                'Все изменения записываются в историю',
+            ):
+                require(
+                    auxiliary_marker not in html_text,
+                    f"Auxiliary workspace copy must be absent: {auxiliary_marker}",
                 )
             require(
                 'data-wms-action="receive"' not in html_text,

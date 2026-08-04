@@ -5109,6 +5109,42 @@ MINIAPP_HTML = """<!doctype html>
         white-space: nowrap;
       }
     }
+
+    /* Functional-only workspace: keep controls, values and operational states. */
+    .screen-head p,
+    .employee-detail-title p,
+    .operations-kpi small,
+    .card.kpi > span:not(.kpi-top),
+    .summary-card > small,
+    .marketplace-v2-kpi > small,
+    .analytics-overview-kpi > small,
+    .analytics-provider-metric > small,
+    .analytics-chart-source,
+    .marketplace-dashboard-kpi > small,
+    .marketplace-chart-note,
+    .ac-kpi > small,
+    .ac-heading p,
+    .ac-brand span,
+    .ac-panel-copy,
+    .marketplace-placeholder p,
+    .ac-map-note,
+    .arbitrary-operation-head span,
+    .arbitrary-operation-help,
+    .ac-empty span {
+      display: none !important;
+    }
+
+    .screen-head p.operational-message {
+      display: block !important;
+    }
+
+    .operations-kpi,
+    .marketplace-v2-kpi,
+    .analytics-overview-kpi,
+    .ac-kpi,
+    .marketplace-chart-panel {
+      min-height: 0;
+    }
   </style>
   <script src="/assets/jsqr.js"></script>
 </head>
@@ -7794,7 +7830,7 @@ MINIAPP_HTML = """<!doctype html>
           ${renderRouteTaskInputs(task)}
           ${(paused || blocked) ? `<div class="task-note">${escapeHtml(task.blocked_reason || (paused ? "Работа приостановлена" : "Задание заблокировано"))}</div>` : ""}
           <div class="form-grid" style="margin-top:11px">
-            ${packingOptions.length ? `<div class="field full"><label>Вариант упаковки</label><select id="taskPackagingOption">${packingOptions.map((option) => `<option value="${escapeHtml(option.id)}" ${draft.packaging_option === option.id ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select><div class="task-note">Для наборов приложение пересчитает готовые комплекты и спишет второй товар со склада, если он входит в комплект.</div></div>` : ""}
+            ${packingOptions.length ? `<div class="field full"><label>Вариант упаковки</label><select id="taskPackagingOption">${packingOptions.map((option) => `<option value="${escapeHtml(option.id)}" ${draft.packaging_option === option.id ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></div>` : ""}
             <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.good ?? task.quantity)}"></div>
             <div class="field"><label>Брак</label><input id="taskDefectQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.defect ?? 0)}"></div>
             <div class="field full"><button type="button" class="small-button secondary" data-task-action="all-good" data-task-id="${escapeHtml(task.id)}">Всё годное: ${escapeHtml(task.quantity)} шт</button></div>
@@ -9051,9 +9087,8 @@ MINIAPP_HTML = """<!doctype html>
             <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">2 этап</span></div>
             <div class="op-list">${rows || itemEmpty("Нет цветов для настила.")}</div>
             <div class="arbitrary-operation-card">
-              <div class="arbitrary-operation-head"><div><b>Произвольная операция</b><span>Отдельно в отчёте, но количество добавится к общему выпуску.</span></div><button type="button" class="small-button secondary" data-arbitrary-add>Добавить строку</button></div>
-              <div class="arbitrary-operation-help">Выберите размер и цвет этого настила, укажите деление настила на 2, 3 или 4 части и фактическое число слоёв. Количество изделий система посчитает как число слоёв.</div>
-              ${arbitraryMarkup || `<div class="empty">Если остатка настила нет, оставьте раздел пустым.</div>`}
+              <div class="arbitrary-operation-head"><div><b>Произвольная операция</b></div><button type="button" class="small-button secondary" data-arbitrary-add>Добавить строку</button></div>
+              ${arbitraryMarkup}
             </div>
             ${current.is_assigned_to_me ? `<div class="button-row"><button type="button" class="small-button secondary" data-cutting-action="release" data-cutting-task-id="${escapeHtml(current.id)}">Отменить и вернуть задание</button></div>` : ""}
           </div>
@@ -9077,7 +9112,6 @@ MINIAPP_HTML = """<!doctype html>
       return `
         <div class="card order-detail">
           <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">4 этап</span></div>
-          <p class="empty">После выполнения готовый крой попадёт на склад полуфабрикатов.</p>
         </div>
         ${renderTaskFabricRolls(current)}
         ${renderTaskAttachment(current.attachment)}
@@ -9893,7 +9927,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="tabs order-mode-tabs" role="tablist" aria-label="Раздел заказов"><button type="button" class="tab" data-order-mode="board">Канбан</button><button type="button" class="tab" data-order-mode="list" role="tab" aria-selected="false">Список</button><button type="button" class="tab active" data-order-mode="create" role="tab" aria-selected="true">Создать задание</button></div>
         <div class="card field-card">
           <div class="form-grid">
-            <div class="field full"><label>Изделия в одном настиле</label>${renderChoiceChips("product", catalog.map((item) => item.product_name), state.orderProducts)}<p class="empty">Выберите одно или несколько изделий. Для выбранных изделий применяются общие размеры, цвета и настил.</p></div>
+            <div class="field full"><label>Изделия в одном настиле</label>${renderChoiceChips("product", catalog.map((item) => item.product_name), state.orderProducts)}</div>
             <div class="field full"><label>Материал</label><select id="orderMaterial"><option value="Ткань" selected>Ткань</option></select></div>
           </div>
         </div>
@@ -10887,9 +10921,8 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card field-card">
           <div class="field full"><label>Сканер ТСД</label><input id="wmsHardwareScannerInput" class="wms-hardware-scanner-input" data-wms-hardware-field="lookup_product" inputmode="none" autocomplete="off" placeholder="Отсканируйте товар" autofocus></div>
           <div class="button-row"><button type="button" class="small-button" data-wms-scan="lookup_product">📷 Сканировать товар</button></div>
-          <div class="task-note">После каждого считывания поле очищается и снова готово к следующему товару.</div>
         </div>
-        ${lookup.error ? `<div class="card field-card"><div class="task-note"><b>Товар не найден</b><br>${escapeHtml(lookup.error)}<br>Если это новый товар, сначала один раз привяжите его штрихкод в приёмке.</div></div>` : ""}
+        ${lookup.error ? `<div class="card field-card"><div class="task-note"><b>Товар не найден</b><br>${escapeHtml(lookup.error)}</div></div>` : ""}
         ${productKey ? `<div class="card field-card"><div class="section-title"><b>${escapeHtml(wmsProductLabel(productKey))}</b><span class="status-chip">найден</span></div><div class="detail-grid"><div class="detail-box"><span>Штрихкод</span><strong>${escapeHtml(lookup.barcode || "—")}</strong></div><div class="detail-box"><span>Всего на складе</span><strong>${escapeHtml(total)} шт.</strong></div><div class="detail-box"><span>В резерве</span><strong>${escapeHtml(reserved)} шт.</strong></div><div class="detail-box"><span>Доступно</span><strong>${escapeHtml(Math.max(0, total - reserved))} шт.</strong></div></div></div><div class="section-title"><b>Ячейки хранения</b><span>${rows.length}</span></div><div class="op-list">${rows.length ? rows.map((row) => { const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)); return `<button type="button" class="card report-row marketplace-clickable" data-wms-cell-id="${escapeHtml(row.location_id)}"><div><b>${escapeHtml(wmsLocationLabel(row.location_id))}</b><span>Доступно ${escapeHtml(available)} · резерв ${escapeHtml(row.reserved_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span></button>`; }).join("") : itemEmpty("Товар распознан, но адресных остатков в ячейках пока нет.")}</div>` : itemEmpty("Наведите ТСД на штрихкод товара.")}
       `;
       focusWmsHardwareScanner();
@@ -10957,7 +10990,7 @@ MINIAPP_HTML = """<!doctype html>
       if (!wmsHasAddressMapForCurrentStock()) {
         state.wmsSelectedLocationId = "";
         const definition = wmsCurrentStockFilter();
-        return `<div class="card field-card"><div class="task-note"><b>Адресные ячейки ещё не заведены</b><br>Созданная карта из 102 ячеек относится к складу готовой продукции. Для раздела «${escapeHtml(definition.label)}» карта не показывается, чтобы не создавать ложных пустых ячеек.</div></div>`;
+        return `<div class="card field-card">${itemEmpty(`Адресные ячейки для раздела «${escapeHtml(definition.label)}» не настроены.`)}</div>`;
       }
       const locations = (state.wmsData.locations || []).map((location) => ({location, parts: wmsPhysicalLocationParts(location)})).filter((row) => row.parts);
       if (!locations.length) return `<div class="card field-card">${itemEmpty("Физические ячейки ещё не загружены.")}</div>`;
@@ -11020,7 +11053,6 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card report-row"><div><b>Остатки по ячейкам</b><span>Товар, ячейка, количество, резерв и доступно</span></div><button type="button" class="small-button" data-wms-report="stock">Скачать CSV</button></div>
           <div class="card report-row"><div><b>История движений</b><span>Дата, операция, товар, количество, исходная и целевая ячейки</span></div><button type="button" class="small-button" data-wms-report="movements">Скачать CSV</button></div>
         </div>
-        <div class="card field-card"><div class="task-note"><b>Важно</b><br>Выгрузки формируются из текущих складских данных и не меняют остатки, ячейки или историю операций.</div></div>
       `;
     }
 
@@ -11065,7 +11097,7 @@ MINIAPP_HTML = """<!doctype html>
       }).join("") : "";
       mount.innerHTML = `
         <div class="screen-head"><div><h2>${selectedGroup ? escapeHtml(selectedGroup.name) : "Товары Ozon"}</h2><p>${selectedGroup ? "Варианты сгруппированы по цвету, затем по размеру." : "Выберите изделие, затем увидите его цвета и размеры."}</p></div><div class="date">${catalog.loaded ? `${products.length} из ${(catalog.products || []).length}` : "загрузка"}</div></div>
-        <div class="card field-card"><div class="warehouse-v2-filter-row"><div class="field"><label>Поиск по артикулу, названию, цвету, размеру или штрихкоду</label><input id="wmsCatalogSearch" value="${escapeHtml(state.wmsCatalogSearch || "")}" placeholder="Например 1073896068 или Чёрный"></div><button type="button" class="small-button" data-wms-catalog-action="apply">Показать</button></div><div class="task-note">Последняя синхронизация Ozon: ${escapeHtml(catalog.lastSyncAt || "нет данных")}. В каталоге: артикул, название, цвет, размер и штрихкод.</div></div>
+        <div class="card field-card"><div class="warehouse-v2-filter-row"><div class="field"><label>Поиск по артикулу, названию, цвету, размеру или штрихкоду</label><input id="wmsCatalogSearch" value="${escapeHtml(state.wmsCatalogSearch || "")}" placeholder="Например 1073896068 или Чёрный"></div><button type="button" class="small-button" data-wms-catalog-action="apply">Показать</button></div></div>
         ${notice}
         ${selectedGroup ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-catalog-action="groups">‹ Все группы</button></div><div class="section-title"><b>Цвета и размеры</b><span>${products.length}</span></div>${colorsBlock}` : `<div class="section-title"><b>Группы изделий</b><span>${catalog.loaded ? groups.length : ""}</span></div>${groupsBlock}`}
       `;
@@ -11726,7 +11758,7 @@ MINIAPP_HTML = """<!doctype html>
         : (state.marketplaceData.loading ? "Синхронизация…" : `Синхронизировать ${isWildberries ? "Wildberries" : isAll ? "маркетплейсы" : "Ozon"}`);
       mainButton.disabled = qualityView ? qualityActionBusy : state.marketplaceData.loading;
       const errorNotice = state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
-      const notConfigured = !providerConfigured ? `<div class="card field-card"><div class="task-note"><b>${isAll ? "Маркетплейсы пока не подключены" : `${providerName} пока не подключён`}</b><br>${isAll ? "Подключите хотя бы одну площадку, чтобы загрузить товары и остатки." : (isOzon ? "Добавьте на сервере OZON_CLIENT_ID и OZON_API_KEY в /etc/sewing-web/sewing-web.env, затем перезапустите сервис." : "Добавьте токен Wildberries, чтобы загрузить товары, остатки и отгрузки.")}</div></div>` : "";
+      const notConfigured = !providerConfigured ? `<div class="card field-card"><div class="task-note"><b>${isAll ? "Маркетплейсы не подключены" : `${providerName} не подключён`}</b></div></div>` : "";
       const kpiUnavailable = (label, hint) => `<div class="card marketplace-v2-kpi unavailable" title="${escapeHtml(hint)}"><span>${escapeHtml(label)}</span><strong>—</strong><small>Нет данных от API</small></div>`;
       const kpiValue = (label, value, suffix, hint, view = "") => `${view ? `<button type="button" class="card marketplace-v2-kpi" data-marketplace-view="${view}">` : `<div class="card marketplace-v2-kpi">`}<span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}<small>${escapeHtml(suffix)}</small></strong><small>${escapeHtml(hint)}</small>${view ? "</button>" : "</div>"}`;
       const groupMarketplaceStockText = (group) => isWildberries && !wbStocksUsable || group.available === null || group.available === undefined ? "—" : `${Number(group.available || 0)} шт.`;
@@ -11824,7 +11856,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="card kpi"><div class="kpi-top"><span>Строк остатков</span><span class="kpi-ico">▦</span></div><strong>${escapeHtml(summary.stock_rows || 0)}</strong><span>FBO и FBS</span></div>
           <div class="card kpi"><div class="kpi-top"><span>Открытые отгрузки</span><span class="kpi-ico">↑</span></div><strong>${escapeHtml(summary.open_orders || 0)}</strong><span>Требуют контроля</span></div>
         </div>
-        <div class="card field-card"><div class="section-title"><b>Состояние синхронизации</b><span>${escapeHtml(account.last_sync_at || "нет данных")}</span></div><div class="task-note">Раздел аналитики показывает только данные, полученные из маркетплейса. Изменения на Ozon и Wildberries из приложения не отправляются.</div></div>
+        <div class="card field-card"><div class="section-title"><b>Состояние синхронизации</b><span>${escapeHtml(account.last_sync_at || "нет данных")}</span></div></div>
       `;
       const ordersBlock = verifiedOrdersAvailable && verifiedOrders.length ? `<div class="op-list">${verifiedOrders.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-order-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>Заказ: ${escapeHtml(row.external_order_id)}<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")} ›</span></button>`).join("")}</div>` : itemEmpty(isWildberries && !verifiedOrdersAvailable ? "Выбранный период или источник заказов WB не подтверждён." : "За выбранный период отгрузок нет.");
       const suppliesBlock = supplies.length
@@ -11911,7 +11943,7 @@ MINIAPP_HTML = """<!doctype html>
         ? `<div class="task-note"><b>PostgreSQL-контур выключен</b><br>Временно используется аварийный SQLite fallback. Для основного каталога, остатков и заказов включите MARKETPLACE_PHASE1A_ENABLED=1.</div>`
         : quality.state === "unavailable"
           ? `<div class="task-note"><b>PostgreSQL marketplace недоступен</b><br>Примените migrations 005–007 и проверьте WMS_DATABASE_URL. Экран не подменяет эти данные устаревшей SQLite-копией.</div>`
-          : `<div class="task-note"><b>Основной read-only PostgreSQL-контур</b><br>Каталог, цены, FBO/FBS-остатки и заказы, возвраты, финансы и рейтинг идут только Ozon → PostgreSQL. Нули, отсутствие данных, partial и ошибки показываются раздельно.</div>`;
+          : "";
       const qualityDatasetCards = qualityDatasets.length ? qualityDatasets.map((row) => `<div class="card field-card"><div class="section-title"><b>${escapeHtml(qualityDatasetLabel[row.dataset] || row.dataset)}</b><span class="status-chip ${qualityChipClass(row.status)}">${escapeHtml(qualityStateLabel[row.status] || row.status)}</span></div><div class="marketplace-mini-list"><div class="marketplace-mini-row"><span>Последний пригодный sync</span><b>${qualityMoment(row.last_usable_at || row.last_success_at || (row.status === "success" ? row.finished_at : ""))}</b></div><div class="marketplace-mini-row"><span>Свежесть</span><b>${escapeHtml(qualityStateLabel[row.freshness] || row.freshness || "неизвестно")}</b></div><div class="marketplace-mini-row"><span>Строки: получено / уникально / ожидалось</span><b>${escapeHtml(row.received_count == null ? "—" : row.received_count)} / ${escapeHtml(row.unique_count == null ? "—" : row.unique_count)} / ${escapeHtml(row.expected_count == null ? "—" : row.expected_count)}</b></div><div class="marketplace-mini-row"><span>Страницы / retry</span><b>${escapeHtml(row.page_count == null ? "—" : row.page_count)} / ${escapeHtml(row.retry_count == null ? "—" : row.retry_count)}</b></div><div class="marketplace-mini-row"><span>Завершение</span><b>${escapeHtml(row.termination_reason || "—")}</b></div></div>${row.error_summary ? `<div class="task-note"><b>Диагностика</b><br>${escapeHtml(row.error_summary)}</div>` : ""}</div>`).join("") : `<div class="card field-card">${itemEmpty("Запусков Phase 1A ещё нет.")}</div>`;
       const capabilityRows = qualityCapabilities.length ? qualityCapabilities.map((row) => `<tr><td>${escapeHtml(row.capability)}</td><td><span class="status-chip ${qualityChipClass(row.status)}">${escapeHtml(qualityStateLabel[row.status] || row.status)}</span></td><td>${qualityMoment(row.checked_at)}</td><td>${escapeHtml(row.safe_message || "—")}</td></tr>`).join("") : `<tr><td colspan="4">Capabilities ещё не проверены.</td></tr>`;
       const qualityProductsState = qualityProductsEnvelope.available !== true
@@ -11942,7 +11974,6 @@ MINIAPP_HTML = """<!doctype html>
         <section class="card field-card">
           <div class="section-title"><b>Capabilities Ozon</b><span>${qualityCapabilities.length}</span></div>
           <div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Набор данных</th><th>Состояние</th><th>Проверено</th><th>Сообщение</th></tr></thead><tbody>${capabilityRows}</tbody></table></div>
-          <div class="task-note"><b>FBO и seller-схемы проверяются раздельно.</b><br>Итоговый статус остатков успешен только после полного объединения обоих источников.</div>
         </section>
         <section class="card field-card">
           <div class="section-title"><b>Проверка current-товаров Ozon в PostgreSQL</b><span>${escapeHtml(qualityProductTotal == null ? "—" : qualityProductTotal)}</span></div>
@@ -11970,7 +12001,6 @@ MINIAPP_HTML = """<!doctype html>
           <button type="button" class="small-button secondary" data-marketplace-action="refresh" ${state.marketplaceData.loading ? "disabled" : ""}>Обновить состояние</button>
           <span class="status-chip ${wbQualityReady ? "" : "warn"}">${wbQualityReady ? "все источники доступны" : "нужна проверка"}</span>
         </div>
-        <div class="task-note"><b>Диагностика Wildberries</b><br>Выбранная площадка сохраняется. Статусы токена, покрытия периода и snapshot показаны отдельно для каждого источника WB.</div>
         <div class="marketplace-dashboard-kpis">
           <div class="marketplace-dashboard-kpi"><span>Товары</span><strong>${escapeHtml(summary.products == null ? "—" : summary.products)}</strong><small>текущий snapshot</small></div>
           <div class="marketplace-dashboard-kpi"><span>Строки остатков</span><strong>${escapeHtml(summary.stock_rows == null ? "—" : summary.stock_rows)}</strong><small>подтверждённые склады</small></div>
@@ -12088,15 +12118,13 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Зона приёмки</h2><p>Готовая продукция появляется здесь автоматически после упаковки. Материалы поступают сразу на склад материалов.</p></div><div class="date">${escapeHtml(total)} ед.</div></div>
         ${renderWmsDataNotice()}
-        <div class="card field-card"><div class="task-note"><b>Как работать</b><br>Приёмка и размещение — независимые операции. В «Размещении» можно сразу отсканировать ячейку, товар и указать количество, даже если товара нет в зоне приёмки.</div></div>
         <div class="section-title"><b>Ожидает размещения</b><span>${receiving.length} поз.</span></div>
         <div class="op-list">${receiving.length ? receiving.map((row, index) => {
           const available = Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0));
           return `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>Готовая продукция · доступно ${escapeHtml(available)}</span></div><div><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span>${state.data && state.data.is_admin ? `<button type="button" class="link-button" data-wms-receipt-product="${index}">штрихкод</button>` : ""}</div></div>`;
-        }).join("") : itemEmpty("После завершения упаковки товар появится здесь автоматически.")}</div>
+        }).join("") : itemEmpty("Приёмка пуста.")}</div>
         <div class="section-title"><b>Ручная приёмка материалов</b><span>без штрихкода</span></div>
         <div class="card field-card">
-          <div class="task-note"><b>Материал сразу поступает на склад материалов.</b><br>Адресная ячейка для него не требуется.</div>
           <div class="form-grid">
             <div class="field"><label>Материал</label><input id="wmsMaterialName" value="${escapeHtml(materialDraft.name || "")}" placeholder="Ткань, дублерин…"></div>
             <div class="field"><label>Цвет</label><input id="wmsMaterialColor" value="${escapeHtml(materialDraft.color || "")}" placeholder="Черный, бежевый…"></div>
@@ -12109,7 +12137,7 @@ MINIAPP_HTML = """<!doctype html>
         ${state.data && state.data.is_admin && selectedProduct ? `
           <div class="card field-card">
             <label>Штрихкод выбранного товара</label>
-            <div class="report-row"><div><b>${escapeHtml(wmsProductLabel(selectedProduct.product_key))}</b><span>Привяжите нанесённый на товар код один раз</span></div><span class="status-chip">выбран</span></div>
+            <div class="report-row"><div><b>${escapeHtml(wmsProductLabel(selectedProduct.product_key))}</b></div><span class="status-chip">выбран</span></div>
             <div class="field full"><label>Новый штрихкод</label><input id="wmsBarcode" value="${escapeHtml(d.barcode || "")}" placeholder="EAN-13 / Code 128"></div>
             <div class="button-row"><button class="small-button" data-wms-scan="bind_product">📷 Сканировать код</button><button class="small-button secondary" data-wms-action="register_barcode">Привязать код</button></div>
           </div>
@@ -12231,7 +12259,7 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Инвентаризация / списание</h2><p>Ручная корректировка без сканирования штрихкодов. Доступно только администратору.</p></div></div>
         ${renderWmsDataNotice()}
-        <div class="card field-card"><div class="task-note"><b>Все изменения записываются в историю.</b><br>Выберите ячейку и товар. Зарезервированное количество уменьшить или списать нельзя.</div><div class="button-row"><button type="button" class="small-button ${draft.mode === "inventory" ? "" : "secondary"}" data-wms-admin-mode="inventory">Инвентаризация</button><button type="button" class="small-button ${draft.mode === "scrap" ? "" : "secondary"}" data-wms-admin-mode="scrap">Списание</button></div></div>
+        <div class="card field-card"><div class="button-row"><button type="button" class="small-button ${draft.mode === "inventory" ? "" : "secondary"}" data-wms-admin-mode="inventory">Инвентаризация</button><button type="button" class="small-button ${draft.mode === "scrap" ? "" : "secondary"}" data-wms-admin-mode="scrap">Списание</button></div></div>
         ${renderWmsAdminAdjustmentForm(false)}
       `;
     }
@@ -12302,7 +12330,6 @@ MINIAPP_HTML = """<!doctype html>
             <div class="field"><label>Окончание</label><input id="adminEndDate" type="date" value="${escapeHtml(state.adminEndDate)}"></div>
             ${isEmployeeReport ? `<div class="field full"><label>Сотрудник</label><select id="adminEmployeeId">${employeeOptions || `<option value="">Нет сотрудников</option>`}</select></div>` : ""}
           </div>
-          ${isTimesheetReport ? `<div class="task-note">В Excel попадут все сотрудники, включая тех, у кого за период не было смен. Дни показаны отдельными колонками, итоги — в часах.</div>` : ""}
           <div class="button-row"><button class="small-button secondary" data-admin-action="load-report">Показать</button><button class="small-button" data-admin-action="export-report">Скачать Excel</button></div>
         </div>
         <div class="kpi-grid">
@@ -13229,7 +13256,7 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         state.data = null;
         document.getElementById("roleLabel").textContent = "Нет соединения";
-        mount.innerHTML = `<div class="screen-head"><div><h2>Не удалось загрузить приложение</h2><p>${escapeHtml(error.apiMessage || "Проверьте соединение и повторите попытку.")}</p></div></div>`;
+      mount.innerHTML = `<div class="screen-head"><div><h2>Не удалось загрузить приложение</h2><p class="operational-message">${escapeHtml(error.apiMessage || "Проверьте соединение и повторите попытку.")}</p></div></div>`;
         topTabs.hidden = true;
         bottomNav.innerHTML = "";
         mainButton.textContent = "Повторить";
