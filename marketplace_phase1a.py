@@ -146,7 +146,7 @@ VERIFIED_ENDPOINTS = (
     },
     {
         "dataset": "supplies", "method": "POST", "path": "/v3/supply-order/get",
-        "pagination_kind": "batch", "request_limit": 100,
+        "pagination_kind": "none", "request_limit": 100,
         "verified_at": "2026-08-04T10:00:00Z",
         "official_url": "https://docs.ozon.ru/api/seller/#operation/SupplyOrderAPI_GetSupplyOrderV3",
         "notes": "Supply status, warehouses, timeslot and bundle identifiers.",
