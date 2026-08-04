@@ -1301,6 +1301,67 @@ class IsolatedDatabaseTest(unittest.TestCase):
         conn.close()
         self.assertEqual(colors, ["Брауни"])
 
+    def test_contour_reset_cancels_zero_output_completed_downstream_tasks(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9013, "Курасова Наталия Валерьевна", "Раскройщик")
+        cutter = self.database.get_employee_by_telegram_id(9013)
+        self.database.update_employee_status(cutter[0], "active")
+        self.database.create_shift(cutter[0])
+        self.database.add_fabric_receipt("Ткань", "Капучино", 2, None)
+        created = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Кардиган детский",
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["104"],
+                "colors": ["Капучино"],
+                "fabric_rolls": {"Капучино": "1"},
+            },
+        )
+        self.assertTrue(created["ok"], created)
+        task_id = self.database.get_active_production_tasks()[0][0]
+        self.assertIsNotNone(self.database.assign_production_task(task_id, cutter[0]))
+        submitted = miniapp_server.submit_production_contours_for_telegram(
+            9013,
+            {"task_id": task_id, "quantities": {"Кардиган детский|104|Капучино": 3}},
+        )
+        self.assertTrue(submitted["ok"], submitted)
+        conn = self.database.get_db_connection()
+        cutting_batch_id = conn.execute(
+            "SELECT id FROM cutting_batches WHERE production_task_id = ?", (task_id,)
+        ).fetchone()[0]
+        now = self.database.local_now().isoformat()
+        cursor = conn.execute(
+            """
+            INSERT INTO route_batches (
+                product_name, product_size, product_color, quantity,
+                route_step_index, status, good_quantity, defect_quantity,
+                source_cutting_batch_id, work_state, created_at, updated_at, completed_at
+            ) VALUES (?, ?, ?, 0, 0, 'done', 0, 0, ?, 'completed', ?, ?, ?)
+            """,
+            ("Кардиган детский", "104", "Капучино", cutting_batch_id, now, now, now),
+        )
+        downstream_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        reset = self.database.reset_cutting_tasks_to_contours_entry(
+            "Курасова Наталия Валерьевна",
+            ["Кардиган детский"],
+            replacement_color="Брауни",
+            task_ids=[task_id],
+        )
+
+        self.assertEqual([row["task_id"] for row in reset], [task_id])
+        conn = self.database.get_db_connection()
+        downstream = conn.execute(
+            "SELECT status, work_state, blocked_reason FROM route_batches WHERE id = ?", (downstream_id,)
+        ).fetchone()
+        conn.close()
+        self.assertEqual(downstream, ("cancelled", "cancelled", "Откат задания к нанесению контуров"))
+
     def test_admin_can_edit_writeoff_and_delete_empty_material_card(self):
         row = self.database.add_fabric_receipt("Ткань", "Брауни", 3, None)
         edited = self.database.update_fabric_stock_card(row[0], "Ткань костюмная", "Брауни", "рул", None, "Уточнение")

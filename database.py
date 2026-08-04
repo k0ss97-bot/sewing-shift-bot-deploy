@@ -8152,13 +8152,30 @@ def reset_cutting_tasks_to_contours_entry(
                 if batch_status == "formed":
                     raise ValueError("formed batch")
                 cursor.execute(
-                    "SELECT COUNT(*) FROM route_batches WHERE source_cutting_batch_id = ? AND status NOT IN ('active', 'cancelled')",
+                    """
+                    SELECT id, status, good_quantity, defect_quantity
+                    FROM route_batches
+                    WHERE source_cutting_batch_id = ?
+                      AND status NOT IN ('active', 'cancelled')
+                    """,
                     (batch_id,),
                 )
-                if int(cursor.fetchone()[0] or 0) > 0:
+                downstream_rows = cursor.fetchall()
+                if any(
+                    status != "done" or int(good_quantity or 0) > 0 or int(defect_quantity or 0) > 0
+                    for _route_id, status, good_quantity, defect_quantity in downstream_rows
+                ):
                     raise ValueError("completed downstream work")
                 cursor.execute(
-                    "UPDATE route_batches SET status = 'cancelled', completed_at = ?, updated_at = ? WHERE source_cutting_batch_id = ? AND status = 'active'",
+                    """
+                    UPDATE route_batches
+                    SET status = 'cancelled',
+                        work_state = 'cancelled',
+                        blocked_reason = 'Откат задания к нанесению контуров',
+                        completed_at = COALESCE(completed_at, ?),
+                        updated_at = ?
+                    WHERE source_cutting_batch_id = ? AND status != 'cancelled'
+                    """,
                     (now, now, batch_id),
                 )
                 cursor.execute(
@@ -8264,7 +8281,7 @@ def rename_fabric_stock_color(material_name: str, old_color: str, new_color: str
 
 def apply_kurasova_brownie_contour_migration():
     """Apply the explicitly requested one-time production correction."""
-    migration_key = "2026-08-04-kurasova-brownie-contours-v4"
+    migration_key = "2026-08-04-kurasova-brownie-contours-v5"
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
