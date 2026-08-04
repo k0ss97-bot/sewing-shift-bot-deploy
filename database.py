@@ -8281,7 +8281,7 @@ def rename_fabric_stock_color(material_name: str, old_color: str, new_color: str
 
 def apply_kurasova_brownie_contour_migration():
     """Apply the explicitly requested one-time production correction."""
-    migration_key = "2026-08-04-kurasova-brownie-contours-v5"
+    migration_key = "2026-08-04-kurasova-brownie-contours-v6"
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -8294,21 +8294,46 @@ def apply_kurasova_brownie_contour_migration():
     if already_applied:
         return True
 
+    # Resolve the two currently unfinished cutting tasks from their cutting
+    # batches first.  Earlier migration versions could mark a partial attempt
+    # as complete and then skip the still in-progress 70% cards on restart.
+    target_products = ("Кардиган детский", "Брюки со стрелками детские")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT production_tasks.product_name, production_tasks.id
+        FROM production_tasks
+        JOIN cutting_batches
+          ON cutting_batches.production_task_id = production_tasks.id
+        WHERE production_tasks.product_name IN (?, ?)
+          AND production_tasks.status IN ('active', 'contours_done', 'in_cutting')
+          AND cutting_batches.status IN ('layout_done', 'cutting_in_progress')
+          AND cutting_batches.cutting_progress < 100
+        ORDER BY production_tasks.id DESC
+        """,
+        target_products,
+    )
+    current_task_ids = {}
+    for product_name, task_id in cursor.fetchall():
+        current_task_ids.setdefault(product_name, int(task_id))
+    conn.close()
+
     # The employee card contains the spelling "Наталия" in production, while
-    # the original one-shot correction used "Наталья".  Process products one
-    # by one as one of the two tasks may already have been safely cancelled by
-    # the administrator.
+    # the original one-shot correction used "Наталья". Process products one
+    # by one because one of them may already be at contour entry.
     reset = []
     employee_names = (
         "Курасова Наталия Валерьевна",
         "Курасова Наталья Валерьевна",
     )
-    for product_name in ("Кардиган детский", "Брюки со стрелками детские"):
+    for product_name in target_products:
+        exact_task_id = current_task_ids.get(product_name)
         rows = reset_cutting_tasks_to_contours_entry(
             employee_names[0],
             [product_name],
             replacement_color="Брауни",
-            task_ids=[3, 4],
+            task_ids=[exact_task_id] if exact_task_id else [3, 4],
         )
         if not rows:
             for employee_name in employee_names:
@@ -8321,7 +8346,27 @@ def apply_kurasova_brownie_contour_migration():
                     break
         if rows:
             reset.extend(rows)
-    if not reset:
+
+    # A successful rerun may find one task already reset and only change the
+    # remaining one. Do not mark the migration until no unfinished cutting
+    # batch for either target product remains.
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM production_tasks
+        JOIN cutting_batches
+          ON cutting_batches.production_task_id = production_tasks.id
+        WHERE production_tasks.product_name IN (?, ?)
+          AND cutting_batches.status IN ('layout_done', 'cutting_in_progress')
+          AND cutting_batches.cutting_progress < 100
+        """,
+        target_products,
+    )
+    unfinished_count = int(cursor.fetchone()[0] or 0)
+    conn.close()
+    if unfinished_count:
         return False
     renamed = rename_fabric_stock_color(
         "Ткань", "Капучино", "Брауни", None,

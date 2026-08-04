@@ -1362,6 +1362,72 @@ class IsolatedDatabaseTest(unittest.TestCase):
         conn.close()
         self.assertEqual(downstream, ("cancelled", "cancelled", "Откат задания к нанесению контуров"))
 
+    def test_kurasova_migration_retries_after_old_partial_marker_and_resets_cutting_progress(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9014, "Курасова Наталия Валерьевна", "Раскройщик")
+        cutter = self.database.get_employee_by_telegram_id(9014)
+        self.database.update_employee_status(cutter[0], "active")
+        self.database.create_shift(cutter[0])
+        self.database.add_fabric_receipt("Ткань", "Капучино", 3, None)
+        created = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Кардиган детский",
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["104"],
+                "colors": ["Капучино"],
+                "fabric_rolls": {"Капучино": "1"},
+            },
+        )
+        self.assertTrue(created["ok"], created)
+        task_id = self.database.get_active_production_tasks()[0][0]
+        self.assertTrue(miniapp_server.start_cutting_task_for_telegram(9014, task_id)["ok"])
+        contours = miniapp_server.submit_cutting_stage_for_telegram(
+            9014,
+            {"stage": "contours", "task_id": task_id, "quantities": {"104|Капучино": "5"}},
+        )
+        self.assertTrue(contours["ok"], contours)
+        batch_id = self.database.get_cutting_batches_for_layout("Кардиган детский")[0][0]
+        layout = miniapp_server.submit_cutting_stage_for_telegram(
+            9014,
+            {"stage": "layout", "batch_id": batch_id, "color_layers": {"Капучино": "2"}},
+        )
+        self.assertTrue(layout["ok"], layout)
+        cutting = miniapp_server.submit_cutting_stage_for_telegram(
+            9014,
+            {"stage": "cutting", "batch_id": batch_id, "progress": "75"},
+        )
+        self.assertTrue(cutting["ok"], cutting)
+        conn = self.database.get_db_connection()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS business_data_migrations (migration_key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO business_data_migrations (migration_key, applied_at) VALUES (?, ?)",
+            ("2026-08-04-kurasova-brownie-contours-v5", self.database.local_now().isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+        self.assertTrue(self.database.apply_kurasova_brownie_contour_migration())
+
+        task = self.database.get_production_task_by_id(task_id)
+        self.assertEqual(task["status"], "active")
+        self.assertEqual(self.database.get_cutting_batches_for_cutting("Кардиган детский"), [])
+        conn = self.database.get_db_connection()
+        colors = [row[0] for row in conn.execute(
+            "SELECT product_color FROM production_task_colors WHERE task_id = ?", (task_id,)
+        ).fetchall()]
+        migration = conn.execute(
+            "SELECT 1 FROM business_data_migrations WHERE migration_key = ?",
+            ("2026-08-04-kurasova-brownie-contours-v6",),
+        ).fetchone()
+        conn.close()
+        self.assertEqual(colors, ["Брауни"])
+        self.assertIsNotNone(migration)
+
     def test_admin_can_edit_writeoff_and_delete_empty_material_card(self):
         row = self.database.add_fabric_receipt("Ткань", "Брауни", 3, None)
         edited = self.database.update_fabric_stock_card(row[0], "Ткань костюмная", "Брауни", "рул", None, "Уточнение")
