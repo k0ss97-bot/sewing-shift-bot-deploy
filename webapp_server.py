@@ -142,6 +142,26 @@ def main() -> None:
     if server is None:
         raise RuntimeError("Standalone web server failed to start.")
 
+    if str(os.getenv("MARKETPLACE_PHASE1A_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        def refresh_ozon_supplies() -> None:
+            try:
+                from marketplace_phase1a import run_phase1a_sync
+
+                result = run_phase1a_sync(datasets=["supplies"], trigger_kind="startup")
+                logging.info(
+                    "Ozon FBO supply startup refresh: status=%s ok=%s",
+                    result.get("status") or result.get("code") or "unknown",
+                    bool(result.get("ok")),
+                )
+            except Exception:
+                logging.exception("Ozon FBO supply startup refresh failed")
+
+        threading.Thread(
+            target=refresh_ozon_supplies,
+            name="ozon-fbo-supply-startup-refresh",
+            daemon=True,
+        ).start()
+
     bot_process = None
     logging.info("Telegram bot integration is disabled; running standalone web application only")
     stop_event = threading.Event()
