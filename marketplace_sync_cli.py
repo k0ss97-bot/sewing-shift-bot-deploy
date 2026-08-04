@@ -54,7 +54,38 @@ def _wildberries_sync_due() -> bool:
 
 def _ozon_sync() -> dict:
     if phase1a_enabled():
-        return run_phase1a_sync()
+        phase1a = run_phase1a_sync()
+        legacy = (
+            sync_ozon()
+            if _legacy_sync_due()
+            else {
+                "ok": True,
+                "status": "not_due",
+                "read_only": True,
+                "message": "Совместимый Ozon read-model ещё свежее часовой cadence.",
+            }
+        )
+        phase1a_ok = bool(phase1a.get("ok")) or phase1a.get("status") in {
+            "deferred", "not_due",
+        }
+        legacy_ok = bool(legacy.get("ok")) or legacy.get("status") == "not_due"
+        status = (
+            "success"
+            if phase1a_ok and legacy_ok
+            else ("partial" if phase1a_ok or legacy_ok else "error")
+        )
+        return {
+            "ok": phase1a_ok and legacy_ok,
+            "status": status,
+            "read_only": True,
+            "message": (
+                "Ozon Phase 1A и совместимый read-model синхронизированы."
+                if status == "success"
+                else "Ozon синхронизирован частично; диагностика сохранена."
+            ),
+            "phase1a": phase1a,
+            "compatibility": legacy,
+        }
     if not _legacy_sync_due():
         return {
             "ok": True,
