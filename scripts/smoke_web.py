@@ -352,6 +352,7 @@ def run_smoke() -> None:
                 marketplace_health.get("supplies") in {"idle", "syncing", "ready", "error"},
                 "Health endpoint is missing the Ozon supplies readiness state.",
             )
+            require(isinstance(marketplace_health.get("reason"), str), "Marketplace health reason must be safe text.")
 
             status, favicon_headers, favicon_body = http_request(f"{base_url}/favicon.ico")
             require(status == 200, f"Favicon endpoint returned HTTP {status}.")

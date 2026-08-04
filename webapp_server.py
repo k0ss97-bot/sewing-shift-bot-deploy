@@ -144,7 +144,7 @@ def main() -> None:
 
     if str(os.getenv("MARKETPLACE_PHASE1A_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}:
         def refresh_ozon_supplies() -> None:
-            set_marketplace_health_state(supplies="syncing")
+            set_marketplace_health_state(supplies="syncing", reason="")
             try:
                 from marketplace_phase1a import run_phase1a_sync
 
@@ -152,8 +152,18 @@ def main() -> None:
                 dataset_result = next(iter(result.get("datasets") or []), {})
                 projection = dataset_result.get("projection") if isinstance(dataset_result, dict) else None
                 projection_ok = not isinstance(projection, dict) or projection.get("ok") is not False
+                run = dataset_result.get("run") if isinstance(dataset_result, dict) else {}
+                reason = (
+                    result.get("code")
+                    or (projection.get("error") if isinstance(projection, dict) and not projection_ok else "")
+                    or (run.get("termination_reason") if isinstance(run, dict) else "")
+                    or dataset_result.get("status")
+                    or result.get("status")
+                    or "unknown"
+                )
                 set_marketplace_health_state(
-                    supplies="ready" if bool(result.get("ok")) and projection_ok else "error"
+                    supplies="ready" if bool(result.get("ok")) and projection_ok else "error",
+                    reason="" if bool(result.get("ok")) and projection_ok else str(reason),
                 )
                 logging.info(
                     "Ozon FBO supply startup refresh: status=%s ok=%s",
@@ -161,7 +171,7 @@ def main() -> None:
                     bool(result.get("ok")),
                 )
             except Exception:
-                set_marketplace_health_state(supplies="error")
+                set_marketplace_health_state(supplies="error", reason="startup_exception")
                 logging.exception("Ozon FBO supply startup refresh failed")
 
         threading.Thread(
