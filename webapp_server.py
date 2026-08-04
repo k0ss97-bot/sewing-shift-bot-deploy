@@ -111,6 +111,18 @@ def main() -> None:
     from miniapp_server import start_miniapp_server
 
     init_db()
+    if str(os.getenv("MARKETPLACE_PHASE1A_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from wms.migrate import migrate_all
+
+            applied = migrate_all()
+            if applied:
+                logging.info("Applied PostgreSQL migrations at startup: %s", ", ".join(applied))
+        except Exception:
+            # The web application and local production/WMS workflows must
+            # remain available during a temporary PostgreSQL outage. The
+            # marketplace screen will expose its own unavailable state.
+            logging.exception("PostgreSQL startup migrations were not applied")
     if not apply_kurasova_brownie_contour_migration():
         logging.warning("Requested Kurasova contour reset was not applied; matching active tasks were not found or are no longer safe to reset")
     ready_cut_migration = apply_ready_cut_confirmation_migration()
