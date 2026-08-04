@@ -65,3 +65,17 @@ CREATE INDEX IF NOT EXISTS idx_marketplace_supply_items_offer
     ON marketplace.supply_items_current (account_id, offer_id) WHERE offer_id <> '';
 CREATE INDEX IF NOT EXISTS idx_marketplace_supply_items_sku
     ON marketplace.supply_items_current (account_id, sku) WHERE sku <> '';
+
+-- Production migrations are applied by the database owner while the runtime
+-- sync uses the restricted ``wms`` role.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wms') THEN
+        GRANT USAGE ON SCHEMA marketplace TO wms;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON marketplace.supplies_current TO wms;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON marketplace.supply_items_current TO wms;
+        GRANT SELECT, INSERT ON marketplace.supplies_history TO wms;
+        GRANT USAGE, SELECT ON SEQUENCE marketplace.supplies_history_id_seq TO wms;
+    END IF;
+END
+$$;
