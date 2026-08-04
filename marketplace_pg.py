@@ -1,7 +1,7 @@
 """PostgreSQL repository for the authoritative read-only Ozon projection.
 
 The module owns the additive ``marketplace`` schema introduced by migrations
-005 and 006.  It never stores Ozon credentials or mutates provider state.
+005 through 007.  It never stores Ozon credentials or mutates provider state.
 """
 
 from __future__ import annotations
@@ -16,14 +16,20 @@ from typing import Any, Iterable
 from wms.connection import get_pg_connection
 
 
-DATASETS = ("catalog", "prices", "stocks", "orders")
+DATASETS = ("catalog", "prices", "stocks", "orders", "returns", "finance", "rating")
 FRESHNESS_SECONDS = {
     "catalog": 2 * 60 * 60,
     "prices": 45 * 60,
     "stocks": 20 * 60,
     "orders": 20 * 60,
+    "returns": 2 * 60 * 60,
+    "finance": 2 * 60 * 60,
+    "rating": 12 * 60 * 60,
 }
-SYNC_CADENCE_SECONDS = {"catalog": 30 * 60, "prices": 15 * 60, "stocks": 5 * 60, "orders": 5 * 60}
+SYNC_CADENCE_SECONDS = {
+    "catalog": 30 * 60, "prices": 15 * 60, "stocks": 5 * 60, "orders": 5 * 60,
+    "returns": 30 * 60, "finance": 30 * 60, "rating": 6 * 60 * 60,
+}
 
 OZON_COLOR_ATTRIBUTE_IDS = {10096}
 OZON_SIZE_ATTRIBUTE_IDS = {4295, 9533, 4508}
@@ -63,6 +69,18 @@ def _decimal(value: Any) -> Decimal | None:
     try:
         return number if number.is_finite() and number >= 0 else None
     except InvalidOperation:
+        return None
+
+
+def _money(value: Any) -> Decimal | None:
+    """Parse a finite signed monetary value."""
+
+    if value is None or value == "":
+        return None
+    try:
+        number = Decimal(str(value).strip())
+        return number if number.is_finite() else None
+    except (InvalidOperation, ValueError):
         return None
 
 
@@ -271,7 +289,7 @@ def normalize_product(row: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def normalize_order(row: dict[str, Any]) -> dict[str, Any] | None:
-    external_id = _text(row.get("order_id") or row.get("posting_number") or row.get("order_number"))
+    external_id = _text(row.get("external_order_id") or row.get("posting_number") or row.get("order_id") or row.get("order_number"))
     if not external_id:
         return None
     return {
@@ -286,6 +304,80 @@ def normalize_order(row: dict[str, Any]) -> dict[str, Any] | None:
         "items": [item for item in (row.get("products") or row.get("items") or []) if isinstance(item, dict)],
         "payload": row,
     }
+
+
+def normalize_return(row: dict[str, Any]) -> dict[str, Any] | None:
+    external_id = _text(row.get("id") or row.get("return_id") or row.get("return_clearing_id"))
+    if not external_id:
+        return None
+    product = row.get("product") if isinstance(row.get("product"), dict) else {}
+    logistic = row.get("logistic") if isinstance(row.get("logistic"), dict) else {}
+    visual = row.get("visual") if isinstance(row.get("visual"), dict) else {}
+    visual_status = visual.get("status") if isinstance(visual.get("status"), dict) else {}
+    price = product.get("price") if isinstance(product.get("price"), dict) else product.get("price")
+    amount_value = price.get("price") if isinstance(price, dict) else price
+    currency = _text(price.get("currency") if isinstance(price, dict) else "RUB").upper() or "RUB"
+    if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+        currency = "RUB"
+    return {
+        "external_return_id": external_id,
+        "scheme": _text(row.get("schema") or row.get("scheme")),
+        "status": _text(visual_status.get("name") or visual_status.get("display_name") or row.get("status") or row.get("type")),
+        "posting_number": _text(row.get("posting_number") or row.get("order_number")),
+        "external_product_id": _text(product.get("product_id") or product.get("id")),
+        "offer_id": _text(product.get("offer_id")),
+        "sku": _text(product.get("sku")),
+        "product_name": _text(product.get("name")),
+        "quantity": _decimal(product.get("quantity") or 1) or Decimal(1),
+        "amount": _money(amount_value),
+        "currency": currency,
+        "returned_at": _timestamp(logistic.get("return_date") or row.get("returned_at") or row.get("created_at")),
+        "payload": row,
+    }
+
+
+def normalize_finance(row: dict[str, Any]) -> dict[str, Any] | None:
+    operation_id = _text(row.get("operation_id") or row.get("id"))
+    if not operation_id:
+        operation_id = hashlib.sha256(_json(row).encode()).hexdigest()
+    posting = row.get("posting") if isinstance(row.get("posting"), dict) else {}
+    items = [item for item in (row.get("items") or []) if isinstance(item, dict)]
+    return {
+        "operation_id": operation_id,
+        "operation_date": _timestamp(row.get("operation_date") or row.get("date")),
+        "operation_type": _text(row.get("operation_type") or row.get("type")),
+        "operation_name": _text(row.get("operation_type_name") or row.get("name")),
+        "posting_number": _text(posting.get("posting_number") or row.get("posting_number")),
+        "sku": _text(items[0].get("sku")) if items else "",
+        "amount": _money(row.get("amount")) or Decimal(0),
+        "accruals_for_sale": _money(row.get("accruals_for_sale")) or Decimal(0),
+        "sale_commission": _money(row.get("sale_commission")) or Decimal(0),
+        "delivery_charge": _money(row.get("delivery_charge")) or Decimal(0),
+        "return_delivery_charge": _money(row.get("return_delivery_charge")) or Decimal(0),
+        "currency": "RUB",
+        "payload": row,
+    }
+
+
+def _rating_value(payload: dict[str, Any]) -> Decimal | None:
+    for group in payload.get("groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for item in group.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            if "оценка товаров" in _text(item.get("name")).casefold():
+                value = _money(item.get("current_value"))
+                return value if value is not None and Decimal(0) <= value <= Decimal(5) else None
+    return None
+
+
+def normalize_rating(row: dict[str, Any]) -> dict[str, Any] | None:
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    observed_at = _timestamp(row.get("observed_at"))
+    if observed_at is None or not payload:
+        return None
+    return {"observed_date": observed_at.date(), "rating": _rating_value(payload), "payload": payload}
 
 
 def normalize_price(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -331,6 +423,23 @@ def normalize_stock_rows(row: dict[str, Any]) -> list[dict[str, Any]]:
     external_id, offer_id, sku = product_identity(row)
     if not external_id:
         return []
+    if _text(row.get("warehouse_type")).upper() == "FBO" and "free_to_sell_amount" in row:
+        available = _decimal(row.get("free_to_sell_amount"))
+        reserved = _decimal(row.get("reserved_amount"))
+        if available is None or reserved is None:
+            return []
+        return [{
+            "external_product_id": external_id,
+            "offer_id": offer_id or _text(row.get("item_code")),
+            "sku": sku,
+            "warehouse_type": "FBO",
+            "warehouse_name": _text(row.get("warehouse_name")),
+            "stock": available + reserved,
+            "reserved": reserved,
+            "available": available,
+            "source_updated_at": None,
+            "payload": {**row, "_available_derived": False},
+        }]
     source_rows = row.get("stocks") if isinstance(row.get("stocks"), list) else [row]
     normalized: list[dict[str, Any]] = []
     for source in source_rows:
@@ -516,7 +625,7 @@ class MarketplacePGRepository:
                         """SELECT EXTRACT(EPOCH FROM (now()-MAX(finished_at)))
                              FROM marketplace.sync_runs
                             WHERE account_id=%s AND dataset=%s
-                              AND (status='success' OR (status='partial' AND termination_reason='fbo_stock_scope_unavailable'))""",
+                              AND status='success'""",
                         (account_id, dataset),
                     )
                     row = cur.fetchone()
@@ -616,8 +725,14 @@ class MarketplacePGRepository:
                             updated += outcomes.count("updated")
                             skipped += outcomes.count("skipped")
                             continue
-                    else:
+                    elif context.dataset == "orders":
                         outcome = self._upsert_order(cur, context, source)
+                    elif context.dataset == "returns":
+                        outcome = self._upsert_return(cur, context, source)
+                    elif context.dataset == "finance":
+                        outcome = self._upsert_finance(cur, context, source)
+                    else:
+                        outcome = self._upsert_rating(cur, context, source)
                     inserted += outcome == "inserted"
                     updated += outcome == "updated"
                     skipped += outcome == "skipped"
@@ -670,6 +785,23 @@ class MarketplacePGRepository:
                ON CONFLICT(account_id,external_product_id,offer_id) DO NOTHING""",
             (context.account_id, external_id, offer_id, sku, offer_id or sku or external_id, context.run_id),
         )
+
+    def _resolve_product_key(
+        self, cur: Any, context: RunContext, external_id: str, offer_id: str, sku: str,
+    ) -> tuple[str, str, str]:
+        cur.execute(
+            """SELECT external_product_id,offer_id,sku FROM marketplace.products_current
+                WHERE account_id=%s AND (
+                    (%s<>'' AND external_product_id=%s) OR
+                    (%s<>'' AND offer_id=%s) OR
+                    (%s<>'' AND sku=%s)
+                )
+                ORDER BY CASE WHEN external_product_id=%s THEN 0 WHEN offer_id=%s THEN 1 ELSE 2 END
+                LIMIT 1""",
+            (context.account_id, external_id, external_id, offer_id, offer_id, sku, sku, external_id, offer_id),
+        )
+        row = cur.fetchone()
+        return (_text(row[0]), _text(row[1]), _text(row[2])) if row else (external_id, offer_id, sku)
 
     def _upsert_product(self, cur: Any, context: RunContext, source: dict[str, Any]) -> str:
         item = normalize_product(source)
@@ -743,6 +875,10 @@ class MarketplacePGRepository:
         return "inserted" if old is None else ("updated" if changed else "skipped")
 
     def _upsert_stock(self, cur: Any, context: RunContext, item: dict[str, Any]) -> str:
+        item = dict(item)
+        item["external_product_id"], item["offer_id"], item["sku"] = self._resolve_product_key(
+            cur, context, item["external_product_id"], item["offer_id"], item["sku"],
+        )
         self._ensure_product_stub(cur, context, item["external_product_id"], item["offer_id"], item["sku"])
         key = (
             context.account_id, item["external_product_id"], item["offer_id"],
@@ -829,6 +965,97 @@ class MarketplacePGRepository:
                  _text(source_item.get("name") or offer_id or sku), quantity, price, currency,
                  _json(source_item)),
             )
+        row_hash = _hash_fields(*key, item["posting_number"], item["warehouse_type"], item["status"], item["shipment_date"], _json(item["payload"]))
+        cur.execute(
+            """INSERT INTO marketplace.orders_history
+               (account_id,external_order_id,posting_number,warehouse_type,status,shipment_date,
+                payload_json,observed_at,run_id,row_hash)
+               VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,now(),%s,%s)
+               ON CONFLICT(run_id,account_id,external_order_id,row_hash) DO NOTHING""",
+            (*key, item["posting_number"], item["warehouse_type"], item["status"],
+             item["shipment_date"], _json(item["payload"]), context.run_id, row_hash),
+        )
+        return "inserted" if old is None else "updated"
+
+    def _upsert_return(self, cur: Any, context: RunContext, source: dict[str, Any]) -> str:
+        item = normalize_return(source)
+        if item is None:
+            return "skipped"
+        key = (context.account_id, item["external_return_id"])
+        cur.execute(
+            "SELECT status,quantity,amount FROM marketplace.returns_current WHERE account_id=%s AND external_return_id=%s",
+            key,
+        )
+        old = cur.fetchone()
+        cur.execute(
+            """INSERT INTO marketplace.returns_current
+               (account_id,external_return_id,scheme,status,posting_number,external_product_id,
+                offer_id,sku,product_name,quantity,amount,currency,returned_at,payload_json,
+                received_at,last_seen_run_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,now(),%s)
+               ON CONFLICT(account_id,external_return_id) DO UPDATE SET
+                 scheme=excluded.scheme,status=excluded.status,posting_number=excluded.posting_number,
+                 external_product_id=excluded.external_product_id,offer_id=excluded.offer_id,
+                 sku=excluded.sku,product_name=excluded.product_name,quantity=excluded.quantity,
+                 amount=excluded.amount,currency=excluded.currency,returned_at=excluded.returned_at,
+                 payload_json=excluded.payload_json,received_at=now(),last_seen_run_id=excluded.last_seen_run_id""",
+            (*key, item["scheme"], item["status"], item["posting_number"], item["external_product_id"],
+             item["offer_id"], item["sku"], item["product_name"], item["quantity"], item["amount"],
+             item["currency"], item["returned_at"], _json(item["payload"]), context.run_id),
+        )
+        row_hash = _hash_fields(*key, item["status"], item["quantity"], item["amount"], _json(item["payload"]))
+        cur.execute(
+            """INSERT INTO marketplace.returns_history
+               (account_id,external_return_id,status,quantity,amount,payload_json,observed_at,run_id,row_hash)
+               VALUES (%s,%s,%s,%s,%s,%s::jsonb,now(),%s,%s)
+               ON CONFLICT(run_id,account_id,external_return_id,row_hash) DO NOTHING""",
+            (*key, item["status"], item["quantity"], item["amount"], _json(item["payload"]), context.run_id, row_hash),
+        )
+        return "inserted" if old is None else "updated"
+
+    def _upsert_finance(self, cur: Any, context: RunContext, source: dict[str, Any]) -> str:
+        item = normalize_finance(source)
+        if item is None:
+            return "skipped"
+        key = (context.account_id, item["operation_id"])
+        cur.execute("SELECT amount FROM marketplace.finance_transactions WHERE account_id=%s AND operation_id=%s", key)
+        old = cur.fetchone()
+        cur.execute(
+            """INSERT INTO marketplace.finance_transactions
+               (account_id,operation_id,operation_date,operation_type,operation_name,posting_number,
+                sku,amount,accruals_for_sale,sale_commission,delivery_charge,return_delivery_charge,
+                currency,payload_json,received_at,last_seen_run_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,now(),%s)
+               ON CONFLICT(account_id,operation_id) DO UPDATE SET
+                 operation_date=excluded.operation_date,operation_type=excluded.operation_type,
+                 operation_name=excluded.operation_name,posting_number=excluded.posting_number,
+                 sku=excluded.sku,amount=excluded.amount,accruals_for_sale=excluded.accruals_for_sale,
+                 sale_commission=excluded.sale_commission,delivery_charge=excluded.delivery_charge,
+                 return_delivery_charge=excluded.return_delivery_charge,currency=excluded.currency,
+                 payload_json=excluded.payload_json,received_at=now(),last_seen_run_id=excluded.last_seen_run_id""",
+            (*key, item["operation_date"], item["operation_type"], item["operation_name"],
+             item["posting_number"], item["sku"], item["amount"], item["accruals_for_sale"],
+             item["sale_commission"], item["delivery_charge"], item["return_delivery_charge"],
+             item["currency"], _json(item["payload"]), context.run_id),
+        )
+        return "inserted" if old is None else "updated"
+
+    def _upsert_rating(self, cur: Any, context: RunContext, source: dict[str, Any]) -> str:
+        item = normalize_rating(source)
+        if item is None:
+            return "skipped"
+        key = (context.account_id, item["observed_date"])
+        cur.execute("SELECT rating FROM marketplace.ratings_history WHERE account_id=%s AND observed_date=%s", key)
+        old = cur.fetchone()
+        cur.execute(
+            """INSERT INTO marketplace.ratings_history
+               (account_id,observed_date,rating,payload_json,received_at,last_seen_run_id)
+               VALUES (%s,%s,%s,%s::jsonb,now(),%s)
+               ON CONFLICT(account_id,observed_date) DO UPDATE SET
+                 rating=excluded.rating,payload_json=excluded.payload_json,
+                 received_at=now(),last_seen_run_id=excluded.last_seen_run_id""",
+            (*key, item["rating"], _json(item["payload"]), context.run_id),
+        )
         return "inserted" if old is None else "updated"
 
     def finish_run(
@@ -871,13 +1098,7 @@ class MarketplacePGRepository:
                            WHERE account_id=%s AND last_seen_run_id IS DISTINCT FROM %s""",
                         (context.account_id, context.run_id),
                     )
-                stocks_snapshot_complete = (
-                    context.dataset == "stocks"
-                    and (
-                        status == "success"
-                        or (status == "partial" and termination_reason == "fbo_stock_scope_unavailable")
-                    )
-                )
+                stocks_snapshot_complete = context.dataset == "stocks" and status == "success"
                 if stocks_snapshot_complete:
                     cur.execute(
                         """DELETE FROM marketplace.stocks_current
@@ -892,11 +1113,7 @@ class MarketplacePGRepository:
                             WHERE account_id=%s AND dataset=%s""",
                         (_json({"reset_reason": termination_reason, "failed_run_id": context.run_id}), context.account_id, context.dataset),
                     )
-                usable_completion = status == "success" or (
-                    context.dataset == "stocks"
-                    and status == "partial"
-                    and termination_reason == "fbo_stock_scope_unavailable"
-                )
+                usable_completion = status == "success"
                 if usable_completion:
                     cur.execute(
                         """UPDATE marketplace.sync_checkpoints SET cursor_value=NULL,page_number=0,
@@ -925,6 +1142,9 @@ class MarketplacePGRepository:
             "prices": "marketplace.prices_current",
             "stocks": "marketplace.stocks_current",
             "orders": "marketplace.orders_current",
+            "returns": "marketplace.returns_current",
+            "finance": "marketplace.finance_transactions",
+            "rating": "marketplace.ratings_history",
         }[context.dataset]
         conn = self._connection()
         try:
@@ -1042,8 +1262,7 @@ class MarketplacePGRepository:
                                     WHERE success.account_id=%s AND success.dataset=%s AND success.status='success') AS last_success_at,
                                   (SELECT MAX(usable.finished_at) FROM marketplace.sync_runs usable
                                     WHERE usable.account_id=%s AND usable.dataset=%s
-                                      AND (usable.status='success' OR
-                                           (usable.status='partial' AND usable.termination_reason='fbo_stock_scope_unavailable'))) AS last_usable_at,
+                                      AND usable.status='success') AS last_usable_at,
                                   EXTRACT(EPOCH FROM (now()-COALESCE(finished_at,started_at))) AS age_seconds
                              FROM marketplace.sync_runs
                             WHERE account_id=%s AND dataset=%s ORDER BY started_at DESC LIMIT 1""",
@@ -1056,9 +1275,7 @@ class MarketplacePGRepository:
                     age = int(row.get("age_seconds") or 0)
                     raw_status = row.get("status")
                     status = "error" if raw_status == "failed" else raw_status
-                    usable = raw_status == "success" or (
-                        raw_status == "partial" and row.get("termination_reason") == "fbo_stock_scope_unavailable"
-                    )
+                    usable = raw_status == "success"
                     freshness = "fresh" if usable and age <= FRESHNESS_SECONDS[dataset] else ("stale" if usable else status)
                     unique = int(row.get("unique_count") or 0)
                     row.update({
@@ -1093,6 +1310,12 @@ class MarketplacePGRepository:
                     (account_id,),
                 )
                 open_orders = int(cur.fetchone()[0])
+                cur.execute("SELECT COUNT(*) FROM marketplace.returns_current WHERE account_id=%s", (account_id,))
+                returns_count = int(cur.fetchone()[0])
+                cur.execute("SELECT COUNT(*) FROM marketplace.finance_transactions WHERE account_id=%s", (account_id,))
+                finance_count = int(cur.fetchone()[0])
+                cur.execute("SELECT COUNT(*) FROM marketplace.ratings_history WHERE account_id=%s", (account_id,))
+                rating_count = int(cur.fetchone()[0])
             conn.rollback()
             overall = "ready" if datasets and all(item["status"] == "success" for item in datasets) else (
                 "no_data" if all(item["status"] == "no_data" for item in datasets) else "attention"
@@ -1110,6 +1333,9 @@ class MarketplacePGRepository:
                     "stock_reserved": stock_totals[2],
                     "stock_available": stock_totals[3],
                     "open_orders": open_orders,
+                    "returns": returns_count,
+                    "finance": finance_count,
+                    "ratings": rating_count,
                 },
             })
         except MarketplacePGUnavailable:
@@ -1243,6 +1469,53 @@ class MarketplacePGRepository:
                 )
                 order_history_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
                 cur.execute(
+                    """SELECT external_return_id AS id,external_return_id,scheme,status,posting_number,
+                              external_product_id,offer_id,sku,product_name,quantity,amount,currency,
+                              returned_at,received_at AS updated_at
+                         FROM marketplace.returns_current WHERE account_id=%s
+                        ORDER BY returned_at DESC NULLS LAST,received_at DESC LIMIT 500""",
+                    (account_id,),
+                )
+                returns_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT DATE(returned_at) AS date,COUNT(*) AS records,SUM(quantity) AS quantity
+                         FROM marketplace.returns_current
+                        WHERE account_id=%s AND returned_at IS NOT NULL
+                        GROUP BY DATE(returned_at) ORDER BY DATE(returned_at)""",
+                    (account_id,),
+                )
+                returns_daily = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT DATE(operation_date) AS date,
+                              SUM(CASE WHEN amount>0 THEN amount ELSE 0 END) AS revenue,
+                              SUM(amount) AS net,COUNT(*) AS records
+                         FROM marketplace.finance_transactions
+                        WHERE account_id=%s AND operation_date IS NOT NULL
+                        GROUP BY DATE(operation_date) ORDER BY DATE(operation_date)""",
+                    (account_id,),
+                )
+                finance_daily = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT observed_date,rating,payload_json FROM marketplace.ratings_history
+                        WHERE account_id=%s ORDER BY observed_date DESC LIMIT 1""",
+                    (account_id,),
+                )
+                rating_row = _row_dict(cur.fetchone(), cur)
+                cur.execute(
+                    """SELECT external_product_id,offer_id,sku,quantity,DATE(returned_at) AS day
+                         FROM marketplace.returns_current
+                        WHERE account_id=%s AND returned_at IS NOT NULL""",
+                    (account_id,),
+                )
+                return_history_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT sku,posting_number,amount,DATE(operation_date) AS day
+                         FROM marketplace.finance_transactions
+                        WHERE account_id=%s AND operation_date IS NOT NULL""",
+                    (account_id,),
+                )
+                finance_history_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
                     """SELECT id,status,dataset,expected_count,unique_count AS products_count,
                               CASE WHEN dataset='prices' THEN unique_count ELSE 0 END AS prices_count,
                               CASE WHEN dataset='stocks' THEN unique_count ELSE 0 END AS stocks_count,
@@ -1284,6 +1557,34 @@ class MarketplacePGRepository:
                     if _text(row.get("posting_number")):
                         bucket["orders"].add(_text(row.get("posting_number")))
                     bucket["units"] += int(Decimal(str(row.get("quantity") or 0)))
+            for row in return_history_rows:
+                day = _text(row.get("day"))[:10]
+                if not day:
+                    continue
+                for identity in {_text(row.get("external_product_id")), _text(row.get("offer_id")), _text(row.get("sku"))}:
+                    if not identity:
+                        continue
+                    bucket = product_history.setdefault(identity, {}).setdefault(
+                        day, {"date": day, "orders": set(), "units": 0, "returns": 0, "accruals": 0.0},
+                    )
+                    bucket["returns"] += int(Decimal(str(row.get("quantity") or 0)))
+            posting_products: dict[str, set[str]] = {}
+            for row in order_history_rows:
+                posting = _text(row.get("posting_number"))
+                if not posting:
+                    continue
+                posting_products.setdefault(posting, set()).update(filter(None, {
+                    _text(row.get("external_product_id")), _text(row.get("offer_id")), _text(row.get("sku")),
+                }))
+            for row in finance_history_rows:
+                day = _text(row.get("day"))[:10]
+                amount = float(Decimal(str(row.get("amount") or 0)))
+                identities = {_text(row.get("sku")), *posting_products.get(_text(row.get("posting_number")), set())}
+                for identity in filter(None, identities):
+                    bucket = product_history.setdefault(identity, {}).setdefault(
+                        day, {"date": day, "orders": set(), "units": 0, "returns": 0, "accruals": 0.0},
+                    )
+                    bucket["accruals"] += amount
             wms_stock, wms_stock_available = _wms_finished_stock(conn)
             groups: dict[str, dict[str, Any]] = {}
             for product in products:
@@ -1312,6 +1613,9 @@ class MarketplacePGRepository:
                         )
                         target["orders"].update(source["orders"])
                         target["units"] = max(int(target["units"]), int(source["units"]))
+                        target["returns"] = max(int(target["returns"]), int(source["returns"]))
+                        if abs(float(source["accruals"])) > abs(float(target["accruals"])):
+                            target["accruals"] = float(source["accruals"])
                 product["history"] = [
                     {**entry, "orders": len(entry["orders"])}
                     for entry in sorted(merged_history.values(), key=lambda value: value["date"])
@@ -1379,7 +1683,20 @@ class MarketplacePGRepository:
                 "warehouses": warehouses,
                 "orders_rows": orders,
                 "sync_runs": runs,
-                "analytics": {},
+                "analytics": {
+                    "finance_daily": finance_daily,
+                    "returns_rows": returns_rows,
+                    "returns_daily": returns_daily,
+                    "rating": rating_row.get("rating"),
+                    "rating_payload": rating_row.get("payload_json") or {},
+                    "finance_available": bool(finance_daily),
+                    "returns_available": bool(returns_rows),
+                    "rating_available": bool(rating_row),
+                    "order_counts": {
+                        scheme: sum(1 for row in orders if _text(row.get("warehouse_type")) == scheme)
+                        for scheme in ("FBO", "FBS")
+                    },
+                },
             })
         except Exception as error:
             conn.rollback()

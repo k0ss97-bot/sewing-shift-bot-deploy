@@ -7299,7 +7299,7 @@ MINIAPP_HTML = """<!doctype html>
       state.marketplaceQuality.error = "";
       render();
       try {
-        const result = await api("/api/marketplaces/phase1a/sync", {datasets: ["catalog", "prices", "stocks", "orders"]});
+        const result = await api("/api/marketplaces/phase1a/sync", {datasets: ["catalog", "prices", "stocks", "orders", "returns", "finance", "rating"]});
         if (!result.ok) throw new Error(result.message || "Phase 1A не запущена.");
         showToast("PostgreSQL Phase 1A", result.message || "Синхронизация запущена.");
       } catch (error) {
@@ -11592,7 +11592,6 @@ MINIAPP_HTML = """<!doctype html>
       const dateTo = params.get("to") || "";
       state.marketplaceProvider = ["all", "ozon", "wildberries"].includes(scope) ? scope : "all";
       state.marketplaceView = marketplaceViewFromPath(window.location.pathname);
-      if (state.marketplaceView === "data-quality") state.marketplaceProvider = "ozon";
       state.marketplacePeriod = ["today", "yesterday", "7d", "30d", "month", "previous-month", "custom"].includes(period) ? period : "7d";
     state.marketplaceDateFrom = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateFrom) ? dateFrom : "";
       state.marketplaceDateTo = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateTo) ? dateTo : "";
@@ -11657,7 +11656,6 @@ MINIAPP_HTML = """<!doctype html>
         applyMarketplaceLocation();
         state.marketplaceLocationInitialized = true;
       }
-      if (state.marketplaceView === "data-quality") state.marketplaceProvider = "ozon";
       const payload = state.marketplaceData.payload || {};
       const selectedProvider = ["all", "ozon", "wildberries"].includes(state.marketplaceProvider) ? state.marketplaceProvider : "all";
       const isOzon = selectedProvider === "ozon";
@@ -11719,12 +11717,12 @@ MINIAPP_HTML = """<!doctype html>
       const providerTitle = isAll ? "маркетплейсами" : providerName;
       const groups = marketplaceGroups(applyInStockFilter ? {...providerPayload, product_groups: []} : providerPayload, products);
       const qualityView = state.marketplaceView === "data-quality";
-      const qualityActionBusy = state.marketplaceQuality.loading
+      const qualityActionBusy = isWildberries ? state.marketplaceData.loading : (state.marketplaceQuality.loading
         || state.marketplaceQuality.syncing
-        || Boolean(state.marketplaceQuality.payload?.phase1a?.worker?.running);
+        || Boolean(state.marketplaceQuality.payload?.phase1a?.worker?.running));
       mainButton.hidden = false;
       mainButton.textContent = qualityView
-        ? (qualityActionBusy ? "Phase 1A выполняется…" : "Запустить Phase 1A")
+        ? (qualityActionBusy ? "Синхронизация выполняется…" : (isWildberries ? "Синхронизировать Wildberries" : "Запустить PostgreSQL sync"))
         : (state.marketplaceData.loading ? "Синхронизация…" : `Синхронизировать ${isWildberries ? "Wildberries" : isAll ? "маркетплейсы" : "Ozon"}`);
       mainButton.disabled = qualityView ? qualityActionBusy : state.marketplaceData.loading;
       const errorNotice = state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
@@ -11894,15 +11892,13 @@ MINIAPP_HTML = """<!doctype html>
       const qualityTotals = quality.totals || {};
       const qualityProductsEnvelope = state.marketplaceQuality.products || {};
       const qualityStateLabel = {disabled:"выключен",unavailable:"недоступен",no_data:"нет данных",ready:"готов",attention:"нужна проверка",success:"успешно",partial:"частично",error:"ошибка",failed:"ошибка",running:"выполняется",stale:"устарело",fresh:"актуально",unknown:"неизвестно",zero:"реальный ноль",value:"есть данные"};
-      const qualityDatasetLabel = {catalog:"Каталог",prices:"Цены",stocks:"Остатки",orders:"Заказы"};
+      const qualityDatasetLabel = {catalog:"Каталог",prices:"Цены",stocks:"Остатки",orders:"Заказы",returns:"Возвраты",finance:"Финансы",rating:"Рейтинг"};
       const qualityChipClass = (value) => ["success","fresh","ready","available","value","zero"].includes(String(value || "")) ? "" : (["disabled","no_data","unknown"].includes(String(value || "")) ? "gray" : "warn");
       const qualityDataset = (dataset) => qualityDatasets.find((row) => row.dataset === dataset) || null;
       const qualityDatasetUsable = (dataset) => {
         const row = qualityDataset(dataset);
         if (!row) return false;
-        return row.status === "success"
-          || Boolean(row.last_success_at)
-          || (dataset === "stocks" && row.termination_reason === "fbo_stock_scope_unavailable");
+        return row.status === "success" || Boolean(row.last_success_at);
       };
       const qualityProductsAvailable = qualityProductsEnvelope.available === true && qualityDatasetUsable("catalog");
       const qualityProducts = qualityProductsAvailable && Array.isArray(qualityProductsEnvelope.items) ? qualityProductsEnvelope.items : [];
@@ -11914,8 +11910,8 @@ MINIAPP_HTML = """<!doctype html>
       const qualityIntro = quality.state === "disabled"
         ? `<div class="task-note"><b>PostgreSQL-контур выключен</b><br>Временно используется аварийный SQLite fallback. Для основного каталога, остатков и заказов включите MARKETPLACE_PHASE1A_ENABLED=1.</div>`
         : quality.state === "unavailable"
-          ? `<div class="task-note"><b>PostgreSQL marketplace недоступен</b><br>Примените migrations 005–006 и проверьте WMS_DATABASE_URL. Экран не подменяет эти данные устаревшей SQLite-копией.</div>`
-          : `<div class="task-note"><b>Основной read-only PostgreSQL-контур</b><br>Каталог, цены, остатки и заказы идут только Ozon → система. Нули, отсутствие данных, partial и ошибки показываются раздельно.</div>`;
+          ? `<div class="task-note"><b>PostgreSQL marketplace недоступен</b><br>Примените migrations 005–007 и проверьте WMS_DATABASE_URL. Экран не подменяет эти данные устаревшей SQLite-копией.</div>`
+          : `<div class="task-note"><b>Основной read-only PostgreSQL-контур</b><br>Каталог, цены, FBO/FBS-остатки и заказы, возвраты, финансы и рейтинг идут только Ozon → PostgreSQL. Нули, отсутствие данных, partial и ошибки показываются раздельно.</div>`;
       const qualityDatasetCards = qualityDatasets.length ? qualityDatasets.map((row) => `<div class="card field-card"><div class="section-title"><b>${escapeHtml(qualityDatasetLabel[row.dataset] || row.dataset)}</b><span class="status-chip ${qualityChipClass(row.status)}">${escapeHtml(qualityStateLabel[row.status] || row.status)}</span></div><div class="marketplace-mini-list"><div class="marketplace-mini-row"><span>Последний пригодный sync</span><b>${qualityMoment(row.last_usable_at || row.last_success_at || (row.status === "success" ? row.finished_at : ""))}</b></div><div class="marketplace-mini-row"><span>Свежесть</span><b>${escapeHtml(qualityStateLabel[row.freshness] || row.freshness || "неизвестно")}</b></div><div class="marketplace-mini-row"><span>Строки: получено / уникально / ожидалось</span><b>${escapeHtml(row.received_count == null ? "—" : row.received_count)} / ${escapeHtml(row.unique_count == null ? "—" : row.unique_count)} / ${escapeHtml(row.expected_count == null ? "—" : row.expected_count)}</b></div><div class="marketplace-mini-row"><span>Страницы / retry</span><b>${escapeHtml(row.page_count == null ? "—" : row.page_count)} / ${escapeHtml(row.retry_count == null ? "—" : row.retry_count)}</b></div><div class="marketplace-mini-row"><span>Завершение</span><b>${escapeHtml(row.termination_reason || "—")}</b></div></div>${row.error_summary ? `<div class="task-note"><b>Диагностика</b><br>${escapeHtml(row.error_summary)}</div>` : ""}</div>`).join("") : `<div class="card field-card">${itemEmpty("Запусков Phase 1A ещё нет.")}</div>`;
       const capabilityRows = qualityCapabilities.length ? qualityCapabilities.map((row) => `<tr><td>${escapeHtml(row.capability)}</td><td><span class="status-chip ${qualityChipClass(row.status)}">${escapeHtml(qualityStateLabel[row.status] || row.status)}</span></td><td>${qualityMoment(row.checked_at)}</td><td>${escapeHtml(row.safe_message || "—")}</td></tr>`).join("") : `<tr><td colspan="4">Capabilities ещё не проверены.</td></tr>`;
       const qualityProductsState = qualityProductsEnvelope.available !== true
@@ -11946,7 +11942,7 @@ MINIAPP_HTML = """<!doctype html>
         <section class="card field-card">
           <div class="section-title"><b>Capabilities Ozon</b><span>${qualityCapabilities.length}</span></div>
           <div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Набор данных</th><th>Состояние</th><th>Проверено</th><th>Сообщение</th></tr></thead><tbody>${capabilityRows}</tbody></table></div>
-          <div class="task-note"><b>FBO не подменяется нулём.</b><br>Подтверждённый /v4 покрывает seller-схемы FBS/rFBS/FBP. Полный FBO ledger остаётся unavailable до отдельного проверенного адаптера.</div>
+          <div class="task-note"><b>FBO и seller-схемы проверяются раздельно.</b><br>Итоговый статус остатков успешен только после полного объединения обоих источников.</div>
         </section>
         <section class="card field-card">
           <div class="section-title"><b>Проверка current-товаров Ozon в PostgreSQL</b><span>${escapeHtml(qualityProductTotal == null ? "—" : qualityProductTotal)}</span></div>
@@ -11958,10 +11954,34 @@ MINIAPP_HTML = """<!doctype html>
           </div>
           <div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Товар</th><th>Offer ID</th><th>Цена</th><th>Present</th><th>Reserved</th><th>Available</th></tr></thead><tbody>${qualityProductRows}</tbody></table></div>
         </section>`;
+      const wbQualityRows = Array.isArray(analytics.capability_rows)
+        ? analytics.capability_rows
+        : Object.entries(wbCapabilityStatuses).map(([capability, value]) => ({capability, ...(value || {})}));
+      const wbQualityReady = wbQualityRows.length > 0 && wbQualityRows.every((row) => row.status === "available");
+      const wbQualityLabels = {catalog:"Каталог",prices:"Цены",stocks:"Остатки",orders:"Заказы",sales:"Продажи и возвраты",finance:"Финансы",funnel:"Воронка",advertising:"Реклама",feedbacks:"Отзывы",supplies:"Поставки"};
+      const wbQualityStatuses = {available:"доступно",partial:"частично",permission_required:"нужны права",unauthorized:"токен отклонён",payment_required:"нужен платный доступ",error:"ошибка",unavailable:"недоступно",unknown:"не проверено"};
+      const wbQualityCards = wbQualityRows.length ? wbQualityRows.map((row) => {
+        const coverage = row.coverage_start_date && row.coverage_end_date ? `${row.coverage_start_date} — ${row.coverage_end_date}` : "не указан";
+        return `<div class="card field-card"><div class="section-title"><b>${escapeHtml(wbQualityLabels[row.capability] || row.capability)}</b><span class="status-chip ${row.status === "available" ? "" : "warn"}">${escapeHtml(wbQualityStatuses[row.status] || row.status || "не проверено")}</span></div><div class="marketplace-mini-list"><div class="marketplace-mini-row"><span>Проверено</span><b>${escapeHtml(row.checked_at || "никогда")}</b></div><div class="marketplace-mini-row"><span>Строк получено</span><b>${escapeHtml(row.row_count == null ? "—" : row.row_count)}</b></div><div class="marketplace-mini-row"><span>Покрытие</span><b>${escapeHtml(coverage)}</b></div></div>${row.safe_message ? `<div class="task-note"><b>Диагностика</b><br>${escapeHtml(row.safe_message)}</div>` : ""}</div>`;
+      }).join("") : `<div class="card field-card">${itemEmpty("Wildberries ещё не записал результаты проверки источников.")}</div>`;
+      const wbQualityBlock = `
+        <div class="button-row">
+          <button type="button" class="small-button" data-marketplace-action="sync" ${state.marketplaceData.loading ? "disabled" : ""}>Запустить read-only sync Wildberries</button>
+          <button type="button" class="small-button secondary" data-marketplace-action="refresh" ${state.marketplaceData.loading ? "disabled" : ""}>Обновить состояние</button>
+          <span class="status-chip ${wbQualityReady ? "" : "warn"}">${wbQualityReady ? "все источники доступны" : "нужна проверка"}</span>
+        </div>
+        <div class="task-note"><b>Диагностика Wildberries</b><br>Выбранная площадка сохраняется. Статусы токена, покрытия периода и snapshot показаны отдельно для каждого источника WB.</div>
+        <div class="marketplace-dashboard-kpis">
+          <div class="marketplace-dashboard-kpi"><span>Товары</span><strong>${escapeHtml(summary.products == null ? "—" : summary.products)}</strong><small>текущий snapshot</small></div>
+          <div class="marketplace-dashboard-kpi"><span>Строки остатков</span><strong>${escapeHtml(summary.stock_rows == null ? "—" : summary.stock_rows)}</strong><small>подтверждённые склады</small></div>
+          <div class="marketplace-dashboard-kpi"><span>Заказы</span><strong>${escapeHtml(summary.open_orders == null ? "—" : summary.open_orders)}</strong><small>подтверждённый период</small></div>
+          <div class="marketplace-dashboard-kpi"><span>Источники</span><strong>${escapeHtml(wbQualityRows.length)}</strong><small>проверено раздельно</small></div>
+        </div>
+        <div class="marketplace-wide-grid">${wbQualityCards}</div>`;
       const placeholderSection = (name, description) => `<div class="card field-card marketplace-placeholder"><div class="marketplace-placeholder-icon">◇</div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(description)}</p><span class="status-chip gray">Раздел подготовлен</span></div>`;
       const safeProductsBlock = isWildberries && !wbCatalogUsable ? itemEmpty("Текущий snapshot каталога Wildberries не подтверждён.") : productsBlock;
       const safeStocksBlock = isWildberries && !wbStocksUsable ? itemEmpty("Текущий snapshot остатков Wildberries не подтверждён; исторический ноль скрыт.") : stocksBlock;
-      const sectionContent = {overview: overviewBlock, orders: ordersBlock, supplies: suppliesBlock, "warehouse-shipments": warehouseShipmentsBlock, sync: runsBlock, stocks: safeStocksBlock, analytics: analyticsBlock, products: safeProductsBlock, finance: financeBlock, reviews: reviewsBlock, "data-quality": qualityBlock, settings: placeholderSection("Настройки", "Подключение работает в режиме только чтения. Расписание синхронизации управляется на сервере.")};
+      const sectionContent = {overview: overviewBlock, orders: ordersBlock, supplies: suppliesBlock, "warehouse-shipments": warehouseShipmentsBlock, sync: runsBlock, stocks: safeStocksBlock, analytics: analyticsBlock, products: safeProductsBlock, finance: financeBlock, reviews: reviewsBlock, "data-quality": isWildberries ? wbQualityBlock : qualityBlock, settings: placeholderSection("Настройки", "Подключение работает в режиме только чтения. Расписание синхронизации управляется на сервере.")};
       const content = sectionContent[state.marketplaceView] || safeProductsBlock;
       const sectionTitles = {overview:"Обзор", orders:"Заказы", supplies:"Поставки", "warehouse-shipments":"Отгрузки на склад", sync:"Журнал синхронизации", stocks:"Остатки", analytics:"Аналитика", products:"Товары", finance:"Финансы", reviews:"Отзывы", "data-quality":"Качество данных", settings:"Настройки"};
       const title = sectionTitles[state.marketplaceView] || "Товары";
@@ -11971,7 +11991,7 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `<div class="marketplace-layout">${marketplaceMenu}<div class="marketplace-main">
         <div class="screen-head marketplace-v2-head"><div><h2>${isAll ? "Маркетплейсы" : providerName}</h2><p>${isAll ? "Общая статистика и управление продажами на маркетплейсах" : (isOzon ? "Продажи, заказы, остатки и показатели магазина Ozon" : "Продажи, заказы, остатки и показатели магазина Wildberries")}</p></div><div class="marketplace-brand-mark ${isWildberries ? "wb" : isOzon ? "ozon" : "all"}">${isWildberries ? "WB" : isOzon ? "OZON" : "Ozon + WB"}</div></div><div class="marketplace-provider-status"><b>${isAll ? "Общий обзор" : providerName}</b><span>${escapeHtml(providerStatus)}</span></div>
         ${errorNotice}${notConfigured}
-        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? (isWildberries && !verifiedOrdersAvailable ? "—" : orders.length) : state.marketplaceView === "supplies" ? (isWildberries && !wbSuppliesCurrent ? "—" : supplies.length) : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? (isWildberries && !wbStocksUsable ? "—" : products.length) : state.marketplaceView === "data-quality" ? qualityDatasets.length : state.marketplaceView === "analytics" ? "" : (isWildberries && !wbCatalogUsable ? "—" : groups.length)}</span></div>${content}`}
+        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? (isWildberries && !verifiedOrdersAvailable ? "—" : orders.length) : state.marketplaceView === "supplies" ? (isWildberries && !wbSuppliesCurrent ? "—" : supplies.length) : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? (isWildberries && !wbStocksUsable ? "—" : products.length) : state.marketplaceView === "data-quality" ? (isWildberries ? wbQualityRows.length : qualityDatasets.length) : state.marketplaceView === "analytics" ? "" : (isWildberries && !wbCatalogUsable ? "—" : groups.length)}</span></div>${content}`}
       </div></div>`;
     }
 
@@ -12569,7 +12589,7 @@ MINIAPP_HTML = """<!doctype html>
       const dataset = (key) => datasets.find((row) => row.dataset === key) || null;
       const usable = (key) => {
         const row = dataset(key);
-        return Boolean(row && (row.status === "success" || row.last_success_at || row.last_usable_at || (row.status === "partial" && row.termination_reason === "fbo_stock_scope_unavailable")));
+        return Boolean(row && (row.status === "success" || row.last_success_at || row.last_usable_at));
       };
       const latest = datasets.map((row) => row.last_usable_at || row.last_success_at || row.finished_at || "").filter(Boolean).sort().pop() || "";
       return {
@@ -13750,11 +13770,13 @@ MINIAPP_HTML = """<!doctype html>
       const marketplaceView = event.target.closest("[data-marketplace-view]");
       if (marketplaceView) {
         state.marketplaceView = marketplaceView.dataset.marketplaceView || "overview";
-        if (state.marketplaceView === "data-quality") state.marketplaceProvider = "ozon";
         state.marketplaceDetail = null;
         syncMarketplaceLocation();
         render();
-        if (state.marketplaceView === "data-quality") refreshMarketplaceQuality({silent: true});
+        if (state.marketplaceView === "data-quality") {
+          if (state.marketplaceProvider === "wildberries") refreshMarketplaces();
+          else refreshMarketplaceQuality({silent: true});
+        }
         return;
       }
 
@@ -14180,7 +14202,7 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       if (state.screen === "marketplaces") {
-        if (state.marketplaceView === "data-quality") syncMarketplacePhase1A();
+        if (state.marketplaceView === "data-quality" && state.marketplaceProvider !== "wildberries") syncMarketplacePhase1A();
         else syncMarketplaces();
         return;
       }

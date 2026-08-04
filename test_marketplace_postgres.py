@@ -1,12 +1,16 @@
 import unittest
 from unittest.mock import patch
 
-from marketplace_ozon_client import OzonReadOnlyClient, _RequestResult
+from marketplace_ozon_client import OzonPaginationError, OzonReadOnlyClient, _RequestResult
 from marketplace_pg import (
     MarketplacePGRepository,
     _production_link_fields,
+    normalize_finance,
     normalize_order,
     normalize_product,
+    normalize_rating,
+    normalize_return,
+    normalize_stock_rows,
 )
 
 
@@ -29,13 +33,85 @@ class MarketplacePostgresReadModelTest(unittest.TestCase):
         responses = [
             _RequestResult({"result": {"postings": [{"posting_number": "1"}], "has_next": True}}, 0),
             _RequestResult({"result": {"postings": [{"posting_number": "2"}], "has_next": False}}, 0),
+            _RequestResult({"postings": [{"posting_number": "3"}], "has_next": True, "cursor": "fbo-next"}, 0),
+            _RequestResult({"postings": [{"posting_number": "4"}], "has_next": False, "cursor": "fbo-end"}, 0),
         ]
         with patch.object(client, "_request", side_effect=responses) as request:
-            result = client.iter_order_pages()
+            result = client.iter_order_pages(history_days=1)
 
         self.assertTrue(result.complete)
-        self.assertEqual([row["posting_number"] for row in result.items], ["1", "2"])
-        self.assertEqual([call.args[1]["offset"] for call in request.call_args_list], [0, 1])
+        self.assertEqual([row["posting_number"] for row in result.items], ["1", "2", "3", "4"])
+        self.assertEqual([call.args[1]["offset"] for call in request.call_args_list[:2]], [0, 1])
+        self.assertNotIn("offset", request.call_args_list[2].args[1])
+        self.assertEqual(request.call_args_list[3].args[1]["cursor"], "fbo-next")
+        self.assertEqual([row["warehouse_type"] for row in result.items], ["FBS", "FBS", "FBO", "FBO"])
+
+    def test_ozon_fbo_orders_reject_a_repeated_provider_page(self):
+        client = OzonReadOnlyClient("client", "secret", page_limit=100, min_interval=0)
+        repeated = {"posting_number": "same-posting"}
+        responses = [
+            _RequestResult({"result": {"postings": [], "has_next": False}}, 0),
+            _RequestResult({"postings": [repeated], "has_next": True, "cursor": "fbo-next"}, 0),
+            _RequestResult({"postings": [repeated], "has_next": True, "cursor": "fbo-next-2"}, 0),
+        ]
+
+        with patch.object(client, "_request", side_effect=responses):
+            with self.assertRaises(OzonPaginationError) as raised:
+                client.iter_order_pages(history_days=1)
+
+        self.assertEqual(raised.exception.code, "repeated_page")
+
+    def test_ozon_finance_deduplicates_month_window_boundaries(self):
+        client = OzonReadOnlyClient("client", "secret", page_limit=1000, min_interval=0)
+        duplicate = {"operation_id": "operation-1", "amount": "10.00"}
+        responses = [
+            _RequestResult({"result": {"operations": [duplicate], "page_count": 1}}, 0),
+            _RequestResult({"result": {"operations": [duplicate], "page_count": 1}}, 0),
+        ]
+
+        with patch.object(client, "_request", side_effect=responses) as request:
+            result = client.iter_finance_pages(history_days=31)
+
+        self.assertTrue(result.complete)
+        self.assertEqual(len(request.call_args_list), 2)
+        self.assertEqual([row["operation_id"] for row in result.items], ["operation-1"])
+        self.assertEqual(result.total, 1)
+
+    def test_fbo_stock_normalization_preserves_real_warehouse_scope(self):
+        rows = normalize_stock_rows({
+            "sku": "9001", "item_code": "CARD-122-BLUE", "offer_id": "CARD-122-BLUE",
+            "warehouse_type": "FBO", "warehouse_name": "Москва",
+            "free_to_sell_amount": 7, "reserved_amount": 2, "promised_amount": 1,
+        })
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["warehouse_type"], "FBO")
+        self.assertEqual(rows[0]["stock"], 9)
+        self.assertEqual(rows[0]["reserved"], 2)
+        self.assertEqual(rows[0]["available"], 7)
+
+    def test_extended_postgres_normalizers_keep_source_identities(self):
+        returned = normalize_return({
+            "id": 55, "posting_number": "700-1", "schema": "FBO",
+            "product": {"sku": "9001", "offer_id": "CARD-122-BLUE", "name": "Кардиган", "quantity": 2, "price": 2490},
+            "logistic": {"return_date": "2026-08-04T06:00:00Z"},
+            "visual": {"status": {"name": "Возвращён"}},
+        })
+        finance = normalize_finance({
+            "operation_id": 99, "operation_date": "2026-08-04T07:00:00Z",
+            "operation_type": "OperationAgentDeliveredToCustomer", "amount": "-150.25",
+            "posting": {"posting_number": "700-1"}, "items": [{"sku": "9001"}],
+        })
+        rating = normalize_rating({
+            "observed_at": "2026-08-04T07:00:00Z",
+            "payload": {"groups": [{"items": [{"name": "Оценка товаров", "current_value": 4.87}]}]},
+        })
+
+        self.assertEqual(returned["external_return_id"], "55")
+        self.assertEqual(returned["quantity"], 2)
+        self.assertEqual(finance["operation_id"], "99")
+        self.assertEqual(str(finance["amount"]), "-150.25")
+        self.assertEqual(str(rating["rating"]), "4.87")
 
     def test_rich_product_normalization_keeps_image_attributes_and_barcodes(self):
         product = normalize_product({
@@ -69,7 +145,7 @@ class MarketplacePostgresReadModelTest(unittest.TestCase):
         })
 
         self.assertIsNotNone(order)
-        self.assertEqual(order["external_order_id"], "700")
+        self.assertEqual(order["external_order_id"], "700-1")
         self.assertEqual(order["posting_number"], "700-1")
         self.assertEqual(order["warehouse_type"], "FBS")
         self.assertEqual(order["items"], [{"sku": "9001", "quantity": 2}])

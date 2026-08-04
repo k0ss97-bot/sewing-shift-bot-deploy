@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from http.client import HTTPException, HTTPResponse
+import hashlib
 import json
 import random
 import socket
@@ -233,6 +234,11 @@ class OzonReadOnlyClient:
         "/v4/product/info/stocks": "POST",
         "/v4/product/info/attributes": "POST",
         "/v3/posting/fbs/list": "POST",
+        "/v3/posting/fbo/list": "POST",
+        "/v2/analytics/stock_on_warehouses": "POST",
+        "/v1/returns/list": "POST",
+        "/v1/rating/summary": "POST",
+        "/v3/finance/transaction/list": "POST",
     }
     _CATALOG = _PaginationSpec(
         endpoint="/v3/product/list",
@@ -397,9 +403,17 @@ class OzonReadOnlyClient:
         *,
         max_pages: int | None = None,
     ) -> PageResult:
-        """Read every current-stock page using its cursor."""
+        """Read seller-scheme and FBO warehouse balances as one complete snapshot."""
 
-        return self._paginate(self._STOCKS, start_cursor, max_pages=max_pages)
+        if _as_text(start_cursor):
+            raise OzonClientError(
+                "Combined Ozon stock snapshots cannot resume from a legacy cursor.",
+                code="checkpoint_invalid",
+                endpoint="/v4/product/info/stocks",
+            )
+        seller = self._paginate(self._STOCKS, "", max_pages=max_pages)
+        fbo = self._iter_fbo_stock_pages(max_pages=max_pages)
+        return self._combine_results("stocks:combined", (seller, fbo))
 
     def product_details(self, product_ids: Iterable[str | int]) -> list[JSONDict]:
         """Read product details in allow-listed batches of at most 100 IDs."""
@@ -475,72 +489,277 @@ class OzonReadOnlyClient:
             endpoint="/v4/product/info/attributes",
         )
 
-    def iter_order_pages(self, start_cursor: str = "", *, max_pages: int | None = None) -> PageResult:
-        """Read FBS postings for the rolling 30-day operational window."""
+    def iter_order_pages(
+        self, start_cursor: str = "", *, max_pages: int | None = None, history_days: int = 365,
+    ) -> PageResult:
+        """Read FBS and FBO postings for the retained one-year order history."""
 
-        try:
-            offset = max(0, int(start_cursor or 0))
-        except (TypeError, ValueError) as error:
+        if _as_text(start_cursor):
             raise OzonClientError(
-                "Stored Ozon order cursor is invalid.",
+                "Combined Ozon order snapshots cannot resume from a legacy cursor.",
                 code="checkpoint_invalid",
                 endpoint="/v3/posting/fbs/list",
-            ) from error
+            )
+        fbs = self._iter_posting_pages("/v3/posting/fbs/list", "FBS", max_pages=max_pages, history_days=history_days)
+        fbo = self._iter_posting_pages("/v3/posting/fbo/list", "FBO", max_pages=max_pages, history_days=history_days)
+        return self._combine_results("orders:combined", (fbs, fbo))
+
+    def _iter_posting_pages(
+        self,
+        endpoint: str,
+        scheme: str,
+        *,
+        max_pages: int | None = None,
+        history_days: int = 365,
+    ) -> PageResult:
         page_cap = min(max_pages or self._pagination_page_cap, self._pagination_page_cap)
         now = datetime.now(timezone.utc)
         pages: list[Page] = []
         all_items: list[JSONDict] = []
         retries = 0
         limit = min(100, self._page_limit)
-        for page_number in range(1, page_cap + 1):
-            response = self._request(
-                "/v3/posting/fbs/list",
-                {
+        history_start = now - timedelta(days=max(1, history_days))
+        window_end = now
+        page_number = 0
+        rows_by_posting: dict[str, JSONDict] = {}
+        cursor_mode = endpoint == "/v3/posting/fbo/list"
+        while window_end > history_start:
+            window_start = max(history_start, window_end - timedelta(days=30))
+            offset = 0
+            cursor = ""
+            seen_cursors: set[str] = set()
+            seen_page_fingerprints: set[str] = set()
+            while True:
+                page_number += 1
+                if page_number > page_cap:
+                    checkpoint = cursor if cursor_mode else str(offset)
+                    self._raise_partial("safety_cap", endpoint, pages, all_items, None, checkpoint, retries)
+                payload: JSONDict = {
                     "dir": "ASC",
                     "filter": {
-                        "since": (now - timedelta(days=30)).isoformat().replace("+00:00", "Z"),
-                        "to": now.isoformat().replace("+00:00", "Z"),
+                        "since": window_start.isoformat().replace("+00:00", "Z"),
+                        "to": window_end.isoformat().replace("+00:00", "Z"),
                     },
                     "limit": limit,
-                    "offset": offset,
                     "with": {"analytics_data": True, "financial_data": True},
-                },
+                }
+                if cursor_mode:
+                    if cursor:
+                        payload["cursor"] = cursor
+                else:
+                    payload["offset"] = offset
+                response = self._request(
+                    endpoint,
+                    payload,
+                    method="POST",
+                )
+                items = _extract_items_strict(response.payload, ("postings", "items"), endpoint=endpoint)
+                items = [{**item, "warehouse_type": scheme, "external_order_id": _as_text(item.get("posting_number") or item.get("order_id"))} for item in items]
+                retries += response.retries
+                has_next = _extract_boolean(response.payload, "has_next")
+                next_offset = offset + len(items)
+                provider_cursor = _extract_cursor(response.payload, ("cursor",)) if cursor_mode else ""
+                page_identity = "\x1f".join(
+                    _as_text(item.get("posting_number") or item.get("external_order_id"))
+                    for item in items
+                )
+                page_fingerprint = hashlib.sha256(page_identity.encode("utf-8")).hexdigest()
+                if items and page_fingerprint in seen_page_fingerprints:
+                    checkpoint = provider_cursor if cursor_mode else str(next_offset)
+                    self._raise_partial("repeated_page", endpoint, pages, all_items, None, checkpoint, retries)
+                if items:
+                    seen_page_fingerprints.add(page_fingerprint)
+                unique_items: list[JSONDict] = []
+                for item in items:
+                    identity = _as_text(item.get("posting_number") or item.get("external_order_id"))
+                    if identity and identity not in rows_by_posting:
+                        rows_by_posting[identity] = item
+                        unique_items.append(item)
+                all_items.extend(unique_items)
+                request_cursor = cursor if cursor_mode else f"{window_start.date()}:{offset}"
+                response_cursor = provider_cursor if cursor_mode and has_next else (
+                    f"{window_start.date()}:{next_offset}" if has_next else ""
+                )
+                pages.append(Page(
+                    endpoint, page_number, request_cursor, response_cursor,
+                    tuple(unique_items), None, response.retries,
+                ))
+                if not has_next:
+                    break
+                if not items:
+                    self._raise_partial("empty_page_with_next", endpoint, pages, all_items, None, response_cursor, retries)
+                if cursor_mode:
+                    if not provider_cursor:
+                        self._raise_partial("missing_cursor", endpoint, pages, all_items, None, "", retries)
+                    if provider_cursor == cursor or provider_cursor in seen_cursors:
+                        self._raise_partial("repeated_cursor", endpoint, pages, all_items, None, provider_cursor, retries)
+                    seen_cursors.add(provider_cursor)
+                    cursor = provider_cursor
+                else:
+                    offset = next_offset
+            window_end = window_start - timedelta(microseconds=1)
+        unique_rows = list(rows_by_posting.values())
+        return self._page_result(endpoint, pages, unique_rows, len(unique_rows), "history_window_complete", True, "", retries)
+
+    def _iter_fbo_stock_pages(self, *, max_pages: int | None = None) -> PageResult:
+        endpoint = "/v2/analytics/stock_on_warehouses"
+        page_cap = min(max_pages or self._pagination_page_cap, self._pagination_page_cap)
+        limit = min(100, self._page_limit)
+        offset = 0
+        pages: list[Page] = []
+        all_items: list[JSONDict] = []
+        retries = 0
+        for page_number in range(1, page_cap + 1):
+            response = self._request(
+                endpoint,
+                {"limit": limit, "offset": offset, "warehouse_type": "ALL"},
                 method="POST",
             )
-            items = _extract_items_strict(
-                response.payload,
-                ("postings", "items"),
-                endpoint="/v3/posting/fbs/list",
-            )
+            items = _extract_items_strict(response.payload, ("rows", "items"), endpoint=endpoint)
+            items = [{**item, "warehouse_type": "FBO", "offer_id": _as_text(item.get("item_code"))} for item in items]
+            retries += response.retries
+            next_offset = offset + len(items)
+            next_cursor = str(next_offset) if len(items) == limit else ""
+            pages.append(Page(endpoint, page_number, str(offset) if offset else "", next_cursor, tuple(items), None, response.retries))
+            all_items.extend(items)
+            if len(items) < limit:
+                return self._page_result(endpoint, pages, all_items, len(all_items), "short_page", True, "", retries)
+            offset = next_offset
+        self._raise_partial("safety_cap", endpoint, pages, all_items, None, str(offset), retries)
+
+    def iter_return_pages(
+        self, start_cursor: str = "", *, max_pages: int | None = None, history_days: int = 730,
+    ) -> PageResult:
+        endpoint = "/v1/returns/list"
+        page_cap = min(max_pages or self._pagination_page_cap, self._pagination_page_cap)
+        now = datetime.now(timezone.utc)
+        since = now - timedelta(days=max(1, history_days))
+        last_id = _as_text(start_cursor)
+        pages: list[Page] = []
+        rows: list[JSONDict] = []
+        retries = 0
+        limit = min(500, self._page_limit)
+        for page_number in range(1, page_cap + 1):
+            payload: JSONDict = {
+                "filter": {"logistic_return_date": {
+                    "time_from": since.isoformat().replace("+00:00", "Z"),
+                    "time_to": now.isoformat().replace("+00:00", "Z"),
+                }},
+                "limit": limit,
+            }
+            if last_id:
+                payload["last_id"] = last_id
+            response = self._request(endpoint, payload, method="POST")
+            items = _extract_items_strict(response.payload, ("returns", "items"), endpoint=endpoint)
             retries += response.retries
             has_next = _extract_boolean(response.payload, "has_next")
-            next_offset = offset + len(items)
-            next_cursor = str(next_offset) if has_next else ""
-            pages.append(Page(
-                endpoint="/v3/posting/fbs/list",
-                number=page_number,
-                request_cursor=str(offset) if offset else "",
-                next_cursor=next_cursor,
-                items=tuple(items),
-                total=None,
-                retries=response.retries,
-            ))
-            all_items.extend(items)
+            next_id = _extract_cursor(response.payload, ("last_id", "cursor"))
+            if has_next and not next_id and items:
+                next_id = _as_text(items[-1].get("id"))
+            pages.append(Page(endpoint, page_number, last_id, next_id if has_next else "", tuple(items), None, response.retries))
+            rows.extend(items)
             if not has_next:
-                return self._page_result(
-                    "/v3/posting/fbs/list", pages, all_items, None,
-                    "has_next_false", True, "", retries,
-                )
-            if not items:
-                self._raise_partial(
-                    "empty_page_with_next", "/v3/posting/fbs/list", pages,
-                    all_items, None, next_cursor, retries,
-                )
-            offset = next_offset
-        self._raise_partial(
-            "safety_cap", "/v3/posting/fbs/list", pages,
-            all_items, None, str(offset), retries,
+                return self._page_result(endpoint, pages, rows, len(rows), "has_next_false", True, "", retries)
+            if not items or not next_id or next_id == last_id:
+                self._raise_partial("invalid_next_cursor", endpoint, pages, rows, None, next_id, retries)
+            last_id = next_id
+        self._raise_partial("safety_cap", endpoint, pages, rows, None, last_id, retries)
+
+    def iter_finance_pages(
+        self, start_cursor: str = "", *, max_pages: int | None = None, history_days: int = 365,
+    ) -> PageResult:
+        endpoint = "/v3/finance/transaction/list"
+        if _as_text(start_cursor):
+            raise OzonClientError("Finance snapshots restart by date window.", code="checkpoint_invalid", endpoint=endpoint)
+        page_cap = min(max_pages or self._pagination_page_cap, self._pagination_page_cap)
+        now = datetime.now(timezone.utc)
+        requested_start = now - timedelta(days=max(1, history_days))
+        # The verified endpoint exposes the current calendar month and five
+        # preceding calendar months. Older `from` values fail with HTTP 400.
+        retention_month = (now.year * 12 + now.month - 1) - 5
+        retention_start = datetime(
+            retention_month // 12, retention_month % 12 + 1, 1,
+            tzinfo=timezone.utc,
         )
+        history_start = max(requested_start, retention_start)
+        retention_clamped = history_start > requested_start
+        limit = min(1000, self._page_limit)
+        pages: list[Page] = []
+        rows: list[JSONDict] = []
+        seen_operation_ids: set[str] = set()
+        retries = 0
+        page_number = 0
+        window_end = now
+        while window_end > history_start:
+            # Ozon rejects a 31-day inclusive interval with HTTP 400. Keep
+            # every request at or below the verified 30-day API boundary.
+            window_start = max(history_start, window_end - timedelta(days=30))
+            provider_page = 1
+            while True:
+                page_number += 1
+                if page_number > page_cap:
+                    self._raise_partial("safety_cap", endpoint, pages, rows, None, str(provider_page), retries)
+                response = self._request(endpoint, {
+                    "filter": {
+                        "date": {
+                            "from": window_start.isoformat().replace("+00:00", "Z"),
+                            "to": window_end.isoformat().replace("+00:00", "Z"),
+                        },
+                        "operation_type": [], "posting_number": "", "transaction_type": "all",
+                    },
+                    "page": provider_page, "page_size": limit,
+                }, method="POST")
+                items = _extract_items_strict(response.payload, ("operations", "items", "transactions"), endpoint=endpoint)
+                unique_items: list[JSONDict] = []
+                for item in items:
+                    operation_id = _as_text(item.get("operation_id") or item.get("id"))
+                    if not operation_id:
+                        operation_id = hashlib.sha256(
+                            json.dumps(item, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+                        ).hexdigest()
+                    if operation_id in seen_operation_ids:
+                        continue
+                    seen_operation_ids.add(operation_id)
+                    unique_items.append(item)
+                result = response.payload.get("result") if isinstance(response.payload.get("result"), Mapping) else {}
+                page_count = int(result.get("page_count") or 0)
+                retries += response.retries
+                request_cursor = f"{window_start.date()}:{provider_page}"
+                next_cursor = f"{window_start.date()}:{provider_page + 1}" if provider_page < page_count else ""
+                pages.append(Page(endpoint, page_number, request_cursor, next_cursor, tuple(unique_items), None, response.retries))
+                rows.extend(unique_items)
+                if provider_page >= page_count:
+                    break
+                if not items:
+                    self._raise_partial("empty_page_before_page_count", endpoint, pages, rows, None, next_cursor, retries)
+                provider_page += 1
+            window_end = window_start - timedelta(microseconds=1)
+        reason = "provider_retention_complete" if retention_clamped else "history_window_complete"
+        return self._page_result(endpoint, pages, rows, len(rows), reason, True, "", retries)
+
+    def iter_rating_pages(self, start_cursor: str = "", *, max_pages: int | None = None) -> PageResult:
+        endpoint = "/v1/rating/summary"
+        if _as_text(start_cursor):
+            raise OzonClientError("Rating snapshots do not use cursors.", code="checkpoint_invalid", endpoint=endpoint)
+        response = self._request(endpoint, {}, method="POST")
+        item = {"observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "payload": response.payload}
+        page = Page(endpoint, 1, "", "", (item,), 1, response.retries)
+        return self._page_result(endpoint, (page,), (item,), 1, "single_snapshot", True, "", response.retries)
+
+    @classmethod
+    def _combine_results(cls, endpoint: str, results: Sequence[PageResult]) -> PageResult:
+        pages: list[Page] = []
+        items: list[JSONDict] = []
+        retries = 0
+        for result in results:
+            retries += result.retries
+            for source_page in result.pages:
+                pages.append(Page(
+                    source_page.endpoint, len(pages) + 1, source_page.request_cursor,
+                    source_page.next_cursor, source_page.items, source_page.total, source_page.retries,
+                ))
+            items.extend(result.items)
+        return cls._page_result(endpoint, pages, items, len(items), "all_sources_complete", True, "", retries)
 
     def _paginate(
         self,

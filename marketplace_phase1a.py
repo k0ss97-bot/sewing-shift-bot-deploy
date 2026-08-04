@@ -19,7 +19,7 @@ from marketplace_ozon_client import (
     Page,
     PageResult,
 )
-from marketplace_pg import MarketplacePGRepository, MarketplacePGUnavailable, RunContext, product_identity
+from marketplace_pg import DATASETS, MarketplacePGRepository, MarketplacePGUnavailable, RunContext, product_identity
 
 
 FEATURE_FLAG = "MARKETPLACE_PHASE1A_ENABLED"
@@ -87,7 +87,17 @@ VERIFIED_ENDPOINTS = (
         "request_limit": 1000,
         "verified_at": "2026-08-02T00:00:00Z",
         "official_url": "https://docs.ozon.ru/api/seller/#operation/ProductAPI_GetProductInfoStocks",
-        "notes": "Verified for seller schemes FBS/rFBS/FBP. FBO completeness is intentionally not claimed.",
+        "notes": "Seller-scheme component of the combined stock snapshot.",
+    },
+    {
+        "dataset": "stocks",
+        "method": "POST",
+        "path": "/v2/analytics/stock_on_warehouses",
+        "pagination_kind": "offset",
+        "request_limit": 100,
+        "verified_at": "2026-08-04T07:25:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/AnalyticsAPI_AnalyticsGetStockOnWarehousesV2",
+        "notes": "FBO balances by Ozon warehouse; merged with seller-scheme stocks.",
     },
     {
         "dataset": "orders",
@@ -97,7 +107,35 @@ VERIFIED_ENDPOINTS = (
         "request_limit": 100,
         "verified_at": "2026-08-04T00:00:00Z",
         "official_url": "https://docs.ozon.ru/api/seller/#operation/PostingAPI_GetFbsPostingListV3",
-        "notes": "Read-only rolling 30-day FBS operational order window.",
+        "notes": "Read-only retained FBS order history.",
+    },
+    {
+        "dataset": "orders", "method": "POST", "path": "/v3/posting/fbo/list",
+        "pagination_kind": "offset", "request_limit": 100,
+        "verified_at": "2026-08-04T07:25:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/PostingAPI_GetFboPostingListV3",
+        "notes": "Read-only retained FBO order history.",
+    },
+    {
+        "dataset": "returns", "method": "POST", "path": "/v1/returns/list",
+        "pagination_kind": "cursor", "request_limit": 500,
+        "verified_at": "2026-08-04T07:25:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/ReturnsAPI_ReturnAPIGetReturnsList",
+        "notes": "Returns retained in PostgreSQL with status history.",
+    },
+    {
+        "dataset": "finance", "method": "POST", "path": "/v3/finance/transaction/list",
+        "pagination_kind": "page", "request_limit": 1000,
+        "verified_at": "2026-08-04T07:25:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/FinanceAPI_FinanceTransactionListV3",
+        "notes": "One-year financial transaction history, synchronized in bounded date windows.",
+    },
+    {
+        "dataset": "rating", "method": "POST", "path": "/v1/rating/summary",
+        "pagination_kind": "none", "request_limit": None,
+        "verified_at": "2026-08-04T07:25:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/RatingAPI_RatingSummaryV1",
+        "notes": "Daily rating snapshots retained in PostgreSQL.",
     },
 )
 
@@ -156,10 +194,10 @@ def _capability_payload(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "method_semantics": "provider_reported_uninterpreted",
         },
         "stocks_fbo_complete": {
-            "status": "unavailable",
+            "status": "unknown",
             "complete": False,
             "seller_scope": raw.get("stock_scope") or ["FBS", "rFBS", "FBP"],
-            "message": "FBO ledger не подтверждён методом /v4; нулём не подменяется.",
+            "message": "Ожидается combined-проверка seller-схем и FBO.",
         },
     }
 
@@ -248,9 +286,36 @@ def _dataset_result(
         "prices": "iter_price_pages",
         "stocks": "iter_stock_pages",
         "orders": "iter_order_pages",
+        "returns": "iter_return_pages",
+        "finance": "iter_finance_pages",
+        "rating": "iter_rating_pages",
     }[dataset])
+    history_kwargs: dict[str, int] = {}
+    if dataset == "orders":
+        history_kwargs["history_days"] = 365 if trigger_kind == "manual" else 30
+    elif dataset == "returns":
+        history_kwargs["history_days"] = 730 if trigger_kind == "manual" else 90
+    elif dataset == "finance":
+        history_kwargs["history_days"] = 365 if trigger_kind == "manual" else 31
+
+    def capability_updates(status: str, complete: bool, message: str) -> dict[str, dict[str, Any]]:
+        names = (
+            ("stocks_complete", "stocks_fbo_complete", "stocks_seller_schemes")
+            if dataset == "stocks"
+            else (dataset,)
+        )
+        return {
+            name: {
+                "status": status,
+                "complete": complete,
+                "scope_complete": complete,
+                "message": message,
+            }
+            for name in names
+        }
+
     try:
-        result = reader(context.cursor)
+        result = reader(context.cursor, **history_kwargs)
         _persist_result(repository, context, result, client)
         unique_count = repository.run_unique_count(context)
         expected = result.total if result.total is not None else repository.run_expected_count(context)
@@ -266,9 +331,6 @@ def _dataset_result(
         reconciled = expected is None or reconciliation_count == expected
         status = "success" if result.complete and reconciled else "partial"
         reason = result.termination_reason if reconciled else "total_mismatch"
-        if dataset == "stocks" and status == "success":
-            status = "partial"
-            reason = "fbo_stock_scope_unavailable"
         run = repository.finish_run(
             context,
             status=status,
@@ -276,27 +338,21 @@ def _dataset_result(
             expected_count=expected,
             termination_reason=reason,
             retry_count=result.retries,
-            safe_error="" if status == "success" else (
-                "FBO stock ledger is not covered by the verified /v4 endpoint."
-                if reason == "fbo_stock_scope_unavailable"
-                else "Provider totals could not be reconciled."
-            ),
+            safe_error="" if status == "success" else "Provider totals could not be reconciled.",
         )
         repository.upsert_capabilities(
             account_id,
-            {("stocks_seller_schemes" if dataset == "stocks" else dataset): {
-                "status": "available" if result.complete else "error",
-                "complete": result.complete,
-                "scope_complete": status == "success",
-                "message": "" if status == "success" else reason,
-            }},
+            capability_updates(
+                "available" if status == "success" else "error",
+                status == "success",
+                "" if status == "success" else reason,
+            ),
         )
-        usable_partial = reason == "fbo_stock_scope_unavailable"
         return {
             "dataset": dataset,
-            "ok": status == "success" or usable_partial,
+            "ok": status == "success",
             "status": status,
-            "usable": status == "success" or usable_partial,
+            "usable": status == "success",
             "run": run,
         }
     except OzonPaginationError as error:
@@ -331,11 +387,11 @@ def _dataset_result(
             )
             repository.upsert_capabilities(
                 account_id,
-                {("stocks_seller_schemes" if dataset == "stocks" else dataset): {
-                    "status": _capability_from_error(persist_error),
-                    "complete": False,
-                    "message": getattr(persist_error, "code", persist_error.__class__.__name__),
-                }},
+                capability_updates(
+                    _capability_from_error(persist_error),
+                    False,
+                    getattr(persist_error, "code", persist_error.__class__.__name__),
+                ),
             )
             return {
                 "dataset": dataset,
@@ -357,11 +413,11 @@ def _dataset_result(
         )
         repository.upsert_capabilities(
             account_id,
-            {("stocks_seller_schemes" if dataset == "stocks" else dataset): {
-                "status": _capability_from_error(error),
-                "complete": False,
-                "message": getattr(error, "cause_code", "") or error.code,
-            }},
+            capability_updates(
+                _capability_from_error(error),
+                False,
+                getattr(error, "cause_code", "") or error.code,
+            ),
         )
         return {"dataset": dataset, "ok": False, "status": "partial", "usable": False, "run": run}
     except Exception as error:
@@ -392,11 +448,11 @@ def _dataset_result(
         )
         repository.upsert_capabilities(
             account_id,
-            {("stocks_seller_schemes" if dataset == "stocks" else dataset): {
-                "status": _capability_from_error(error),
-                "complete": False,
-                "message": getattr(error, "code", error.__class__.__name__),
-            }},
+            capability_updates(
+                _capability_from_error(error),
+                False,
+                getattr(error, "code", error.__class__.__name__),
+            ),
         )
         return {"dataset": dataset, "ok": False, "status": "partial" if unique_count else "failed", "usable": False, "run": run}
 
@@ -416,10 +472,10 @@ def run_phase1a_sync(
         return {"ok": False, "code": "not_configured", "message": "Ozon read-only credentials are not configured."}
     raw_datasets = None if datasets is None or isinstance(datasets, (str, bytes)) else tuple(datasets)
     if datasets is not None and (raw_datasets is None or any(not isinstance(item, str) for item in raw_datasets)):
-        return {"ok": False, "code": "invalid_dataset", "message": "Допустимы catalog, prices, stocks и orders."}
+        return {"ok": False, "code": "invalid_dataset", "message": "Неизвестный PostgreSQL dataset."}
     requested = tuple(dict.fromkeys(item.strip() for item in raw_datasets)) if raw_datasets is not None else None
-    if requested is not None and (not requested or any(dataset not in {"catalog", "prices", "stocks", "orders"} for dataset in requested)):
-        return {"ok": False, "code": "invalid_dataset", "message": "Допустимы catalog, prices, stocks и orders."}
+    if requested is not None and (not requested or any(dataset not in DATASETS for dataset in requested)):
+        return {"ok": False, "code": "invalid_dataset", "message": "Неизвестный PostgreSQL dataset."}
     repository = repository or MarketplacePGRepository()
     client = client or _client_from_environment()
     account_id: int | None = None
@@ -433,7 +489,7 @@ def run_phase1a_sync(
         selected = requested or (
             repository.datasets_due(account_id)
             if trigger_kind == "scheduled"
-            else ("catalog", "prices", "stocks", "orders")
+            else DATASETS
         )
         if trigger_kind != "scheduled" or repository.capabilities_due(account_id):
             try:
@@ -474,10 +530,10 @@ def start_phase1a_sync(*, datasets: Iterable[str] | None = None) -> dict[str, An
     """Start a non-blocking manual job, guarded against overlapping workers."""
     raw_datasets = None if datasets is None or isinstance(datasets, (str, bytes)) else tuple(datasets)
     if datasets is not None and (raw_datasets is None or any(not isinstance(item, str) for item in raw_datasets)):
-        return {"ok": False, "accepted": False, "code": "invalid_dataset", "message": "Допустимы catalog, prices, stocks и orders."}
+        return {"ok": False, "accepted": False, "code": "invalid_dataset", "message": "Неизвестный PostgreSQL dataset."}
     selected = tuple(dict.fromkeys(item.strip() for item in raw_datasets)) if raw_datasets is not None else None
-    if selected is not None and (not selected or any(item not in {"catalog", "prices", "stocks", "orders"} for item in selected)):
-        return {"ok": False, "accepted": False, "code": "invalid_dataset", "message": "Допустимы catalog, prices, stocks и orders."}
+    if selected is not None and (not selected or any(item not in DATASETS for item in selected)):
+        return {"ok": False, "accepted": False, "code": "invalid_dataset", "message": "Неизвестный PostgreSQL dataset."}
     if not phase1a_enabled():
         return {"ok": False, "accepted": False, "code": "phase1a_disabled", "message": f"Включите {FEATURE_FLAG}=1."}
     if not phase1a_configured():
