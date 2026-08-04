@@ -108,7 +108,7 @@ def main() -> None:
         apply_ready_cut_confirmation_migration,
         init_db,
     )
-    from miniapp_server import start_miniapp_server
+    from miniapp_server import set_marketplace_health_state, start_miniapp_server
 
     init_db()
     if str(os.getenv("MARKETPLACE_PHASE1A_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}:
@@ -144,16 +144,24 @@ def main() -> None:
 
     if str(os.getenv("MARKETPLACE_PHASE1A_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}:
         def refresh_ozon_supplies() -> None:
+            set_marketplace_health_state(supplies="syncing")
             try:
                 from marketplace_phase1a import run_phase1a_sync
 
                 result = run_phase1a_sync(datasets=["supplies"], trigger_kind="startup")
+                dataset_result = next(iter(result.get("datasets") or []), {})
+                projection = dataset_result.get("projection") if isinstance(dataset_result, dict) else None
+                projection_ok = not isinstance(projection, dict) or projection.get("ok") is not False
+                set_marketplace_health_state(
+                    supplies="ready" if bool(result.get("ok")) and projection_ok else "error"
+                )
                 logging.info(
                     "Ozon FBO supply startup refresh: status=%s ok=%s",
                     result.get("status") or result.get("code") or "unknown",
                     bool(result.get("ok")),
                 )
             except Exception:
+                set_marketplace_health_state(supplies="error")
                 logging.exception("Ozon FBO supply startup refresh failed")
 
         threading.Thread(

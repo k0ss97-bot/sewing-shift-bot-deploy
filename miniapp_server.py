@@ -229,6 +229,7 @@ DEFECT_REASONS = [
     "Другое",
 ]
 DEFECT_DISPOSITIONS = ["Списать", "На переделку", "Уточнить"]
+MARKETPLACE_HEALTH_STATE = {"supplies": "idle"}
 PWA_HTML = inject_pwa_markup(MINIAPP_HTML)
 PWA_SHELL_REVISION = app_shell_revision(PWA_HTML)
 
@@ -249,6 +250,10 @@ def get_admin_ids():
             logging.warning("Invalid ADMIN_IDS item ignored: %s", raw_admin_id)
 
     return admin_ids
+
+
+def set_marketplace_health_state(*, supplies: str) -> None:
+    MARKETPLACE_HEALTH_STATE["supplies"] = supplies if supplies in {"idle", "syncing", "ready", "error"} else "error"
 
 
 def is_admin(telegram_id: int):
@@ -5733,7 +5738,7 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             if path == "/health":
-                self.send_json({"ok": True})
+                self.send_json({"ok": True, "marketplace": dict(MARKETPLACE_HEALTH_STATE)})
                 return
 
             if path == "/api/web/session":

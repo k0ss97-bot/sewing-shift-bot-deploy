@@ -346,7 +346,12 @@ def run_smoke() -> None:
 
             status, headers, health_body = http_request(f"{base_url}/health")
             health_payload = parse_json_response(status, headers, health_body)
-            require(status == 200 and health_payload == {"ok": True}, "Health endpoint failed.")
+            require(status == 200 and health_payload.get("ok") is True, "Health endpoint failed.")
+            marketplace_health = health_payload.get("marketplace") or {}
+            require(
+                marketplace_health.get("supplies") in {"idle", "syncing", "ready", "error"},
+                "Health endpoint is missing the Ozon supplies readiness state.",
+            )
 
             status, favicon_headers, favicon_body = http_request(f"{base_url}/favicon.ico")
             require(status == 200, f"Favicon endpoint returned HTTP {status}.")
