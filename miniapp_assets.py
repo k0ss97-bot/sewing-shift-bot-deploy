@@ -5734,6 +5734,11 @@ MINIAPP_HTML = """<!doctype html>
       wmsCatalogGroup: "",
       wmsCatalog: {loading: false, loaded: false, error: "", products: [], lastSyncAt: ""},
       wmsShipmentDetail: null,
+      wmsShipmentTaskDetail: null,
+      wmsShipmentTaskTab: "required",
+      wmsShipmentTaskLocation: "",
+      wmsShipmentTaskScannedAllocationId: "",
+      wmsShipmentTaskExpectedAllocationId: "",
       wmsShipmentCreate: false,
       wmsShipmentDraft: {destination: "", comment: "", lines: {}},
       wmsLookup: {barcode: "", productKey: null, error: ""},
@@ -9621,6 +9626,8 @@ MINIAPP_HTML = """<!doctype html>
         bind_product: "Наведите камеру на новый штрихкод товара",
         from_location: "Наведите камеру на штрихкод ячейки",
         to_location: "Наведите камеру на штрихкод ячейки",
+        shipment_cell: "Наведите камеру на штрихкод ячейки отгрузки",
+        shipment_product: "Наведите камеру на штрихкод товара из ячейки",
       };
       state.wmsScanField = field;
       qrScannerTitle.textContent = prompts[field] || "Сканирование";
@@ -9647,6 +9654,47 @@ MINIAPP_HTML = """<!doctype html>
       if (!v) return;
       clearWmsHardwareScannerInput();
       const field = state.wmsScanField || "product";
+      if (field === "shipment_cell") {
+        const location = wmsLocationByScan(v);
+        const code = location ? String(location.code) : v.replace(/^LOC:/i, "").trim().toUpperCase();
+        const task = state.wmsShipmentTaskDetail;
+        const allowed = task ? task.items.flatMap((item) => item.allocations || []).some((allocation) => String(allocation.location_code || "").toUpperCase() === code) : false;
+        if (!allowed) {
+          showToast("Отгрузка", "Эта ячейка не входит в текущую отгрузку.");
+          return;
+        }
+        state.wmsShipmentTaskLocation = code;
+        state.wmsShipmentTaskExpectedAllocationId = "";
+        render();
+        showToast("Отгрузка", `Открыта ячейка ${code}.`);
+        return;
+      }
+      if (field === "shipment_product") {
+        const task = state.wmsShipmentTaskDetail;
+        const expectedId = String(state.wmsShipmentTaskExpectedAllocationId || "");
+        const allocation = task && task.items.flatMap((item) => (item.allocations || []).map((entry) => ({...entry, item}))).find((entry) => String(entry.id) === expectedId);
+        if (!task || !allocation || !state.wmsShipmentTaskLocation) {
+          showToast("Отгрузка", "Сначала откройте ячейку и выберите позицию.");
+          return;
+        }
+        try {
+          const data = await api("/api/wms/barcode/resolve", {barcode: v, location_code: state.wmsShipmentTaskLocation});
+          const scannedKey = data.product_key || {};
+          const expectedKey = JSON.parse(allocation.product_key_json || "{}");
+          const sameProduct = ["item_type", "product_name", "product_size", "product_color", "stage_name", "ready_for_position"].every((key) => String(scannedKey[key] || "") === String(expectedKey[key] || ""));
+          if (!sameProduct) {
+            showToast("Отгрузка", "Этот товар не соответствует выбранной позиции отгрузки.");
+            return;
+          }
+          state.wmsShipmentTaskScannedAllocationId = expectedId;
+          state.wmsShipmentTaskExpectedAllocationId = "";
+          render();
+          showToast("Отгрузка", "Товар подтверждён. Укажите количество и выполните подбор.");
+        } catch (error) {
+          showToast("Отгрузка", error.apiMessage || "Штрихкод товара не зарегистрирован в этой ячейке.");
+        }
+        return;
+      }
       if (field === "bind_product") {
         const el = document.getElementById("wmsBarcode");
         if (el) el.value = v;
@@ -11287,10 +11335,27 @@ MINIAPP_HTML = """<!doctype html>
         shipments.set(reference, item);
       });
       const rows = [...shipments.values()].sort((first, second) => String(second.occurredAt || "").localeCompare(String(first.occurredAt || "")));
-      const pendingTasks = state.wmsData.shipmentTasks || [];
-      const taskStatusLabels = {WAITING_RESERVATION:"Ожидает резерв",SHORTAGE:"Дефицит",READY_TO_PICK:"Готова к отбору",PICKING:"Отбор",PICKED:"Отобрана",PACKING:"Упаковка",READY_TO_HANDOVER:"Готова к передаче"};
-      const pendingTasksBlock = `<div class="section-title"><b>Задания к отгрузке</b><span>${escapeHtml(pendingTasks.length)}</span></div><div class="op-list">${pendingTasks.length ? pendingTasks.map((task) => `<div class="card field-card"><div class="section-title"><b>${escapeHtml(task.number)}</b><span class="status-chip ${task.status === "SHORTAGE" ? "warn" : ""}">${escapeHtml(taskStatusLabels[task.status] || task.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Поставка Ozon</span><strong>${escapeHtml(task.external_supply_id || "—")}</strong></div><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(task.item_count || 0)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(task.total_quantity || 0)} шт.</strong></div><div class="detail-box"><span>Резерв</span><strong>${escapeHtml(task.reserved_quantity || 0)} шт.</strong></div></div><div class="task-note">${escapeHtml(task.destination_name || "Направление не указано")}</div></div>`).join("") : itemEmpty("Актуальных заданий к отгрузке нет.")}</div>`;
+      const allTasks = state.wmsData.shipmentTasks || [];
+      const taskStatusLabels = {WAITING_RESERVATION:"Требует подготовки",SHORTAGE:"Не хватает товара",READY_TO_PICK:"В работе",PICKING:"Собирается",PICKED:"Собрана",PACKING:"Упаковка",READY_TO_HANDOVER:"Готова к отгрузке",SHIPPED:"Отгружено",HANDED_OVER:"Передана",ACCEPTED:"Принята"};
+      const taskBuckets = {
+        required: allTasks.filter((task) => ["WAITING_RESERVATION", "SHORTAGE"].includes(task.status)),
+        progress: allTasks.filter((task) => ["READY_TO_PICK", "PICKING", "PICKED", "PACKING", "READY_TO_HANDOVER"].includes(task.status)),
+        shipped: allTasks.filter((task) => ["SHIPPED", "HANDED_OVER", "ACCEPTED"].includes(task.status)),
+      };
+      const activeTaskTab = taskBuckets[state.wmsShipmentTaskTab] ? state.wmsShipmentTaskTab : "required";
+      const pendingTasks = taskBuckets[activeTaskTab];
+      const taskTabLabels = {required:"Требуют отгрузки",progress:"В работе",shipped:"Отгружено"};
+      const pendingTasksBlock = `<div class="button-row">${Object.entries(taskTabLabels).map(([key,label]) => `<button type="button" class="small-button ${key === activeTaskTab ? "" : "secondary"}" data-wms-task-tab="${key}">${label} · ${taskBuckets[key].length}</button>`).join("")}</div><div class="section-title"><b>${taskTabLabels[activeTaskTab]}</b><span>${escapeHtml(pendingTasks.length)}</span></div><div class="op-list">${pendingTasks.length ? pendingTasks.map((task) => `<button type="button" class="card field-card marketplace-clickable" data-wms-shipment-task-number="${escapeHtml(task.number)}"><div class="section-title"><b>${escapeHtml(task.number)}</b><span class="status-chip ${task.status === "SHORTAGE" ? "warn" : ""}">${escapeHtml(taskStatusLabels[task.status] || task.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Маркетплейс</span><strong>${escapeHtml(task.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</strong></div><div class="detail-box"><span>Поставка</span><strong>${escapeHtml(task.external_supply_id || "—")}</strong></div><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(task.item_count || 0)}</strong></div><div class="detail-box"><span>Собрано</span><strong>${escapeHtml(task.picked_quantity || 0)} / ${escapeHtml(task.total_quantity || 0)} шт.</strong></div></div><div class="task-note">${escapeHtml(task.destination_name || "Направление не указано")} · открыть ›</div></button>`).join("") : itemEmpty(activeTaskTab === "shipped" ? "Подтверждённых отгрузок пока нет." : "Заданий в этом разделе нет.")}</div>`;
       const detail = state.wmsShipmentDetail || null;
+      const taskDetail = state.wmsShipmentTaskDetail || null;
+      const selectedTaskLocation = String(state.wmsShipmentTaskLocation || "").trim().toUpperCase();
+      const taskAllocations = taskDetail ? taskDetail.items.flatMap((item) => (item.allocations || []).map((allocation) => ({...allocation, item}))) : [];
+      const taskCells = [...new Set(taskAllocations.map((allocation) => allocation.location_code))];
+      const selectedTaskAllocations = taskAllocations.filter((allocation) => !selectedTaskLocation || String(allocation.location_code).toUpperCase() === selectedTaskLocation);
+      const taskScannerIsProduct = Boolean(state.wmsShipmentTaskExpectedAllocationId);
+      const taskScannerField = taskScannerIsProduct ? "shipment_product" : "shipment_cell";
+      const taskScannerLabel = taskScannerIsProduct ? "Отсканируйте товар из выбранной ячейки" : "Отсканируйте ячейку";
+      const taskDetailBlock = taskDetail ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-task-action="back">‹ Все задания</button>${taskDetail.can_start ? `<button type="button" class="small-button" data-wms-task-action="start">Подготовить ячейки</button>` : ""}${taskDetail.can_confirm ? `<button type="button" class="small-button" data-wms-task-action="confirm">Подтвердить отгрузку</button>` : ""}</div><div class="card field-card"><div class="section-title"><b>${escapeHtml(taskDetail.number)}</b><span class="status-chip ${taskDetail.status === "SHORTAGE" ? "warn" : ""}">${escapeHtml(taskStatusLabels[taskDetail.status] || taskDetail.status)}</span></div><div class="detail-grid"><div class="detail-box"><span>Маркетплейс</span><strong>${escapeHtml(taskDetail.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</strong></div><div class="detail-box"><span>Поставка</span><strong>${escapeHtml(taskDetail.external_supply_id || "—")}</strong></div><div class="detail-box"><span>Собрано</span><strong>${escapeHtml(taskDetail.picked_quantity || 0)} / ${escapeHtml(taskDetail.total_quantity || 0)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(taskCells.length)}</strong></div></div><div class="task-note">${escapeHtml(taskDetail.destination_name || "Направление не указано")}</div></div>${taskDetail.can_start ? `<div class="card field-card"><b>Подготовьте задание</b><p>Система проверит остатки и закрепит за этой поставкой конкретные ячейки. После этого сотрудник сможет сканировать ячейки и товары.</p></div>` : taskCells.length ? `<div class="card field-card"><div class="field full"><label>${taskScannerLabel}</label><div class="wms-shipment-picker"><input id="wmsShipmentTaskCell" class="wms-hardware-scanner-input" data-wms-hardware-field="${taskScannerField}" inputmode="none" autocomplete="off" placeholder="${taskScannerIsProduct ? "Штрихкод товара" : "Например, Z1-S1-P1-1"}" value="${taskScannerIsProduct ? "" : escapeHtml(selectedTaskLocation)}"><button type="button" class="small-button secondary" data-wms-task-action="select-cell">${taskScannerIsProduct ? "Сканируйте ТСД" : "Открыть ячейку"}</button></div></div><div class="button-row">${taskCells.map((code) => `<button type="button" class="small-button ${String(code).toUpperCase() === selectedTaskLocation ? "" : "secondary"}" data-wms-task-location="${escapeHtml(code)}">${escapeHtml(code)}</button>`).join("")}</div></div><div class="section-title"><b>${selectedTaskLocation ? `Ячейка ${escapeHtml(selectedTaskLocation)}` : "Позиции и ячейки"}</b><span>${escapeHtml(selectedTaskAllocations.length)}</span></div><div class="op-list">${selectedTaskAllocations.map((allocation) => { const remaining = Math.max(0, Number(allocation.reserved_quantity || 0) - Number(allocation.picked_quantity || 0)); const complete = remaining === 0; const scanned = String(state.wmsShipmentTaskScannedAllocationId) === String(allocation.id); return `<div class="card report-row"><div><b>${escapeHtml(allocation.item.article || allocation.item.product_key || "Артикул не указан")} · ${escapeHtml(allocation.item.name || "Товар")}</b><span>Размер ${escapeHtml(allocation.item.size || "—")} · Цвет ${escapeHtml(allocation.item.color || "—")}<br>Ячейка: ${escapeHtml(allocation.location_code)} · ${complete ? "позиция собрана" : `осталось ${remaining} шт.`}</span></div><div>${complete ? `<span class="status-chip">✓ Собрано</span>` : `<button type="button" class="small-button secondary" data-wms-task-scan-product="${escapeHtml(allocation.id)}">${scanned ? "✓ Товар отсканирован" : "Сканировать товар"}</button><div class="field"><label>Количество</label><input type="number" min="1" max="${escapeHtml(remaining)}" value="${escapeHtml(remaining)}" data-wms-task-quantity="${escapeHtml(allocation.id)}"></div><button type="button" class="small-button" data-wms-task-pick="${escapeHtml(allocation.id)}" ${scanned ? "" : "disabled"}>Выполнить</button>`}</div></div>`; }).join("")}</div>` : ""}${taskDetail.can_confirm ? `<div class="card field-card"><b>Все позиции собраны.</b><p>Подтвердите отгрузку: задание перейдёт в раздел «Отгружено», а поставка маркетплейса получит статус «Отгружено на производстве».</p></div>` : ""}` : "";
       const creating = Boolean(state.wmsShipmentCreate && state.data && state.data.is_admin);
       const availableRows = (state.wmsData.stock || []).filter((row) => row.product_key?.item_type === "finished" && row.location_id && Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)) > 0);
       const draftLines = Object.entries(state.wmsShipmentDraft.lines || {}).map(([stockId, quantity]) => {
@@ -11303,10 +11368,10 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.textContent = "Обновить отгрузки";
       mainButton.disabled = state.wmsData.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>${detail ? `Отгрузка ${escapeHtml(detail.number)}` : (creating ? "Новая отгрузка" : "Отгрузки со склада")}</h2><p>${detail ? "Лист отбора: что взять и из какой ячейки." : (creating ? "Добавьте товары из доступных адресных остатков и подтвердите документ." : "Актуальные задания к сборке и выполненные отгрузки из адресных ячеек.")}</p></div><div class="date">${detail ? `${detail.total} шт.` : `${pendingTasks.length + rows.length} док.`}</div></div>
+        <div class="screen-head"><div><h2>${taskDetail ? `Комплектация ${escapeHtml(taskDetail.number)}` : (detail ? `Отгрузка ${escapeHtml(detail.number)}` : (creating ? "Новая отгрузка" : "Отгрузки со склада"))}</h2><p>${taskDetail ? "Сканируйте ячейку, выберите товар и подтвердите фактически отобранное количество." : (detail ? "Лист отбора: что взять и из какой ячейки." : (creating ? "Добавьте товары из доступных адресных остатков и подтвердите документ." : "Задания сотрудников на комплектацию и выполненные отгрузки."))}</p></div><div class="date">${taskDetail ? `${escapeHtml(taskDetail.picked_quantity || 0)} / ${escapeHtml(taskDetail.total_quantity || 0)} шт.` : (detail ? `${detail.total} шт.` : `${allTasks.length + rows.length} док.`)}</div></div>
         ${renderWmsDataNotice()}
-        ${!detail && !creating ? pendingTasksBlock : ""}
-        ${detail ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="back">‹ Все отгрузки</button><button type="button" class="small-button secondary" data-wms-shipment-export="xlsx">Excel</button><button type="button" class="small-button" data-wms-shipment-export="pdf">PDF</button></div><div class="card field-card"><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(detail.lines.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(detail.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(detail.locations)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(detail.occurred_at) || "—")}</strong></div></div><div class="task-note">${escapeHtml(detail.reason || "")}</div></div><div class="section-title"><b>Лист отбора</b><span>${detail.lines.length} поз.</span></div><div class="op-list">${detail.lines.map((line, index) => `<div class="card report-row"><div><b>${index + 1}. ${escapeHtml(line.product_name)}</b><span>Размер ${escapeHtml(line.product_size)} · Цвет ${escapeHtml(line.product_color)}<br>Взять из: ${escapeHtml(line.from_location_code)}${line.from_location_name ? ` · ${escapeHtml(line.from_location_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(line.quantity)} шт.</span></div>`).join("")}</div>` : creating ? `<div class="card field-card"><div class="form-grid"><div class="field"><label>Получатель или назначение</label><input id="wmsShipmentDestination" maxlength="120" placeholder="Например, магазин или контрагент" value="${escapeHtml(state.wmsShipmentDraft.destination || "")}"></div><div class="field"><label>Комментарий</label><input id="wmsShipmentComment" maxlength="300" placeholder="Необязательно" value="${escapeHtml(state.wmsShipmentDraft.comment || "")}"></div></div><div class="wms-shipment-picker"><div class="field"><label>Добавить товар из ячейки</label><select id="wmsShipmentProduct">${pickerRows.length ? `<option value="">Выберите товар</option>${pickerRows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(wmsProductLabel(row.product_key))} · ${escapeHtml(wmsLocationLabel(row.location_id))} · доступно ${escapeHtml(Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)))}</option>`).join("")}` : `<option value="">Все доступные позиции добавлены</option>`}</select></div><button type="button" class="small-button secondary" data-wms-shipment-action="add">Добавить позицию</button></div></div><div class="section-title"><b>Состав отгрузки</b><span>${draftLines.length} поз.</span></div><div class="op-list">${draftLines.length ? draftLines.map(({stock, quantity}) => { const available = Math.max(0, Number(stock.quantity || 0) - Number(stock.reserved_quantity || 0)); return `<div class="card wms-shipment-line">${stock.marketplace_product ? `<div class="wms-product-rich">${marketplaceProductAvatar(stock.marketplace_product, false, true)}<div class="wms-product-rich-copy"><b>${escapeHtml(stock.marketplace_product.group_name || stock.marketplace_product.name || wmsProductLabel(stock.product_key))}</b><span>${escapeHtml(wmsProductLabel(stock.product_key))}</span><small>Ячейка ${escapeHtml(wmsLocationLabel(stock.location_id))} · доступно ${escapeHtml(available)} ${escapeHtml(stock.unit || "шт")}</small></div></div>` : `<div><b>${escapeHtml(wmsProductLabel(stock.product_key))}</b><span>Ячейка ${escapeHtml(wmsLocationLabel(stock.location_id))} · доступно ${escapeHtml(available)} ${escapeHtml(stock.unit || "шт")}</span></div>`}<div class="field"><label>Количество</label><input type="number" min="1" max="${escapeHtml(available)}" step="1" inputmode="numeric" data-wms-shipment-qty="${escapeHtml(stock.id)}" value="${escapeHtml(quantity)}"></div><button type="button" class="small-button danger" data-wms-shipment-remove="${escapeHtml(stock.id)}">Убрать</button></div>`; }).join("") : itemEmpty("Добавьте товары из списка выше.")}</div><div class="wms-shipment-summary"><div><b>Итого к отгрузке</b><br><span>${draftLines.length} позиций</span></div><strong>${escapeHtml(draftTotal)} шт.</strong></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="cancel">Отмена</button><button type="button" class="small-button" data-wms-shipment-action="submit" ${draftLines.length ? "" : "disabled"}>Создать и списать со склада</button></div>` : `<div class="button-row">${state.data && state.data.is_admin ? `<button type="button" class="small-button" data-wms-shipment-action="new">+ Создать отгрузку</button>` : ""}</div><div class="op-list">${rows.length ? rows.map((shipment) => `<button type="button" class="card field-card marketplace-clickable" data-wms-shipment-number="${escapeHtml(shipment.number)}"><div class="section-title"><b>${escapeHtml(shipment.number)}</b><span class="status-chip">открыть ›</span></div><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(shipment.rows.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(shipment.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(shipment.locations.size)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(shipment.occurredAt) || "—")}</strong></div></div></button>`).join("") : itemEmpty("Отгрузок пока нет.")}</div>`}
+        ${!detail && !creating && !taskDetail ? pendingTasksBlock : ""}
+        ${taskDetail ? taskDetailBlock : (detail ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="back">‹ Все отгрузки</button><button type="button" class="small-button secondary" data-wms-shipment-export="xlsx">Excel</button><button type="button" class="small-button" data-wms-shipment-export="pdf">PDF</button></div><div class="card field-card"><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(detail.lines.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(detail.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(detail.locations)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(detail.occurred_at) || "—")}</strong></div></div><div class="task-note">${escapeHtml(detail.reason || "")}</div></div><div class="section-title"><b>Лист отбора</b><span>${detail.lines.length} поз.</span></div><div class="op-list">${detail.lines.map((line, index) => `<div class="card report-row"><div><b>${index + 1}. ${escapeHtml(line.product_name)}</b><span>Размер ${escapeHtml(line.product_size)} · Цвет ${escapeHtml(line.product_color)}<br>Взять из: ${escapeHtml(line.from_location_code)}${line.from_location_name ? ` · ${escapeHtml(line.from_location_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(line.quantity)} шт.</span></div>`).join("")}</div>` : creating ? `<div class="card field-card"><div class="form-grid"><div class="field"><label>Получатель или назначение</label><input id="wmsShipmentDestination" maxlength="120" placeholder="Например, магазин или контрагент" value="${escapeHtml(state.wmsShipmentDraft.destination || "")}"></div><div class="field"><label>Комментарий</label><input id="wmsShipmentComment" maxlength="300" placeholder="Необязательно" value="${escapeHtml(state.wmsShipmentDraft.comment || "")}"></div></div><div class="wms-shipment-picker"><div class="field"><label>Добавить товар из ячейки</label><select id="wmsShipmentProduct">${pickerRows.length ? `<option value="">Выберите товар</option>${pickerRows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(wmsProductLabel(row.product_key))} · ${escapeHtml(wmsLocationLabel(row.location_id))} · доступно ${escapeHtml(Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)))}</option>`).join("")}` : `<option value="">Все доступные позиции добавлены</option>`}</select></div><button type="button" class="small-button secondary" data-wms-shipment-action="add">Добавить позицию</button></div></div><div class="section-title"><b>Состав отгрузки</b><span>${draftLines.length} поз.</span></div><div class="op-list">${draftLines.length ? draftLines.map(({stock, quantity}) => { const available = Math.max(0, Number(stock.quantity || 0) - Number(stock.reserved_quantity || 0)); return `<div class="card wms-shipment-line">${stock.marketplace_product ? `<div class="wms-product-rich">${marketplaceProductAvatar(stock.marketplace_product, false, true)}<div class="wms-product-rich-copy"><b>${escapeHtml(stock.marketplace_product.group_name || stock.marketplace_product.name || wmsProductLabel(stock.product_key))}</b><span>${escapeHtml(wmsProductLabel(stock.product_key))}</span><small>Ячейка ${escapeHtml(wmsLocationLabel(stock.location_id))} · доступно ${escapeHtml(available)} ${escapeHtml(stock.unit || "шт")}</small></div></div>` : `<div><b>${escapeHtml(wmsProductLabel(stock.product_key))}</b><span>Ячейка ${escapeHtml(wmsLocationLabel(stock.location_id))} · доступно ${escapeHtml(available)} ${escapeHtml(stock.unit || "шт")}</span></div>`}<div class="field"><label>Количество</label><input type="number" min="1" max="${escapeHtml(available)}" step="1" inputmode="numeric" data-wms-shipment-qty="${escapeHtml(stock.id)}" value="${escapeHtml(quantity)}"></div><button type="button" class="small-button danger" data-wms-shipment-remove="${escapeHtml(stock.id)}">Убрать</button></div>`; }).join("") : itemEmpty("Добавьте товары из списка выше.")}</div><div class="wms-shipment-summary"><div><b>Итого к отгрузке</b><br><span>${draftLines.length} позиций</span></div><strong>${escapeHtml(draftTotal)} шт.</strong></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="cancel">Отмена</button><button type="button" class="small-button" data-wms-shipment-action="submit" ${draftLines.length ? "" : "disabled"}>Создать и списать со склада</button></div>` : `<div class="button-row">${state.data && state.data.is_admin ? `<button type="button" class="small-button" data-wms-shipment-action="new">+ Создать отгрузку</button>` : ""}</div><div class="op-list">${rows.length ? rows.map((shipment) => `<button type="button" class="card field-card marketplace-clickable" data-wms-shipment-number="${escapeHtml(shipment.number)}"><div class="section-title"><b>${escapeHtml(shipment.number)}</b><span class="status-chip">открыть ›</span></div><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(shipment.rows.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(shipment.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(shipment.locations.size)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(shipment.occurredAt) || "—")}</strong></div></div></button>`).join("") : itemEmpty("Отгрузок пока нет.")}</div>`)}
       `;
     }
 
@@ -11352,6 +11417,82 @@ MINIAPP_HTML = """<!doctype html>
         render();
       } catch (error) {
         showToast("Отгрузка", error.apiMessage || error.message || "Не удалось открыть отгрузку.");
+      }
+    }
+
+    async function loadWmsShipmentTask(number) {
+      try {
+        const data = await api("/api/wms/shipment/task-detail", {shipment_number: number});
+        if (!data.ok) throw new Error(data.message || "Не удалось открыть задание.");
+        state.wmsShipmentTaskDetail = data.shipment;
+        state.wmsShipmentDetail = null;
+        state.wmsShipmentTaskLocation = "";
+        state.wmsShipmentTaskScannedAllocationId = "";
+        state.wmsShipmentTaskExpectedAllocationId = "";
+        render();
+      } catch (error) {
+        showToast("Отгрузка", error.apiMessage || error.message || "Не удалось открыть задание.");
+      }
+    }
+
+    async function startWmsShipmentTask() {
+      const task = state.wmsShipmentTaskDetail;
+      if (!task) return;
+      try {
+        const data = await api("/api/wms/shipment/task-start", {shipment_number: task.number});
+        if (!data.ok) throw new Error(data.message || "Не удалось подготовить задание.");
+        state.wmsShipmentTaskDetail = data.shipment;
+        state.wmsShipmentTaskScannedAllocationId = "";
+        state.wmsShipmentTaskExpectedAllocationId = "";
+        await refreshWmsWorkspace({silent: true});
+        render();
+        showToast("Отгрузка", data.message || "Ячейки подготовлены.");
+      } catch (error) {
+        showToast("Отгрузка", error.apiMessage || error.message || "Не удалось подготовить задание.");
+      }
+    }
+
+    async function pickWmsShipmentTask(allocationId) {
+      const task = state.wmsShipmentTaskDetail;
+      if (!task) return;
+      const quantityInput = [...document.querySelectorAll("[data-wms-task-quantity]")].find((input) => String(input.dataset.wmsTaskQuantity) === String(allocationId));
+      const locationInput = document.getElementById("wmsShipmentTaskCell");
+      const locationCode = String((locationInput && locationInput.value) || state.wmsShipmentTaskLocation || "").trim().toUpperCase();
+      const quantity = Number(quantityInput && quantityInput.value);
+      if (!locationCode) { showToast("Отгрузка", "Сначала отсканируйте ячейку."); return; }
+      if (String(state.wmsShipmentTaskScannedAllocationId) !== String(allocationId)) { showToast("Отгрузка", "Сначала отсканируйте нужный товар."); return; }
+      if (!Number.isInteger(quantity) || quantity <= 0) { showToast("Отгрузка", "Укажите целое количество для подбора."); return; }
+      try {
+        const data = await api("/api/wms/shipment/task-pick", {
+          shipment_number: task.number, allocation_id: Number(allocationId), quantity,
+          location_code: locationCode, request_key: `web-pick:${task.number}:${allocationId}:${Date.now()}`,
+        });
+        if (!data.ok) throw new Error(data.message || "Не удалось выполнить подбор.");
+        state.wmsShipmentTaskDetail = data.shipment;
+        state.wmsShipmentTaskLocation = locationCode;
+        state.wmsShipmentTaskScannedAllocationId = "";
+        state.wmsShipmentTaskExpectedAllocationId = "";
+        await refreshWmsWorkspace({silent: true});
+        render();
+        showToast("Отгрузка", data.message || "Позиция отобрана.");
+      } catch (error) {
+        showToast("Отгрузка", error.apiMessage || error.message || "Не удалось выполнить подбор.");
+      }
+    }
+
+    async function confirmWmsShipmentTask() {
+      const task = state.wmsShipmentTaskDetail;
+      if (!task) return;
+      try {
+        const data = await api("/api/wms/shipment/task-confirm", {shipment_number: task.number});
+        if (!data.ok) throw new Error(data.message || "Не удалось подтвердить отгрузку.");
+        state.wmsShipmentTaskDetail = data.shipment;
+        state.wmsShipmentTaskTab = "shipped";
+        await refreshWmsWorkspace({silent: true});
+        render();
+        showToast("Отгрузка", data.message || "Отгрузка подтверждена.");
+      } catch (error) {
+        showToast("Отгрузка", error.apiMessage || error.message || "Не удалось подтвердить отгрузку.");
       }
     }
 
@@ -11962,9 +12103,9 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card field-card"><div class="section-title"><b>Состояние синхронизации</b><span>${escapeHtml(account.last_sync_at || "нет данных")}</span></div></div>
       `;
       const ordersBlock = verifiedOrdersAvailable && verifiedOrders.length ? `<div class="op-list">${verifiedOrders.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-order-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>Заказ: ${escapeHtml(row.external_order_id)}<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")} ›</span></button>`).join("")}</div>` : itemEmpty(isWildberries && !verifiedOrdersAvailable ? "Выбранный период или источник заказов WB не подтверждён." : "За выбранный период отгрузок нет.");
-      const supplyStatusLabels = {PLANNED:"Актуальная",WAITING_RESERVATION:"Ожидает резерв",SHORTAGE:"Дефицит",READY_TO_PICK:"Готова к отбору",PICKING:"Отбор",PICKED:"Отобрана",PACKING:"Упаковка",READY_TO_HANDOVER:"Готова к передаче"};
+      const supplyStatusLabels = {PLANNED:"Актуальная",WAITING_RESERVATION:"Ожидает резерв",SHORTAGE:"Дефицит",READY_TO_PICK:"Готова к отбору",PICKING:"Отбор",PICKED:"Отобрана",PACKING:"Упаковка",READY_TO_HANDOVER:"Готова к передаче",SHIPPED_FROM_PRODUCTION:"Отгружено на производстве"};
       const suppliesBlock = supplies.length
-        ? `${isWildberries && !wbSuppliesCurrent ? `<div class="analytics-overview-notice warn"><div><b>Показана сохранённая история поставок WB</b><span>${escapeHtml(wbSuppliesCapability.safe_message || "Текущий источник поставок не подтверждён; создание складских заданий отключено.")}</span></div></div>` : ""}<div class="op-list">${supplies.map((row) => `<div class="card report-row marketplace-supply-card"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id)}</b><span>${escapeHtml(row.destination_name || "Направление не указано")} · ${escapeHtml(row.item_count || 0)} поз. · ${escapeHtml(row.total_quantity || 0)} шт.${row.unmatched_count ? `<br><span class="critical-text">Не сопоставлено: ${escapeHtml(row.unmatched_count)}</span>` : ""}</span></div><div class="supply-actions"><span class="status-chip ${["SHORTAGE","SYNC_ERROR"].includes(row.canonical_status) ? "warn" : ""}">${escapeHtml(supplyStatusLabels[row.canonical_status] || row.canonical_status)}</span>${row.warehouse_shipment_id ? `<span class="status-chip">MP-${String(row.warehouse_shipment_id).padStart(6, "0")}</span>` : (isWildberries && !wbSuppliesCurrent ? `<span class="status-chip warn">только история</span>` : (!row.is_actionable ? `<span class="status-chip warn">Недоступна для задания</span>` : (Number(row.item_count || 0) <= 0 ? `<span class="status-chip warn">Нет состава</span>` : (!row.unmatched_count ? `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>` : `<span class="status-chip warn">Нужно сопоставление</span>`))))}</div></div>`).join("")}</div>`
+        ? `${isWildberries && !wbSuppliesCurrent ? `<div class="analytics-overview-notice warn"><div><b>Показана сохранённая история поставок WB</b><span>${escapeHtml(wbSuppliesCapability.safe_message || "Текущий источник поставок не подтверждён; создание складских заданий отключено.")}</span></div></div>` : ""}<div class="op-list">${supplies.map((row) => `<div class="card report-row marketplace-supply-card"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id)}</b><span>${escapeHtml(row.destination_name || "Направление не указано")} · ${escapeHtml(row.item_count || 0)} поз. · ${escapeHtml(row.total_quantity || 0)} шт.${row.unmatched_count ? `<br><span class="critical-text">Не сопоставлено: ${escapeHtml(row.unmatched_count)}</span>` : ""}</span></div><div class="supply-actions"><span class="status-chip ${["SHORTAGE","SYNC_ERROR"].includes(row.canonical_status) ? "warn" : ""}">${escapeHtml(supplyStatusLabels[row.canonical_status] || row.canonical_status)}</span>${row.warehouse_shipment_id ? `<span class="status-chip">${escapeHtml(row.warehouse_shipment_number || `MP-${String(row.warehouse_shipment_id).padStart(6, "0")}`)}</span>` : (isWildberries && !wbSuppliesCurrent ? `<span class="status-chip warn">только история</span>` : (!row.is_actionable ? `<span class="status-chip warn">Недоступна для задания</span>` : (Number(row.item_count || 0) <= 0 ? `<span class="status-chip warn">Нет состава</span>` : (!row.unmatched_count ? `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>` : `<span class="status-chip warn">Нужно сопоставление</span>`))))}</div></div>`).join("")}</div>`
         : itemEmpty(isWildberries && wbSuppliesCurrent ? "Источник поставок WB доступен; активных поставок нет." : "Актуальных поставок нет.");
       const warehouseShipmentsBlock = warehouseShipments.length ? `<div class="op-list">${warehouseShipments.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.number)}</b><span>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.destination_name || "Направление не указано")}<br>${escapeHtml(row.total_quantity || 0)} шт. · резерв ${escapeHtml(row.reserved_quantity || 0)} · отобрано ${escapeHtml(row.picked_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.status)}</span></div>`).join("")}</div>` : itemEmpty("Внутренних складских отгрузок пока нет.");
       const topProducts = isWildberries && !wbStocksUsable ? [] : [...products].sort((a, b) => Number(b.available || 0) - Number(a.available || 0)).slice(0, 5);
@@ -12999,7 +13140,7 @@ MINIAPP_HTML = """<!doctype html>
           : `<div class="marketplace-chart-empty"><b>Проверка рисков неполная</b><span>Часть источников недоступна или устарела, поэтому ноль рисков не подтверждён.</span></div>`;
       const matrixBlock = `<div class="marketplace-chart-empty"><b>SKU-матрица пока недоступна</b><span>Действия «пополнить / в производство» появятся после server-side сопоставления current-остатков с производственными SKU. Старые строки не используются.</span></div>`;
       const criticalSupplyStatuses = new Set(["SHORTAGE", "SYNC_ERROR", "PARTIALLY_ACCEPTED", "DOCUMENTS_REQUIRED"]);
-      const supplyStatusLabels = {EXTERNAL_DRAFT:"Черновик",PLANNED:"Запланирована",WAITING_RESERVATION:"Ожидает резерв",SHORTAGE:"Дефицит",READY_TO_PICK:"Готова к отбору",PICKING:"Отбор",PICKED:"Отобрана",PACKING:"Упаковка",DOCUMENTS_REQUIRED:"Нужны документы",READY_TO_HANDOVER:"К передаче",HANDED_OVER:"Передана",ACCEPTING:"Приёмка",ACCEPTED:"Принята",PARTIALLY_ACCEPTED:"Принята частично",CANCELLED:"Отменена",SYNC_ERROR:"Ошибка sync"};
+      const supplyStatusLabels = {EXTERNAL_DRAFT:"Черновик",PLANNED:"Запланирована",WAITING_RESERVATION:"Ожидает резерв",SHORTAGE:"Дефицит",READY_TO_PICK:"Готова к отбору",PICKING:"Отбор",PICKED:"Отобрана",PACKING:"Упаковка",DOCUMENTS_REQUIRED:"Нужны документы",READY_TO_HANDOVER:"К передаче",HANDED_OVER:"Передана",ACCEPTING:"Приёмка",ACCEPTED:"Принята",PARTIALLY_ACCEPTED:"Принята частично",SHIPPED_FROM_PRODUCTION:"Отгружено на производстве",CANCELLED:"Отменена",SYNC_ERROR:"Ошибка sync"};
       const suppliesBlock = supplies.length
         ? `<div class="analytics-supply-list">${supplies.slice(0, 8).map((row) => { const status = String(row.canonical_status || row.status || "UNKNOWN"); return `<div class="analytics-supply-row"><div class="analytics-supply-copy"><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id || row.number || "без номера")}</b><span>${escapeHtml(row.destination_name || "направление не указано")}${row.total_quantity !== null && row.total_quantity !== undefined ? ` · ${escapeHtml(row.total_quantity)} шт.` : ""}${row.unmatched_count ? ` · не сопоставлено ${escapeHtml(row.unmatched_count)}` : ""}</span></div><span class="status-chip ${criticalSupplyStatuses.has(status) ? "warn" : "gray"}">${escapeHtml(supplyStatusLabels[status] || status)}</span></div>`; }).join("")}</div>`
         : supplyCoverageComplete
@@ -13712,11 +13853,68 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const wmsShipmentTask = event.target.closest("[data-wms-shipment-task-number]");
+      if (wmsShipmentTask) {
+        loadWmsShipmentTask(wmsShipmentTask.dataset.wmsShipmentTaskNumber || "");
+        return;
+      }
+
+      const wmsTaskTab = event.target.closest("[data-wms-task-tab]");
+      if (wmsTaskTab) {
+        state.wmsShipmentTaskTab = wmsTaskTab.dataset.wmsTaskTab || "required";
+        render();
+        return;
+      }
+
+      const wmsTaskLocation = event.target.closest("[data-wms-task-location]");
+      if (wmsTaskLocation) {
+        state.wmsShipmentTaskLocation = String(wmsTaskLocation.dataset.wmsTaskLocation || "").trim().toUpperCase();
+        state.wmsShipmentTaskScannedAllocationId = "";
+        state.wmsShipmentTaskExpectedAllocationId = "";
+        render();
+        return;
+      }
+
+      const wmsTaskProduct = event.target.closest("[data-wms-task-scan-product]");
+      if (wmsTaskProduct) {
+        state.wmsShipmentTaskScannedAllocationId = "";
+        state.wmsShipmentTaskExpectedAllocationId = wmsTaskProduct.dataset.wmsTaskScanProduct || "";
+        state.wmsScanField = "shipment_product";
+        scanWms("shipment_product");
+        return;
+      }
+
+      const wmsTaskPick = event.target.closest("[data-wms-task-pick]");
+      if (wmsTaskPick) {
+        pickWmsShipmentTask(wmsTaskPick.dataset.wmsTaskPick || "");
+        return;
+      }
+
+      const wmsTaskAction = event.target.closest("[data-wms-task-action]");
+      if (wmsTaskAction) {
+        const action = wmsTaskAction.dataset.wmsTaskAction;
+        if (action === "back") { state.wmsShipmentTaskDetail = null; state.wmsShipmentTaskLocation = ""; state.wmsShipmentTaskScannedAllocationId = ""; state.wmsShipmentTaskExpectedAllocationId = ""; render(); return; }
+        if (action === "start") { startWmsShipmentTask(); return; }
+        if (action === "confirm") { confirmWmsShipmentTask(); return; }
+        if (action === "select-cell") {
+          if (state.wmsShipmentTaskExpectedAllocationId) {
+            focusWmsHardwareScanner();
+            return;
+          }
+          const input = document.getElementById("wmsShipmentTaskCell");
+          state.wmsShipmentTaskLocation = String(input && input.value || "").trim().replace(/^LOC:/i, "").toUpperCase();
+          state.wmsShipmentTaskScannedAllocationId = "";
+          state.wmsShipmentTaskExpectedAllocationId = "";
+          render();
+          return;
+        }
+      }
+
       const wmsShipmentAction = event.target.closest("[data-wms-shipment-action]");
       if (wmsShipmentAction) {
         const action = wmsShipmentAction.dataset.wmsShipmentAction;
         if (action === "back") state.wmsShipmentDetail = null;
-        if (action === "new") { state.wmsShipmentCreate = true; state.wmsShipmentDetail = null; }
+        if (action === "new") { state.wmsShipmentCreate = true; state.wmsShipmentDetail = null; state.wmsShipmentTaskDetail = null; }
         if (action === "cancel") { state.wmsShipmentCreate = false; state.wmsShipmentDraft = {destination: "", comment: "", lines: {}}; }
         if (action === "add") {
           syncWmsShipmentDraft();

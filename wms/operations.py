@@ -394,6 +394,81 @@ def pick(
         raise
 
 
+def pick_reserved_for_shipment(
+    product_key: ProductKey,
+    quantity: int,
+    *,
+    from_location_code: str,
+    shipment_id: int,
+    employee_id: int | None = None,
+    request_key: str | None = None,
+    reason: str | None = None,
+    tsd_device_id: str | None = None,
+) -> OperationResult:
+    """Pick units reserved for one marketplace shipment.
+
+    This is deliberately distinct from :func:`pick`: an ordinary manual pick
+    cannot consume a reservation, whereas this operation must decrement both
+    physical and reserved balance atomically.  The movement's source makes the
+    audit trail attributable to the marketplace document.
+    """
+    if quantity <= 0:
+        return OperationResult(False, reason="Количество должно быть больше нуля.")
+    request_key = request_key or _new_request_key("marketplace-pick")
+    conn = get_pg_connection()
+    try:
+        source = repo.get_location_by_code(conn, from_location_code)
+        if source is None:
+            conn.rollback()
+            return OperationResult(False, reason=f"Ячейка {from_location_code} не найдена.")
+        if source.status != "active":
+            conn.rollback()
+            return OperationResult(False, reason=f"Ячейка {from_location_code} недоступна.")
+        if repo.movement_exists(conn, request_key):
+            conn.rollback()
+            return OperationResult(True, skipped_duplicate=True, reason="duplicate request_key")
+        stock = repo.find_stock(
+            conn, product_key, item_state="SELLABLE", unit="шт",
+            location_id=source.id, for_update=True,
+        )
+        reserved = 0 if stock is None else int(stock.reserved_quantity)
+        if stock is None or reserved < quantity:
+            conn.rollback()
+            return OperationResult(
+                False,
+                reason=f"В ячейке для этой отгрузки зарезервировано только {reserved} шт.",
+            )
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE warehouse_stock
+                      SET quantity=quantity-%s,reserved_quantity=reserved_quantity-%s,updated_at=now()
+                    WHERE id=%s AND quantity >= %s AND reserved_quantity >= %s""",
+                (quantity, quantity, stock.id, quantity, quantity),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("Не удалось списать зарезервированный товар из ячейки.")
+        movement_id = repo.insert_movement(
+            conn,
+            request_key=request_key,
+            movement_type="pick",
+            product_key=product_key,
+            quantity=quantity,
+            from_location_id=source.id,
+            from_state="SELLABLE",
+            to_state="PICKED",
+            source_type="marketplace_shipment",
+            source_id=shipment_id,
+            reason=reason,
+            actor_employee_id=employee_id,
+            tsd_device_id=tsd_device_id,
+        )
+        conn.commit()
+        return OperationResult(True, movement_id=movement_id)
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # ──────────────────────────────────────────────────────────────────────
 # scrap (Списание: SELLABLE → DAMAGED/SCRAPPED)
 # ──────────────────────────────────────────────────────────────────────

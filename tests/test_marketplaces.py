@@ -115,6 +115,45 @@ class MarketplaceTests(unittest.TestCase):
             self.assertEqual(detail["items"][0]["mapped_status"], "matched")
             self.assertEqual(shipment_tasks[0]["number"], shipment["shipment"]["number"])
 
+    def test_supply_uses_real_warehouse_number_and_keeps_shipped_status_during_sync(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "bot.db")
+
+            def connection(**_kwargs):
+                conn = sqlite3.connect(path)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON")
+                return conn
+
+            payload = {
+                "id": "SUPPLY-1", "status": "DATA_FILLING",
+                "items": [{"product_id": "10", "offer_id": "CARD-122", "quantity": 2}],
+            }
+            with patch.object(marketplaces, "get_db_connection", side_effect=connection):
+                with connection() as conn:
+                    marketplaces.ensure_schema(conn)
+                    account_id = marketplaces._account(conn, "ozon", "Основной Ozon", "client")
+                    conn.execute(
+                        """INSERT INTO marketplace_products
+                           (account_id,external_product_id,offer_id,sku,barcode,name,payload_json,updated_at)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (account_id, "10", "CARD-122", "", "", "Кардиган", "{}", "2026-08-04"),
+                    )
+                    marketplaces.upsert_marketplace_supply(conn, payload, marketplace="ozon", account_id=account_id)
+                    supply_id = conn.execute("SELECT id FROM marketplace_supplies WHERE external_supply_id='SUPPLY-1'").fetchone()[0]
+                    conn.commit()
+
+                created = marketplaces.create_internal_shipment_for_supply(supply_id)
+                with connection() as conn:
+                    shipment_id = created["shipment"]["id"]
+                    conn.execute("UPDATE warehouse_shipments SET status='SHIPPED' WHERE id=?", (shipment_id,))
+                    conn.commit()
+                    marketplaces.upsert_marketplace_supply(conn, payload, marketplace="ozon", account_id=account_id)
+                    rows = marketplaces._supply_rows(conn, marketplace="ozon")
+
+            self.assertEqual(rows[0]["warehouse_shipment_number"], created["shipment"]["number"])
+            self.assertEqual(rows[0]["canonical_status"], "SHIPPED_FROM_PRODUCTION")
+
     def test_product_group_uses_article_and_name_without_variant_split(self):
         self.assertEqual(
             marketplaces.product_group_for("Брюки со стрелками детские", "BR-122-СИНИЕ"),

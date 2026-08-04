@@ -13,6 +13,7 @@ import os
 import re
 import sqlite3
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -208,6 +209,32 @@ CREATE TABLE IF NOT EXISTS warehouse_shipment_items (
     FOREIGN KEY(shipment_id) REFERENCES warehouse_shipments(id) ON DELETE CASCADE,
     FOREIGN KEY(marketplace_product_id) REFERENCES marketplace_products(id)
 );
+-- Allocation is intentionally a separate row: one marketplace position may
+-- need to be picked from several address cells.
+CREATE TABLE IF NOT EXISTS warehouse_shipment_allocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shipment_item_id INTEGER NOT NULL,
+    location_code TEXT NOT NULL,
+    product_key_json TEXT NOT NULL DEFAULT '{}',
+    quantity INTEGER NOT NULL DEFAULT 0,
+    reserved_quantity INTEGER NOT NULL DEFAULT 0,
+    picked_quantity INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(shipment_item_id, location_code),
+    FOREIGN KEY(shipment_item_id) REFERENCES warehouse_shipment_items(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS warehouse_shipment_pick_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shipment_id INTEGER NOT NULL,
+    allocation_id INTEGER NOT NULL,
+    request_key TEXT NOT NULL UNIQUE,
+    quantity INTEGER NOT NULL,
+    employee_id INTEGER,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(shipment_id) REFERENCES warehouse_shipments(id) ON DELETE CASCADE,
+    FOREIGN KEY(allocation_id) REFERENCES warehouse_shipment_allocations(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS marketplace_sync_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     marketplace TEXT NOT NULL,
@@ -221,6 +248,7 @@ CREATE TABLE IF NOT EXISTS marketplace_sync_events (
 CREATE INDEX IF NOT EXISTS idx_marketplace_supplies_status ON marketplace_supplies(marketplace, canonical_status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_supply_items_supply ON marketplace_supply_items(supply_id);
 CREATE INDEX IF NOT EXISTS idx_warehouse_shipments_status ON warehouse_shipments(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_warehouse_shipment_allocations_item ON warehouse_shipment_allocations(shipment_item_id, location_code);
 CREATE INDEX IF NOT EXISTS idx_marketplace_sync_events_created ON marketplace_sync_events(created_at DESC);
 """
 
@@ -286,7 +314,7 @@ MARKETPLACE_SUPPLY_STATUSES = (
     "EXTERNAL_DRAFT", "PLANNED", "WAITING_RESERVATION", "SHORTAGE",
     "READY_TO_PICK", "PICKING", "PICKED", "PACKING", "DOCUMENTS_REQUIRED",
     "READY_TO_HANDOVER", "HANDED_OVER", "ACCEPTING", "ACCEPTED",
-    "PARTIALLY_ACCEPTED", "CANCELLED", "SYNC_ERROR",
+    "PARTIALLY_ACCEPTED", "SHIPPED_FROM_PRODUCTION", "CANCELLED", "SYNC_ERROR",
 )
 
 # Only these Ozon states still require preparation by the seller. The Ozon
@@ -340,6 +368,24 @@ def upsert_marketplace_supply(conn: sqlite3.Connection, payload: dict, *, market
     now = _now()
     external_status = _text(payload.get("status") or payload.get("state"))
     canonical = canonical_supply_status(marketplace, external_status)
+    # The marketplace is the source of truth for its external state, but while
+    # an actionable supply is being processed the employee must see the local
+    # warehouse state rather than have it reset to "Запланирована" on every
+    # read-only sync.
+    existing = conn.execute(
+        """SELECT s.warehouse_shipment_id,ws.status AS warehouse_status
+             FROM marketplace_supplies s
+        LEFT JOIN warehouse_shipments ws ON ws.id=s.warehouse_shipment_id
+            WHERE s.marketplace=? AND s.account_id IS ? AND s.external_supply_id=?""",
+        (_text(marketplace), account_id, external_id),
+    ).fetchone()
+    if existing and supply_is_actionable(marketplace, external_status):
+        warehouse_status = _text(existing["warehouse_status"])
+        if warehouse_status in {
+            "WAITING_RESERVATION", "SHORTAGE", "READY_TO_PICK", "PICKING",
+            "PICKED", "PACKING", "READY_TO_HANDOVER", "SHIPPED",
+        }:
+            canonical = "SHIPPED_FROM_PRODUCTION" if warehouse_status == "SHIPPED" else warehouse_status
     destination = payload.get("destination") if isinstance(payload.get("destination"), dict) else {}
     timeslot = payload.get("timeslot") if isinstance(payload.get("timeslot"), dict) else {}
     conn.execute(
@@ -456,10 +502,11 @@ def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str
     args.append(max(1, min(500, int(limit or 100))))
     rows = conn.execute(f"""SELECT s.id,s.marketplace,s.external_supply_id,s.external_preorder_id,s.external_status,
             s.canonical_status,s.supply_type,s.destination_name,s.macrolocal_cluster_id,s.planned_at,
-            s.timeslot_from,s.timeslot_to,s.last_synced_at,s.warehouse_shipment_id,s.updated_at,
+            s.timeslot_from,s.timeslot_to,s.last_synced_at,s.warehouse_shipment_id,ws.number AS warehouse_shipment_number,ws.status AS warehouse_shipment_status,s.updated_at,
             COUNT(i.id) AS item_count, COALESCE(SUM(i.quantity),0) AS total_quantity,
             SUM(CASE WHEN i.mapped_status='unmatched' THEN 1 ELSE 0 END) AS unmatched_count
         FROM marketplace_supplies s LEFT JOIN marketplace_supply_items i ON i.supply_id=s.id
+        LEFT JOIN warehouse_shipments ws ON ws.id=s.warehouse_shipment_id
         {where} GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ?""", args).fetchall()
     result = [dict(row) for row in rows]
     for row in result:
@@ -535,15 +582,27 @@ def create_internal_shipment_for_supply(supply_id: int) -> dict:
 
 
 def warehouse_shipment_tasks(*, limit: int = 100) -> list[dict]:
-    """Return open marketplace shipment tasks for the operational WMS screen."""
+    """Return employee-facing marketplace shipment tasks by operational status.
+
+    Old historical marketplace rows are deliberately not turned into new work:
+    only an active Ozon supply, an already started task, or a completed local
+    task appears here. Empty legacy WB tasks are hidden as well.
+    """
     conn = get_db_connection(); ensure_schema(conn)
     rows = conn.execute(
         """SELECT s.id,s.number,s.marketplace,s.external_supply_id,s.status,s.destination_name,
                   s.total_quantity,s.reserved_quantity,s.picked_quantity,s.packed_quantity,
-                  s.planned_at,s.updated_at,COUNT(i.id) AS item_count
+                  s.planned_at,s.updated_at,COUNT(i.id) AS item_count,ms.external_status
              FROM warehouse_shipments s
         LEFT JOIN warehouse_shipment_items i ON i.shipment_id=s.id
-            WHERE s.status NOT IN ('HANDED_OVER','ACCEPTED','CANCELLED')
+        LEFT JOIN marketplace_supplies ms ON ms.id=s.source_id
+            WHERE s.status NOT IN ('CANCELLED')
+              AND (s.total_quantity > 0 OR s.status IN ('SHIPPED','HANDED_OVER','ACCEPTED'))
+              AND (
+                    s.marketplace <> 'ozon'
+                    OR upper(COALESCE(ms.external_status,'')) IN ('DATA_FILLING','READY_TO_SUPPLY')
+                    OR s.status IN ('READY_TO_PICK','PICKING','PICKED','PACKING','READY_TO_HANDOVER','SHIPPED','HANDED_OVER','ACCEPTED')
+              )
          GROUP BY s.id
          ORDER BY s.updated_at DESC
             LIMIT ?""",
@@ -552,6 +611,255 @@ def warehouse_shipment_tasks(*, limit: int = 100) -> list[dict]:
     result = [dict(row) for row in rows]
     conn.close()
     return result
+
+
+def _shipment_item_product_key(conn: sqlite3.Connection, item: sqlite3.Row) -> dict:
+    """Build the exact WMS identity for a mapped marketplace position."""
+    link = None
+    if item["marketplace_product_id"]:
+        link = conn.execute(
+            """SELECT production_product_name,production_size,production_color,status
+                 FROM marketplace_production_links WHERE marketplace_product_id=?""",
+            (item["marketplace_product_id"],),
+        ).fetchone()
+    product_name = _text(link["production_product_name"] if link else "") or _text(item["name"])
+    size = _text(link["production_size"] if link else "") or _text(item["size"])
+    color = _text(link["production_color"] if link else "") or _text(item["color"])
+    if not product_name or not size or not color:
+        raise MarketplaceError(
+            f"Для позиции «{_text(item['name']) or _text(item['article'])}» не заполнены наименование, размер или цвет.",
+            code="shipment_product_identity_missing",
+        )
+    return {
+        "item_type": "finished", "product_name": product_name,
+        "product_size": size, "product_color": color,
+        "stage_name": "Готово", "ready_for_position": "Склад",
+    }
+
+
+def _refresh_shipment_counters(conn: sqlite3.Connection, shipment_id: int, *, status: str | None = None) -> None:
+    now = _now()
+    totals = conn.execute(
+        """SELECT COALESCE(SUM(reserved_quantity),0),COALESCE(SUM(picked_quantity),0)
+             FROM warehouse_shipment_items WHERE shipment_id=?""",
+        (shipment_id,),
+    ).fetchone()
+    if status is None:
+        current = conn.execute("SELECT status FROM warehouse_shipments WHERE id=?", (shipment_id,)).fetchone()
+        status = current[0] if current else "WAITING_RESERVATION"
+    conn.execute(
+        """UPDATE warehouse_shipments
+              SET reserved_quantity=?,picked_quantity=?,status=?,updated_at=? WHERE id=?""",
+        (int(totals[0] or 0), int(totals[1] or 0), status, now, shipment_id),
+    )
+
+
+def _reserve_shipment_positions(items: list[tuple[int, dict, int]]) -> list[tuple[int, str, dict, int]]:
+    """Reserve unbound address stock in one Postgres transaction.
+
+    SQLite stores the task document; Postgres owns physical stock.  A caller
+    writes allocations to SQLite only after this commit, and retries are safe
+    because it requests only the still-unreserved quantity.
+    """
+    from wms.connection import get_pg_connection
+    from wms.models import ProductKey
+
+    conn = get_pg_connection()
+    allocations: list[tuple[int, str, dict, int]] = []
+    try:
+        with conn.cursor() as cur:
+            for item_id, key_data, needed in items:
+                if needed <= 0:
+                    continue
+                key = ProductKey.from_dict(key_data)
+                cur.execute(
+                    """SELECT ws.id,ws.quantity,ws.reserved_quantity,l.code
+                         FROM warehouse_stock ws
+                         JOIN wms_locations l ON l.id=ws.location_id
+                        WHERE ws.item_type=%s AND ws.product_name=%s AND ws.product_size=%s
+                          AND ws.product_color=%s AND ws.stage_name=%s AND ws.ready_for_position=%s
+                          AND ws.item_state='SELLABLE' AND ws.unit='шт' AND l.status='active'
+                          AND ws.quantity > ws.reserved_quantity
+                     ORDER BY l.pick_priority,l.route_order,l.code,ws.id FOR UPDATE""",
+                    tuple(key.to_dict().values()),
+                )
+                remaining = int(needed)
+                for row in cur.fetchall():
+                    if remaining <= 0:
+                        break
+                    available = max(0, int(row[1]) - int(row[2]))
+                    take = min(remaining, available)
+                    if not take:
+                        continue
+                    cur.execute(
+                        "UPDATE warehouse_stock SET reserved_quantity=reserved_quantity+%s,updated_at=now() WHERE id=%s",
+                        (take, int(row[0])),
+                    )
+                    allocations.append((item_id, str(row[3]), key.to_dict(), take))
+                    remaining -= take
+        conn.commit()
+        return allocations
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def warehouse_shipment_task_detail(shipment_number: str) -> dict | None:
+    conn = get_db_connection(); ensure_schema(conn)
+    shipment = conn.execute("SELECT * FROM warehouse_shipments WHERE number=?", (_text(shipment_number),)).fetchone()
+    if shipment is None:
+        conn.close(); return None
+    result = dict(shipment)
+    items = []
+    for row in conn.execute("SELECT * FROM warehouse_shipment_items WHERE shipment_id=? ORDER BY id", (shipment["id"],)):
+        item = dict(row)
+        item["allocations"] = [dict(value) for value in conn.execute(
+            "SELECT * FROM warehouse_shipment_allocations WHERE shipment_item_id=? ORDER BY location_code,id", (row["id"],)
+        )]
+        items.append(item)
+    result["items"] = items
+    result["can_start"] = result["status"] in {"WAITING_RESERVATION", "SHORTAGE"}
+    result["can_confirm"] = bool(items) and all(int(item["picked_quantity"] or 0) >= int(item["quantity"] or 0) for item in items)
+    conn.close()
+    return result
+
+
+def start_warehouse_shipment_task(shipment_number: str) -> dict:
+    """Reserve locations and make a marketplace shipment available for picking."""
+    conn = get_db_connection(); ensure_schema(conn)
+    try:
+        shipment = conn.execute("SELECT * FROM warehouse_shipments WHERE number=?", (_text(shipment_number),)).fetchone()
+        if shipment is None:
+            return {"ok": False, "message": "Задание на отгрузку не найдено."}
+        if shipment["status"] in {"SHIPPED", "HANDED_OVER", "ACCEPTED", "CANCELLED"}:
+            return {"ok": False, "message": "Это задание уже завершено и недоступно для комплектации."}
+        items_to_reserve = []
+        for item in conn.execute("SELECT * FROM warehouse_shipment_items WHERE shipment_id=? ORDER BY id", (shipment["id"],)):
+            missing = max(0, int(item["quantity"] or 0) - int(item["reserved_quantity"] or 0))
+            if missing:
+                items_to_reserve.append((int(item["id"]), _shipment_item_product_key(conn, item), missing))
+        allocations = _reserve_shipment_positions(items_to_reserve) if items_to_reserve else []
+        now = _now()
+        for item_id, location_code, product_key, quantity in allocations:
+            conn.execute(
+                """INSERT INTO warehouse_shipment_allocations
+                   (shipment_item_id,location_code,product_key_json,quantity,reserved_quantity,picked_quantity,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)
+                   ON CONFLICT(shipment_item_id,location_code) DO UPDATE SET
+                     quantity=warehouse_shipment_allocations.quantity+excluded.quantity,
+                     reserved_quantity=warehouse_shipment_allocations.reserved_quantity+excluded.reserved_quantity,
+                     updated_at=excluded.updated_at""",
+                (item_id, location_code, _json(product_key), quantity, quantity, 0, now, now),
+            )
+            conn.execute(
+                "UPDATE warehouse_shipment_items SET reserved_quantity=reserved_quantity+?,from_location_code=COALESCE(NULLIF(from_location_code,''),?) WHERE id=?",
+                (quantity, location_code, item_id),
+            )
+        complete = conn.execute(
+            "SELECT COUNT(*) FROM warehouse_shipment_items WHERE shipment_id=? AND reserved_quantity < quantity",
+            (shipment["id"],),
+        ).fetchone()[0] == 0
+        _refresh_shipment_counters(conn, int(shipment["id"]), status="READY_TO_PICK" if complete else "SHORTAGE")
+        conn.commit()
+        detail = warehouse_shipment_task_detail(_text(shipment_number))
+        return {"ok": True, "shipment": detail, "message": "Ячейки зарезервированы." if complete else "Часть позиций зарезервирована; по остальным не хватает товара."}
+    except MarketplaceError as error:
+        conn.rollback(); return {"ok": False, "code": error.code, "message": str(error)}
+    except Exception as error:
+        conn.rollback(); return {"ok": False, "message": f"Не удалось подготовить отгрузку: {error}"}
+    finally:
+        conn.close()
+
+
+def pick_warehouse_shipment_allocation(shipment_number: str, allocation_id: int, quantity: int, *, employee_id: int, location_code: str, request_key: str = "") -> dict:
+    """Consume an already reserved line after the employee scans its cell."""
+    from wms import operations as wms_operations
+    from wms.models import ProductKey
+    conn = get_db_connection(); ensure_schema(conn)
+    try:
+        row = conn.execute(
+            """SELECT a.*,i.shipment_id,s.number,s.status FROM warehouse_shipment_allocations a
+                 JOIN warehouse_shipment_items i ON i.id=a.shipment_item_id
+                 JOIN warehouse_shipments s ON s.id=i.shipment_id
+                WHERE a.id=? AND s.number=?""",
+            (int(allocation_id), _text(shipment_number)),
+        ).fetchone()
+        if row is None:
+            return {"ok": False, "message": "Позиция отгрузки не найдена."}
+        if _text(row["status"]) in {"SHIPPED", "HANDED_OVER", "ACCEPTED", "CANCELLED"}:
+            return {"ok": False, "message": "Отгрузка уже завершена."}
+        if _text(location_code).upper() != _text(row["location_code"]).upper():
+            return {"ok": False, "message": f"Сначала отсканируйте ячейку {row['location_code']}."}
+        quantity = int(quantity)
+        remaining = max(0, int(row["reserved_quantity"] or 0) - int(row["picked_quantity"] or 0))
+        if quantity <= 0 or quantity > remaining:
+            return {"ok": False, "message": f"Для этой позиции осталось отобрать {remaining} шт."}
+        request_key = _text(request_key) or f"marketplace-pick:{row['shipment_id']}:{row['id']}:{uuid.uuid4().hex}"
+        key_data = json.loads(row["product_key_json"] or "{}")
+        operation = wms_operations.pick_reserved_for_shipment(
+            ProductKey.from_dict(key_data), quantity,
+            from_location_code=row["location_code"], shipment_id=int(row["shipment_id"]),
+            employee_id=int(employee_id), request_key=request_key, reason=f"Комплектация поставки {row['number']}",
+        )
+        if not operation.ok:
+            return {"ok": False, "message": operation.reason or "Не удалось отобрать товар из ячейки."}
+        now = _now()
+        event = conn.execute(
+            "INSERT OR IGNORE INTO warehouse_shipment_pick_events (shipment_id,allocation_id,request_key,quantity,employee_id,created_at) VALUES (?,?,?,?,?,?)",
+            (row["shipment_id"], row["id"], request_key, quantity, employee_id, now),
+        )
+        if event.rowcount:
+            conn.execute("UPDATE warehouse_shipment_allocations SET picked_quantity=picked_quantity+?,updated_at=? WHERE id=?", (quantity, now, row["id"]))
+            conn.execute("UPDATE warehouse_shipment_items SET picked_quantity=picked_quantity+? WHERE id=?", (quantity, row["shipment_item_id"]))
+        all_picked = conn.execute(
+            "SELECT COUNT(*) FROM warehouse_shipment_items WHERE shipment_id=? AND picked_quantity < quantity",
+            (row["shipment_id"],),
+        ).fetchone()[0] == 0
+        _refresh_shipment_counters(conn, int(row["shipment_id"]), status="PICKED" if all_picked else "PICKING")
+        conn.commit()
+        return {"ok": True, "shipment": warehouse_shipment_task_detail(_text(shipment_number)), "message": "Позиция отобрана."}
+    except (ValueError, json.JSONDecodeError) as error:
+        conn.rollback(); return {"ok": False, "message": f"Некорректные данные позиции: {error}"}
+    except Exception as error:
+        conn.rollback(); return {"ok": False, "message": f"Не удалось выполнить подбор: {error}"}
+    finally:
+        conn.close()
+
+
+def confirm_warehouse_shipment(shipment_number: str, *, employee_id: int) -> dict:
+    """Mark a fully picked document as shipped from production."""
+    conn = get_db_connection(); ensure_schema(conn)
+    try:
+        shipment = conn.execute("SELECT * FROM warehouse_shipments WHERE number=?", (_text(shipment_number),)).fetchone()
+        if shipment is None:
+            return {"ok": False, "message": "Задание на отгрузку не найдено."}
+        if shipment["status"] == "SHIPPED":
+            return {"ok": True, "shipment": warehouse_shipment_task_detail(_text(shipment_number)), "message": "Отгрузка уже подтверждена."}
+        outstanding = conn.execute(
+            "SELECT COUNT(*) FROM warehouse_shipment_items WHERE shipment_id=? AND picked_quantity < quantity",
+            (shipment["id"],),
+        ).fetchone()[0]
+        if outstanding:
+            return {"ok": False, "message": "Нельзя подтвердить отгрузку: собраны не все позиции."}
+        now = _now()
+        conn.execute(
+            "UPDATE warehouse_shipments SET status='SHIPPED',packed_quantity=picked_quantity,updated_at=? WHERE id=?",
+            (now, shipment["id"]),
+        )
+        if shipment["source_id"]:
+            conn.execute(
+                "UPDATE marketplace_supplies SET canonical_status='SHIPPED_FROM_PRODUCTION',updated_at=? WHERE id=?",
+                (now, shipment["source_id"]),
+            )
+        _sync_event(conn, shipment["marketplace"], "shipment_confirmed", f"Отгрузка {shipment['number']} подтверждена сотрудником {employee_id}.", external_id=shipment["external_supply_id"])
+        conn.commit()
+        return {"ok": True, "shipment": warehouse_shipment_task_detail(_text(shipment_number)), "message": "Отгрузка подтверждена и передана в маркетплейсы."}
+    except Exception as error:
+        conn.rollback(); return {"ok": False, "message": f"Не удалось подтвердить отгрузку: {error}"}
+    finally:
+        conn.close()
 
 
 def product_group_for(*values: object) -> tuple[str, str]:
