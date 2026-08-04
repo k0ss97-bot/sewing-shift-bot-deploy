@@ -1,9 +1,11 @@
+from datetime import date, datetime, timezone
 import unittest
 from unittest.mock import patch
 
 from marketplace_ozon_client import OzonPaginationError, OzonReadOnlyClient, _RequestResult
 from marketplace_pg import (
     MarketplacePGRepository,
+    _json_value,
     _production_link_fields,
     normalize_finance,
     normalize_order,
@@ -15,6 +17,15 @@ from marketplace_pg import (
 
 
 class MarketplacePostgresReadModelTest(unittest.TestCase):
+    def test_json_value_serializes_postgres_dates_and_timestamps(self):
+        payload = _json_value({
+            "day": date(2026, 8, 4),
+            "updated_at": datetime(2026, 8, 4, 8, 40, tzinfo=timezone.utc),
+        })
+
+        self.assertEqual(payload["day"], "2026-08-04")
+        self.assertEqual(payload["updated_at"], "2026-08-04T08:40:00Z")
+
     def test_ozon_attributes_follow_last_id(self):
         client = OzonReadOnlyClient("client", "secret", page_limit=1, min_interval=0)
         responses = [
