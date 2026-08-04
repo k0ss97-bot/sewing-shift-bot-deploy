@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import marketplaces
@@ -220,6 +221,36 @@ class MarketplaceTests(unittest.TestCase):
             marketplaces.product_group_for("Кбшв-", "кбшв-", "1073896068"),
             ("other", "Прочие товары"),
         )
+
+    def test_catalog_reconciliation_keeps_missing_routes_and_cells_visible(self):
+        fake_connection = SimpleNamespace(rollback=lambda: None, close=lambda: None)
+        location = SimpleNamespace(id=7, code="Z2-S1-P3-1")
+        stock = SimpleNamespace(
+            product_key=SimpleNamespace(
+                item_type="finished", product_name="Бомбер", product_size="98", product_color="Бежевый",
+            ),
+            item_state="SELLABLE", quantity=2, reserved_quantity=0, location_id=7,
+        )
+        ozon = [
+            {"id": "ozon-1", "offer_id": "BMB-98", "name": "Бомбер детский", "size": "98", "color": "Бежевый"},
+            {"id": "ozon-2", "offer_id": "UNKNOWN-1", "name": "Редкая модель", "size": "98", "color": "Бежевый"},
+        ]
+        wildberries = [
+            {"id": "wb-1", "offer_id": "WB-BMB-98", "name": "Бомбер детский", "size": "98", "color": "Бежевый"},
+        ]
+        with patch("wms.connection.get_pg_connection", return_value=fake_connection), patch(
+            "wms.repository.list_locations", return_value=[location]
+        ), patch("wms.repository.get_stock_rows", return_value=[stock]):
+            result = marketplaces.marketplace_catalog_reconciliation(ozon, wildberries)
+
+        self.assertTrue(result["warehouse_available"])
+        self.assertEqual(result["summary"]["ozon"]["products"], 2)
+        self.assertEqual(result["summary"]["ozon"]["warehouse_found"], 1)
+        self.assertEqual(result["summary"]["ozon"]["route_missing"], 1)
+        self.assertEqual(result["summary"]["production"]["visible_on_ozon"], 1)
+        self.assertEqual(result["summary"]["production"]["visible_on_wildberries"], 1)
+        ready = next(item for item in result["marketplace_items"] if item["article"] == "BMB-98")
+        self.assertEqual(ready["locations"], [{"code": "Z2-S1-P3-1", "quantity": 2, "reserved_quantity": 0, "available_quantity": 2}])
 
     def test_dashboard_without_credentials_does_not_call_network(self):
         with tempfile.TemporaryDirectory() as directory:

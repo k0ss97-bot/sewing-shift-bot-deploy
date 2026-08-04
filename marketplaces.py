@@ -2066,15 +2066,189 @@ def warehouse_catalog() -> dict:
     }
 
 
+def _catalog_identity(*values: object) -> tuple[str, str, str]:
+    """Normalise a factory identity without changing the source values.
+
+    Marketplace titles are user-facing and may differ in punctuation or case.
+    The warehouse, however, owns the canonical ``name / size / colour`` key.
+    Keeping this normalisation in one place makes the read-only catalogue
+    projection predictable for both Ozon and Wildberries.
+    """
+
+    normalized = [
+        " ".join(_text(value).casefold().replace("ё", "е").split())
+        for value in values
+    ]
+    return (
+        normalized[0] if len(normalized) > 0 else "",
+        normalized[1] if len(normalized) > 1 else "",
+        normalized[2] if len(normalized) > 2 else "",
+    )
+
+
+def marketplace_catalog_reconciliation(
+    ozon_products: list[dict] | None,
+    wildberries_products: list[dict] | None,
+) -> dict:
+    """Project marketplace cards, production routes and physical cells together.
+
+    This is deliberately a read-only view.  A marketplace card is never
+    invented for a warehouse row: unmatched factory stock stays visible with
+    an explicit ``no Ozon/WB card`` status.  Conversely, a marketplace card
+    without a supported factory route is shown as ``route_missing`` instead of
+    receiving a made-up warehouse balance.
+    """
+
+    wms_by_identity: dict[tuple[str, str, str], dict] = {}
+    warehouse_available = True
+    try:
+        from wms.connection import get_pg_connection
+        from wms.repository import get_stock_rows, list_locations
+
+        wms_conn = get_pg_connection()
+        try:
+            location_codes = {int(location.id): _text(location.code) for location in list_locations(wms_conn)}
+            for stock_row in get_stock_rows(wms_conn):
+                product_key = stock_row.product_key
+                if product_key.item_type != "finished" or stock_row.item_state != "SELLABLE":
+                    continue
+                identity = _catalog_identity(
+                    product_key.product_name,
+                    product_key.product_size,
+                    product_key.product_color,
+                )
+                if not all(identity):
+                    continue
+                entry = wms_by_identity.setdefault(identity, {
+                    "production_name": _text(product_key.product_name),
+                    "size": _text(product_key.product_size),
+                    "color": _text(product_key.product_color),
+                    "quantity": 0,
+                    "reserved_quantity": 0,
+                    "available_quantity": 0,
+                    "locations": [],
+                })
+                quantity = max(0, int(stock_row.quantity or 0))
+                reserved = max(0, int(stock_row.reserved_quantity or 0))
+                available = max(0, quantity - reserved)
+                entry["quantity"] += quantity
+                entry["reserved_quantity"] += reserved
+                entry["available_quantity"] += available
+                entry["locations"].append({
+                    "code": location_codes.get(int(stock_row.location_id or 0), "Не размещён"),
+                    "quantity": quantity,
+                    "reserved_quantity": reserved,
+                    "available_quantity": available,
+                })
+            wms_conn.rollback()
+        finally:
+            wms_conn.close()
+    except Exception:
+        # A temporary WMS outage must not hide the marketplace catalogue or be
+        # presented as a physical zero balance.
+        warehouse_available = False
+        wms_by_identity = {}
+
+    marketplace_items: list[dict] = []
+    by_identity: dict[tuple[str, str, str], list[dict]] = {}
+    for marketplace, source_rows in (
+        ("ozon", ozon_products or []),
+        ("wildberries", wildberries_products or []),
+    ):
+        for source in source_rows:
+            if not isinstance(source, dict):
+                continue
+            target = production_target_for_marketplace_product(source)
+            production_name, size, color = target if target else ("", "", "")
+            identity = _catalog_identity(production_name, size, color) if target else None
+            stock = wms_by_identity.get(identity) if identity else None
+            item = {
+                "marketplace": marketplace,
+                "id": _text(source.get("id") or source.get("external_product_id") or source.get("sku") or source.get("offer_id")),
+                "article": _text(source.get("offer_id") or source.get("sku") or source.get("external_product_id")),
+                "sku": _text(source.get("sku")),
+                "name": _text(source.get("name")) or "Без названия",
+                "size": _text(source.get("size")),
+                "color": _text(source.get("color")),
+                "production_name": production_name,
+                "production_size": size,
+                "production_color": color,
+                "route_configured": bool(target),
+                "warehouse_found": bool(stock),
+                "warehouse_quantity": int(stock["quantity"]) if stock else 0,
+                "warehouse_reserved_quantity": int(stock["reserved_quantity"]) if stock else 0,
+                "warehouse_available_quantity": int(stock["available_quantity"]) if stock else 0,
+                "locations": list(stock["locations"]) if stock else [],
+                "status": "ready" if target and stock else ("route_missing" if not target else "not_in_warehouse"),
+            }
+            marketplace_items.append(item)
+            if identity:
+                by_identity.setdefault(identity, []).append(item)
+
+    production_items: list[dict] = []
+    for identity, stock in wms_by_identity.items():
+        linked_cards = by_identity.get(identity, [])
+        ozon_cards = [item for item in linked_cards if item["marketplace"] == "ozon"]
+        wildberries_cards = [item for item in linked_cards if item["marketplace"] == "wildberries"]
+        production_items.append({
+            **stock,
+            "ozon_cards": [{"article": item["article"], "name": item["name"]} for item in ozon_cards],
+            "wildberries_cards": [{"article": item["article"], "name": item["name"]} for item in wildberries_cards],
+            "visible_on_ozon": bool(ozon_cards),
+            "visible_on_wildberries": bool(wildberries_cards),
+        })
+
+    marketplace_items.sort(key=lambda item: (item["marketplace"], item["name"].casefold(), item["article"]))
+    production_items.sort(key=lambda item: (item["production_name"].casefold(), item["size"], item["color"]))
+
+    def provider_summary(provider: str) -> dict:
+        rows = [item for item in marketplace_items if item["marketplace"] == provider]
+        return {
+            "products": len(rows),
+            "route_configured": sum(1 for item in rows if item["route_configured"]),
+            "route_missing": sum(1 for item in rows if not item["route_configured"]),
+            "warehouse_found": sum(1 for item in rows if item["warehouse_found"]),
+            "not_in_warehouse": sum(1 for item in rows if item["route_configured"] and not item["warehouse_found"]),
+        }
+
+    return {
+        "ok": True,
+        "warehouse_available": warehouse_available,
+        "marketplace_items": marketplace_items,
+        "production_items": production_items,
+        "summary": {
+            "ozon": provider_summary("ozon"),
+            "wildberries": provider_summary("wildberries"),
+            "production": {
+                "finished_identities": len(production_items),
+                "visible_on_ozon": sum(1 for item in production_items if item["visible_on_ozon"]),
+                "visible_on_wildberries": sum(1 for item in production_items if item["visible_on_wildberries"]),
+                "without_marketplace_card": sum(
+                    1 for item in production_items
+                    if not item["visible_on_ozon"] and not item["visible_on_wildberries"]
+                ),
+            },
+        },
+    }
+
+
 def marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) -> list[dict | None]:
-    """Resolve WMS finished-goods identities to their read-only Ozon cards."""
+    """Resolve WMS finished-goods identities to their marketplace cards.
+
+    PostgreSQL is authoritative for the current Ozon catalogue.  Wildberries
+    still uses the shared legacy projection, so it remains a fallback for an
+    otherwise unresolved physical product instead of disappearing from the
+    warehouse screen when Phase 1A is enabled.
+    """
     if os.getenv("MARKETPLACE_PHASE1A_ENABLED", "0").strip() == "1":
         from marketplace_pg import MarketplacePGRepository
         from marketplace_phase1a import account_key
 
-        return MarketplacePGRepository().marketplace_metadata_for_wms_product_keys(
+        ozon_rows = MarketplacePGRepository().marketplace_metadata_for_wms_product_keys(
             account_key(), product_keys,
         )
+        fallback_rows = _legacy_marketplace_metadata_for_wms_product_keys(product_keys)
+        return [ozon or fallback for ozon, fallback in zip(ozon_rows, fallback_rows)]
     conn = get_db_connection()
     ensure_schema(conn)
     rows = conn.execute(
@@ -2142,6 +2316,86 @@ def marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) -> list[
             } | {"barcodes": sorted(alternate_barcodes)})
         else:
             resolved.append(None)
+    conn.close()
+    return resolved
+
+
+def _legacy_marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) -> list[dict | None]:
+    """Resolve a WMS identity against retained Ozon/WB cards without PG mode.
+
+    The helper is intentionally only a fallback: a fresh Ozon projection from
+    PostgreSQL always wins, while a matching Wildberries card can still be
+    shown to warehouse staff.
+    """
+
+    conn = get_db_connection()
+    ensure_schema(conn)
+    rows = conn.execute(
+        """SELECT p.id,p.external_product_id,p.name,p.offer_id,p.sku,p.barcode,p.size,p.color,p.payload_json,
+                  a.marketplace,
+                  COALESCE(l.status,'unmatched') AS production_status,
+                  COALESCE(l.route_configured,0) AS route_configured,
+                  COALESCE(l.production_product_name,'') AS production_product_name,
+                  COALESCE(l.production_size,'') AS production_size,
+                  COALESCE(l.production_color,'') AS production_color
+             FROM marketplace_products p
+             JOIN marketplace_accounts a ON a.id=p.account_id
+             LEFT JOIN marketplace_production_links l ON l.marketplace_product_id=p.id
+            ORDER BY CASE a.marketplace WHEN 'wildberries' THEN 0 ELSE 1 END,p.updated_at DESC,p.id DESC"""
+    ).fetchall()
+    products = []
+    for source in rows:
+        product = dict(source)
+        payload_json = product.pop("payload_json", "")
+        product["image_url"] = _marketplace_product_image(payload_json)
+        product["barcodes"] = sorted(_marketplace_payload_barcodes(payload_json))
+        products.append(product)
+
+    resolved: list[dict | None] = []
+    for product_key in product_keys:
+        if _text(product_key.get("item_type")) != "finished":
+            resolved.append(None)
+            continue
+        wms_name, wms_size, wms_color = _catalog_identity(
+            product_key.get("product_name"),
+            product_key.get("product_size"),
+            product_key.get("product_color"),
+        )
+        direct = next(
+            (
+                product for product in products
+                if (_text(product.get("offer_id")) and _text(product.get("offer_id")).casefold() in wms_name)
+                or (_text(product.get("sku")) and _text(product.get("sku")).casefold() in wms_name)
+            ),
+            None,
+        )
+        linked = direct or next(
+            (
+                product for product in products
+                if product.get("production_status") == "linked"
+                and _catalog_identity(
+                    product.get("production_product_name"),
+                    product.get("production_size"),
+                    product.get("production_color"),
+                ) == (wms_name, wms_size, wms_color)
+            ),
+            None,
+        )
+        if linked is None:
+            resolved.append(None)
+            continue
+        alternate_barcodes = set(linked.get("barcodes") or [])
+        primary_barcode = _normalized_marketplace_barcode(linked.get("barcode"))
+        if primary_barcode:
+            alternate_barcodes.add(primary_barcode)
+        resolved.append({
+            key: linked.get(key)
+            for key in (
+                "id", "marketplace", "external_product_id", "name", "offer_id", "sku", "barcode",
+                "size", "color", "image_url", "route_configured", "production_product_name",
+                "production_size", "production_color",
+            )
+        } | {"barcodes": sorted(alternate_barcodes)})
     conn.close()
     return resolved
 

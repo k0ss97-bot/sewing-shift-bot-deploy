@@ -11658,6 +11658,22 @@ MINIAPP_HTML = """<!doctype html>
       if (emptyNode) emptyNode.classList.toggle("visible", visible === 0);
     }
 
+    function filterMarketplaceLinks(control) {
+      const section = control.closest(".marketplace-links-section");
+      if (!section) return;
+      const query = String(control.value || "").trim().toLocaleLowerCase("ru");
+      let visible = 0;
+      section.querySelectorAll("[data-marketplace-link-row]").forEach((row) => {
+        const matches = !query || String(row.dataset.marketplaceLinkSearch || "").includes(query);
+        row.hidden = !matches;
+        if (matches) visible += 1;
+      });
+      const countNode = section.querySelector("[data-marketplace-link-visible-count]");
+      const emptyNode = section.querySelector(".marketplace-links-empty");
+      if (countNode) countNode.textContent = String(visible);
+      if (emptyNode) emptyNode.hidden = visible !== 0;
+    }
+
     function marketplaceLineChart(rows, primaryKey = "revenue", secondaryKey = "net") {
       const source = Array.isArray(rows) ? rows.filter(Boolean) : [];
       if (!source.length) return itemEmpty("За выбранный период данных нет.");
@@ -11845,7 +11861,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     const marketplaceRouteMap = {
-      overview: "", products: "/products", orders: "/orders", supplies: "/supplies",
+      overview: "", products: "/products", links: "/links", orders: "/orders", supplies: "/supplies",
       finance: "/finance", analytics: "/analytics", reviews: "/reviews", settings: "/settings",
       "data-quality": "/data-quality",
       stocks: "/stocks", "warehouse-shipments": "/warehouse-shipments", sync: "/sync",
@@ -12262,17 +12278,42 @@ MINIAPP_HTML = """<!doctype html>
       const ozonSettingsBlock = `<div class="card field-card"><div class="section-title"><b>Доступ Ozon Seller API</b><span class="status-chip ${ozonRolesCapability.status === "available" ? "" : "warn"}">${escapeHtml(ozonRolesCapability.status === "available" ? "проверен" : "не проверен")}</span></div><div class="marketplace-mini-list"><div class="marketplace-mini-row"><span>Роль ключа</span><b>${escapeHtml(ozonRoleNames.join(", ") || "не определена")}</b></div><div class="marketplace-mini-row"><span>Методов разрешено Ozon</span><b>${escapeHtml(ozonMethodPaths.length || "—")}</b></div><div class="marketplace-mini-row"><span>Интегрированные наборы PostgreSQL</span><b>${escapeHtml(qualityDatasets.length)}</b></div><div class="marketplace-mini-row"><span>Изменение данных в Ozon</span><b>${ozonRoleNames.some((name) => String(name).toLowerCase().includes("read only")) ? "заблокировано ключом" : "зависит от прав ключа"}</b></div></div><div class="task-note"><b>Что означает «подключён»</b><br>Сайт показывает только данные, реально подтверждённые отдельными синхронизациями. Внутренние задания склада создаются у нас и не изменяют кабинет Ozon.</div></div>`;
       const safeProductsBlock = isWildberries && !wbCatalogUsable ? itemEmpty("Текущий snapshot каталога Wildberries не подтверждён.") : productsBlock;
       const safeStocksBlock = isWildberries && !wbStocksUsable ? itemEmpty("Текущий snapshot остатков Wildberries не подтверждён; исторический ноль скрыт.") : stocksBlock;
-      const sectionContent = {overview: overviewBlock, orders: ordersBlock, supplies: suppliesBlock, "warehouse-shipments": warehouseShipmentsBlock, sync: runsBlock, stocks: safeStocksBlock, analytics: analyticsBlock, products: safeProductsBlock, finance: financeBlock, reviews: reviewsBlock, "data-quality": isWildberries ? wbQualityBlock : qualityBlock, settings: isWildberries ? placeholderSection("Настройки", "Подключение Wildberries управляется на сервере.") : ozonSettingsBlock};
+      const catalogReconciliation = payload.catalog_reconciliation || {};
+      const reconciliationSummary = catalogReconciliation.summary || {};
+      const reconciliationProvider = isWildberries ? "wildberries" : "ozon";
+      const reconciliationProviderSummary = isAll ? null : (reconciliationSummary[reconciliationProvider] || {});
+      const reconciliationRows = (catalogReconciliation.marketplace_items || []).filter((row) => isAll || row.marketplace === reconciliationProvider);
+      const productionLinkRows = (catalogReconciliation.production_items || []).filter((row) => isAll || (reconciliationProvider === "ozon" ? true : true));
+      const linkStatus = (row) => row.status === "ready"
+        ? ["В ячейках", ""]
+        : row.status === "route_missing"
+          ? ["Нет маршрута производства", "warn"]
+          : ["Нет в ячейках", "warn"];
+      const locationText = (locations) => (locations || []).map((location) => `${location.code}: ${Number(location.available_quantity || 0)} шт.`).join(" · ");
+      const reconciliationBlock = !catalogReconciliation.ok
+        ? itemEmpty("Связи каталога пока недоступны.")
+        : `<section class="marketplace-links-section">
+          <div class="card field-card"><div class="section-title"><b>Единый каталог: маркетплейсы → производство → склад</b><span>${reconciliationRows.length}</span></div><p>Связка строится по маршруту производства и физическим ячейкам. Система не создаёт фиктивные остатки: отсутствие маршрута или ячейки видно отдельно.</p>${catalogReconciliation.warehouse_available ? "" : `<div class="task-note"><b>Склад временно недоступен</b><br>Карточки маркетплейсов показаны, но наличие в ячейках сейчас не подтверждено.</div>`}</div>
+          <div class="marketplace-v2-kpis">
+            <div class="card marketplace-v2-kpi"><span>${isAll ? "Карточки Ozon" : "Карточки"}</span><strong>${escapeHtml(isAll ? reconciliationSummary.ozon?.products || 0 : reconciliationProviderSummary?.products || 0)}</strong><small>проверено по вариантам</small></div>
+            ${isAll ? `<div class="card marketplace-v2-kpi"><span>Карточки Wildberries</span><strong>${escapeHtml(reconciliationSummary.wildberries?.products || 0)}</strong><small>проверено по вариантам</small></div>` : ""}
+            <div class="card marketplace-v2-kpi"><span>Маршрут производства</span><strong>${escapeHtml(isAll ? (Number(reconciliationSummary.ozon?.route_configured || 0) + Number(reconciliationSummary.wildberries?.route_configured || 0)) : reconciliationProviderSummary?.route_configured || 0)}</strong><small>вариантов с настроенным маршрутом</small></div>
+            <div class="card marketplace-v2-kpi"><span>В ячейках</span><strong>${escapeHtml(isAll ? (Number(reconciliationSummary.ozon?.warehouse_found || 0) + Number(reconciliationSummary.wildberries?.warehouse_found || 0)) : reconciliationProviderSummary?.warehouse_found || 0)}</strong><small>карточек, найденных на складе</small></div>
+          </div>
+          <div class="card field-card"><div class="marketplace-filter-bar"><label><span>Поиск по названию, артикулу, SKU или ячейке</span><input type="search" oninput="filterMarketplaceLinks(this)" placeholder="Например КДШВН-1/98 или Z2-S1-P3-1"></label></div><div class="section-title"><b>Карточки маркетплейсов</b><span data-marketplace-link-visible-count>${reconciliationRows.length}</span></div><div class="op-list">${reconciliationRows.map((row) => { const [statusLabel, statusClass] = linkStatus(row); const search = [row.name,row.article,row.sku,row.production_name,row.production_size,row.production_color,locationText(row.locations)].join(" ").toLocaleLowerCase("ru"); return `<div class="card report-row" data-marketplace-link-row data-marketplace-link-search="${escapeHtml(search)}"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.article || row.sku || "без артикула")}</b><span>${escapeHtml(row.name)} · ${escapeHtml(row.size || "размер не указан")} · ${escapeHtml(row.color || "цвет не указан")}<br>${row.route_configured ? `Производство: ${escapeHtml(row.production_name)} · ${escapeHtml(row.production_size)} · ${escapeHtml(row.production_color)}` : "Производство: маршрут не настроен"}${row.warehouse_found ? `<br>Ячейки: ${escapeHtml(locationText(row.locations))}` : ""}</span></div><span class="status-chip ${statusClass}">${escapeHtml(statusLabel)}</span></div>`; }).join("")}</div><div class="marketplace-links-empty" hidden>${itemEmpty("Поиск ничего не нашёл.")}</div></div>
+          <div class="card field-card"><div class="section-title"><b>Готовая продукция на складе</b><span>${productionLinkRows.length}</span></div><div class="op-list">${productionLinkRows.map((row) => { const ozonCards = row.ozon_cards || []; const wbCards = row.wildberries_cards || []; return `<div class="card report-row"><div><b>${escapeHtml(row.production_name)} · ${escapeHtml(row.size)} · ${escapeHtml(row.color)}</b><span>В ячейках: ${escapeHtml(locationText(row.locations) || "не размещено")}<br>Ozon: ${escapeHtml(ozonCards.length ? ozonCards.map((card) => card.article).join(", ") : "нет карточки")} · Wildberries: ${escapeHtml(wbCards.length ? wbCards.map((card) => card.article).join(", ") : "нет карточки")}</span></div><span class="status-chip ${(!row.visible_on_ozon && !row.visible_on_wildberries) ? "warn" : ""}">${escapeHtml((!row.visible_on_ozon && !row.visible_on_wildberries) ? "Нет карточки" : "В каталоге")}</span></div>`; }).join("") || itemEmpty("Готовой продукции в адресном складе пока нет.")}</div></div>
+        </section>`;
+      const sectionContent = {overview: overviewBlock, orders: ordersBlock, supplies: suppliesBlock, "warehouse-shipments": warehouseShipmentsBlock, sync: runsBlock, stocks: safeStocksBlock, analytics: analyticsBlock, products: safeProductsBlock, links: reconciliationBlock, finance: financeBlock, reviews: reviewsBlock, "data-quality": isWildberries ? wbQualityBlock : qualityBlock, settings: isWildberries ? placeholderSection("Настройки", "Подключение Wildberries управляется на сервере.") : ozonSettingsBlock};
       const content = sectionContent[state.marketplaceView] || safeProductsBlock;
-      const sectionTitles = {overview:"Обзор", orders:"Заказы", supplies:"Поставки", "warehouse-shipments":"Отгрузки на склад", sync:"Журнал синхронизации", stocks:"Остатки", analytics:"Аналитика", products:"Товары", finance:"Финансы", reviews:"Отзывы", "data-quality":"Качество данных", settings:"Настройки"};
+      const sectionTitles = {overview:"Обзор", orders:"Заказы", supplies:"Поставки", "warehouse-shipments":"Отгрузки на склад", sync:"Журнал синхронизации", stocks:"Остатки", analytics:"Аналитика", products:"Товары", links:"Связи каталога", finance:"Финансы", reviews:"Отзывы", "data-quality":"Качество данных", settings:"Настройки"};
       const title = sectionTitles[state.marketplaceView] || "Товары";
       const detail = renderMarketplaceDetail(products, orders, runs);
-      const marketplaceMenuItems = [["overview","⌂","Обзор"],["products","▤","Товары"],["stocks","▦","Остатки"],["orders","▣","Заказы"],["supplies","⇧","Поставки"],["finance","₽","Финансы"],["reviews","☆","Отзывы"],["data-quality","◉","Качество данных"],["settings","⚙","Настройки"]];
+      const marketplaceMenuItems = [["overview","⌂","Обзор"],["products","▤","Товары"],["links","⇄","Связи каталога"],["stocks","▦","Остатки"],["orders","▣","Заказы"],["supplies","⇧","Поставки"],["finance","₽","Финансы"],["reviews","☆","Отзывы"],["data-quality","◉","Качество данных"],["settings","⚙","Настройки"]];
       const marketplaceMenu = `<nav class="marketplace-menu-strip" aria-label="Разделы маркетплейсов"><div class="marketplace-menu-label">Площадки</div><button type="button" class="marketplace-provider-menu-button ${isAll ? "active" : ""}" data-marketplace-provider="all"><span class="marketplace-menu-icon">∞</span><span>Все площадки</span></button><button type="button" class="marketplace-provider-menu-button ${isOzon ? "active" : ""}" data-marketplace-provider="ozon"><span class="marketplace-menu-icon">O</span><span>Ozon</span><small>${payload.configured ? "подключён" : "нет связи"}</small></button><button type="button" class="marketplace-provider-menu-button ${isWildberries ? "active" : ""}" data-marketplace-provider="wildberries" ${wildberriesConnected ? "" : "disabled"}><span class="marketplace-menu-icon">W</span><span>Wildberries</span><small>${wildberriesConnected ? "подключён" : "не подключён"}</small></button><div class="marketplace-menu-label">Разделы</div>${marketplaceMenuItems.map(([id,icon,label]) => `<button type="button" class="marketplace-menu-link ${state.marketplaceView === id ? "active" : ""}" data-marketplace-view="${id}"><span class="marketplace-menu-icon">${icon}</span><span>${label}</span></button>`).join("")}</nav>`;
       mount.innerHTML = `<div class="marketplace-layout">${marketplaceMenu}<div class="marketplace-main">
         <div class="screen-head marketplace-v2-head"><div><h2>${isAll ? "Маркетплейсы" : providerName}</h2><p>${isAll ? "Общая статистика и управление продажами на маркетплейсах" : (isOzon ? "Продажи, заказы, остатки и показатели магазина Ozon" : "Продажи, заказы, остатки и показатели магазина Wildberries")}</p></div><div class="marketplace-brand-mark ${isWildberries ? "wb" : isOzon ? "ozon" : "all"}">${isWildberries ? "WB" : isOzon ? "OZON" : "Ozon + WB"}</div></div><div class="marketplace-provider-status"><b>${isAll ? "Общий обзор" : providerName}</b><span>${escapeHtml(providerStatus)}</span></div>
         ${errorNotice}${notConfigured}
-        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? (isWildberries && !verifiedOrdersAvailable ? "—" : orders.length) : state.marketplaceView === "supplies" ? (isWildberries && !wbSuppliesCurrent ? "—" : supplies.length) : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? (isWildberries && !wbStocksUsable ? "—" : products.length) : state.marketplaceView === "data-quality" ? (isWildberries ? wbQualityRows.length : qualityDatasets.length) : state.marketplaceView === "analytics" ? "" : (isWildberries && !wbCatalogUsable ? "—" : groups.length)}</span></div>${content}`}
+        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? (isWildberries && !verifiedOrdersAvailable ? "—" : orders.length) : state.marketplaceView === "supplies" ? (isWildberries && !wbSuppliesCurrent ? "—" : supplies.length) : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? (isWildberries && !wbStocksUsable ? "—" : products.length) : state.marketplaceView === "links" ? reconciliationRows.length : state.marketplaceView === "data-quality" ? (isWildberries ? wbQualityRows.length : qualityDatasets.length) : state.marketplaceView === "analytics" ? "" : (isWildberries && !wbCatalogUsable ? "—" : groups.length)}</span></div>${content}`}
       </div></div>`;
     }
 

@@ -170,7 +170,7 @@ from marketplaces import (
     marketplace_supplies, marketplace_supply_detail, create_internal_shipment_for_supply,
     warehouse_shipment_tasks, warehouse_shipment_task_detail,
     start_warehouse_shipment_task, pick_warehouse_shipment_allocation,
-    confirm_warehouse_shipment,
+    confirm_warehouse_shipment, marketplace_catalog_reconciliation,
 )
 from marketplace_phase1a import (
     phase1a_dashboard,
@@ -284,8 +284,17 @@ def get_marketplace_dashboard_for_admin(telegram_id: int):
             if key in supplement:
                 result[key] = supplement[key]
         result["connectors"] = supplement.get("connectors", result.get("connectors", []))
+        result["catalog_reconciliation"] = marketplace_catalog_reconciliation(
+            result.get("products_rows") or [],
+            (result.get("wildberries") or {}).get("products_rows") or [],
+        )
         return result
-    return marketplace_dashboard()
+    result = marketplace_dashboard()
+    result["catalog_reconciliation"] = marketplace_catalog_reconciliation(
+        result.get("products_rows") or [],
+        (result.get("wildberries") or {}).get("products_rows") or [],
+    )
+    return result
 
 
 def get_warehouse_catalog_for_access(telegram_id: int):
