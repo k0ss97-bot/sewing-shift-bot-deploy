@@ -673,15 +673,20 @@ def _reserve_shipment_positions(items: list[tuple[int, dict, int]]) -> list[tupl
                     continue
                 key = ProductKey.from_dict(key_data)
                 cur.execute(
-                    """SELECT ws.id,ws.quantity,ws.reserved_quantity,l.code
+                    """SELECT ws.id,ws.quantity,ws.reserved_quantity,l.code,
+                              ws.item_type,ws.product_name,ws.product_size,ws.product_color,
+                              ws.stage_name,ws.ready_for_position
                          FROM warehouse_stock ws
                          JOIN wms_locations l ON l.id=ws.location_id
                         WHERE ws.item_type=%s AND ws.product_name=%s AND ws.product_size=%s
-                          AND ws.product_color=%s AND ws.stage_name=%s AND ws.ready_for_position=%s
+                          AND ws.product_color=%s
                           AND ws.item_state='SELLABLE' AND ws.unit='шт' AND l.status='active'
                           AND ws.quantity > ws.reserved_quantity
                      ORDER BY l.pick_priority,l.route_order,l.code,ws.id FOR UPDATE""",
-                    tuple(key.to_dict().values()),
+                    (
+                        key.item_type, key.product_name, key.product_size,
+                        key.product_color,
+                    ),
                 )
                 remaining = int(needed)
                 for row in cur.fetchall():
@@ -695,7 +700,17 @@ def _reserve_shipment_positions(items: list[tuple[int, dict, int]]) -> list[tupl
                         "UPDATE warehouse_stock SET reserved_quantity=reserved_quantity+%s,updated_at=now() WHERE id=%s",
                         (take, int(row[0])),
                     )
-                    allocations.append((item_id, str(row[3]), key.to_dict(), take))
+                    # A product can have been accepted at a different internal
+                    # route step than the one used by the marketplace link.
+                    # The physical cell is still a valid source when the item,
+                    # variant and state match. Preserve its exact WMS key for
+                    # the later scan and atomic pick.
+                    actual_key = ProductKey(
+                        item_type=str(row[4]), product_name=str(row[5]),
+                        product_size=str(row[6]), product_color=str(row[7]),
+                        stage_name=str(row[8]), ready_for_position=str(row[9]),
+                    )
+                    allocations.append((item_id, str(row[3]), actual_key.to_dict(), take))
                     remaining -= take
         conn.commit()
         return allocations
