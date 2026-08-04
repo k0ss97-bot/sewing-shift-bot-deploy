@@ -614,14 +614,30 @@ def warehouse_shipment_tasks(*, limit: int = 100) -> list[dict]:
 
 
 def _shipment_item_product_key(conn: sqlite3.Connection, item: sqlite3.Row) -> dict:
-    """Build the exact WMS identity for a mapped marketplace position."""
-    link = None
-    if item["marketplace_product_id"]:
-        link = conn.execute(
-            """SELECT production_product_name,production_size,production_color,status
-                 FROM marketplace_production_links WHERE marketplace_product_id=?""",
-            (item["marketplace_product_id"],),
-        ).fetchone()
+    """Build WMS identity by the marketplace article, not display text.
+
+    Names and colours can be edited by a marketplace, while the seller article
+    identifies the physical variant.  Prefer it over a stale product id from a
+    historic supply snapshot and use the id only as a fallback.
+    """
+    article = _text(item["article"]) or _text(item["product_key"])
+    link = conn.execute(
+        """SELECT l.production_product_name,l.production_size,l.production_color,l.status
+             FROM marketplace_products p
+             JOIN marketplace_production_links l ON l.marketplace_product_id=p.id
+            WHERE (?<>'' AND (p.offer_id=? OR p.sku=? OR p.external_product_id=?)) OR p.id=?
+         ORDER BY CASE
+             WHEN p.offer_id=? THEN 0
+             WHEN p.sku=? THEN 1
+             WHEN p.external_product_id=? THEN 2
+             WHEN p.id=? THEN 3
+             ELSE 4 END
+            LIMIT 1""",
+        (
+            article, article, article, article, item["marketplace_product_id"],
+            article, article, article, item["marketplace_product_id"],
+        ),
+    ).fetchone()
     product_name = _text(link["production_product_name"] if link else "") or _text(item["name"])
     size = _text(link["production_size"] if link else "") or _text(item["size"])
     color = _text(link["production_color"] if link else "") or _text(item["color"])

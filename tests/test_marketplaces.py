@@ -154,6 +154,55 @@ class MarketplaceTests(unittest.TestCase):
             self.assertEqual(rows[0]["warehouse_shipment_number"], created["shipment"]["number"])
             self.assertEqual(rows[0]["canonical_status"], "SHIPPED_FROM_PRODUCTION")
 
+    def test_shipment_resolves_physical_product_by_article_before_stale_product_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "bot.db")
+
+            def connection(**_kwargs):
+                conn = sqlite3.connect(path)
+                conn.row_factory = sqlite3.Row
+                return conn
+
+            with patch.object(marketplaces, "get_db_connection", side_effect=connection):
+                with connection() as conn:
+                    marketplaces.ensure_schema(conn)
+                    account_id = marketplaces._account(conn, "ozon", "Основной Ozon", "client")
+                    now = "2026-08-04T00:00:00"
+                    first = conn.execute(
+                        """INSERT INTO marketplace_products
+                           (account_id,external_product_id,offer_id,sku,barcode,name,payload_json,updated_at)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (account_id, "old", "OLD-ARTICLE", "", "", "Старый", "{}", now),
+                    ).lastrowid
+                    correct = conn.execute(
+                        """INSERT INTO marketplace_products
+                           (account_id,external_product_id,offer_id,sku,barcode,name,payload_json,updated_at)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (account_id, "good", "КДШВН-1/98", "2383102410", "", "Костюм", "{}", now),
+                    ).lastrowid
+                    for product_id, name in ((first, "Неверный"), (correct, "Костюм трикотажный детский")):
+                        conn.execute(
+                            """INSERT INTO marketplace_production_links
+                               (marketplace_product_id,production_product_name,production_size,production_color,status,source,updated_at)
+                               VALUES (?,?,?,?,?,?,?)""",
+                            (product_id, name, "98", "бежевый", "linked", "test", now),
+                        )
+                    shipment_id = conn.execute(
+                        """INSERT INTO warehouse_shipments
+                           (number,status,created_at,updated_at) VALUES (?,?,?,?)""",
+                        ("MP-TEST", "WAITING_RESERVATION", now, now),
+                    ).lastrowid
+                    item_id = conn.execute(
+                        """INSERT INTO warehouse_shipment_items
+                           (shipment_id,marketplace_product_id,product_key,article,name,size,color,quantity)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (shipment_id, first, "КДШВН-1/98", "КДШВН-1/98", "Костюм", "98", "бежевый", 2),
+                    ).lastrowid
+                    item = conn.execute("SELECT * FROM warehouse_shipment_items WHERE id=?", (item_id,)).fetchone()
+                    key = marketplaces._shipment_item_product_key(conn, item)
+
+            self.assertEqual(key["product_name"], "Костюм трикотажный детский")
+
     def test_product_group_uses_article_and_name_without_variant_split(self):
         self.assertEqual(
             marketplaces.product_group_for("Брюки со стрелками детские", "BR-122-СИНИЕ"),
