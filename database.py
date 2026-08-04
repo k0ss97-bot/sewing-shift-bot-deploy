@@ -8282,25 +8282,28 @@ def apply_kurasova_brownie_contour_migration():
     # by one as one of the two tasks may already have been safely cancelled by
     # the administrator.
     reset = []
-    for employee_name in (
+    employee_names = (
         "Курасова Наталия Валерьевна",
         "Курасова Наталья Валерьевна",
-    ):
-        for product_name in ("Кардиган детский", "Брюки со стрелками детские"):
-            rows = reset_cutting_tasks_to_contours_entry(
-                employee_name,
-                [product_name],
-                replacement_color="Брауни",
-                task_ids=[3, 4],
-            )
-            if not rows:
+    )
+    for product_name in ("Кардиган детский", "Брюки со стрелками детские"):
+        rows = reset_cutting_tasks_to_contours_entry(
+            employee_names[0],
+            [product_name],
+            replacement_color="Брауни",
+            task_ids=[3, 4],
+        )
+        if not rows:
+            for employee_name in employee_names:
                 rows = reset_cutting_tasks_to_contours_entry(
                     employee_name,
                     [product_name],
                     replacement_color="Брауни",
                 )
-            if rows:
-                reset.extend(rows)
+                if rows:
+                    break
+        if rows:
+            reset.extend(rows)
     if not reset:
         return False
     renamed = rename_fabric_stock_color(

@@ -17,22 +17,24 @@ PRODUCTS = ["Кардиган детский", "Брюки со стрелкам
 
 def main():
     reset = []
-    for employee_name in EMPLOYEES:
-        for product_name in PRODUCTS:
-            rows = reset_cutting_tasks_to_contours_entry(
-                employee_name,
-                [product_name],
-                replacement_color="Брауни",
-                task_ids=[3, 4],
-            )
-            if not rows:
+    for product_name in PRODUCTS:
+        rows = reset_cutting_tasks_to_contours_entry(
+            EMPLOYEES[0],
+            [product_name],
+            replacement_color="Брауни",
+            task_ids=[3, 4],
+        )
+        if not rows:
+            for employee_name in EMPLOYEES:
                 rows = reset_cutting_tasks_to_contours_entry(
                     employee_name,
                     [product_name],
                     replacement_color="Брауни",
                 )
-            if rows:
-                reset.extend(rows)
+                if rows:
+                    break
+        if rows:
+            reset.extend(rows)
     if not reset:
         raise SystemExit("Не найдены подходящие активные задания или откат заблокирован завершённым следующим этапом.")
 
