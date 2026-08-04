@@ -23,7 +23,14 @@ def main():
                 employee_name,
                 [product_name],
                 replacement_color="Брауни",
+                task_ids=[3, 4],
             )
+            if not rows:
+                rows = reset_cutting_tasks_to_contours_entry(
+                    employee_name,
+                    [product_name],
+                    replacement_color="Брауни",
+                )
             if rows:
                 reset.extend(rows)
     if not reset:

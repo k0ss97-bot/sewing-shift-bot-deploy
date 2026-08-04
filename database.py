@@ -8069,11 +8069,17 @@ def rollback_cutting_batch(batch_id: int, target_status: str):
     }
 
 
-def reset_cutting_tasks_to_contours_entry(employee_full_name: str, product_names: list[str], replacement_color: str = ""):
+def reset_cutting_tasks_to_contours_entry(
+    employee_full_name: str,
+    product_names: list[str],
+    replacement_color: str = "",
+    task_ids: list[int] | None = None,
+):
     """Return the named employee's latest matching tasks to contour entry."""
     employee_full_name = employee_full_name.strip()
     product_names = [name.strip() for name in product_names if name.strip()]
     replacement_color = replacement_color.strip()
+    task_ids = [int(task_id) for task_id in (task_ids or []) if int(task_id) > 0]
     if not employee_full_name or not product_names:
         return None
 
@@ -8082,18 +8088,48 @@ def reset_cutting_tasks_to_contours_entry(employee_full_name: str, product_names
     try:
         cursor.execute("BEGIN IMMEDIATE")
         placeholders = ",".join("?" for _ in product_names)
+        task_filter = ""
+        parameters = [*product_names]
+        if task_ids:
+            task_placeholders = ",".join("?" for _ in task_ids)
+            task_filter = f"AND production_tasks.id IN ({task_placeholders})"
+            parameters.extend(task_ids)
+        else:
+            task_filter = """
+              AND (
+                    assigned_employee.full_name = ?
+                    OR EXISTS (
+                        SELECT 1
+                        FROM cutting_batches AS employee_batch
+                        LEFT JOIN employees AS contour_employee
+                          ON contour_employee.id = employee_batch.contour_employee_id
+                        LEFT JOIN employees AS layout_employee
+                          ON layout_employee.id = employee_batch.layout_employee_id
+                        LEFT JOIN employees AS cutting_employee
+                          ON cutting_employee.id = employee_batch.cutting_employee_id
+                        WHERE employee_batch.production_task_id = production_tasks.id
+                          AND ? IN (
+                              contour_employee.full_name,
+                              layout_employee.full_name,
+                              cutting_employee.full_name
+                          )
+                    )
+                  )
+            """
+            parameters.extend((employee_full_name, employee_full_name))
         cursor.execute(
             f"""
             SELECT production_tasks.id, production_tasks.product_name, production_tasks.status,
                    production_tasks.assigned_employee_id
             FROM production_tasks
-            JOIN employees ON employees.id = production_tasks.assigned_employee_id
-            WHERE employees.full_name = ?
-              AND production_tasks.product_name IN ({placeholders})
+            LEFT JOIN employees AS assigned_employee
+              ON assigned_employee.id = production_tasks.assigned_employee_id
+            WHERE production_tasks.product_name IN ({placeholders})
               AND production_tasks.status IN ('active', 'contours_done', 'in_cutting')
+              {task_filter}
             ORDER BY production_tasks.id DESC
             """,
-            (employee_full_name, *product_names),
+            tuple(parameters),
         )
         selected = {}
         for row in cursor.fetchall():
@@ -8228,7 +8264,7 @@ def rename_fabric_stock_color(material_name: str, old_color: str, new_color: str
 
 def apply_kurasova_brownie_contour_migration():
     """Apply the explicitly requested one-time production correction."""
-    migration_key = "2026-08-04-kurasova-brownie-contours-v3"
+    migration_key = "2026-08-04-kurasova-brownie-contours-v4"
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -8255,7 +8291,14 @@ def apply_kurasova_brownie_contour_migration():
                 employee_name,
                 [product_name],
                 replacement_color="Брауни",
+                task_ids=[3, 4],
             )
+            if not rows:
+                rows = reset_cutting_tasks_to_contours_entry(
+                    employee_name,
+                    [product_name],
+                    replacement_color="Брауни",
+                )
             if rows:
                 reset.extend(rows)
     if not reset:

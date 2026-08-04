@@ -1251,6 +1251,56 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(colors, ["Брауни"])
         self.assertEqual(fabric_colors, ["Брауни"])
 
+    def test_contour_reset_can_target_an_exact_task_when_assignment_is_missing(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9012, "Курасова Наталия Валерьевна", "Раскройщик")
+        cutter = self.database.get_employee_by_telegram_id(9012)
+        self.database.update_employee_status(cutter[0], "active")
+        self.database.create_shift(cutter[0])
+        self.database.add_fabric_receipt("Ткань", "Капучино", 2, None)
+        created = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Брюки со стрелками детские",
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["104"],
+                "colors": ["Капучино"],
+                "fabric_rolls": {"Капучино": "1"},
+            },
+        )
+        self.assertTrue(created["ok"], created)
+        task_id = self.database.get_active_production_tasks()[0][0]
+        self.assertIsNotNone(self.database.assign_production_task(task_id, cutter[0]))
+        submitted = miniapp_server.submit_production_contours_for_telegram(
+            9012,
+            {"task_id": task_id, "quantities": {"Брюки со стрелками детские|104|Капучино": 3}},
+        )
+        self.assertTrue(submitted["ok"], submitted)
+        conn = self.database.get_db_connection()
+        conn.execute("UPDATE production_tasks SET assigned_employee_id = NULL WHERE id = ?", (task_id,))
+        conn.commit()
+        conn.close()
+
+        reset = self.database.reset_cutting_tasks_to_contours_entry(
+            "Курасова Наталия Валерьевна",
+            ["Брюки со стрелками детские"],
+            replacement_color="Брауни",
+            task_ids=[task_id],
+        )
+
+        self.assertEqual([row["task_id"] for row in reset], [task_id])
+        task = self.database.get_production_task_by_id(task_id)
+        self.assertEqual(task["status"], "active")
+        self.assertIsNone(task["assigned_employee_id"])
+        conn = self.database.get_db_connection()
+        colors = [row[0] for row in conn.execute(
+            "SELECT product_color FROM production_task_colors WHERE task_id = ?", (task_id,)
+        ).fetchall()]
+        conn.close()
+        self.assertEqual(colors, ["Брауни"])
+
     def test_admin_can_edit_writeoff_and_delete_empty_material_card(self):
         row = self.database.add_fabric_receipt("Ткань", "Брауни", 3, None)
         edited = self.database.update_fabric_stock_card(row[0], "Ткань костюмная", "Брауни", "рул", None, "Уточнение")
