@@ -8228,7 +8228,7 @@ def rename_fabric_stock_color(material_name: str, old_color: str, new_color: str
 
 def apply_kurasova_brownie_contour_migration():
     """Apply the explicitly requested one-time production correction."""
-    migration_key = "2026-08-03-kurasova-brownie-contours-v2"
+    migration_key = "2026-08-04-kurasova-brownie-contours-v3"
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -8241,11 +8241,23 @@ def apply_kurasova_brownie_contour_migration():
     if already_applied:
         return True
 
-    reset = reset_cutting_tasks_to_contours_entry(
+    # The employee card contains the spelling "Наталия" in production, while
+    # the original one-shot correction used "Наталья".  Process products one
+    # by one as one of the two tasks may already have been safely cancelled by
+    # the administrator.
+    reset = []
+    for employee_name in (
+        "Курасова Наталия Валерьевна",
         "Курасова Наталья Валерьевна",
-        ["Кардиган детский", "Брюки со стрелками детские"],
-        replacement_color="Брауни",
-    )
+    ):
+        for product_name in ("Кардиган детский", "Брюки со стрелками детские"):
+            rows = reset_cutting_tasks_to_contours_entry(
+                employee_name,
+                [product_name],
+                replacement_color="Брауни",
+            )
+            if rows:
+                reset.extend(rows)
     if not reset:
         return False
     renamed = rename_fabric_stock_color(

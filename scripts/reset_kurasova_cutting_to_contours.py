@@ -11,12 +11,21 @@ if str(ROOT) not in sys.path:
 from database import rename_fabric_stock_color, reset_cutting_tasks_to_contours_entry
 
 
-EMPLOYEE = "Курасова Наталья Валерьевна"
+EMPLOYEES = ["Курасова Наталия Валерьевна", "Курасова Наталья Валерьевна"]
 PRODUCTS = ["Кардиган детский", "Брюки со стрелками детские"]
 
 
 def main():
-    reset = reset_cutting_tasks_to_contours_entry(EMPLOYEE, PRODUCTS, replacement_color="Брауни")
+    reset = []
+    for employee_name in EMPLOYEES:
+        for product_name in PRODUCTS:
+            rows = reset_cutting_tasks_to_contours_entry(
+                employee_name,
+                [product_name],
+                replacement_color="Брауни",
+            )
+            if rows:
+                reset.extend(rows)
     if not reset:
         raise SystemExit("Не найдены подходящие активные задания или откат заблокирован завершённым следующим этапом.")
 

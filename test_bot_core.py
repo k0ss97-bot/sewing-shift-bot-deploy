@@ -1209,6 +1209,48 @@ class IsolatedDatabaseTest(unittest.TestCase):
             conn.close()
             self.assertEqual(colors, ["Брауни"])
 
+    def test_kurasova_migration_accepts_database_spelling_and_one_remaining_task(self):
+        os.environ["ADMIN_IDS"] = "9001"
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9011, "Курасова Наталия Валерьевна", "Раскройщик")
+        cutter = self.database.get_employee_by_telegram_id(9011)
+        self.database.update_employee_status(cutter[0], "active")
+        self.database.create_shift(cutter[0])
+        self.database.add_fabric_receipt("Ткань", "Капучино", 2, None)
+        created = miniapp_server.create_order_task_for_telegram(
+            9001,
+            {
+                "product_name": "Кардиган детский",
+                "task_type": "cutting",
+                "material_name": "Ткань",
+                "sizes": ["98"],
+                "colors": ["Капучино"],
+                "fabric_rolls": {"Капучино": "1"},
+            },
+        )
+        self.assertTrue(created["ok"], created)
+        task_id = self.database.get_active_production_tasks()[0][0]
+        self.assertIsNotNone(self.database.assign_production_task(task_id, cutter[0]))
+        submitted = miniapp_server.submit_production_contours_for_telegram(
+            9011,
+            {"task_id": task_id, "quantities": {"Кардиган детский|98|Капучино": 3}},
+        )
+        self.assertTrue(submitted["ok"], submitted)
+
+        self.assertTrue(self.database.apply_kurasova_brownie_contour_migration())
+        task = self.database.get_production_task_by_id(task_id)
+        self.assertEqual(task["status"], "active")
+        conn = self.database.get_db_connection()
+        colors = [row[0] for row in conn.execute(
+            "SELECT product_color FROM production_task_colors WHERE task_id = ?", (task_id,)
+        ).fetchall()]
+        fabric_colors = [row[0] for row in conn.execute(
+            "SELECT product_color FROM fabric_stock ORDER BY product_color"
+        ).fetchall()]
+        conn.close()
+        self.assertEqual(colors, ["Брауни"])
+        self.assertEqual(fabric_colors, ["Брауни"])
+
     def test_admin_can_edit_writeoff_and_delete_empty_material_card(self):
         row = self.database.add_fabric_receipt("Ткань", "Брауни", 3, None)
         edited = self.database.update_fabric_stock_card(row[0], "Ткань костюмная", "Брауни", "рул", None, "Уточнение")
