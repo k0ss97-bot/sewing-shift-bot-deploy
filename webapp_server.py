@@ -111,6 +111,7 @@ def main() -> None:
     from miniapp_server import set_marketplace_health_state, start_miniapp_server
 
     init_db()
+    marketplace_startup_migration_reason = ""
     if str(os.getenv("MARKETPLACE_PHASE1A_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from wms.migrate import migrate_all
@@ -118,7 +119,13 @@ def main() -> None:
             applied = migrate_all()
             if applied:
                 logging.info("Applied PostgreSQL migrations at startup: %s", ", ".join(applied))
-        except Exception:
+        except Exception as error:
+            error_code = str(
+                getattr(error, "sqlstate", "") or getattr(error, "pgcode", "") or "unknown"
+            ).strip()
+            marketplace_startup_migration_reason = (
+                f"migration_{error.__class__.__name__}_{error_code}"
+            )
             # The web application and local production/WMS workflows must
             # remain available during a temporary PostgreSQL outage. The
             # marketplace screen will expose its own unavailable state.
@@ -161,6 +168,8 @@ def main() -> None:
                     or result.get("status")
                     or "unknown"
                 )
+                if reason == "postgres_unavailable" and marketplace_startup_migration_reason:
+                    reason = marketplace_startup_migration_reason
                 set_marketplace_health_state(
                     supplies="ready" if bool(result.get("ok")) and projection_ok else "error",
                     reason="" if bool(result.get("ok")) and projection_ok else str(reason),
