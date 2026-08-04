@@ -57,6 +57,7 @@ from database import (
     get_cutting_batches_for_layout,
     get_cutting_batch_contour_matrix,
     get_cutting_batch_arbitrary_operations,
+    get_cutting_batch_formation_reviews,
     get_cutting_batch_result_rows,
     get_cutting_batch_owner,
     get_employee_by_telegram_id,
@@ -2209,12 +2210,20 @@ def cutting_stage_task_to_dict(stage: str, row, viewer_employee=None):
         "category": "Раскрой",
         "stage": "formation",
         "stage_title": "Формирование готового кроя",
-        "next_action": "Принять крой на склад",
+        "next_action": "Сверить и подтвердить крой",
         "product_name": product_name,
         "status": "cutting_done",
         "process_status_text": "раскрой завершён",
         "created_at": layout_date or contour_date,
         "progress": progress or 100,
+        "formation_rows": [
+            {
+                "product_size": product_size,
+                "product_color": product_color,
+                "planned_quantity": int(quantity or 0),
+            }
+            for product_size, product_color, quantity in get_cutting_batch_result_rows(batch_id)
+        ],
         "fabric_rolls": task_fabric_rolls_to_dict(production_task_id),
         "attachment": task_attachment_to_dict(production_task_id),
     }
@@ -3326,9 +3335,50 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
             return {"ok": False, "message": "Для изделия не найдена операция формирования готового кроя."}
 
         result_rows = get_cutting_batch_result_rows(batch_id)
+        expected = {
+            (str(product_size), str(product_color)): int(quantity or 0)
+            for product_size, product_color, quantity in result_rows
+        }
+        raw_review_rows = payload.get("formation_rows")
+        if not isinstance(raw_review_rows, list):
+            return {"ok": False, "message": "Проверьте каждую строку готового кроя."}
 
-        if not mark_cutting_batch_formed(batch_id, shift[0], employee[0], operation["id"]):
+        review_rows = []
+        seen = set()
+        for item in raw_review_rows:
+            if not isinstance(item, dict):
+                return {"ok": False, "message": "Проверьте каждую строку готового кроя."}
+            product_size = str(item.get("product_size") or "").strip()
+            product_color = str(item.get("product_color") or "").strip()
+            key = (product_size, product_color)
+            if key not in expected or key in seen:
+                return {"ok": False, "message": "Состав готового кроя изменился. Обновите задание и проверьте строки заново."}
+            try:
+                defect_quantity = int(item.get("defect_quantity") or 0)
+            except (TypeError, ValueError):
+                return {"ok": False, "message": f"Укажите целое количество брака: размер {product_size}, цвет {product_color}."}
+            if defect_quantity < 0 or defect_quantity > expected[key]:
+                return {"ok": False, "message": f"Брак должен быть от 0 до {expected[key]}: размер {product_size}, цвет {product_color}."}
+            defect_comment = str(item.get("defect_comment") or "").strip()
+            if defect_quantity > 0 and not defect_comment:
+                return {"ok": False, "message": f"Добавьте комментарий к браку: размер {product_size}, цвет {product_color}."}
+            seen.add(key)
+            review_rows.append({
+                "product_size": product_size,
+                "product_color": product_color,
+                "defect_quantity": defect_quantity,
+                "defect_comment": defect_comment,
+            })
+
+        if seen != set(expected):
+            return {"ok": False, "message": "Проверьте каждую строку готового кроя."}
+
+        if not mark_cutting_batch_formed(batch_id, shift[0], employee[0], operation["id"], review_rows):
             return {"ok": False, "message": "Готовый крой уже недоступен."}
+
+        saved_review = get_cutting_batch_formation_reviews(batch_id)
+        good_quantity = sum(int(row["good_quantity"] or 0) for row in saved_review)
+        defect_quantity = sum(int(row["defect_quantity"] or 0) for row in saved_review)
 
         add_edit_log(
             telegram_id,
@@ -3336,12 +3386,12 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
             "Сформировал готовый крой из миниаппа",
             "cutting_batch",
             batch_id,
-            f"На склад передано строк: {len([row for row in result_rows if row[2] > 0])}",
+            f"Строк сверено: {len(saved_review)}; годно: {good_quantity}; брак: {defect_quantity}",
         )
 
         return {
             "ok": True,
-            "message": "Готовый крой принят на склад.",
+            "message": "Готовый крой подтверждён. Следующие задания созданы по годному количеству.",
             "production": get_production_state_for_telegram(telegram_id),
         }
 

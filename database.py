@@ -2107,6 +2107,26 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cutting_batch_formation_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            product_size TEXT NOT NULL,
+            product_color TEXT NOT NULL,
+            planned_quantity INTEGER NOT NULL,
+            good_quantity INTEGER NOT NULL,
+            defect_quantity INTEGER NOT NULL DEFAULT 0,
+            defect_comment TEXT NOT NULL DEFAULT '',
+            shift_id INTEGER,
+            employee_id INTEGER,
+            created_at TEXT NOT NULL,
+            UNIQUE(batch_id, product_size, product_color),
+            FOREIGN KEY (batch_id) REFERENCES cutting_batches (id),
+            FOREIGN KEY (shift_id) REFERENCES shifts (id),
+            FOREIGN KEY (employee_id) REFERENCES employees (id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS fabric_stock (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             material_name TEXT NOT NULL,
@@ -2679,6 +2699,7 @@ def init_db():
     )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batch_matrix_batch ON cutting_batch_matrix (batch_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_batch_arbitrary_batch ON cutting_batch_arbitrary_operations (batch_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cutting_formation_reviews_batch ON cutting_batch_formation_reviews (batch_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_date ON feedback_entries (feedback_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_entries_employee_date ON feedback_entries (employee_id, feedback_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batches_status_step ON route_batches (status, route_step_index)")
@@ -7136,7 +7157,13 @@ def _get_cutting_batch_result_rows(cursor, batch_id: int):
     ]
 
 
-def _create_preparation_route_batches_for_layout(cursor, batch_id: int, employee_id: int | None, now_text: str):
+def _create_preparation_route_batches_for_formed_cut(
+    cursor,
+    batch_id: int,
+    employee_id: int | None,
+    now_text: str,
+    result_rows: list[tuple[str, str, int]],
+):
     from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 
     cursor.execute(
@@ -7161,7 +7188,6 @@ def _create_preparation_route_batches_for_layout(cursor, batch_id: int, employee
     if not product_name or not route_steps:
         return []
 
-    result_rows = _get_cutting_batch_result_rows(cursor, batch_id)
     grouped_tasks = {}
 
     for step_index, route_step in enumerate(route_steps[len(CUTTING_ROUTE):], start=len(CUTTING_ROUTE)):
@@ -7411,8 +7437,6 @@ def add_cutting_layout(
                 ],
             )
 
-    preparation_batch_ids = _create_preparation_route_batches_for_layout(cursor, batch_id, employee_id, now_text)
-
     cursor.execute("SELECT production_task_id FROM cutting_batches WHERE id = ?", (batch_id,))
     task_row = cursor.fetchone()
 
@@ -7440,7 +7464,6 @@ def add_cutting_layout(
         details={
             "color_layers": color_layers,
             "arbitrary_operations": normalized_arbitrary_operations,
-            "preparation_batch_ids": preparation_batch_ids,
         },
         request_key=f"cutting-batch:{batch_id}:layout",
         created_at=now_text,
@@ -7620,6 +7643,36 @@ def get_cutting_batch_result_rows(batch_id: int):
     return rows
 
 
+def get_cutting_batch_formation_reviews(batch_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT product_size, product_color, planned_quantity, good_quantity,
+               defect_quantity, defect_comment, employee_id, created_at
+        FROM cutting_batch_formation_reviews
+        WHERE batch_id = ?
+        ORDER BY CAST(product_size AS INTEGER), product_size, product_color
+        """,
+        (batch_id,),
+    )
+    rows = [
+        {
+            "product_size": row[0],
+            "product_color": row[1],
+            "planned_quantity": int(row[2] or 0),
+            "good_quantity": int(row[3] or 0),
+            "defect_quantity": int(row[4] or 0),
+            "defect_comment": row[5] or "",
+            "employee_id": row[6],
+            "created_at": row[7] or "",
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return rows
+
+
 def get_cutting_batch_owner(batch_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -7645,31 +7698,113 @@ def get_cutting_batch_owner(batch_id: int):
     }
 
 
-def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, operation_id: int):
+def _normalize_cutting_formation_review(cursor, batch_id: int, review_rows):
+    expected_rows = _get_cutting_batch_result_rows(cursor, batch_id)
+    expected = {
+        (str(product_size), str(product_color)): int(quantity or 0)
+        for product_size, product_color, quantity in expected_rows
+    }
+    if not expected or not isinstance(review_rows, list):
+        return None
+
+    provided = {}
+    for item in review_rows:
+        if not isinstance(item, dict):
+            return None
+        key = (
+            str(item.get("product_size") or "").strip(),
+            str(item.get("product_color") or "").strip(),
+        )
+        if key not in expected or key in provided:
+            return None
+        try:
+            defect_quantity = int(item.get("defect_quantity") or 0)
+        except (TypeError, ValueError):
+            return None
+        defect_comment = str(item.get("defect_comment") or "").strip()
+        if defect_quantity < 0 or defect_quantity > expected[key]:
+            return None
+        if defect_quantity > 0 and not defect_comment:
+            return None
+        provided[key] = (defect_quantity, defect_comment)
+
+    if set(provided) != set(expected):
+        return None
+
+    return [
+        (
+            product_size,
+            product_color,
+            planned_quantity,
+            planned_quantity - provided[(product_size, product_color)][0],
+            provided[(product_size, product_color)][0],
+            provided[(product_size, product_color)][1],
+        )
+        for (product_size, product_color), planned_quantity in expected.items()
+    ]
+
+
+def mark_cutting_batch_formed(
+    batch_id: int,
+    shift_id: int,
+    employee_id: int,
+    operation_id: int,
+    review_rows: list[dict],
+):
     conn = get_db_connection()
     cursor = conn.cursor()
 
     now = local_now()
     now_text = now.isoformat()
 
-    cursor.execute(
-        """
-        UPDATE cutting_batches
-        SET status = 'formed',
-            formed_shift_id = ?,
-            formed_operation_id = ?,
-            formed_employee_id = ?,
-            formed_date = ?,
-            updated_at = ?
-        WHERE id = ?
-          AND status = 'cutting_done'
-        """,
-        (shift_id, operation_id, employee_id, now.date().isoformat(), now_text, batch_id)
-    )
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        reviewed_rows = _normalize_cutting_formation_review(cursor, batch_id, review_rows)
+        if reviewed_rows is None:
+            raise ValueError("invalid cutting formation review")
 
-    changed = cursor.rowcount > 0
+        cursor.execute(
+            """
+            UPDATE cutting_batches
+            SET status = 'formed',
+                formed_shift_id = ?,
+                formed_operation_id = ?,
+                formed_employee_id = ?,
+                formed_date = ?,
+                updated_at = ?
+            WHERE id = ?
+              AND status = 'cutting_done'
+            """,
+            (shift_id, operation_id, employee_id, now.date().isoformat(), now_text, batch_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("cutting batch changed")
 
-    if changed:
+        cursor.executemany(
+            """
+            INSERT INTO cutting_batch_formation_reviews (
+                batch_id, product_size, product_color, planned_quantity,
+                good_quantity, defect_quantity, defect_comment,
+                shift_id, employee_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    batch_id,
+                    product_size,
+                    product_color,
+                    planned_quantity,
+                    good_quantity,
+                    defect_quantity,
+                    defect_comment,
+                    shift_id,
+                    employee_id,
+                    now_text,
+                )
+                for product_size, product_color, planned_quantity, good_quantity, defect_quantity, defect_comment in reviewed_rows
+            ],
+        )
+
         cursor.execute(
             """
             SELECT
@@ -7694,7 +7829,17 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
         task_due_date = task_row[5] if task_row and task_row[5] else ""
 
         if task_id is not None:
-            result_rows = _get_cutting_batch_result_rows(cursor, batch_id)
+            result_rows = [
+                (product_size, product_color, good_quantity)
+                for product_size, product_color, _planned_quantity, good_quantity, _defect_quantity, _defect_comment in reviewed_rows
+            ]
+            preparation_batch_ids = _create_preparation_route_batches_for_formed_cut(
+                cursor,
+                batch_id,
+                employee_id,
+                now_text,
+                result_rows,
+            )
             ready_for_position = get_first_production_position(batch_product_name)
             stage_name = "Раскроенные"
 
@@ -7854,14 +7999,36 @@ def mark_cutting_batch_formed(batch_id: int, shift_id: int, employee_id: int, op
                 actor_employee_id=employee_id,
                 shift_id=shift_id,
                 operation_name="Формирование кроя",
-                quantity=sum(int(row[2] or 0) for row in result_rows),
+                quantity=sum(int(row[2] or 0) for row in reviewed_rows),
+                good_quantity=sum(int(row[3] or 0) for row in reviewed_rows),
+                defect_quantity=sum(int(row[4] or 0) for row in reviewed_rows),
+                reason="Брак готового кроя" if any(int(row[4] or 0) > 0 for row in reviewed_rows) else "",
+                details={
+                    "formation_review": [
+                        {
+                            "product_size": row[0],
+                            "product_color": row[1],
+                            "planned_quantity": row[2],
+                            "good_quantity": row[3],
+                            "defect_quantity": row[4],
+                            "defect_comment": row[5],
+                        }
+                        for row in reviewed_rows
+                    ],
+                    "preparation_batch_ids": preparation_batch_ids,
+                },
                 request_key=f"cutting-batch:{batch_id}:formed",
                 created_at=now_text,
             )
 
-    conn.commit()
+        conn.commit()
+    except (sqlite3.Error, TypeError, ValueError):
+        conn.rollback()
+        conn.close()
+        return False
+
     conn.close()
-    return changed
+    return True
 
 
 def get_admin_cutting_batches(limit: int = 50):
@@ -8384,6 +8551,86 @@ def apply_kurasova_brownie_contour_migration():
     conn.commit()
     conn.close()
     return True
+
+
+def apply_ready_cut_confirmation_migration():
+    """Cancel only untouched preparation tasks created before ready-cut review existed."""
+    migration_key = "2026-08-04-ready-cut-confirmation-v1"
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now_text = local_now().isoformat()
+    cancelled_ids = []
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(
+            "CREATE TABLE IF NOT EXISTS business_data_migrations (migration_key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        cursor.execute("SELECT 1 FROM business_data_migrations WHERE migration_key = ?", (migration_key,))
+        if cursor.fetchone() is not None:
+            conn.commit()
+            conn.close()
+            return {"applied": False, "cancelled_ids": []}
+
+        cursor.execute(
+            """
+            SELECT rb.id, rb.product_name, rb.route_step_index, rb.route_snapshot,
+                   rb.source_cutting_batch_id
+            FROM route_batches rb
+            JOIN cutting_batches cb ON cb.id = rb.source_cutting_batch_id
+            WHERE rb.status = 'active'
+              AND COALESCE(rb.work_state, 'free') = 'free'
+              AND rb.assigned_employee_id IS NULL
+              AND cb.status IN ('contours_done', 'layout_done', 'cutting_in_progress', 'cutting_done')
+            ORDER BY rb.id
+            """
+        )
+        for route_batch_id, product_name, route_step_index, route_snapshot, cutting_batch_id in cursor.fetchall():
+            steps = route_steps_from_snapshot(route_snapshot, product_name)
+            if route_step_index < 0 or route_step_index >= len(steps):
+                continue
+            operation_name = str(steps[route_step_index].get("operation") or "")
+            if not is_auto_preparation_operation(operation_name):
+                continue
+            cursor.execute(
+                """
+                UPDATE route_batches
+                SET status = 'cancelled', work_state = 'cancelled',
+                    blocked_reason = 'Ожидает подтверждения готового кроя',
+                    completed_at = ?, updated_at = ?, last_activity_at = ?
+                WHERE id = ? AND status = 'active'
+                  AND COALESCE(work_state, 'free') = 'free'
+                  AND assigned_employee_id IS NULL
+                """,
+                (now_text, now_text, now_text, route_batch_id),
+            )
+            if cursor.rowcount != 1:
+                continue
+            cancelled_ids.append(int(route_batch_id))
+            _record_production_event(
+                cursor,
+                "early_preparation_cancelled",
+                batch_id=route_batch_id,
+                cutting_batch_id=cutting_batch_id,
+                operation_name=operation_name,
+                reason="Ожидает подтверждения готового кроя",
+                details={"migration_key": migration_key},
+                request_key=f"{migration_key}:route-batch:{route_batch_id}",
+                created_at=now_text,
+            )
+
+        cursor.execute(
+            "INSERT INTO business_data_migrations (migration_key, applied_at) VALUES (?, ?)",
+            (migration_key, now_text),
+        )
+        conn.commit()
+    except (sqlite3.Error, TypeError, ValueError):
+        conn.rollback()
+        conn.close()
+        return None
+
+    conn.close()
+    return {"applied": True, "cancelled_ids": cancelled_ids}
 
 
 def admin_update_cutting_batch_progress(batch_id: int, progress: int):

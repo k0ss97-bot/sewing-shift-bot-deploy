@@ -2087,6 +2087,66 @@ MINIAPP_HTML = """<!doctype html>
       box-shadow: 0 0 0 3px rgba(25,89,243,.12);
     }
 
+    .cutting-formation-row {
+      display: grid;
+      grid-template-columns: minmax(150px, 1.25fr) minmax(90px, .55fr) minmax(90px, .55fr) minmax(170px, 1fr);
+      gap: 10px;
+      align-items: end;
+      padding: 13px;
+    }
+
+    .cutting-formation-meta b,
+    .cutting-formation-field label {
+      display: block;
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .cutting-formation-meta span,
+    .cutting-formation-field label {
+      color: var(--muted);
+    }
+
+    .cutting-formation-meta span {
+      display: block;
+      margin-top: 5px;
+      font-size: 12px;
+    }
+
+    .cutting-formation-field {
+      display: grid;
+      gap: 5px;
+    }
+
+    .cutting-formation-field input {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid rgba(109,124,158,.16);
+      border-radius: 12px;
+      background: rgba(255,255,255,.9);
+      padding: 0 10px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      outline: none;
+    }
+
+    .cutting-formation-field input:disabled {
+      opacity: .55;
+    }
+
+    .cutting-formation-good {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      padding: 0 11px;
+      border-radius: 12px;
+      background: rgba(34,197,94,.1);
+      color: #16823d;
+      font-size: 15px;
+      font-weight: 800;
+    }
+
     .arbitrary-operation-card {
       display: grid;
       gap: 12px;
@@ -2158,6 +2218,15 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     @media (max-width: 680px) {
+      .cutting-formation-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .cutting-formation-meta,
+      .cutting-formation-comment {
+        grid-column: 1 / -1;
+      }
+
       .arbitrary-operation-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
@@ -7871,7 +7940,7 @@ MINIAPP_HTML = """<!doctype html>
       state.selectedReportTaskKey = taskIdentity(selectedTask);
       state.selectedCuttingReportTaskKey = taskIdentity(selectedCuttingTask);
       mainButton.textContent = state.reportSection === "work" && (selectedCuttingTask || selectedTask)
-        ? (selectedCuttingTask ? "Выполнить этап" : (selectedTask.can_complete ? "Выполнить задание" : "Продолжить задание"))
+        ? (selectedCuttingTask ? (selectedCuttingTask.stage === "formation" ? "Подтвердить готовый крой" : "Выполнить этап") : (selectedTask.can_complete ? "Выполнить задание" : "Продолжить задание"))
         : "Обновить отчёт";
       mainButton.disabled = false;
 
@@ -7895,7 +7964,7 @@ MINIAPP_HTML = """<!doctype html>
             ${selectedCuttingTask ? `
               <div class="section-title"><b>Выполнение этапа</b><span>${escapeHtml(selectedCuttingTask.next_action || "")}</span></div>
               ${renderCuttingStageDetail(selectedCuttingTask)}
-              <div class="button-row"><button class="small-button" data-report-action="complete-cutting-stage">Выполнить этап</button></div>
+              <div class="button-row"><button class="small-button" data-report-action="complete-cutting-stage">${selectedCuttingTask.stage === "formation" ? "Подтвердить готовый крой" : "Выполнить этап"}</button></div>
             ` : ""}
           `;
           return;
@@ -9109,9 +9178,26 @@ MINIAPP_HTML = """<!doctype html>
         `;
       }
 
+      const formationRows = (current.formation_rows || []).map((row) => {
+        const rowKey = `${row.product_size}|${row.product_color}`;
+        const rawDefect = (draft.formation_defects || {})[rowKey] ?? 0;
+        const defect = Math.max(0, Math.min(Number(row.planned_quantity || 0), Number(rawDefect || 0)));
+        const comment = (draft.formation_comments || {})[rowKey] || "";
+        return `
+          <div class="card cutting-formation-row" data-formation-row data-formation-size="${escapeHtml(row.product_size)}" data-formation-color="${escapeHtml(row.product_color)}" data-formation-total="${escapeHtml(row.planned_quantity)}">
+            <div class="cutting-formation-meta"><b>Размер ${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color)}</b><span>Раскроено: ${escapeHtml(row.planned_quantity)} шт.</span></div>
+            <div class="cutting-formation-field"><label>Брак, шт.</label><input data-formation-defect type="number" inputmode="numeric" min="0" max="${escapeHtml(row.planned_quantity)}" step="1" value="${escapeHtml(rawDefect)}"></div>
+            <div class="cutting-formation-field"><label>Годно, шт.</label><div class="cutting-formation-good" data-formation-good>${escapeHtml(Number(row.planned_quantity || 0) - defect)}</div></div>
+            <div class="cutting-formation-field cutting-formation-comment"><label>Комментарий к браку</label><input data-formation-comment type="text" maxlength="300" placeholder="Причина брака" value="${escapeHtml(comment)}" ${defect > 0 ? "" : "disabled"}></div>
+          </div>
+        `;
+      }).join("");
+
       return `
         <div class="card order-detail">
           <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">4 этап</span></div>
+          <div class="task-note"><b>Сверьте готовый крой</b><br>Укажите брак отдельно по каждому размеру и цвету. При браке комментарий обязателен.</div>
+          <div class="op-list">${formationRows || itemEmpty("Нет строк готового кроя.")}</div>
         </div>
         ${renderTaskFabricRolls(current)}
         ${renderTaskAttachment(current.attachment)}
@@ -9165,6 +9251,15 @@ MINIAPP_HTML = """<!doctype html>
       if (current.stage === "cutting") {
         const progress = document.getElementById("cuttingProgress");
         payload.progress = progress ? progress.value : "100";
+      }
+
+      if (current.stage === "formation") {
+        payload.formation_rows = [...document.querySelectorAll("[data-formation-row]")].map((row) => ({
+          product_size: row.dataset.formationSize || "",
+          product_color: row.dataset.formationColor || "",
+          defect_quantity: row.querySelector("[data-formation-defect]")?.value || "0",
+          defect_comment: row.querySelector("[data-formation-comment]")?.value || "",
+        }));
       }
 
       mainButton.disabled = true;
@@ -14323,7 +14418,7 @@ MINIAPP_HTML = """<!doctype html>
       const cuttingTasks = getMyCuttingTasks();
       const cuttingTask = cuttingTasks[state.selectedCuttingReportTask] || cuttingTasks[0];
 
-      if (cuttingTask && (event.target.matches("[data-contour-key]") || event.target.matches("[data-layer-color]") || event.target.matches("[data-arbitrary-size], [data-arbitrary-color], [data-arbitrary-parts], [data-arbitrary-layers]") || event.target.id === "cuttingProgress")) {
+      if (cuttingTask && (event.target.matches("[data-contour-key]") || event.target.matches("[data-layer-color]") || event.target.matches("[data-arbitrary-size], [data-arbitrary-color], [data-arbitrary-parts], [data-arbitrary-layers]") || event.target.matches("[data-formation-defect], [data-formation-comment]") || event.target.id === "cuttingProgress")) {
         const key = cuttingDraftKey(cuttingTask);
         const draft = state.cuttingStageDrafts[key] || {};
         if (event.target.dataset.contourKey) {
@@ -14336,6 +14431,24 @@ MINIAPP_HTML = """<!doctype html>
         }
         if (event.target.closest("[data-arbitrary-row]")) {
           draft.arbitrary_operations = readCuttingArbitraryRowsFromDom();
+        }
+        const formationRow = event.target.closest("[data-formation-row]");
+        if (formationRow) {
+          const formationKey = `${formationRow.dataset.formationSize || ""}|${formationRow.dataset.formationColor || ""}`;
+          draft.formation_defects = draft.formation_defects || {};
+          draft.formation_comments = draft.formation_comments || {};
+          if (event.target.matches("[data-formation-defect]")) {
+            draft.formation_defects[formationKey] = event.target.value;
+            const total = Number(formationRow.dataset.formationTotal || 0);
+            const defect = Math.max(0, Math.min(total, Number(event.target.value || 0)));
+            const good = formationRow.querySelector("[data-formation-good]");
+            const comment = formationRow.querySelector("[data-formation-comment]");
+            if (good) good.textContent = String(total - defect);
+            if (comment) comment.disabled = defect <= 0;
+          }
+          if (event.target.matches("[data-formation-comment]")) {
+            draft.formation_comments[formationKey] = event.target.value;
+          }
         }
         if (event.target.id === "cuttingProgress") draft.progress = event.target.value;
         state.cuttingStageDrafts[key] = draft;

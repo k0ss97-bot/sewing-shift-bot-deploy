@@ -4174,67 +4174,13 @@ async def select_cutting_batch(message: Message, state: FSMContext, selected_num
         return
 
     if cutting_mode == CUTTING_MODE_FORM:
-        result_rows = get_cutting_batch_result_rows(batch["id"])
-
-        if not result_rows:
-            await message.answer("По этой партии нет расчёта размеров и цветов.", reply_markup=report_keyboard())
-            await state.clear()
-            return
-
-        marked = mark_cutting_batch_formed(
-            batch["id"],
-            data["shift_id"],
-            data["employee_id"],
-            data["operation_id"],
-        )
-
-        if not marked:
-            await message.answer("Эту партию уже сформировали или она недоступна.", reply_markup=report_keyboard())
-            await state.clear()
-            return
-
-        created_route_batches = create_route_batches_from_cutting_result(
-            batch["product_name"],
-            result_rows,
-            data["employee_id"],
-        )
-
-        added_count = 0
-        for product_size, product_color, quantity in result_rows:
-            add_shift_operation(
-                data["shift_id"],
-                data["employee_id"],
-                data["operation_id"],
-                product_size,
-                product_color,
-                quantity,
-            )
-            added_count += 1
-
-        add_edit_log(
-            get_message_actor_id(message),
-            "employee",
-            "Сформировал готовый крой",
-            "shift",
-            data["shift_id"],
-            f"{data['operation_name']}, партия {batch['id']}, строк добавлено: {added_count}",
-        )
-
-        report = get_shift_report(data["shift_id"])
-        text = (
-            f"Готовый крой сформирован. Строк добавлено: {added_count}\n\n"
-            "Расчёт партии:\n"
-            f"{format_cutting_batch_result(result_rows)}\n"
-            f"Маршрутных партий создано: {len(created_route_batches)}\n\n"
-            "Текущий отчёт за смену:\n\n"
-        )
-
-        for index, row in enumerate(report, start=1):
-            name, product_size, product_color, qty, unit = row
-            text += f"{index}. {format_operation_line(name, product_size, product_color, qty, unit)}\n"
-
         await state.clear()
-        await send_long_text(message, text, reply_markup=report_keyboard())
+        await message.answer(
+            "Формирование готового кроя выполняется в мини-приложении: "
+            "там нужно сверить каждый размер и цвет и указать брак.",
+            reply_markup=report_keyboard(),
+        )
+        return
 
 
 @dp.message(Report.waiting_for_batch)

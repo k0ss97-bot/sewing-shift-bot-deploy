@@ -786,16 +786,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
             )
         )
         self.assertEqual(self.database.get_production_task_by_id(task["id"])["status"], "in_cutting")
-        preparation_batches = self.database.get_active_route_batches()
+        self.assertEqual(self.database.get_active_route_batches(), [])
         elastic_step_index = self.route_step_index("Шорты", "Шорты — резинка 25 мм", "Упаковщик")
-        self.assertEqual({batch["route_step_index"] for batch in preparation_batches}, {elastic_step_index})
-        self.assertEqual(
-            sorted((batch["product_size"], batch["product_color"], batch["quantity"]) for batch in preparation_batches),
-            [
-                ("80 (43 см)", "Черный", 14),
-                ("92 (45 см)", "Черный", 9),
-            ],
-        )
 
         self.assertTrue(self.database.update_cutting_batch_progress(batch_id, 1, 1, 1, 100))
         self.assertEqual(
@@ -807,8 +799,41 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ],
         )
 
-        self.assertTrue(self.database.mark_cutting_batch_formed(batch_id, 1, 1, 1))
+        review_rows = [
+            {"product_size": "80", "product_color": "Бежевый", "defect_quantity": 1, "defect_comment": "Повреждена деталь"},
+            {"product_size": "80", "product_color": "Синий", "defect_quantity": 0, "defect_comment": ""},
+            {"product_size": "92", "product_color": "Бежевый", "defect_quantity": 0, "defect_comment": ""},
+        ]
+        self.assertTrue(self.database.mark_cutting_batch_formed(batch_id, 1, 1, 1, review_rows))
         self.assertEqual(self.database.get_production_task_by_id(task["id"])["status"], "formed")
+        self.assertEqual(
+            self.database.get_cutting_batch_formation_reviews(batch_id),
+            [
+                {
+                    "product_size": "80", "product_color": "Бежевый", "planned_quantity": 6,
+                    "good_quantity": 5, "defect_quantity": 1, "defect_comment": "Повреждена деталь",
+                    "employee_id": 1, "created_at": self.database.get_cutting_batch_formation_reviews(batch_id)[0]["created_at"],
+                },
+                {
+                    "product_size": "80", "product_color": "Синий", "planned_quantity": 8,
+                    "good_quantity": 8, "defect_quantity": 0, "defect_comment": "",
+                    "employee_id": 1, "created_at": self.database.get_cutting_batch_formation_reviews(batch_id)[1]["created_at"],
+                },
+                {
+                    "product_size": "92", "product_color": "Бежевый", "planned_quantity": 9,
+                    "good_quantity": 9, "defect_quantity": 0, "defect_comment": "",
+                    "employee_id": 1, "created_at": self.database.get_cutting_batch_formation_reviews(batch_id)[2]["created_at"],
+                },
+            ],
+        )
+        preparation_batches = [
+            batch for batch in self.database.get_active_route_batches()
+            if batch["route_step_index"] == elastic_step_index
+        ]
+        self.assertEqual(
+            sorted((batch["product_size"], batch["product_color"], batch["quantity"]) for batch in preparation_batches),
+            [("80 (43 см)", "Черный", 13), ("92 (45 см)", "Черный", 9)],
+        )
 
         conn = sqlite3.connect(self.database.DB_NAME)
         cursor = conn.cursor()
@@ -824,7 +849,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(
             cursor.fetchall(),
             [
-                ("80", "Бежевый", 2, 6),
+                ("80", "Бежевый", 2, 5),
                 ("92", "Бежевый", 3, 9),
                 ("80", "Синий", 4, 8),
                 ("92", "Синий", 0, 0),
@@ -838,7 +863,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 for row in warehouse_rows
             },
             {
-                ("80", "Бежевый", 6, "Раскроенные", "Швея"),
+                ("80", "Бежевый", 5, "Раскроенные", "Швея"),
                 ("92", "Бежевый", 9, "Раскроенные", "Швея"),
                 ("80", "Синий", 8, "Раскроенные", "Швея"),
             },
@@ -855,7 +880,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(
             cursor.fetchall(),
             [
-                ("80", "Бежевый", 6, "receipt", "cutting_batch", batch_id),
+                ("80", "Бежевый", 5, "receipt", "cutting_batch", batch_id),
                 ("92", "Бежевый", 9, "receipt", "cutting_batch", batch_id),
                 ("80", "Синий", 8, "receipt", "cutting_batch", batch_id),
             ],
@@ -923,7 +948,13 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(arbitrary_shift_quantity, 5)
 
         self.assertTrue(self.database.update_cutting_batch_progress(batch_id, 1, 1, 1, 100))
-        self.assertTrue(self.database.mark_cutting_batch_formed(batch_id, 1, 1, 1))
+        self.assertTrue(self.database.mark_cutting_batch_formed(
+            batch_id, 1, 1, 1,
+            [
+                {"product_size": size, "product_color": color, "defect_quantity": 0, "defect_comment": ""}
+                for size, color, _quantity in self.database.get_cutting_batch_result_rows(batch_id)
+            ],
+        ))
         conn = sqlite3.connect(self.database.DB_NAME)
         formed = conn.execute(
             "SELECT formed_quantity FROM production_task_items WHERE task_id = ? AND product_size = '92' AND product_color = 'Бежевый'",
@@ -932,7 +963,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         conn.close()
         self.assertEqual(formed, 14)
 
-    def test_layout_creates_only_dublerin_before_dubling(self):
+    def test_formation_creates_only_dublerin_before_dubling(self):
         task = self.database.create_production_task(
             "Жакет для девочек",
             ["98"],
@@ -957,10 +988,19 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 {"Черный": 2},
             )
         )
+        self.assertEqual(self.database.get_active_route_batches(), [])
+        self.assertTrue(self.database.update_cutting_batch_progress(batch_id, 1, 1, 1, 100))
+        self.assertTrue(self.database.mark_cutting_batch_formed(
+            batch_id, 1, 1, 1,
+            [{"product_size": "98", "product_color": "Черный", "defect_quantity": 0, "defect_comment": ""}],
+        ))
 
         dublerin_index = self.route_step_index("Жакет для девочек", "Жакеты — дублерин 80 мм", "Упаковщик")
         dubling_index = self.route_step_index("Жакет для девочек", "Жакет для девочек — Дублирование", "Упаковщик")
-        preparation_batches = self.database.get_active_route_batches()
+        preparation_batches = [
+            batch for batch in self.database.get_active_route_batches()
+            if batch["route_step_index"] == dublerin_index
+        ]
 
         self.assertEqual(
             sorted((batch["route_step_index"], batch["product_size"], batch["product_color"], batch["quantity"]) for batch in preparation_batches),
@@ -977,6 +1017,12 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 task["id"], product_name, 1, 1, 1, {(size, "Черный"): 5}
             )
             self.assertTrue(self.database.add_cutting_layout(batch_id, 1, 1, 1, {"Черный": 2}))
+            self.assertFalse(any(batch["source_cutting_batch_id"] == batch_id for batch in self.database.get_active_route_batches()))
+            self.assertTrue(self.database.update_cutting_batch_progress(batch_id, 1, 1, 1, 100))
+            self.assertTrue(self.database.mark_cutting_batch_formed(
+                batch_id, 1, 1, 1,
+                [{"product_size": size, "product_color": "Черный", "defect_quantity": 0, "defect_comment": ""}],
+            ))
             dublerin_index = self.route_step_index(product_name, "Кардиганы — дублерин 25 мм", "Упаковщик")
             expected.extend([
                 (product_name, dublerin_index, f"{size} (100 см)", "Черный", 20),
@@ -1004,12 +1050,59 @@ class IsolatedDatabaseTest(unittest.TestCase):
             {("98", "Брауни"): 2, ("98", "Черный"): 2},
         )
         self.assertTrue(self.database.add_cutting_layout(batch_id, 1, 1, 1, {"Брауни": 2, "Черный": 2}))
+        self.assertEqual(self.database.get_active_route_batches(), [])
+        self.assertTrue(self.database.update_cutting_batch_progress(batch_id, 1, 1, 1, 100))
+        self.assertTrue(self.database.mark_cutting_batch_formed(
+            batch_id, 1, 1, 1,
+            [
+                {"product_size": "98", "product_color": color, "defect_quantity": 0, "defect_comment": ""}
+                for color in ("Брауни", "Черный")
+            ],
+        ))
 
         dublerin_index = self.route_step_index("Кардиган", "Кардиганы — дублерин 25 мм", "Упаковщик")
         batches = self.database.get_active_route_batches()
         dublerin_rows = [row for row in batches if row["route_step_index"] == dublerin_index]
         self.assertEqual([(row["product_size"], row["product_color"], row["quantity"]) for row in dublerin_rows], [("98 (100 см)", "Черный", 16)])
         self.assertFalse(any(row["route_step_index"] == dublerin_index + 1 for row in batches))
+
+    def test_ready_cut_migration_cancels_only_untouched_early_preparation(self):
+        task = self.database.create_production_task("Шорты", ["80"], ["Черный"], None)
+        batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"], "Шорты", 1, 1, 1, {("80", "Черный"): 5},
+        )
+        self.assertTrue(self.database.add_cutting_layout(batch_id, 1, 1, 1, {"Черный": 2}))
+
+        conn = self.database.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        early_ids = self.database._create_preparation_route_batches_for_formed_cut(
+            cursor,
+            batch_id,
+            1,
+            self.database.local_now().isoformat(),
+            self.database._get_cutting_batch_result_rows(cursor, batch_id),
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(early_ids)
+
+        migrated = self.database.apply_ready_cut_confirmation_migration()
+        self.assertTrue(migrated["applied"])
+        self.assertEqual(migrated["cancelled_ids"], early_ids)
+        self.assertEqual(self.database.get_active_route_batches(), [])
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        rows = conn.execute(
+            "SELECT status, work_state, blocked_reason FROM route_batches WHERE id = ?",
+            (early_ids[0],),
+        ).fetchone()
+        conn.close()
+        self.assertEqual(rows, ("cancelled", "cancelled", "Ожидает подтверждения готового кроя"))
+        self.assertEqual(
+            self.database.apply_ready_cut_confirmation_migration(),
+            {"applied": False, "cancelled_ids": []},
+        )
 
     def test_miniapp_production_creates_task_and_submits_contours(self):
         os.environ["ADMIN_IDS"] = "9001"
@@ -1794,16 +1887,47 @@ class IsolatedDatabaseTest(unittest.TestCase):
             {"stage": "cutting", "batch_id": batch_id, "progress": "100"},
         )
         self.assertTrue(completed_cutting["ok"], completed_cutting)
-        formation = miniapp_server.submit_cutting_stage_for_telegram(
+        missing_review = miniapp_server.submit_cutting_stage_for_telegram(
             9002,
             {"stage": "formation", "batch_id": batch_id},
+        )
+        self.assertFalse(missing_review["ok"], missing_review)
+        self.assertIn("каждую строку", missing_review["message"])
+        missing_comment = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {
+                "stage": "formation",
+                "batch_id": batch_id,
+                "formation_rows": [{
+                    "product_size": "86", "product_color": "Бежевый",
+                    "defect_quantity": "1", "defect_comment": "",
+                }],
+            },
+        )
+        self.assertFalse(missing_comment["ok"], missing_comment)
+        self.assertIn("комментарий", missing_comment["message"])
+        formation = miniapp_server.submit_cutting_stage_for_telegram(
+            9002,
+            {
+                "stage": "formation",
+                "batch_id": batch_id,
+                "formation_rows": [{
+                    "product_size": "86", "product_color": "Бежевый",
+                    "defect_quantity": "1", "defect_comment": "Брак детали",
+                }],
+            },
         )
         self.assertTrue(formation["ok"], formation)
 
         stock = next(row for row in self.database.get_warehouse_stock_rows() if row["quantity"] > 0)
         self.assertEqual(
             (stock["item_type"], stock["stage_name"], stock["ready_for_position"], stock["quantity"]),
-            ("semifinished", "Раскроенные", "Швея", 10),
+            ("semifinished", "Раскроенные", "Швея", 9),
+        )
+        self.assertEqual(
+            [(row["planned_quantity"], row["good_quantity"], row["defect_quantity"], row["defect_comment"])
+             for row in self.database.get_cutting_batch_formation_reviews(batch_id)],
+            [(10, 9, 1, "Брак детали")],
         )
 
         route_steps = route_maps.PRODUCT_ROUTE_MAPS["Футболки"]
@@ -1818,7 +1942,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             },
         )
         self.assertFalse(manual_route["ok"], manual_route)
-        self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 10)
+        self.assertEqual(self.database.get_warehouse_stock_by_id(stock["id"])["quantity"], 9)
 
         position_telegram_ids = {position: data[0] for position, data in employees.items()}
 
@@ -1833,7 +1957,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             completed = miniapp_server.complete_route_task_for_telegram(
                 telegram_id,
                 active_batch["id"],
-                {"good_quantity": 10, "defect_quantity": 0},
+                {"good_quantity": 9, "defect_quantity": 0},
             )
             self.assertTrue(completed["ok"], (step_index, completed))
 
@@ -1846,7 +1970,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 final_stock[0]["ready_for_position"],
                 final_stock[0]["quantity"],
             ),
-            ("finished", "Упаковано", "Склад", 10),
+            ("finished", "Упаковано", "Склад", 9),
         )
         self.assertEqual(self.database.get_active_route_batches(), [])
 
@@ -2137,7 +2261,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             "SELECT COUNT(*) FROM route_batches WHERE source_cutting_batch_id = ? AND status = 'active'",
             (batch_id,),
         )
-        self.assertGreater(cursor.fetchone()[0], 0)
+        self.assertEqual(cursor.fetchone()[0], 0)
         conn.close()
 
         rollback_to_contours = self.database.rollback_cutting_batch(batch_id, "contours_done")
