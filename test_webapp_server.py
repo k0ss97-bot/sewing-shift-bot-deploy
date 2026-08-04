@@ -2,10 +2,32 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from webapp_server import load_runtime_settings, start_shared_bot_process
+from webapp_server import (
+    load_runtime_settings,
+    marketplace_supply_snapshot_ready,
+    start_shared_bot_process,
+)
 
 
 class WebAppServerSettingsTest(unittest.TestCase):
+    def test_marketplace_supply_snapshot_ready_accepts_last_usable_data(self):
+        self.assertTrue(marketplace_supply_snapshot_ready({
+            "datasets": [{
+                "dataset": "supplies",
+                "status": "running",
+                "last_usable_at": "2026-08-04T11:00:00Z",
+            }],
+            "capabilities": [],
+        }))
+        self.assertTrue(marketplace_supply_snapshot_ready({
+            "datasets": [],
+            "capabilities": [{"capability": "supplies", "status": "available"}],
+        }))
+        self.assertFalse(marketplace_supply_snapshot_ready({
+            "datasets": [{"dataset": "supplies", "status": "failed"}],
+            "capabilities": [],
+        }))
+
     def test_defaults_to_loopback_and_ephemeral_secret(self):
         settings = load_runtime_settings({})
         self.assertEqual(settings.host, "127.0.0.1")

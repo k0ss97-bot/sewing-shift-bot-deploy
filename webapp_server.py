@@ -25,6 +25,26 @@ class RuntimeSettings:
 BOT_ENABLE_MARKER = "bot.enabled"
 
 
+def marketplace_supply_snapshot_ready(quality: dict | None) -> bool:
+    """Return whether PostgreSQL already contains a usable supply snapshot."""
+
+    if not isinstance(quality, dict):
+        return False
+    datasets = quality.get("datasets")
+    for dataset in datasets if isinstance(datasets, list) else []:
+        if not isinstance(dataset, dict) or dataset.get("dataset") != "supplies":
+            continue
+        if dataset.get("last_usable_at") or dataset.get("status") == "success":
+            return True
+    capabilities = quality.get("capabilities")
+    return any(
+        isinstance(capability, dict)
+        and capability.get("capability") == "supplies"
+        and capability.get("status") == "available"
+        for capability in capabilities if isinstance(capabilities, list)
+    )
+
+
 def start_shared_bot_process(
     environ: dict[str, str] | None = None,
     *,
@@ -156,6 +176,20 @@ def main() -> None:
                 from marketplace_phase1a import run_phase1a_sync
 
                 result = run_phase1a_sync(datasets=["supplies"], trigger_kind="startup")
+                if result.get("code") == "already_running":
+                    try:
+                        from marketplace_phase1a import account_key
+                        from marketplace_pg import MarketplacePGRepository
+
+                        quality = MarketplacePGRepository().data_quality(account_key())
+                        has_snapshot = marketplace_supply_snapshot_ready(quality)
+                    except Exception:
+                        has_snapshot = False
+                    set_marketplace_health_state(
+                        supplies="ready" if has_snapshot else "syncing",
+                        reason="sync_in_progress",
+                    )
+                    return
                 dataset_result = next(iter(result.get("datasets") or []), {})
                 projection = dataset_result.get("projection") if isinstance(dataset_result, dict) else None
                 projection_ok = not isinstance(projection, dict) or projection.get("ok") is not False
