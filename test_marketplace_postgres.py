@@ -116,6 +116,30 @@ class MarketplacePostgresReadModelTest(unittest.TestCase):
             "/v3/supply-order/list", "/v3/supply-order/get", "/v1/supply-order/bundle",
         ])
 
+    def test_ozon_fbo_supply_details_are_requested_in_groups_of_fifty(self):
+        client = OzonReadOnlyClient("client", "secret", page_limit=100, min_interval=0)
+        order_ids = list(range(1, 52))
+        responses = [
+            _RequestResult({"order_ids": order_ids, "last_id": ""}, 0),
+            _RequestResult({"orders": [
+                {"order_id": order_id, "state": "DATA_FILLING", "supplies": []}
+                for order_id in order_ids[:50]
+            ]}, 0),
+            _RequestResult({"orders": [
+                {"order_id": order_ids[-1], "state": "DATA_FILLING", "supplies": []}
+            ]}, 0),
+        ]
+
+        with patch.object(client, "_request", side_effect=responses) as request:
+            result = client.iter_supply_pages()
+
+        detail_calls = [
+            call for call in request.call_args_list if call.args[0] == "/v3/supply-order/get"
+        ]
+        self.assertTrue(result.complete)
+        self.assertEqual(len(result.items), 51)
+        self.assertEqual([len(call.args[1]["order_ids"]) for call in detail_calls], [50, 1])
+
     def test_fbo_stock_normalization_preserves_real_warehouse_scope(self):
         rows = normalize_stock_rows({
             "sku": "9001", "item_code": "CARD-122-BLUE", "offer_id": "CARD-122-BLUE",

@@ -803,17 +803,21 @@ class OzonReadOnlyClient:
 
             page_rows: list[JSONDict] = []
             if order_ids:
-                details_response = self._request(
-                    "/v3/supply-order/get",
-                    {"order_ids": order_ids},
-                    method="POST",
-                )
-                retries += details_response.retries
-                details = _extract_items_strict(
-                    details_response.payload,
-                    ("orders",),
-                    endpoint="/v3/supply-order/get",
-                )
+                details: list[JSONDict] = []
+                # Ozon accepts at most 50 order identifiers per details call,
+                # while the list endpoint returns up to 100 identifiers.
+                for offset in range(0, len(order_ids), 50):
+                    details_response = self._request(
+                        "/v3/supply-order/get",
+                        {"order_ids": order_ids[offset:offset + 50]},
+                        method="POST",
+                    )
+                    retries += details_response.retries
+                    details.extend(_extract_items_strict(
+                        details_response.payload,
+                        ("orders",),
+                        endpoint="/v3/supply-order/get",
+                    ))
                 details_by_id = {
                     _as_text(item.get("order_id")): item
                     for item in details
