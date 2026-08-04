@@ -187,7 +187,7 @@ def main() -> None:
                         has_snapshot = False
                     set_marketplace_health_state(
                         supplies="ready" if has_snapshot else "syncing",
-                        reason="sync_in_progress",
+                        reason="snapshot_ready" if has_snapshot else "sync_in_progress",
                     )
                     return
                 dataset_result = next(iter(result.get("datasets") or []), {})
