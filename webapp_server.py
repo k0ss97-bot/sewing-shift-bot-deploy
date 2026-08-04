@@ -175,7 +175,10 @@ def main() -> None:
             try:
                 from marketplace_phase1a import run_phase1a_sync
 
-                result = run_phase1a_sync(datasets=["supplies"], trigger_kind="startup")
+                # The PostgreSQL audit contract accepts scheduled/manual/
+                # backfill/retry/reconcile. Startup refresh is operationally a
+                # scheduled read and must use that persisted trigger value.
+                result = run_phase1a_sync(datasets=["supplies"], trigger_kind="scheduled")
                 if result.get("code") == "already_running":
                     try:
                         from marketplace_phase1a import account_key
