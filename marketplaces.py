@@ -670,7 +670,7 @@ def _refresh_shipment_counters(conn: sqlite3.Connection, shipment_id: int, *, st
     )
 
 
-def _reserve_shipment_positions(items: list[tuple[int, dict, int]]) -> list[tuple[int, str, dict, int]]:
+def _reserve_shipment_positions(items: list[tuple[int, dict, int, str]]) -> list[tuple[int, str, dict, int]]:
     """Reserve unbound address stock in one Postgres transaction.
 
     SQLite stores the task document; Postgres owns physical stock.  A caller
@@ -684,25 +684,56 @@ def _reserve_shipment_positions(items: list[tuple[int, dict, int]]) -> list[tupl
     allocations: list[tuple[int, str, dict, int]] = []
     try:
         with conn.cursor() as cur:
-            for item_id, key_data, needed in items:
+            for item_id, key_data, needed, article in items:
                 if needed <= 0:
                     continue
-                key = ProductKey.from_dict(key_data)
+                # WMS stock itself keeps a production key, not the marketplace
+                # article. Resolve each physical row through the same metadata
+                # adapter that powers the warehouse-map product card, then use
+                # the seller article/SKU as the only business selector.
                 cur.execute(
                     """SELECT ws.id,ws.quantity,ws.reserved_quantity,l.code,
                               ws.item_type,ws.product_name,ws.product_size,ws.product_color,
                               ws.stage_name,ws.ready_for_position
                          FROM warehouse_stock ws
                          JOIN wms_locations l ON l.id=ws.location_id
-                        WHERE ws.item_type=%s AND ws.product_name=%s AND ws.product_size=%s
-                          AND ws.product_color=%s
-                          AND ws.item_state='SELLABLE' AND ws.unit='шт' AND l.status='active'
+                        WHERE ws.item_state='SELLABLE' AND ws.unit='шт' AND l.status='active'
                           AND ws.quantity > ws.reserved_quantity
-                     ORDER BY l.pick_priority,l.route_order,l.code,ws.id FOR UPDATE""",
-                    (
-                        key.item_type, key.product_name, key.product_size,
-                        key.product_color,
-                    ),
+                     ORDER BY l.pick_priority,l.route_order,l.code,ws.id""",
+                )
+                candidates = cur.fetchall()
+                keys = [
+                    {
+                        "item_type": row[4], "product_name": row[5],
+                        "product_size": row[6], "product_color": row[7],
+                        "stage_name": row[8], "ready_for_position": row[9],
+                    }
+                    for row in candidates
+                ]
+                metadata = marketplace_metadata_for_wms_product_keys(keys) if keys else []
+                article_key = _text(article).casefold()
+                matching_ids = [
+                    int(row[0]) for row, product in zip(candidates, metadata)
+                    if product and article_key in {
+                        _text(product.get("offer_id")).casefold(),
+                        _text(product.get("sku")).casefold(),
+                        _text(product.get("external_product_id")).casefold(),
+                    }
+                ]
+                if not matching_ids:
+                    continue
+                placeholders = ",".join("%s" for _ in matching_ids)
+                cur.execute(
+                    f"""SELECT ws.id,ws.quantity,ws.reserved_quantity,l.code,
+                               ws.item_type,ws.product_name,ws.product_size,ws.product_color,
+                               ws.stage_name,ws.ready_for_position
+                          FROM warehouse_stock ws
+                          JOIN wms_locations l ON l.id=ws.location_id
+                         WHERE ws.id IN ({placeholders})
+                           AND ws.item_state='SELLABLE' AND ws.unit='шт' AND l.status='active'
+                           AND ws.quantity > ws.reserved_quantity
+                      ORDER BY l.pick_priority,l.route_order,l.code,ws.id FOR UPDATE""",
+                    matching_ids,
                 )
                 remaining = int(needed)
                 for row in cur.fetchall():
@@ -770,7 +801,10 @@ def start_warehouse_shipment_task(shipment_number: str) -> dict:
         for item in conn.execute("SELECT * FROM warehouse_shipment_items WHERE shipment_id=? ORDER BY id", (shipment["id"],)):
             missing = max(0, int(item["quantity"] or 0) - int(item["reserved_quantity"] or 0))
             if missing:
-                items_to_reserve.append((int(item["id"]), _shipment_item_product_key(conn, item), missing))
+                items_to_reserve.append((
+                    int(item["id"]), _shipment_item_product_key(conn, item), missing,
+                    _text(item["article"]) or _text(item["product_key"]),
+                ))
         allocations = _reserve_shipment_positions(items_to_reserve) if items_to_reserve else []
         now = _now()
         for item_id, location_code, product_key, quantity in allocations:
@@ -795,7 +829,12 @@ def start_warehouse_shipment_task(shipment_number: str) -> dict:
         _refresh_shipment_counters(conn, int(shipment["id"]), status="READY_TO_PICK" if complete else "SHORTAGE")
         conn.commit()
         detail = warehouse_shipment_task_detail(_text(shipment_number))
-        return {"ok": True, "shipment": detail, "message": "Ячейки зарезервированы." if complete else "Часть позиций зарезервирована; по остальным не хватает товара."}
+        message = (
+            "Ячейки зарезервированы." if complete
+            else ("Часть позиций зарезервирована; по остальным не хватает товара." if allocations
+                  else "По артикулу поставки не найден адресный остаток для резервирования.")
+        )
+        return {"ok": True, "shipment": detail, "message": message}
     except MarketplaceError as error:
         conn.rollback(); return {"ok": False, "code": error.code, "message": str(error)}
     except Exception as error:
