@@ -1,8 +1,7 @@
-"""PostgreSQL shadow repository for the read-only marketplace foundation.
+"""PostgreSQL repository for the authoritative read-only Ozon projection.
 
-The legacy marketplace dashboard continues to use SQLite.  This module owns
-only the additive ``marketplace`` schema introduced by migration 005 and never
-stores Ozon credentials or mutates marketplace state.
+The module owns the additive ``marketplace`` schema introduced by migrations
+005 and 006.  It never stores Ozon credentials or mutates provider state.
 """
 
 from __future__ import annotations
@@ -17,13 +16,21 @@ from typing import Any, Iterable
 from wms.connection import get_pg_connection
 
 
-DATASETS = ("catalog", "prices", "stocks")
-FRESHNESS_SECONDS = {"catalog": 2 * 60 * 60, "prices": 45 * 60, "stocks": 20 * 60}
-SYNC_CADENCE_SECONDS = {"catalog": 30 * 60, "prices": 15 * 60, "stocks": 5 * 60}
+DATASETS = ("catalog", "prices", "stocks", "orders")
+FRESHNESS_SECONDS = {
+    "catalog": 2 * 60 * 60,
+    "prices": 45 * 60,
+    "stocks": 20 * 60,
+    "orders": 20 * 60,
+}
+SYNC_CADENCE_SECONDS = {"catalog": 30 * 60, "prices": 15 * 60, "stocks": 5 * 60, "orders": 5 * 60}
+
+OZON_COLOR_ATTRIBUTE_IDS = {10096}
+OZON_SIZE_ATTRIBUTE_IDS = {4295, 9533, 4508}
 
 
 class MarketplacePGUnavailable(RuntimeError):
-    """The optional Phase 1A PostgreSQL projection cannot be read or written."""
+    """The PostgreSQL marketplace projection cannot be read or written."""
 
 
 @dataclass(frozen=True)
@@ -81,7 +88,7 @@ def _timestamp(value: Any) -> datetime | None:
 
 
 def _json(value: Any) -> str:
-    payload = value if isinstance(value, dict) else {}
+    payload = value if isinstance(value, (dict, list)) else {}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
@@ -115,24 +122,168 @@ def product_identity(row: dict[str, Any]) -> tuple[str, str, str]:
     return external_id, offer_id, sku
 
 
+def _nested_text(value: Any, keys: tuple[str, ...]) -> str:
+    if isinstance(value, dict):
+        for key in keys:
+            candidate = value.get(key)
+            if candidate not in (None, "") and not isinstance(candidate, (dict, list)):
+                return _text(candidate)
+        for child in value.values():
+            found = _nested_text(child, keys)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _nested_text(child, keys)
+            if found:
+                return found
+    return ""
+
+
+def _attribute_value(attributes: Any, identifiers: set[int]) -> str:
+    for attribute in attributes if isinstance(attributes, list) else []:
+        if not isinstance(attribute, dict):
+            continue
+        try:
+            attribute_id = int(attribute.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if attribute_id not in identifiers:
+            continue
+        for value in attribute.get("values") or []:
+            if isinstance(value, dict) and _text(value.get("value")):
+                return _text(value["value"])
+    return ""
+
+
+def _product_image(row: dict[str, Any]) -> str:
+    for field in ("primary_image", "images", "color_image", "images360"):
+        value = row.get(field)
+        for candidate in value if isinstance(value, list) else [value]:
+            if isinstance(candidate, str) and candidate.startswith("https://"):
+                return candidate
+    return ""
+
+
+def _product_barcodes(row: dict[str, Any]) -> list[str]:
+    found: list[str] = []
+    values = row.get("barcodes") if isinstance(row.get("barcodes"), list) else []
+    for value in [row.get("barcode"), *values]:
+        barcode = _text(value)
+        if barcode and barcode not in found:
+            found.append(barcode)
+    return found
+
+
+def _normalized_barcode(value: Any) -> str:
+    barcode = "".join(character for character in _text(value) if ord(character) >= 32).strip()
+    if len(barcode) >= 3 and barcode[0] == "]" and barcode[1].isalpha() and barcode[2].isdigit():
+        barcode = barcode[3:].strip()
+    return barcode
+
+
+def _production_link_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """Build the same safe production/WMS link without a SQLite side table."""
+
+    from marketplaces import product_group_for, production_target_for_marketplace_product
+
+    group_key, group_name = product_group_for(
+        item.get("name"), item.get("offer_id"), item.get("sku"),
+        item.get("barcode"), item.get("size"),
+    )
+    target = production_target_for_marketplace_product(item)
+    if target:
+        product_name, size, color = target
+        route_configured = 1
+    else:
+        product_name = (
+            _text(item.get("name")) if group_key == "other" else _text(group_name)
+        ) or _text(item.get("offer_id") or item.get("sku")) or "Товар Ozon"
+        size = _text(item.get("size")) or "Не указан"
+        color = _text(item.get("color")) or "Не указан"
+        route_configured = 0
+    return {
+        "group_key": group_key,
+        "group_name": group_name,
+        "production_status": "linked",
+        "route_configured": route_configured,
+        "production_product_name": product_name,
+        "production_size": size,
+        "production_color": color,
+    }
+
+
+def _warehouse_key(warehouse_type: Any, warehouse_name: Any) -> str:
+    kind = _text(warehouse_type).casefold() or "stock"
+    name = _text(warehouse_name)
+    return f"{kind}:{name}" if name else kind
+
+
+def _wms_finished_stock(conn: Any) -> tuple[dict[tuple[str, str, str], int], bool]:
+    """Read physical finished-goods balances without touching marketplace data."""
+
+    try:
+        from wms.repository import get_stock_rows
+
+        balances: dict[tuple[str, str, str], int] = {}
+        for stock_row in get_stock_rows(conn):
+            key = stock_row.product_key
+            if key.item_type != "finished" or stock_row.item_state != "SELLABLE":
+                continue
+            identity = (key.product_name, key.product_size, key.product_color)
+            available = max(0, int(stock_row.quantity or 0) - int(stock_row.reserved_quantity or 0))
+            balances[identity] = balances.get(identity, 0) + available
+        conn.rollback()
+        return balances, True
+    except Exception:
+        conn.rollback()
+        return {}, False
+
+
 def normalize_product(row: dict[str, Any]) -> dict[str, Any] | None:
     external_id, offer_id, sku = product_identity(row)
     if not external_id:
         return None
-    barcodes = row.get("barcodes") if isinstance(row.get("barcodes"), list) else []
+    barcodes = _product_barcodes(row)
+    attributes = row.get("attributes") if isinstance(row.get("attributes"), list) else []
     visibility = _text(row.get("visibility") or row.get("status") or "unknown") or "unknown"
     archived_tokens = {"archived", "archive", "disabled", "inactive"}
     return {
         "external_product_id": external_id,
         "offer_id": offer_id,
         "sku": sku,
-        "barcode": _text(row.get("barcode") or (barcodes[0] if barcodes else "")),
+        "barcode": barcodes[0] if barcodes else "",
         "name": _text(row.get("name") or row.get("title") or offer_id or sku),
+        "size": _text(row.get("size")) or _attribute_value(attributes, OZON_SIZE_ATTRIBUTE_IDS)
+        or _nested_text(row, ("Размер", "размер")),
+        "color": _text(row.get("color")) or _attribute_value(attributes, OZON_COLOR_ATTRIBUTE_IDS)
+        or _nested_text(row, ("Цвет", "цвет")),
+        "image_url": _product_image(row),
+        "barcodes": barcodes,
+        "attributes": {"attributes": attributes},
         "visibility": visibility,
         "is_archived": _truthy_flag(row.get("is_archived"))
         or _truthy_flag(row.get("archived"))
         or visibility.casefold() in archived_tokens,
         "source_updated_at": _timestamp(row.get("updated_at") or row.get("source_updated_at")),
+        "payload": row,
+    }
+
+
+def normalize_order(row: dict[str, Any]) -> dict[str, Any] | None:
+    external_id = _text(row.get("order_id") or row.get("posting_number") or row.get("order_number"))
+    if not external_id:
+        return None
+    return {
+        "external_order_id": external_id,
+        "posting_number": _text(row.get("posting_number") or row.get("order_number")),
+        "warehouse_type": _text(row.get("warehouse_type") or "FBS") or "FBS",
+        "status": _text(row.get("status")),
+        "shipment_date": _timestamp(
+            row.get("shipment_date") or row.get("in_process_at") or row.get("created_at")
+        ),
+        "source_updated_at": _timestamp(row.get("updated_at") or row.get("source_updated_at")),
+        "items": [item for item in (row.get("products") or row.get("items") or []) if isinstance(item, dict)],
         "payload": row,
     }
 
@@ -221,7 +372,7 @@ def _hash_fields(*values: Any) -> str:
 
 
 class MarketplacePGRepository:
-    """Transaction boundary and query API for the Phase 1A shadow schema."""
+    """Transaction boundary and query API for the marketplace schema."""
 
     def __init__(self, connection_factory=get_pg_connection):
         self.connection_factory = connection_factory
@@ -456,7 +607,7 @@ class MarketplacePGRepository:
                         outcome = self._upsert_product(cur, context, source)
                     elif context.dataset == "prices":
                         outcome = self._upsert_price(cur, context, source)
-                    else:
+                    elif context.dataset == "stocks":
                         outcomes = [self._upsert_stock(cur, context, item) for item in normalize_stock_rows(source)]
                         if not outcomes:
                             outcome = "skipped"
@@ -465,6 +616,8 @@ class MarketplacePGRepository:
                             updated += outcomes.count("updated")
                             skipped += outcomes.count("skipped")
                             continue
+                    else:
+                        outcome = self._upsert_order(cur, context, source)
                     inserted += outcome == "inserted"
                     updated += outcome == "updated"
                     skipped += outcome == "skipped"
@@ -524,22 +677,30 @@ class MarketplacePGRepository:
             return "skipped"
         key = (context.account_id, item["external_product_id"], item["offer_id"])
         cur.execute(
-            "SELECT sku,barcode,name,visibility,is_archived,payload_json FROM marketplace.products_current WHERE account_id=%s AND external_product_id=%s AND offer_id=%s",
+            """SELECT sku,barcode,name,size,color,image_url,barcodes_json,attributes_json,
+                      visibility,is_archived,payload_json
+                 FROM marketplace.products_current
+                WHERE account_id=%s AND external_product_id=%s AND offer_id=%s""",
             key,
         )
         old = cur.fetchone()
         cur.execute(
             """INSERT INTO marketplace.products_current
-               (account_id,external_product_id,offer_id,sku,barcode,name,visibility,is_archived,
-                payload_json,source_updated_at,received_at,last_seen_run_id)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,now(),%s)
+               (account_id,external_product_id,offer_id,sku,barcode,name,size,color,image_url,
+                barcodes_json,attributes_json,visibility,is_archived,payload_json,
+                source_updated_at,received_at,last_seen_run_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s::jsonb,%s,now(),%s)
                ON CONFLICT(account_id,external_product_id,offer_id) DO UPDATE SET
                  sku=excluded.sku,barcode=excluded.barcode,name=excluded.name,
+                 size=excluded.size,color=excluded.color,image_url=excluded.image_url,
+                 barcodes_json=excluded.barcodes_json,attributes_json=excluded.attributes_json,
                  visibility=excluded.visibility,is_archived=excluded.is_archived,
                  payload_json=excluded.payload_json,source_updated_at=excluded.source_updated_at,
                  received_at=now(),last_seen_run_id=excluded.last_seen_run_id""",
-            (*key, item["sku"], item["barcode"], item["name"], item["visibility"], item["is_archived"],
-             _json(item["payload"]), item["source_updated_at"], context.run_id),
+            (*key, item["sku"], item["barcode"], item["name"], item["size"], item["color"],
+             item["image_url"], _json(item["barcodes"]), _json(item["attributes"]),
+             item["visibility"], item["is_archived"], _json(item["payload"]),
+             item["source_updated_at"], context.run_id),
         )
         return "inserted" if old is None else "updated"
 
@@ -622,6 +783,53 @@ class MarketplacePGRepository:
             (*key, *values, _json(item["payload"]), item["source_updated_at"], context.run_id, row_hash),
         )
         return "inserted" if old is None else ("updated" if changed else "skipped")
+
+    def _upsert_order(self, cur: Any, context: RunContext, source: dict[str, Any]) -> str:
+        item = normalize_order(source)
+        if item is None:
+            return "skipped"
+        key = (context.account_id, item["external_order_id"])
+        cur.execute(
+            """SELECT posting_number,warehouse_type,status,shipment_date,payload_json
+                 FROM marketplace.orders_current
+                WHERE account_id=%s AND external_order_id=%s""",
+            key,
+        )
+        old = cur.fetchone()
+        cur.execute(
+            """INSERT INTO marketplace.orders_current
+               (account_id,external_order_id,posting_number,warehouse_type,status,shipment_date,
+                payload_json,source_updated_at,received_at,last_seen_run_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,now(),%s)
+               ON CONFLICT(account_id,external_order_id) DO UPDATE SET
+                 posting_number=excluded.posting_number,warehouse_type=excluded.warehouse_type,
+                 status=excluded.status,shipment_date=excluded.shipment_date,
+                 payload_json=excluded.payload_json,source_updated_at=excluded.source_updated_at,
+                 received_at=now(),last_seen_run_id=excluded.last_seen_run_id""",
+            (*key, item["posting_number"], item["warehouse_type"], item["status"],
+             item["shipment_date"], _json(item["payload"]), item["source_updated_at"], context.run_id),
+        )
+        cur.execute(
+            "DELETE FROM marketplace.order_items_current WHERE account_id=%s AND external_order_id=%s",
+            key,
+        )
+        for line_number, source_item in enumerate(item["items"], start=1):
+            external_id, offer_id, sku = product_identity(source_item)
+            quantity = _decimal(source_item.get("quantity")) or Decimal(0)
+            price = _decimal(source_item.get("price"))
+            currency = _text(source_item.get("currency_code") or source_item.get("currency") or "RUB").upper()
+            if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+                currency = "RUB"
+            cur.execute(
+                """INSERT INTO marketplace.order_items_current
+                   (account_id,external_order_id,line_number,external_product_id,offer_id,sku,
+                    name,quantity,price,currency,payload_json)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+                (*key, line_number, external_id, offer_id, sku,
+                 _text(source_item.get("name") or offer_id or sku), quantity, price, currency,
+                 _json(source_item)),
+            )
+        return "inserted" if old is None else "updated"
 
     def finish_run(
         self,
@@ -716,6 +924,7 @@ class MarketplacePGRepository:
             "catalog": "marketplace.products_current",
             "prices": "marketplace.prices_current",
             "stocks": "marketplace.stocks_current",
+            "orders": "marketplace.orders_current",
         }[context.dataset]
         conn = self._connection()
         try:
@@ -878,6 +1087,12 @@ class MarketplacePGRepository:
                     (account_id,),
                 )
                 stock_totals = cur.fetchone()
+                cur.execute(
+                    """SELECT COUNT(*) FROM marketplace.orders_current
+                        WHERE account_id=%s AND lower(status) NOT IN ('cancelled','delivered')""",
+                    (account_id,),
+                )
+                open_orders = int(cur.fetchone()[0])
             conn.rollback()
             overall = "ready" if datasets and all(item["status"] == "success" for item in datasets) else (
                 "no_data" if all(item["status"] == "no_data" for item in datasets) else "attention"
@@ -894,6 +1109,7 @@ class MarketplacePGRepository:
                     "stock_present": stock_totals[1],
                     "stock_reserved": stock_totals[2],
                     "stock_available": stock_totals[3],
+                    "open_orders": open_orders,
                 },
             })
         except MarketplacePGUnavailable:
@@ -928,7 +1144,8 @@ class MarketplacePGRepository:
                 pages = (total + page_size - 1) // page_size
                 page = min(page, max(1, pages))
                 cur.execute(
-                    f"""SELECT p.external_product_id,p.offer_id,p.sku,p.barcode,p.name,p.visibility,p.is_archived,
+                    f"""SELECT p.external_product_id,p.offer_id,p.sku,p.barcode,p.name,p.size,p.color,
+                               p.image_url,p.barcodes_json,p.attributes_json,p.visibility,p.is_archived,
                                p.received_at,pr.current_price,pr.old_price,pr.marketing_price,pr.currency,
                                s.stock,s.reserved,s.available
                           FROM marketplace.products_current p
@@ -948,3 +1165,327 @@ class MarketplacePGRepository:
         except Exception as error:
             conn.rollback()
             raise MarketplacePGUnavailable("Could not read the marketplace product page.") from error
+
+    def dashboard(self, account_key: str) -> dict[str, Any]:
+        """Return the Ozon dashboard read model exclusively from PostgreSQL."""
+
+        conn = self._connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id,account_name,enabled,updated_at FROM marketplace.accounts WHERE account_key=%s",
+                    (account_key,),
+                )
+                account = cur.fetchone()
+                if account is None:
+                    conn.rollback()
+                    return {
+                        "ok": True, "configured": True, "read_only": True,
+                        "accounts": [], "summary": {"products": 0, "stock_rows": 0, "open_orders": 0},
+                        "products_rows": [], "product_groups": [], "warehouses": [],
+                        "orders_rows": [], "sync_runs": [],
+                    }
+                account_id = int(account[0])
+                cur.execute(
+                    """SELECT p.external_product_id AS id,p.external_product_id,p.name,p.offer_id,p.sku,
+                              p.barcode,p.size,p.color,p.image_url,p.barcodes_json,p.attributes_json,
+                              p.received_at AS updated_at,pr.current_price,pr.old_price,
+                              COALESCE(s.stock,0) AS available
+                         FROM marketplace.products_current p
+                         LEFT JOIN marketplace.prices_current pr
+                           USING(account_id,external_product_id,offer_id)
+                         LEFT JOIN (
+                             SELECT account_id,external_product_id,offer_id,SUM(available) AS stock
+                               FROM marketplace.stocks_current
+                              GROUP BY account_id,external_product_id,offer_id
+                         ) s USING(account_id,external_product_id,offer_id)
+                        WHERE p.account_id=%s AND p.is_archived=FALSE
+                        ORDER BY p.name,p.offer_id,p.external_product_id""",
+                    (account_id,),
+                )
+                products = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT warehouse_type,warehouse_name,COUNT(*) AS rows,SUM(available) AS available
+                         FROM marketplace.stocks_current WHERE account_id=%s
+                         GROUP BY warehouse_type,warehouse_name ORDER BY warehouse_type,warehouse_name""",
+                    (account_id,),
+                )
+                stock_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT external_product_id,offer_id,warehouse_type,warehouse_name,
+                              SUM(available) AS available
+                         FROM marketplace.stocks_current WHERE account_id=%s
+                        GROUP BY external_product_id,offer_id,warehouse_type,warehouse_name""",
+                    (account_id,),
+                )
+                product_stock_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT o.external_order_id AS id,o.external_order_id,o.posting_number,o.status,
+                              o.warehouse_type,o.shipment_date,o.received_at AS updated_at,
+                              COALESCE(SUM(i.quantity),0) AS quantity
+                         FROM marketplace.orders_current o
+                         LEFT JOIN marketplace.order_items_current i
+                           USING(account_id,external_order_id)
+                        WHERE o.account_id=%s
+                        GROUP BY o.account_id,o.external_order_id,o.posting_number,o.status,
+                                 o.warehouse_type,o.shipment_date,o.received_at
+                        ORDER BY o.received_at DESC LIMIT 500""",
+                    (account_id,),
+                )
+                orders = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT i.external_product_id,i.offer_id,i.sku,i.quantity,o.posting_number,
+                              DATE(COALESCE(o.shipment_date,o.received_at)) AS day
+                         FROM marketplace.order_items_current i
+                         JOIN marketplace.orders_current o USING(account_id,external_order_id)
+                        WHERE i.account_id=%s""",
+                    (account_id,),
+                )
+                order_history_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT id,status,dataset,expected_count,unique_count AS products_count,
+                              CASE WHEN dataset='prices' THEN unique_count ELSE 0 END AS prices_count,
+                              CASE WHEN dataset='stocks' THEN unique_count ELSE 0 END AS stocks_count,
+                              CASE WHEN dataset='orders' THEN unique_count ELSE 0 END AS orders_count,
+                              error_summary AS error_message,started_at,finished_at
+                         FROM marketplace.sync_runs WHERE account_id=%s
+                        ORDER BY started_at DESC LIMIT 12""",
+                    (account_id,),
+                )
+                runs = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+            conn.rollback()
+            warehouses = [
+                {
+                    "key": _warehouse_key(row.get("warehouse_type"), row.get("warehouse_name")),
+                    "name": _text(row.get("warehouse_name")) or _text(row.get("warehouse_type")) or "Склад Ozon",
+                }
+                for row in stock_rows
+            ]
+            stock_by_product: dict[tuple[str, str], dict[str, int]] = {}
+            for row in product_stock_rows:
+                key = (_text(row.get("external_product_id")), _text(row.get("offer_id")))
+                warehouse_key = _warehouse_key(row.get("warehouse_type"), row.get("warehouse_name"))
+                stock_by_product.setdefault(key, {})[warehouse_key] = int(Decimal(str(row.get("available") or 0)))
+            product_history: dict[str, dict[str, dict[str, Any]]] = {}
+            for row in order_history_rows:
+                day = _text(row.get("day"))[:10]
+                if not day:
+                    continue
+                for identity in {
+                    _text(row.get("external_product_id")),
+                    _text(row.get("offer_id")),
+                    _text(row.get("sku")),
+                }:
+                    if not identity:
+                        continue
+                    bucket = product_history.setdefault(identity, {}).setdefault(
+                        day, {"date": day, "orders": set(), "units": 0, "returns": 0, "accruals": 0.0},
+                    )
+                    if _text(row.get("posting_number")):
+                        bucket["orders"].add(_text(row.get("posting_number")))
+                    bucket["units"] += int(Decimal(str(row.get("quantity") or 0)))
+            wms_stock, wms_stock_available = _wms_finished_stock(conn)
+            groups: dict[str, dict[str, Any]] = {}
+            for product in products:
+                product.update(_production_link_fields(product))
+                product["warehouse_stocks"] = stock_by_product.get(
+                    (_text(product.get("external_product_id")), _text(product.get("offer_id"))),
+                    {},
+                )
+                production_identity = (
+                    _text(product.get("production_product_name")),
+                    _text(product.get("production_size")),
+                    _text(product.get("production_color")),
+                )
+                product["production_available"] = wms_stock.get(production_identity, 0)
+                product["production_linked"] = bool(product.get("production_status") == "linked")
+                product["production_stock_available"] = wms_stock_available
+                merged_history: dict[str, dict[str, Any]] = {}
+                for identity in {
+                    _text(product.get("external_product_id")),
+                    _text(product.get("offer_id")),
+                    _text(product.get("sku")),
+                }:
+                    for day, source in product_history.get(identity, {}).items():
+                        target = merged_history.setdefault(
+                            day, {"date": day, "orders": set(), "units": 0, "returns": 0, "accruals": 0.0},
+                        )
+                        target["orders"].update(source["orders"])
+                        target["units"] = max(int(target["units"]), int(source["units"]))
+                product["history"] = [
+                    {**entry, "orders": len(entry["orders"])}
+                    for entry in sorted(merged_history.values(), key=lambda value: value["date"])
+                ]
+                group_key = product["group_key"]
+                group_name = product["group_name"]
+                group = groups.setdefault(group_key, {
+                    "key": group_key, "name": group_name, "products": 0,
+                    "articles": set(), "colors": set(), "sizes": set(), "available": 0,
+                    "production_available": 0, "production_linked_products": 0,
+                    "production_stock_available": wms_stock_available,
+                    "production_keys": set(), "prices": [],
+                })
+                if not group.get("image_url") and product.get("image_url"):
+                    group["image_url"] = product["image_url"]
+                group["products"] += 1
+                article = _text(product.get("offer_id") or product.get("sku"))
+                if article:
+                    group["articles"].add(article)
+                if _text(product.get("color")):
+                    group["colors"].add(_text(product.get("color")))
+                if _text(product.get("size")):
+                    group["sizes"].add(_text(product.get("size")))
+                group["available"] += int(Decimal(str(product.get("available") or 0)))
+                if production_identity not in group["production_keys"]:
+                    group["production_keys"].add(production_identity)
+                    group["production_available"] += int(product.get("production_available") or 0)
+                if product.get("production_linked"):
+                    group["production_linked_products"] += 1
+                if product.get("current_price") is not None:
+                    group["prices"].append(float(product["current_price"]))
+            group_rows = [
+                {
+                    **group,
+                    "articles": len(group["articles"]),
+                    "colors": sorted(group["colors"]),
+                    "sizes": sorted(group["sizes"]),
+                    "price_min": min(group["prices"]) if group["prices"] else None,
+                    "price_max": max(group["prices"]) if group["prices"] else None,
+                }
+                for group in sorted(groups.values(), key=lambda item: _text(item["name"]).casefold())
+            ]
+            for group in group_rows:
+                group.pop("prices", None)
+                group.pop("production_keys", None)
+            open_orders = sum(
+                _text(row.get("status")).casefold() not in {"cancelled", "delivered"}
+                for row in orders
+            )
+            return _json_value({
+                "ok": True,
+                "configured": True,
+                "read_only": True,
+                "source": "postgresql",
+                "accounts": [{
+                    "id": account_id, "marketplace": "ozon", "account_name": account[1],
+                    "enabled": bool(account[2]), "last_sync_at": account[3], "last_error": "",
+                }],
+                "summary": {
+                    "products": len(products), "stock_rows": len(stock_rows),
+                    "open_orders": open_orders,
+                },
+                "products_rows": products,
+                "product_groups": group_rows,
+                "warehouses": warehouses,
+                "orders_rows": orders,
+                "sync_runs": runs,
+                "analytics": {},
+            })
+        except Exception as error:
+            conn.rollback()
+            raise MarketplacePGUnavailable("Could not read the PostgreSQL marketplace dashboard.") from error
+
+    def warehouse_catalog(self, account_key: str) -> dict[str, Any]:
+        page = self.products_page(account_key, page=1, page_size=200, include_archived=False)
+        all_items = list(page["items"])
+        for number in range(2, int(page.get("pages") or 0) + 1):
+            all_items.extend(
+                self.products_page(account_key, page=number, page_size=200, include_archived=False)["items"]
+            )
+        for item in all_items:
+            item.update(_production_link_fields(item))
+        return _json_value({
+            "ok": True,
+            "marketplace": "ozon",
+            "source": "postgresql",
+            "account_name": account_key,
+            "products": all_items,
+        })
+
+    def marketplace_metadata_for_wms_product_keys(
+        self,
+        account_key: str,
+        product_keys: list[dict[str, Any]],
+    ) -> list[dict[str, Any] | None]:
+        """Resolve WMS identities from the PostgreSQL catalogue only."""
+
+        catalog = self.warehouse_catalog(account_key)
+        products = list(catalog.get("products") or [])
+        resolved: list[dict[str, Any] | None] = []
+        for product_key in product_keys:
+            if _text(product_key.get("item_type")) != "finished":
+                resolved.append(None)
+                continue
+            wms_name = _text(product_key.get("product_name")).casefold()
+            wms_size = _text(product_key.get("product_size")).casefold()
+            wms_color = _text(product_key.get("product_color")).casefold()
+            direct = next(
+                (
+                    product for product in products
+                    if (_text(product.get("offer_id")) and _text(product.get("offer_id")).casefold() in wms_name)
+                    or (_text(product.get("sku")) and _text(product.get("sku")).casefold() in wms_name)
+                ),
+                None,
+            )
+            linked = direct or next(
+                (
+                    product for product in products
+                    if product.get("production_status") == "linked"
+                    and _text(product.get("production_product_name")).casefold() == wms_name
+                    and _text(product.get("production_size")).casefold() == wms_size
+                    and _text(product.get("production_color")).casefold() == wms_color
+                ),
+                None,
+            )
+            if linked is None:
+                resolved.append(None)
+                continue
+            alternate_barcodes = {
+                _normalized_barcode(value)
+                for value in (linked.get("barcodes_json") or linked.get("barcodes") or [])
+                if _normalized_barcode(value)
+            }
+            primary_barcode = _normalized_barcode(linked.get("barcode"))
+            if primary_barcode:
+                alternate_barcodes.add(primary_barcode)
+            resolved.append({
+                key: linked.get(key)
+                for key in (
+                    "external_product_id", "name", "group_name", "offer_id", "sku",
+                    "barcode", "size", "color", "image_url", "route_configured",
+                    "production_product_name", "production_size", "production_color",
+                )
+            } | {"id": linked.get("external_product_id"), "barcodes": sorted(alternate_barcodes)})
+        return resolved
+
+    def resolve_production_product_by_barcode(
+        self,
+        account_key: str,
+        barcode: str,
+    ) -> dict[str, Any] | None:
+        """Resolve a scanner code using primary and alternate PostgreSQL barcodes."""
+
+        wanted = _normalized_barcode(barcode)
+        if not wanted:
+            return None
+        products = self.warehouse_catalog(account_key).get("products") or []
+        for product in products:
+            candidates = {
+                _normalized_barcode(value)
+                for value in (product.get("barcodes_json") or product.get("barcodes") or [])
+                if _normalized_barcode(value)
+            }
+            primary = _normalized_barcode(product.get("barcode"))
+            if primary:
+                candidates.add(primary)
+            if wanted not in candidates or product.get("production_status") != "linked":
+                continue
+            return {
+                "item_type": "finished",
+                "product_name": product["production_product_name"],
+                "product_size": product["production_size"],
+                "product_color": product["production_color"],
+                "stage_name": "Упаковано",
+                "ready_for_position": "Склад",
+            }
+        return None

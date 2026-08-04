@@ -36,7 +36,7 @@ def _sync_due(marketplace: str, interval_seconds: int) -> bool:
 
 
 def _legacy_sync_due() -> bool:
-    """Keep the pre-Phase-1A Ozon fallback on its historical hourly cadence."""
+    """Evaluate legacy cadence only while PostgreSQL authority is disabled."""
     try:
         interval_seconds = max(300, int(os.getenv("MARKETPLACE_LEGACY_SYNC_INTERVAL_SECONDS", "3600")))
     except (TypeError, ValueError):
@@ -55,36 +55,21 @@ def _wildberries_sync_due() -> bool:
 def _ozon_sync() -> dict:
     if phase1a_enabled():
         phase1a = run_phase1a_sync()
-        legacy = (
-            sync_ozon()
-            if _legacy_sync_due()
-            else {
-                "ok": True,
-                "status": "not_due",
-                "read_only": True,
-                "message": "Совместимый Ozon read-model ещё свежее часовой cadence.",
-            }
-        )
         phase1a_ok = bool(phase1a.get("ok")) or phase1a.get("status") in {
             "deferred", "not_due",
         }
-        legacy_ok = bool(legacy.get("ok")) or legacy.get("status") == "not_due"
-        status = (
-            "success"
-            if phase1a_ok and legacy_ok
-            else ("partial" if phase1a_ok or legacy_ok else "error")
-        )
+        status = phase1a.get("status") or ("success" if phase1a_ok else "error")
         return {
-            "ok": phase1a_ok and legacy_ok,
+            "ok": phase1a_ok,
             "status": status,
             "read_only": True,
             "message": (
-                "Ozon Phase 1A и совместимый read-model синхронизированы."
-                if status == "success"
-                else "Ozon синхронизирован частично; диагностика сохранена."
+                "Ozon синхронизирован в PostgreSQL."
+                if phase1a_ok
+                else "Ozon PostgreSQL синхронизирован частично; диагностика сохранена."
             ),
             "phase1a": phase1a,
-            "compatibility": legacy,
+            "compatibility": {"enabled": False, "reason": "postgresql_authoritative"},
         }
     if not _legacy_sync_due():
         return {

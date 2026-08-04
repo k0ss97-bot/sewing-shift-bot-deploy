@@ -11,11 +11,20 @@ class FakeOzonClient:
     def products(self):
         return [{"id": "100", "offer_id": "CARD-122-BLUE", "sku": "9001", "name": "Кардиган", "size": "122", "color": "Синий", "barcode": "460000000001"}]
 
+    def product_details(self, _product_ids):
+        return []
+
+    def product_attributes(self):
+        return []
+
     def prices(self):
         return [{"product_id": "100", "offer_id": "CARD-122-BLUE", "price": {"price": "2490", "old_price": "2990", "currency_code": "RUB"}}]
 
     def stocks(self):
-        return [{"product_id": "100", "offer_id": "CARD-122-BLUE", "stocks": [{"warehouse_name": "FBO Москва", "present": 8, "reserved": 2}]}]
+        return [{"product_id": "100", "offer_id": "CARD-122-BLUE", "stocks": [{"type": "FBO", "warehouse_name": "FBO Москва", "present": 8, "reserved": 2}]}]
+
+    def warehouse_stocks(self):
+        return []
 
     def fbs_postings(self):
         return [{"order_id": "700", "posting_number": "700-1", "status": "awaiting_packaging", "shipment_date": "2026-07-30", "products": [{"product_id": "100", "offer_id": "CARD-122-BLUE", "sku": "9001", "name": "Кардиган", "quantity": 2}]}]
@@ -44,7 +53,7 @@ class MarketplaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "bot.db")
             with patch.dict(os.environ, {"OZON_CLIENT_ID": "", "OZON_API_KEY": ""}, clear=False):
-                with patch.object(marketplaces, "get_db_connection", side_effect=lambda: sqlite3.connect(path)):
+                with patch.object(marketplaces, "get_db_connection", side_effect=lambda **_kwargs: sqlite3.connect(path)):
                     payload = marketplaces.dashboard()
                     result = marketplaces.sync_ozon()
             self.assertFalse(payload["configured"])
@@ -55,7 +64,7 @@ class MarketplaceTests(unittest.TestCase):
     def test_read_only_snapshot_upserts_products_prices_stock_and_orders(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "bot.db")
-            def connection():
+            def connection(**_kwargs):
                 conn = sqlite3.connect(path)
                 conn.execute("PRAGMA foreign_keys = ON")
                 return conn
@@ -63,7 +72,11 @@ class MarketplaceTests(unittest.TestCase):
             with patch.dict(os.environ, {"OZON_CLIENT_ID": "client", "OZON_API_KEY": "secret"}, clear=False):
                 with patch.object(marketplaces, "get_db_connection", side_effect=connection):
                     with patch.object(marketplaces, "OzonClient", return_value=FakeOzonClient()):
-                        result = marketplaces.sync_ozon()
+                        with patch(
+                            "marketplace_extended.sync_extended",
+                            return_value={"actions": 0, "fbo": 0, "fbs": 0, "returns": 0, "rfbs_returns": 0, "finance": 0, "rating": 0},
+                        ):
+                            result = marketplaces.sync_ozon()
                     payload = marketplaces.dashboard()
             self.assertTrue(result["ok"], result)
             self.assertEqual(result["products"], 1)

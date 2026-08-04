@@ -7283,7 +7283,7 @@ MINIAPP_HTML = """<!doctype html>
       state.marketplaceQuality.error = "";
       render();
       try {
-        const result = await api("/api/marketplaces/phase1a/sync", {datasets: ["catalog", "prices", "stocks"]});
+        const result = await api("/api/marketplaces/phase1a/sync", {datasets: ["catalog", "prices", "stocks", "orders"]});
         if (!result.ok) throw new Error(result.message || "Phase 1A не запущена.");
         showToast("PostgreSQL Phase 1A", result.message || "Синхронизация запущена.");
       } catch (error) {
@@ -11772,7 +11772,7 @@ MINIAPP_HTML = """<!doctype html>
       const qualityTotals = quality.totals || {};
       const qualityProductsEnvelope = state.marketplaceQuality.products || {};
       const qualityStateLabel = {disabled:"выключен",unavailable:"недоступен",no_data:"нет данных",ready:"готов",attention:"нужна проверка",success:"успешно",partial:"частично",error:"ошибка",failed:"ошибка",running:"выполняется",stale:"устарело",fresh:"актуально",unknown:"неизвестно",zero:"реальный ноль",value:"есть данные"};
-      const qualityDatasetLabel = {catalog:"Каталог",prices:"Цены",stocks:"Остатки"};
+      const qualityDatasetLabel = {catalog:"Каталог",prices:"Цены",stocks:"Остатки",orders:"Заказы"};
       const qualityChipClass = (value) => ["success","fresh","ready","available","value","zero"].includes(String(value || "")) ? "" : (["disabled","no_data","unknown"].includes(String(value || "")) ? "gray" : "warn");
       const qualityDataset = (dataset) => qualityDatasets.find((row) => row.dataset === dataset) || null;
       const qualityDatasetUsable = (dataset) => {
@@ -11790,10 +11790,10 @@ MINIAPP_HTML = """<!doctype html>
       const qualityMoment = (value) => value ? escapeHtml(String(value).replace("T", " ").replace("Z", " UTC")) : "никогда";
       const qualityError = state.marketplaceQuality.error ? `<div class="task-note"><b>Ошибка экрана качества</b><br>${escapeHtml(state.marketplaceQuality.error)}</div>` : "";
       const qualityIntro = quality.state === "disabled"
-        ? `<div class="task-note"><b>PostgreSQL shadow выключен</b><br>Рабочий SQLite-контур продолжает обслуживать сайт. Для запуска миграции и worker нужен флаг MARKETPLACE_PHASE1A_ENABLED=1.</div>`
+        ? `<div class="task-note"><b>PostgreSQL-контур выключен</b><br>Временно используется аварийный SQLite fallback. Для основного каталога, остатков и заказов включите MARKETPLACE_PHASE1A_ENABLED=1.</div>`
         : quality.state === "unavailable"
-          ? `<div class="task-note"><b>PostgreSQL marketplace недоступен</b><br>Примените migration 005 и проверьте WMS_DATABASE_URL. На текущий SQLite экран это не влияет.</div>`
-          : `<div class="task-note"><b>Read-only PostgreSQL shadow</b><br>Данные идут только Ozon → система. Нули, отсутствие данных, partial и ошибки показываются раздельно.</div>`;
+          ? `<div class="task-note"><b>PostgreSQL marketplace недоступен</b><br>Примените migrations 005–006 и проверьте WMS_DATABASE_URL. Экран не подменяет эти данные устаревшей SQLite-копией.</div>`
+          : `<div class="task-note"><b>Основной read-only PostgreSQL-контур</b><br>Каталог, цены, остатки и заказы идут только Ozon → система. Нули, отсутствие данных, partial и ошибки показываются раздельно.</div>`;
       const qualityDatasetCards = qualityDatasets.length ? qualityDatasets.map((row) => `<div class="card field-card"><div class="section-title"><b>${escapeHtml(qualityDatasetLabel[row.dataset] || row.dataset)}</b><span class="status-chip ${qualityChipClass(row.status)}">${escapeHtml(qualityStateLabel[row.status] || row.status)}</span></div><div class="marketplace-mini-list"><div class="marketplace-mini-row"><span>Последний пригодный sync</span><b>${qualityMoment(row.last_usable_at || row.last_success_at || (row.status === "success" ? row.finished_at : ""))}</b></div><div class="marketplace-mini-row"><span>Свежесть</span><b>${escapeHtml(qualityStateLabel[row.freshness] || row.freshness || "неизвестно")}</b></div><div class="marketplace-mini-row"><span>Строки: получено / уникально / ожидалось</span><b>${escapeHtml(row.received_count == null ? "—" : row.received_count)} / ${escapeHtml(row.unique_count == null ? "—" : row.unique_count)} / ${escapeHtml(row.expected_count == null ? "—" : row.expected_count)}</b></div><div class="marketplace-mini-row"><span>Страницы / retry</span><b>${escapeHtml(row.page_count == null ? "—" : row.page_count)} / ${escapeHtml(row.retry_count == null ? "—" : row.retry_count)}</b></div><div class="marketplace-mini-row"><span>Завершение</span><b>${escapeHtml(row.termination_reason || "—")}</b></div></div>${row.error_summary ? `<div class="task-note"><b>Диагностика</b><br>${escapeHtml(row.error_summary)}</div>` : ""}</div>`).join("") : `<div class="card field-card">${itemEmpty("Запусков Phase 1A ещё нет.")}</div>`;
       const capabilityRows = qualityCapabilities.length ? qualityCapabilities.map((row) => `<tr><td>${escapeHtml(row.capability)}</td><td><span class="status-chip ${qualityChipClass(row.status)}">${escapeHtml(qualityStateLabel[row.status] || row.status)}</span></td><td>${qualityMoment(row.checked_at)}</td><td>${escapeHtml(row.safe_message || "—")}</td></tr>`).join("") : `<tr><td colspan="4">Capabilities ещё не проверены.</td></tr>`;
       const qualityProductsState = qualityProductsEnvelope.available !== true

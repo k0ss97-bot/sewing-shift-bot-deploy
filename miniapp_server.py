@@ -166,7 +166,14 @@ from marketplaces import dashboard as marketplace_dashboard
 from marketplaces import warehouse_catalog as marketplace_warehouse_catalog
 from marketplaces import sync_for_admin as sync_marketplace_for_admin
 from marketplaces import marketplace_supplies, marketplace_supply_detail, create_internal_shipment_for_supply
-from marketplace_phase1a import phase1a_data_quality, phase1a_products_page, start_phase1a_sync
+from marketplace_phase1a import (
+    phase1a_dashboard,
+    phase1a_data_quality,
+    phase1a_enabled,
+    phase1a_products_page,
+    phase1a_warehouse_catalog,
+    start_phase1a_sync,
+)
 from analytics_overview import analytics_overview as build_analytics_overview
 from analytics_overview import analytics_overview_http_status
 from web_push import WebPushDeliveryError, get_public_web_push_config, send_web_push
@@ -253,12 +260,27 @@ def is_admin(telegram_id: int):
 def get_marketplace_dashboard_for_admin(telegram_id: int):
     if not is_admin(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    if phase1a_enabled():
+        result = phase1a_dashboard()
+        if not result.get("ok"):
+            return result
+        # Wildberries and internal warehouse shipments remain independent
+        # read models. Ozon products, prices, stocks and orders above are never
+        # replaced with their legacy SQLite copies.
+        supplement = marketplace_dashboard(read_only=True)
+        for key in ("wildberries", "supplies", "supply_counts", "warehouse_shipments", "sync_events"):
+            if key in supplement:
+                result[key] = supplement[key]
+        result["connectors"] = supplement.get("connectors", result.get("connectors", []))
+        return result
     return marketplace_dashboard()
 
 
 def get_warehouse_catalog_for_access(telegram_id: int):
     if not can_access_wms(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Нет доступа к складскому каталогу."}
+    if phase1a_enabled():
+        return phase1a_warehouse_catalog()
     return marketplace_warehouse_catalog()
 
 

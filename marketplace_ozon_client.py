@@ -3,13 +3,14 @@
 The module deliberately exposes only calls that read data.  Pagination returns
 an explicit result object and fails closed when completeness cannot be proven.
 It is independent from the legacy marketplace module so it can be used by the
-PostgreSQL shadow sync without importing SQLite or application runtime state.
+PostgreSQL read-model sync without importing SQLite or application runtime state.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from http.client import HTTPException, HTTPResponse
 import json
@@ -230,6 +231,8 @@ class OzonReadOnlyClient:
         "/v3/product/info/list": "POST",
         "/v5/product/info/prices": "POST",
         "/v4/product/info/stocks": "POST",
+        "/v4/product/info/attributes": "POST",
+        "/v3/posting/fbs/list": "POST",
     }
     _CATALOG = _PaginationSpec(
         endpoint="/v3/product/list",
@@ -437,6 +440,107 @@ class OzonReadOnlyClient:
                 )
             details.extend(batch_details)
         return details
+
+    def product_attributes(self) -> list[JSONDict]:
+        """Read all visible product characteristics, including colour and size."""
+
+        rows: list[JSONDict] = []
+        cursor = ""
+        seen: set[str] = set()
+        for _page_number in range(1, self._pagination_page_cap + 1):
+            payload: JSONDict = {"filter": {"visibility": "ALL"}, "limit": min(100, self._page_limit)}
+            if cursor:
+                payload["last_id"] = cursor
+            response = self._request("/v4/product/info/attributes", payload, method="POST").payload
+            page = _extract_items_strict(
+                response,
+                ("items", "products", "result"),
+                endpoint="/v4/product/info/attributes",
+            )
+            rows.extend(page)
+            next_cursor = _extract_cursor(response, ("last_id", "cursor"))
+            if not next_cursor or len(page) < min(100, self._page_limit):
+                return rows
+            if next_cursor == cursor or next_cursor in seen:
+                raise OzonClientError(
+                    "Ozon returned a repeated product-attributes cursor.",
+                    code="repeated_cursor",
+                    endpoint="/v4/product/info/attributes",
+                )
+            seen.add(next_cursor)
+            cursor = next_cursor
+        raise OzonClientError(
+            "Ozon product attributes exceeded the safety page cap.",
+            code="safety_cap",
+            endpoint="/v4/product/info/attributes",
+        )
+
+    def iter_order_pages(self, start_cursor: str = "", *, max_pages: int | None = None) -> PageResult:
+        """Read FBS postings for the rolling 30-day operational window."""
+
+        try:
+            offset = max(0, int(start_cursor or 0))
+        except (TypeError, ValueError) as error:
+            raise OzonClientError(
+                "Stored Ozon order cursor is invalid.",
+                code="checkpoint_invalid",
+                endpoint="/v3/posting/fbs/list",
+            ) from error
+        page_cap = min(max_pages or self._pagination_page_cap, self._pagination_page_cap)
+        now = datetime.now(timezone.utc)
+        pages: list[Page] = []
+        all_items: list[JSONDict] = []
+        retries = 0
+        limit = min(100, self._page_limit)
+        for page_number in range(1, page_cap + 1):
+            response = self._request(
+                "/v3/posting/fbs/list",
+                {
+                    "dir": "ASC",
+                    "filter": {
+                        "since": (now - timedelta(days=30)).isoformat().replace("+00:00", "Z"),
+                        "to": now.isoformat().replace("+00:00", "Z"),
+                    },
+                    "limit": limit,
+                    "offset": offset,
+                    "with": {"analytics_data": True, "financial_data": True},
+                },
+                method="POST",
+            )
+            items = _extract_items_strict(
+                response.payload,
+                ("postings", "items"),
+                endpoint="/v3/posting/fbs/list",
+            )
+            retries += response.retries
+            has_next = _extract_boolean(response.payload, "has_next")
+            next_offset = offset + len(items)
+            next_cursor = str(next_offset) if has_next else ""
+            pages.append(Page(
+                endpoint="/v3/posting/fbs/list",
+                number=page_number,
+                request_cursor=str(offset) if offset else "",
+                next_cursor=next_cursor,
+                items=tuple(items),
+                total=None,
+                retries=response.retries,
+            ))
+            all_items.extend(items)
+            if not has_next:
+                return self._page_result(
+                    "/v3/posting/fbs/list", pages, all_items, None,
+                    "has_next_false", True, "", retries,
+                )
+            if not items:
+                self._raise_partial(
+                    "empty_page_with_next", "/v3/posting/fbs/list", pages,
+                    all_items, None, next_cursor, retries,
+                )
+            offset = next_offset
+        self._raise_partial(
+            "safety_cap", "/v3/posting/fbs/list", pages,
+            all_items, None, str(offset), retries,
+        )
 
     def _paginate(
         self,
@@ -944,6 +1048,16 @@ def _extract_total(payload: Mapping[str, Any]) -> int | None:
             if isinstance(value, str) and value.strip().isdigit():
                 return int(value.strip())
     return None
+
+
+def _extract_boolean(payload: Mapping[str, Any], field: str) -> bool:
+    for node in _mapping_nodes(payload):
+        value = node.get(field)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().casefold() in {"true", "false"}:
+            return value.strip().casefold() == "true"
+    return False
 
 
 def _unique_item_count(items: Sequence[Mapping[str, Any]]) -> int:

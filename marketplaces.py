@@ -752,6 +752,11 @@ def _marketplace_payload_barcodes(payload_json: object) -> set[str]:
 
 def resolve_production_product_by_barcode(barcode: str) -> dict | None:
     """Resolve an Ozon barcode to a linked internal product key for WMS scans."""
+    if os.getenv("MARKETPLACE_PHASE1A_ENABLED", "0").strip() == "1":
+        from marketplace_pg import MarketplacePGRepository
+        from marketplace_phase1a import account_key
+
+        return MarketplacePGRepository().resolve_production_product_by_barcode(account_key(), barcode)
     value = _normalized_marketplace_barcode(barcode)
     if not value:
         return None
@@ -1600,6 +1605,13 @@ def warehouse_catalog() -> dict:
 
 def marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) -> list[dict | None]:
     """Resolve WMS finished-goods identities to their read-only Ozon cards."""
+    if os.getenv("MARKETPLACE_PHASE1A_ENABLED", "0").strip() == "1":
+        from marketplace_pg import MarketplacePGRepository
+        from marketplace_phase1a import account_key
+
+        return MarketplacePGRepository().marketplace_metadata_for_wms_product_keys(
+            account_key(), product_keys,
+        )
     conn = get_db_connection()
     ensure_schema(conn)
     rows = conn.execute(
@@ -1677,7 +1689,12 @@ def sync_for_admin() -> dict:
         wildberries = sync_wildberries()
     except Exception as error:
         wildberries = {"ok": False, "message": str(error)}
-    ozon = sync_ozon()
+    if os.getenv("MARKETPLACE_PHASE1A_ENABLED", "0").strip() == "1":
+        from marketplace_phase1a import start_phase1a_sync
+
+        ozon = start_phase1a_sync()
+    else:
+        ozon = sync_ozon()
     return {
         "ok": bool(ozon.get("ok")) and bool(wildberries.get("ok")),
         "message": "Ozon и Wildberries синхронизированы." if ozon.get("ok") and wildberries.get("ok") else "Синхронизация завершена с ошибками.",

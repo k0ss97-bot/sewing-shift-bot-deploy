@@ -1,7 +1,7 @@
-"""Phase 1A Ozon foundation orchestration.
+"""Orchestrate the authoritative PostgreSQL Ozon read model.
 
-This is an opt-in PostgreSQL shadow path.  It can be disabled instantly without
-changing or deleting the existing SQLite marketplace data.
+The feature flag still provides an instant code-path rollback without changing
+or deleting the retained legacy SQLite marketplace data.
 """
 
 from __future__ import annotations
@@ -60,6 +60,16 @@ VERIFIED_ENDPOINTS = (
         "notes": "Only one identifier type is sent per batch; implementation uses product_id batches of 100.",
     },
     {
+        "dataset": "catalog_attributes",
+        "method": "POST",
+        "path": "/v4/product/info/attributes",
+        "pagination_kind": "cursor",
+        "request_limit": 100,
+        "verified_at": "2026-08-04T00:00:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/ProductAPI_GetProductAttributesV4",
+        "notes": "Product characteristics provide source colour and size without parsing seller articles.",
+    },
+    {
         "dataset": "prices",
         "method": "POST",
         "path": "/v5/product/info/prices",
@@ -78,6 +88,16 @@ VERIFIED_ENDPOINTS = (
         "verified_at": "2026-08-02T00:00:00Z",
         "official_url": "https://docs.ozon.ru/api/seller/#operation/ProductAPI_GetProductInfoStocks",
         "notes": "Verified for seller schemes FBS/rFBS/FBP. FBO completeness is intentionally not claimed.",
+    },
+    {
+        "dataset": "orders",
+        "method": "POST",
+        "path": "/v3/posting/fbs/list",
+        "pagination_kind": "offset",
+        "request_limit": 100,
+        "verified_at": "2026-08-04T00:00:00Z",
+        "official_url": "https://docs.ozon.ru/api/seller/#operation/PostingAPI_GetFbsPostingListV3",
+        "notes": "Read-only rolling 30-day FBS operational order window.",
     },
 )
 
@@ -149,7 +169,11 @@ def _capability_from_error(error: Exception) -> str:
     return "permission_required" if status in (401, 403) else "error"
 
 
-def _merge_catalog_page(client: OzonReadOnlyClient, page: Page) -> list[dict[str, Any]]:
+def _merge_catalog_page(
+    client: OzonReadOnlyClient,
+    page: Page,
+    attributes_by_product: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
     source_rows = [dict(item) for item in page.items]
     product_ids = [product_identity(row)[0] for row in source_rows if product_identity(row)[0]]
     details = client.product_details(product_ids)
@@ -165,7 +189,12 @@ def _merge_catalog_page(client: OzonReadOnlyClient, page: Page) -> list[dict[str
     for source in source_rows:
         external_id, offer_id, _sku = product_identity(source)
         detail = by_product.get(external_id) or by_offer.get(offer_id) or {}
+        attribute_row = attributes_by_product.get(external_id, {})
         item = {**source, **detail}
+        if isinstance(attribute_row.get("attributes"), list):
+            item["attributes"] = attribute_row["attributes"]
+        if not item.get("barcodes") and isinstance(attribute_row.get("barcodes"), list):
+            item["barcodes"] = attribute_row["barcodes"]
         if external_id:
             item["product_id"] = external_id
         if offer_id and not item.get("offer_id"):
@@ -183,8 +212,18 @@ def _persist_result(
     omit_last_page: bool = False,
 ) -> None:
     pages: Iterable[Page] = result.pages[:-1] if omit_last_page and result.pages else result.pages
+    attributes_by_product: dict[str, dict[str, Any]] = {}
+    if context.dataset == "catalog":
+        for attribute_row in client.product_attributes():
+            external_id, _offer_id, _sku = product_identity(attribute_row)
+            if external_id:
+                attributes_by_product[external_id] = attribute_row
     for page in pages:
-        rows = _merge_catalog_page(client, page) if context.dataset == "catalog" else [dict(item) for item in page.items]
+        rows = (
+            _merge_catalog_page(client, page, attributes_by_product)
+            if context.dataset == "catalog"
+            else [dict(item) for item in page.items]
+        )
         repository.persist_page(
             context,
             local_page_number=page.number,
@@ -208,6 +247,7 @@ def _dataset_result(
         "catalog": "iter_catalog_pages",
         "prices": "iter_price_pages",
         "stocks": "iter_stock_pages",
+        "orders": "iter_order_pages",
     }[dataset])
     try:
         result = reader(context.cursor)
@@ -371,15 +411,15 @@ def run_phase1a_sync(
 ) -> dict[str, Any]:
     """Synchronize the verified Phase 1A datasets into PostgreSQL."""
     if require_enabled and not phase1a_enabled():
-        return {"ok": False, "code": "phase1a_disabled", "message": f"Включите {FEATURE_FLAG}=1 для PostgreSQL shadow sync."}
+        return {"ok": False, "code": "phase1a_disabled", "message": f"Включите {FEATURE_FLAG}=1 для PostgreSQL sync."}
     if client is None and not phase1a_configured():
         return {"ok": False, "code": "not_configured", "message": "Ozon read-only credentials are not configured."}
     raw_datasets = None if datasets is None or isinstance(datasets, (str, bytes)) else tuple(datasets)
     if datasets is not None and (raw_datasets is None or any(not isinstance(item, str) for item in raw_datasets)):
-        return {"ok": False, "code": "invalid_dataset", "message": "Допустимы только catalog, prices и stocks."}
+        return {"ok": False, "code": "invalid_dataset", "message": "Допустимы catalog, prices, stocks и orders."}
     requested = tuple(dict.fromkeys(item.strip() for item in raw_datasets)) if raw_datasets is not None else None
-    if requested is not None and (not requested or any(dataset not in {"catalog", "prices", "stocks"} for dataset in requested)):
-        return {"ok": False, "code": "invalid_dataset", "message": "Допустимы только catalog, prices и stocks."}
+    if requested is not None and (not requested or any(dataset not in {"catalog", "prices", "stocks", "orders"} for dataset in requested)):
+        return {"ok": False, "code": "invalid_dataset", "message": "Допустимы catalog, prices, stocks и orders."}
     repository = repository or MarketplacePGRepository()
     client = client or _client_from_environment()
     account_id: int | None = None
@@ -393,7 +433,7 @@ def run_phase1a_sync(
         selected = requested or (
             repository.datasets_due(account_id)
             if trigger_kind == "scheduled"
-            else ("catalog", "prices", "stocks")
+            else ("catalog", "prices", "stocks", "orders")
         )
         if trigger_kind != "scheduled" or repository.capabilities_due(account_id):
             try:
@@ -422,7 +462,7 @@ def run_phase1a_sync(
             "message": f"Phase 1A: успешно {successful} из {len(results)}; partial {partial}.",
         }
     except MarketplacePGUnavailable:
-        return {"ok": False, "code": "postgres_unavailable", "message": "PostgreSQL schema marketplace недоступна; SQLite fallback не изменён."}
+        return {"ok": False, "code": "postgres_unavailable", "message": "PostgreSQL schema marketplace недоступна; сохранённые SQLite-данные не изменены."}
     except OzonClientError as error:
         return {"ok": False, "code": error.code, "message": str(error), "read_only": True}
     finally:
@@ -434,10 +474,10 @@ def start_phase1a_sync(*, datasets: Iterable[str] | None = None) -> dict[str, An
     """Start a non-blocking manual job, guarded against overlapping workers."""
     raw_datasets = None if datasets is None or isinstance(datasets, (str, bytes)) else tuple(datasets)
     if datasets is not None and (raw_datasets is None or any(not isinstance(item, str) for item in raw_datasets)):
-        return {"ok": False, "accepted": False, "code": "invalid_dataset", "message": "Допустимы только catalog, prices и stocks."}
+        return {"ok": False, "accepted": False, "code": "invalid_dataset", "message": "Допустимы catalog, prices, stocks и orders."}
     selected = tuple(dict.fromkeys(item.strip() for item in raw_datasets)) if raw_datasets is not None else None
-    if selected is not None and (not selected or any(item not in {"catalog", "prices", "stocks"} for item in selected)):
-        return {"ok": False, "accepted": False, "code": "invalid_dataset", "message": "Допустимы только catalog, prices и stocks."}
+    if selected is not None and (not selected or any(item not in {"catalog", "prices", "stocks", "orders"} for item in selected)):
+        return {"ok": False, "accepted": False, "code": "invalid_dataset", "message": "Допустимы catalog, prices, stocks и orders."}
     if not phase1a_enabled():
         return {"ok": False, "accepted": False, "code": "phase1a_disabled", "message": f"Включите {FEATURE_FLAG}=1."}
     if not phase1a_configured():
@@ -479,7 +519,7 @@ def phase1a_data_quality() -> dict[str, Any]:
         return {
             "ok": True,
             "phase1a": {"enabled": False, "configured": configured, "state": "disabled", "worker": worker},
-            "message": f"PostgreSQL shadow выключен ({FEATURE_FLAG}=0); используется SQLite fallback.",
+            "message": f"PostgreSQL-контур выключен ({FEATURE_FLAG}=0); используется аварийный SQLite fallback.",
         }
     try:
         quality = MarketplacePGRepository().data_quality(account_key())
@@ -540,12 +580,42 @@ def phase1a_products_page(payload: dict[str, Any] | None = None) -> dict[str, An
         return {"ok": True, "available": False, "state": "unavailable", "items": [], "total": None, "pages": None}
 
 
+def phase1a_dashboard() -> dict[str, Any]:
+    if not phase1a_enabled():
+        return {"ok": False, "code": "phase1a_disabled", "message": "PostgreSQL marketplace выключен."}
+    try:
+        return MarketplacePGRepository().dashboard(account_key())
+    except MarketplacePGUnavailable:
+        return {
+            "ok": False,
+            "code": "postgres_unavailable",
+            "message": "Данные маркетплейса временно недоступны в PostgreSQL.",
+            "read_only": True,
+        }
+
+
+def phase1a_warehouse_catalog() -> dict[str, Any]:
+    if not phase1a_enabled():
+        return {"ok": False, "code": "phase1a_disabled", "message": "PostgreSQL marketplace выключен."}
+    try:
+        return MarketplacePGRepository().warehouse_catalog(account_key())
+    except MarketplacePGUnavailable:
+        return {
+            "ok": False,
+            "code": "postgres_unavailable",
+            "message": "Складской каталог временно недоступен в PostgreSQL.",
+            "products": [],
+        }
+
+
 __all__ = [
     "FEATURE_FLAG",
     "VERIFIED_ENDPOINTS",
     "phase1a_data_quality",
+    "phase1a_dashboard",
     "phase1a_enabled",
     "phase1a_products_page",
+    "phase1a_warehouse_catalog",
     "run_phase1a_sync",
     "start_phase1a_sync",
 ]
