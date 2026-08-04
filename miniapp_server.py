@@ -159,7 +159,7 @@ from webapp_auth import (
 from webapp_pwa import app_shell_revision, inject_pwa_markup, send_pwa_resource
 from wms import api as wms_api
 from wms import operations as wms_operations
-from wms.api import WMS_READ_ROUTES, WMS_ROUTES
+from wms.api import WMS_ADMIN_ROUTES, WMS_READ_ROUTES, WMS_ROUTES
 from wms.models import ProductKey
 from wms.shipments import shipment_detail, shipment_excel_bytes, shipment_pdf_bytes
 from marketplaces import dashboard as marketplace_dashboard
@@ -6163,7 +6163,7 @@ def make_handler(bot_token: str, debug: bool):
                         status=403,
                     )
                     return
-                if path in {"/api/wms/receive", "/api/wms/barcode/register", "/api/wms/locations/create", "/api/wms/shipment/create"} and not is_admin(telegram_id):
+                if path in ({"/api/wms/receive", "/api/wms/barcode/register", "/api/wms/locations/create", "/api/wms/shipment/create"} | WMS_ADMIN_ROUTES) and not is_admin(telegram_id):
                     self.send_json(
                         {"ok": False, "code": "forbidden", "message": "Эту складскую операцию может выполнять только администратор."},
                         status=403,

@@ -441,13 +441,17 @@ def scrap(
             return OperationResult(False, reason="Недостаточно доступного товара.")
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, quantity FROM warehouse_stock WHERE id=%s FOR UPDATE",
+                "SELECT id, quantity, reserved_quantity FROM warehouse_stock WHERE id=%s FOR UPDATE",
                 (stock.id,),
             )
             row = cur.fetchone()
-        if row is None or int(row[1]) < quantity:
+        available_quantity = 0 if row is None else max(0, int(row[1]) - int(row[2]))
+        if row is None or available_quantity < quantity:
             conn.rollback()
-            return OperationResult(False, reason="Недостаточно доступного товара.")
+            return OperationResult(
+                False,
+                reason=f"Недостаточно доступного товара: доступно только {available_quantity} шт., резерв списывать нельзя.",
+            )
         repo.upsert_stock(
             conn,
             product_key,
@@ -468,6 +472,7 @@ def scrap(
             movement_type="scrap",
             product_key=product_key,
             quantity=quantity,
+            from_location_id=stock.location_id,
             from_state="SELLABLE",
             to_state=target_state,
             reason=reason,
@@ -492,6 +497,7 @@ def inventory_count(
     *,
     employee_id: int | None = None,
     request_key: str | None = None,
+    reason: str | None = None,
 ) -> OperationResult:
     """Blind count: compare counted quantities to system stock, adjust diffs.
 
@@ -534,6 +540,16 @@ def inventory_count(
                 raise ValueError("counted_quantity must be non-negative")
             stock = repo.find_stock(conn, pk, location_id=loc.id, for_update=True)
             expected = stock.quantity if stock else 0
+            reserved = stock.reserved_quantity if stock else 0
+            if counted_qty < reserved:
+                conn.rollback()
+                return OperationResult(
+                    False,
+                    reason=(
+                        f"Фактический остаток не может быть меньше резерва: "
+                        f"зарезервировано {reserved} шт."
+                    ),
+                )
             diff = counted_qty - expected
             # Record the line (blind: expected is captured but not shown to the counter).
             with conn.cursor() as cur:
@@ -566,7 +582,10 @@ def inventory_count(
                     to_location_id=loc.id,
                     source_type="inventory_count",
                     source_id=count_id,
-                    reason=f"инвентаризация: ожидалось {expected}, фактически {counted_qty}",
+                    reason=(
+                        f"инвентаризация{f' ({reason.strip()})' if reason and reason.strip() else ''}: "
+                        f"ожидалось {expected}, фактически {counted_qty}"
+                    ),
                     actor_employee_id=employee_id,
                 )
                 adjustments += 1

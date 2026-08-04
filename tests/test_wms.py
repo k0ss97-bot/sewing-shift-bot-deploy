@@ -179,6 +179,46 @@ class WmsContractTests(unittest.TestCase):
         self.assertEqual(pick.call_args.kwargs["employee_id"], 23)
         self.assertEqual(pick.call_args.kwargs["from_location_code"], "A-01-01")
 
+    def test_admin_scrap_alias_uses_authenticated_employee(self):
+        from wms import api
+
+        payload = self._payload()
+        payload.update({"from_location_code": "A-01-01", "reason": "Повреждение"})
+        with patch("wms.api.ops.scrap") as scrap:
+            scrap.return_value = OperationResult(ok=True, movement_id=15)
+            status, body = api.handle("/api/wms/admin/scrap", payload, employee_id=29)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(scrap.call_args.kwargs["employee_id"], 29)
+
+    def test_admin_inventory_requires_reason(self):
+        from wms import api
+
+        status, body = api.handle(
+            "/api/wms/admin/inventory",
+            {"location_code": "A-01-01", "counted": []},
+            employee_id=29,
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("причину", body["message"])
+
+    def test_manual_routes_are_admin_only_contract(self):
+        from wms.api import WMS_ADMIN_ROUTES, WMS_ROUTES
+
+        self.assertEqual(
+            WMS_ADMIN_ROUTES,
+            {"/api/wms/admin/scrap", "/api/wms/admin/inventory"},
+        )
+        self.assertTrue(WMS_ADMIN_ROUTES <= WMS_ROUTES)
+
+    def test_admin_manual_adjustment_is_available_in_cell_and_menu(self):
+        root = Path(__file__).resolve().parents[1]
+        assets = (root / "miniapp_assets.py").read_text(encoding="utf-8")
+        self.assertIn('data-wms-cell-writeoff=', assets)
+        self.assertIn('"admin-stock-control"', assets)
+        self.assertIn('"/api/wms/admin/inventory"', assets)
+        self.assertIn('"/api/wms/admin/scrap"', assets)
+
     def test_stock_api_passes_postgres_connection_to_repository(self):
         from wms import api
 
@@ -366,6 +406,57 @@ class PickOperationTests(unittest.TestCase):
         self.assertEqual(movement.call_args.kwargs["movement_type"], "pick")
         self.assertEqual(movement.call_args.kwargs["actor_employee_id"], 23)
         self.conn.commit.assert_called_once()
+
+
+class StockAdjustmentOperationTests(unittest.TestCase):
+    def setUp(self):
+        self.pk = ProductKey("finished", "Брюки", "128", "Черный", "Готово", "Склад")
+        self.location = Location(7, 2, "A-01-01", "LOC:A-01-01", None, 0, 0, "active")
+        self.stock = WarehouseStock(3, self.pk, 5, 2, "SELLABLE", self.location.id, "шт")
+        self.conn = MagicMock()
+
+    def test_scrap_cannot_consume_reserved_balance(self):
+        from wms import operations as ops
+
+        cursor = self.conn.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = (self.stock.id, self.stock.quantity, self.stock.reserved_quantity)
+        with patch("wms.operations.get_pg_connection", return_value=self.conn), patch(
+            "wms.operations.repo.get_location_by_code", return_value=self.location
+        ), patch("wms.operations.repo.movement_exists", return_value=False), patch(
+            "wms.operations.repo.find_stock", return_value=self.stock
+        ), patch("wms.operations.repo.upsert_stock") as upsert:
+            result = ops.scrap(
+                self.pk,
+                4,
+                reason="Повреждение",
+                from_location_code=self.location.code,
+            )
+        self.assertFalse(result.ok)
+        self.assertIn("доступно только 3", result.reason)
+        self.assertIn("резерв", result.reason)
+        upsert.assert_not_called()
+        self.conn.rollback.assert_called()
+
+    def test_inventory_cannot_reduce_quantity_below_reserve(self):
+        from wms import operations as ops
+
+        cursor = self.conn.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = (41,)
+        with patch("wms.operations.get_pg_connection", return_value=self.conn), patch(
+            "wms.operations.repo.get_location_by_code", return_value=self.location
+        ), patch("wms.operations.repo.find_stock", return_value=self.stock), patch(
+            "wms.operations.repo.upsert_stock"
+        ) as upsert:
+            result = ops.inventory_count(
+                self.location.code,
+                [{"product_key": self.pk.to_dict(), "counted_quantity": 1}],
+                employee_id=23,
+                reason="Контрольный пересчёт",
+            )
+        self.assertFalse(result.ok)
+        self.assertIn("зарезервировано 2", result.reason)
+        upsert.assert_not_called()
+        self.conn.rollback.assert_called()
 
 
 # ──────────────────────────────────────────────────────────────────────

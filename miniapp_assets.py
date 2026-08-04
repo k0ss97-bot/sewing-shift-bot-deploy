@@ -5022,6 +5022,15 @@ MINIAPP_HTML = """<!doctype html>
       line-height: 1.3;
     }
 
+    .wms-stock-product-balance .small-button {
+      min-height: 34px;
+      padding: 8px 14px;
+    }
+
+    .wms-location-detail > .button-row > :last-child:nth-child(3) {
+      grid-column: 1 / -1;
+    }
+
     @media (max-width: 520px) {
       .wms-stock-product-row {
         grid-template-columns: minmax(0, 1fr);
@@ -5066,6 +5075,11 @@ MINIAPP_HTML = """<!doctype html>
       .wms-stock-product-balance small {
         justify-self: end;
         text-align: right;
+      }
+
+      .wms-stock-product-balance .small-button {
+        grid-column: 1 / -1;
+        width: 100%;
       }
 
       .wms-guided-scanner .report-row {
@@ -5618,6 +5632,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsShipmentCreate: false,
       wmsShipmentDraft: {destination: "", comment: "", lines: {}},
       wmsLookup: {barcode: "", productKey: null, error: ""},
+      wmsAdminAdjustment: {mode: "inventory", locationId: "", stockId: "", quantity: "", reason: "", targetState: "SCRAPPED", returnView: "admin-stock-control"},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
       wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, matchedStock: null, matchedLocationCode: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
@@ -5651,6 +5666,7 @@ MINIAPP_HTML = """<!doctype html>
     if (!state.taskDefectPhotos || typeof state.taskDefectPhotos !== "object") state.taskDefectPhotos = {};
     if (!["all", "free", "in_work", "done"].includes(state.adminTaskStatus)) state.adminTaskStatus = "all";
     if (!state.wmsMaterialReceipt || typeof state.wmsMaterialReceipt !== "object") state.wmsMaterialReceipt = {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""};
+    if (!state.wmsAdminAdjustment || typeof state.wmsAdminAdjustment !== "object") state.wmsAdminAdjustment = {mode: "inventory", locationId: "", stockId: "", quantity: "", reason: "", targetState: "SCRAPPED", returnView: "admin-stock-control"};
 
     const mount = document.getElementById("mount");
     const appRoot = document.getElementById("appRoot");
@@ -5700,7 +5716,7 @@ MINIAPP_HTML = """<!doctype html>
       { id: "orders", label: "Задания", icon: "▣" },
     ];
     const productionScreens = new Set(["shift", "report", "analytics", "orders", "admin", "passport", "profile"]);
-    const warehouseMoreViews = new Set(["more", "lookup", "products", "transfer", "stock", "movements", "inventory", "scrap", "reports", "map"]);
+    const warehouseMoreViews = new Set(["more", "lookup", "products", "transfer", "stock", "movements", "inventory", "scrap", "admin-stock-control", "reports", "map"]);
 
     if (tg) {
       tg.ready();
@@ -8828,6 +8844,62 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function wmsAdminAdjustmentSubmit() {
+      const draft = syncWmsAdminAdjustmentFromForm();
+      const location = wmsAdminSelectedLocation();
+      const stock = wmsAdminSelectedStock();
+      const quantity = Number(draft.quantity);
+      const reason = String(draft.reason || "").trim();
+      if (!location || !stock || Number(stock.location_id) !== Number(location.id)) {
+        showToast("Склад", "Выберите ячейку и товар.");
+        return;
+      }
+      if (!Number.isInteger(quantity) || quantity < (draft.mode === "inventory" ? 0 : 1)) {
+        showToast("Склад", "Введите целое количество.");
+        return;
+      }
+      if (!reason) {
+        showToast("Склад", "Укажите причину для журнала.");
+        return;
+      }
+      const reserved = Number(stock.reserved_quantity || 0);
+      const available = Math.max(0, Number(stock.quantity || 0) - reserved);
+      if (draft.mode === "inventory" && quantity < reserved) {
+        showToast("Склад", `Фактический остаток не может быть меньше резерва ${reserved} шт.`);
+        return;
+      }
+      if (draft.mode === "scrap" && quantity > available) {
+        showToast("Склад", `Можно списать не больше ${available} шт.; резерв защищён.`);
+        return;
+      }
+      const actionLabel = draft.mode === "inventory" ? `установить фактический остаток ${quantity} шт.` : `списать ${quantity} шт.`;
+      if (!window.confirm(`Подтвердите: ${actionLabel}\n${wmsProductLabel(stock.product_key)}\n${location.code}`)) return;
+      const actionKey = `wms:admin-adjustment:${draft.mode}:${stock.id}:${quantity}`;
+      if (!beginAction(actionKey)) return;
+      try {
+        const payload = draft.mode === "inventory"
+          ? {location_code: location.code, counted: [{product_key: stock.product_key, counted_quantity: quantity}], reason, request_key: `wms:admin-inventory:${createRequestId()}`}
+          : {product_key: stock.product_key, quantity, from_location_code: location.code, target_state: draft.targetState || "SCRAPPED", reason, request_key: `wms:admin-scrap:${createRequestId()}`};
+        const endpoint = draft.returnView === "cell"
+          ? "/api/wms/scrap"
+          : (draft.mode === "inventory" ? "/api/wms/admin/inventory" : "/api/wms/admin/scrap");
+        const data = await api(endpoint, payload);
+        const ok = data.status === "ok" || data.status === "duplicate";
+        showToast("Склад", ok ? (draft.mode === "inventory" ? "Инвентаризация сохранена." : `Списано: ${quantity} шт.`) : (data.reason || data.message || "Операция не выполнена."));
+        if (ok) {
+          draft.quantity = "";
+          draft.reason = "";
+          if (draft.returnView === "cell") draft.returnView = "";
+          render();
+          refreshWmsWorkspace({silent: true});
+        }
+      } catch (error) {
+        showToast("Ошибка", error.apiMessage || "Не удалось сохранить складскую операцию.");
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
     async function wmsRegisterBarcode() {
       const d = readWmsDraftFromForm();
       const barcode = (d.barcode || "").trim();
@@ -10641,13 +10713,62 @@ MINIAPP_HTML = """<!doctype html>
       return [product.product_name, product.product_size, product.product_color].filter(Boolean).join(" · ") || "Товар";
     }
 
-    function renderWmsStockProductRow(row, available = null) {
+    function renderWmsStockProductRow(row, available = null, allowWriteoff = false) {
       const product = row.marketplace_product || null;
       const free = available == null ? Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)) : available;
       const identity = product
         ? `<div class="wms-product-rich">${marketplaceProductAvatar(product, false, true)}<div class="wms-product-rich-copy"><b>${escapeHtml(product.group_name || product.name || "Товар Ozon")}</b><span>Артикул: ${escapeHtml(product.offer_id || "—")} · SKU: ${escapeHtml(product.sku || "—")}</span><small>Размер ${escapeHtml(product.size || row.product_key?.product_size || "—")} · цвет ${escapeHtml(product.color || row.product_key?.product_color || "—")}</small></div></div>`
         : `<div><b>${escapeHtml(wmsProductLabel(row.product_key))}</b><span>Складская номенклатура</span></div>`;
-      return `<div class="card report-row wms-stock-product-row">${identity}<div class="wms-stock-product-balance"><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span><small>Доступно ${escapeHtml(free)} · резерв ${escapeHtml(row.reserved_quantity || 0)}</small></div></div>`;
+      return `<div class="card report-row wms-stock-product-row">${identity}<div class="wms-stock-product-balance"><span class="status-chip">${escapeHtml(row.quantity)} ${escapeHtml(row.unit || "шт")}</span><small>Доступно ${escapeHtml(free)} · резерв ${escapeHtml(row.reserved_quantity || 0)}</small>${allowWriteoff ? `<button type="button" class="small-button secondary" data-wms-cell-writeoff="${escapeHtml(row.id)}" ${free > 0 ? "" : "disabled"}>Списать</button>` : ""}</div></div>`;
+    }
+
+    function wmsAdminSelectedLocation() {
+      return (state.wmsData.locations || []).find((row) => Number(row.id) === Number(state.wmsAdminAdjustment.locationId || 0)) || null;
+    }
+
+    function wmsAdminStockRows(locationId = state.wmsAdminAdjustment.locationId) {
+      return (state.wmsData.stock || []).filter((row) => Number(row.location_id) === Number(locationId || 0) && row.item_state === "SELLABLE" && Number(row.quantity || 0) > 0);
+    }
+
+    function wmsAdminSelectedStock() {
+      return (state.wmsData.stock || []).find((row) => Number(row.id) === Number(state.wmsAdminAdjustment.stockId || 0)) || null;
+    }
+
+    function syncWmsAdminAdjustmentFromForm() {
+      const draft = state.wmsAdminAdjustment;
+      const location = document.getElementById("wmsAdminLocation");
+      const stock = document.getElementById("wmsAdminStock");
+      const quantity = document.getElementById("wmsAdminQuantity");
+      const reason = document.getElementById("wmsAdminReason");
+      const targetState = document.getElementById("wmsAdminTargetState");
+      if (location) draft.locationId = location.value;
+      if (stock) draft.stockId = stock.value;
+      if (quantity) draft.quantity = quantity.value;
+      if (reason) draft.reason = reason.value;
+      if (targetState) draft.targetState = targetState.value;
+      return draft;
+    }
+
+    function renderWmsAdminAdjustmentForm(cellMode = false) {
+      const draft = state.wmsAdminAdjustment;
+      const location = wmsAdminSelectedLocation();
+      const rows = wmsAdminStockRows();
+      const stock = wmsAdminSelectedStock();
+      const available = stock ? Math.max(0, Number(stock.quantity || 0) - Number(stock.reserved_quantity || 0)) : 0;
+      const locationOptions = (state.wmsData.locations || []).filter((row) => wmsAdminStockRows(row.id).length).map((row) => `<option value="${escapeHtml(row.id)}" ${Number(row.id) === Number(draft.locationId) ? "selected" : ""}>${escapeHtml(wmsLocationDisplayName(row))}</option>`).join("");
+      const stockOptions = rows.map((row) => `<option value="${escapeHtml(row.id)}" ${Number(row.id) === Number(draft.stockId) ? "selected" : ""}>${escapeHtml(wmsProductLabel(row.product_key))} · ${escapeHtml(row.quantity)} шт.</option>`).join("");
+      return `<div class="card field-card">
+        ${cellMode ? `<div class="section-title"><b>Списать из ячейки</b><span>частично</span></div>` : ""}
+        <div class="form-grid">
+          ${cellMode ? `<div class="field full"><label>Ячейка</label><input value="${escapeHtml(location ? wmsLocationDisplayName(location) : "—")}" readonly></div>` : `<div class="field full"><label>Ячейка без сканирования</label><select id="wmsAdminLocation" data-wms-admin-field="location"><option value="">Выберите ячейку</option>${locationOptions}</select></div>`}
+          <div class="field full"><label>Товар</label><select id="wmsAdminStock" data-wms-admin-field="stock"><option value="">Выберите товар</option>${stockOptions}</select></div>
+          ${stock ? `<div class="field"><label>В системе</label><input value="${escapeHtml(stock.quantity)} шт." readonly></div><div class="field"><label>Резерв / доступно</label><input value="${escapeHtml(stock.reserved_quantity || 0)} / ${escapeHtml(available)} шт." readonly></div>` : ""}
+          ${stock ? `<div class="field"><label>${draft.mode === "inventory" ? "Фактическое количество" : "Количество к списанию"}</label><input id="wmsAdminQuantity" type="number" inputmode="numeric" min="${draft.mode === "inventory" ? escapeHtml(stock.reserved_quantity || 0) : "1"}" max="${draft.mode === "inventory" ? "" : escapeHtml(available)}" step="1" value="${escapeHtml(draft.quantity || "")}" placeholder="0"></div>` : ""}
+          ${stock && draft.mode === "scrap" ? `<div class="field"><label>Результат</label><select id="wmsAdminTargetState"><option value="SCRAPPED" ${draft.targetState === "SCRAPPED" ? "selected" : ""}>Списано</option><option value="DAMAGED" ${draft.targetState === "DAMAGED" ? "selected" : ""}>Брак</option><option value="QUARANTINE" ${draft.targetState === "QUARANTINE" ? "selected" : ""}>Карантин</option></select></div>` : ""}
+          ${stock ? `<div class="field full"><label>Причина</label><textarea id="wmsAdminReason" rows="3" placeholder="Обязательная причина для журнала">${escapeHtml(draft.reason || "")}</textarea></div>` : ""}
+        </div>
+        <div class="button-row"><button type="button" class="small-button secondary" data-wms-admin-action="cancel">Отмена</button>${stock ? `<button type="button" class="small-button" data-wms-admin-action="submit">${draft.mode === "inventory" ? "Сохранить пересчёт" : "Списать"}</button>` : ""}</div>
+      </div>`;
     }
 
     function wmsMovementLabel(type) {
@@ -10745,7 +10866,7 @@ MINIAPP_HTML = """<!doctype html>
           <button type="button" class="card summary-card clickable" data-wms-view="stock"><span>Остатки</span><strong>▤</strong><small>По адресным ячейкам</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="movements"><span>История</span><strong>⇄</strong><small>Все движения</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="inventory"><span>Инвентаризация</span><strong>≡</strong><small>Фактический пересчёт</small></button>
-          <button type="button" class="card summary-card clickable" data-wms-view="scrap"><span>Списание</span><strong>×</strong><small>Брак и карантин</small></button>
+          ${state.data && state.data.is_admin ? `<button type="button" class="card summary-card clickable" data-wms-view="admin-stock-control"><span>Инвентаризация / списание</span><strong>✎</strong><small>Без сканирования штрихкода</small></button>` : `<button type="button" class="card summary-card clickable" data-wms-view="scrap"><span>Списание</span><strong>×</strong><small>Брак и карантин</small></button>`}
         </div>
       `;
     }
@@ -10822,9 +10943,10 @@ MINIAPP_HTML = """<!doctype html>
           <div class="detail-box"><span>Всего</span><strong>${escapeHtml(summary.quantity)} ${escapeHtml(wmsCurrentStockFilter().unit)}</strong></div>
           <div class="detail-box"><span>Доступно / резерв</span><strong>${escapeHtml(summary.available)} / ${escapeHtml(summary.reserved)}</strong></div>
         </div>
-        <div class="button-row"><button type="button" class="small-button" data-wms-cell-action="putaway" data-wms-cell-code="${escapeHtml(location.code)}">Разместить сюда</button><button type="button" class="small-button secondary" data-wms-cell-action="pick" data-wms-cell-code="${escapeHtml(location.code)}">Выдать из ячейки</button></div>
+        <div class="button-row"><button type="button" class="small-button" data-wms-cell-action="putaway" data-wms-cell-code="${escapeHtml(location.code)}">Разместить сюда</button><button type="button" class="small-button secondary" data-wms-cell-action="pick" data-wms-cell-code="${escapeHtml(location.code)}">Выдать из ячейки</button>${summary.available > 0 ? `<button type="button" class="small-button secondary" data-wms-cell-writeoff="">Списать</button>` : ""}</div>
+        ${state.wmsAdminAdjustment.returnView === "cell" && Number(state.wmsAdminAdjustment.locationId) === Number(location.id) ? renderWmsAdminAdjustmentForm(true) : ""}
         <div class="section-title"><b>Содержимое</b><span>${summary.rows.length} поз.</span></div>
-        <div class="wms-location-products">${summary.rows.length ? summary.rows.map((row) => renderWmsStockProductRow(row)).join("") : itemEmpty("Ячейка свободна.")}</div>
+        <div class="wms-location-products">${summary.rows.length ? summary.rows.map((row) => renderWmsStockProductRow(row, null, true)).join("") : itemEmpty("Ячейка свободна.")}</div>
         <div class="section-title"><b>История ячейки</b><span>${movements.length}</span></div>
         <div class="wms-location-products">${movements.length ? movements.map((movement) => `<div class="report-row"><div><b>${escapeHtml(wmsMovementLabel(movement.movement_type))}</b><span>${escapeHtml(wmsProductLabel(movement.product_key))}<br>${escapeHtml(wmsMovementTime(movement.occurred_at))}</span></div><span class="status-chip gray">${escapeHtml(movement.quantity)} шт.</span></div>`).join("") : itemEmpty("Движений по ячейке пока нет.")}</div>
       </div>`;
@@ -11873,11 +11995,12 @@ MINIAPP_HTML = """<!doctype html>
         ["lookup", "⌕", "Проверка товара"],
         ["products", "▤", "Товары"],
         ["inventory", "≡", "Инвентаризация"],
+        ...((state.data && state.data.is_admin) ? [["admin-stock-control", "✎", "Инвентаризация / списание"]] : []),
         ["reports", "↧", "Отчёты"],
         ["more", "•••", "Ещё"],
       ];
       return `<aside class="warehouse-v2-sidebar" aria-label="Разделы склада"><h3>Управление складом</h3>${items.map(([id, icon, label]) => `
-        <button type="button" class="warehouse-v2-nav ${state.wmsView === id || (id === "more" && warehouseMoreViews.has(state.wmsView) && !["map", "reports", "products", "lookup"].includes(state.wmsView)) ? "active" : ""}" data-wms-view="${id}"><span class="warehouse-v2-icon">${icon}</span><span>${label}</span></button>
+        <button type="button" class="warehouse-v2-nav ${state.wmsView === id || (id === "more" && warehouseMoreViews.has(state.wmsView) && !["map", "reports", "products", "lookup", "inventory", "stock", "transfer", "admin-stock-control"].includes(state.wmsView)) ? "active" : ""}" data-wms-view="${id}"><span class="warehouse-v2-icon">${icon}</span><span>${label}</span></button>
       `).join("")}</aside>`;
     }
 
@@ -11900,6 +12023,7 @@ MINIAPP_HTML = """<!doctype html>
       else if (state.wmsView === "movements") renderWmsMovements();
       else if (state.wmsView === "shipments") renderWmsShipments();
       else if (state.wmsView === "inventory") renderWmsInventory();
+      else if (state.wmsView === "admin-stock-control") renderWmsAdminStockControl();
       else if (state.wmsView === "reports") renderWmsReports();
       else if (state.wmsView === "scrap") renderWmsScrap();
       else if (state.wmsView === "pick") renderWmsPick();
@@ -12072,6 +12196,23 @@ MINIAPP_HTML = """<!doctype html>
           <button class="small-button secondary" data-wms-action="inventory_back">Назад</button>
           ${productDetected ? `<button class="small-button" data-wms-action="inventory" ${canConfirm ? "" : "disabled"}>Подтвердить</button>` : ""}
         </div>
+      `;
+    }
+
+    function renderWmsAdminStockControl() {
+      if (!(state.data && state.data.is_admin)) {
+        state.wmsView = "overview";
+        renderWmsOverview();
+        return;
+      }
+      const draft = state.wmsAdminAdjustment;
+      draft.returnView = "admin-stock-control";
+      mainButton.hidden = true;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Инвентаризация / списание</h2><p>Ручная корректировка без сканирования штрихкодов. Доступно только администратору.</p></div></div>
+        ${renderWmsDataNotice()}
+        <div class="card field-card"><div class="task-note"><b>Все изменения записываются в историю.</b><br>Выберите ячейку и товар. Зарезервированное количество уменьшить или списать нельзя.</div><div class="button-row"><button type="button" class="small-button ${draft.mode === "inventory" ? "" : "secondary"}" data-wms-admin-mode="inventory">Инвентаризация</button><button type="button" class="small-button ${draft.mode === "scrap" ? "" : "secondary"}" data-wms-admin-mode="scrap">Списание</button></div></div>
+        ${renderWmsAdminAdjustmentForm(false)}
       `;
     }
 
@@ -13467,6 +13608,45 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const wmsCellWriteoff = event.target.closest("[data-wms-cell-writeoff]");
+      if (wmsCellWriteoff) {
+        const locationId = state.wmsSelectedLocationId;
+        const rows = wmsAdminStockRows(locationId);
+        state.wmsAdminAdjustment = {
+          mode: "scrap",
+          locationId: String(locationId || ""),
+          stockId: String(wmsCellWriteoff.dataset.wmsCellWriteoff || (rows[0] && rows[0].id) || ""),
+          quantity: "",
+          reason: "",
+          targetState: "SCRAPPED",
+          returnView: "cell",
+        };
+        render();
+        return;
+      }
+
+      const wmsAdminMode = event.target.closest("[data-wms-admin-mode]");
+      if (wmsAdminMode) {
+        syncWmsAdminAdjustmentFromForm();
+        state.wmsAdminAdjustment.mode = wmsAdminMode.dataset.wmsAdminMode === "scrap" ? "scrap" : "inventory";
+        state.wmsAdminAdjustment.quantity = "";
+        render();
+        return;
+      }
+
+      const wmsAdminAction = event.target.closest("[data-wms-admin-action]");
+      if (wmsAdminAction) {
+        if (wmsAdminAction.dataset.wmsAdminAction === "submit") {
+          wmsAdminAdjustmentSubmit();
+        } else {
+          state.wmsAdminAdjustment.quantity = "";
+          state.wmsAdminAdjustment.reason = "";
+          if (state.wmsAdminAdjustment.returnView === "cell") state.wmsAdminAdjustment.returnView = "";
+          render();
+        }
+        return;
+      }
+
       const wmsCellAction = event.target.closest("[data-wms-cell-action]");
       if (wmsCellAction) {
         const code = String(wmsCellAction.dataset.wmsCellCode || "").trim();
@@ -14168,6 +14348,21 @@ MINIAPP_HTML = """<!doctype html>
       }
       if (event.target.id === "marketplaceOnlyProblems") {
         state.marketplaceFilters.onlyProblems = Boolean(event.target.checked);
+        return;
+      }
+      if (event.target.id === "wmsAdminLocation") {
+        state.wmsAdminAdjustment.locationId = event.target.value;
+        state.wmsAdminAdjustment.stockId = "";
+        state.wmsAdminAdjustment.quantity = "";
+        state.wmsAdminAdjustment.reason = "";
+        render();
+        return;
+      }
+      if (event.target.id === "wmsAdminStock") {
+        syncWmsAdminAdjustmentFromForm();
+        state.wmsAdminAdjustment.quantity = "";
+        state.wmsAdminAdjustment.reason = "";
+        render();
         return;
       }
       if (event.target.closest("#wmsProductName")) {

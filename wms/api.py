@@ -57,10 +57,14 @@ def handle(
             return _transfer(payload, employee_id)
         if path == "/api/wms/pick":
             return _pick(payload, employee_id)
-        if path == "/api/wms/scrap":
+        if path in {"/api/wms/scrap", "/api/wms/admin/scrap"}:
             return _scrap(payload, employee_id)
-        if path == "/api/wms/inventory":
-            return _inventory(payload, employee_id)
+        if path in {"/api/wms/inventory", "/api/wms/admin/inventory"}:
+            return _inventory(
+                payload,
+                employee_id,
+                require_reason=path == "/api/wms/admin/inventory",
+            )
         if path == "/api/wms/locations":
             return _locations(payload)
         if path == "/api/wms/stock":
@@ -196,12 +200,21 @@ def _scrap(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, An
     return _result_response(result)
 
 
-def _inventory(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
+def _inventory(
+    payload: dict[str, Any],
+    employee_id: int,
+    *,
+    require_reason: bool = False,
+) -> tuple[int, dict[str, Any]]:
+    reason = str(payload.get("reason") or "").strip()
+    if require_reason and not reason:
+        raise ValueError("Укажите причину корректировки остатка.")
     result = ops.inventory_count(
         payload["location_code"],
         payload["counted"],
         employee_id=employee_id,
         request_key=payload.get("request_key"),
+        reason=reason,
     )
     return _result_response(result)
 
@@ -493,9 +506,16 @@ WMS_WRITE_ROUTES = {
     "/api/wms/pick",
     "/api/wms/scrap",
     "/api/wms/inventory",
+    "/api/wms/admin/scrap",
+    "/api/wms/admin/inventory",
     "/api/wms/barcode/resolve",
     "/api/wms/barcode/register",
     "/api/wms/locations/create",
+}
+
+WMS_ADMIN_ROUTES = {
+    "/api/wms/admin/scrap",
+    "/api/wms/admin/inventory",
 }
 
 WMS_READ_ROUTES = {
