@@ -18,6 +18,17 @@ from marketplace_pg import (
 
 
 class MarketplacePostgresReadModelTest(unittest.TestCase):
+    def test_release_sync_lock_accepts_connection_already_closed_by_projection(self):
+        class ClosedConnection:
+            closed = True
+
+        repository = MarketplacePGRepository(connection_factory=lambda: None)
+        repository._lock_connections[1] = ClosedConnection()
+
+        repository.release_sync_lock(1)
+
+        self.assertNotIn(1, repository._lock_connections)
+
     def test_json_value_serializes_postgres_dates_and_timestamps(self):
         payload = _json_value({
             "day": date(2026, 8, 4),

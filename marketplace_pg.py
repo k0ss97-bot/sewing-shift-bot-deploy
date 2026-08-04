@@ -608,14 +608,21 @@ class MarketplacePGRepository:
         conn = self._lock_connections.pop(account_id, None)
         if conn is None:
             return
+        # Some final projection readers close the thread-cached connection.
+        # PostgreSQL releases its session advisory lock on close, so there is
+        # nothing left to unlock in that case.
+        if conn.closed:
+            return
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (f"marketplace:ozon:{account_id}",))
             conn.commit()
         except Exception:
-            conn.rollback()
+            if not conn.closed:
+                conn.rollback()
         finally:
-            conn.close()
+            if not conn.closed:
+                conn.close()
 
     def upsert_endpoint_registry(self, rows: Iterable[dict[str, Any]]) -> None:
         conn = self._connection()
