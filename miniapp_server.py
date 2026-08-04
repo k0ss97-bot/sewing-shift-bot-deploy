@@ -166,7 +166,7 @@ from wms.shipments import shipment_detail, shipment_excel_bytes, shipment_pdf_by
 from marketplaces import dashboard as marketplace_dashboard
 from marketplaces import warehouse_catalog as marketplace_warehouse_catalog
 from marketplaces import sync_for_admin as sync_marketplace_for_admin
-from marketplaces import marketplace_supplies, marketplace_supply_detail, create_internal_shipment_for_supply
+from marketplaces import marketplace_supplies, marketplace_supply_detail, create_internal_shipment_for_supply, warehouse_shipment_tasks
 from marketplace_phase1a import (
     phase1a_dashboard,
     phase1a_data_quality,
@@ -298,6 +298,12 @@ def get_wms_shipment_for_access(telegram_id: int, shipment_number: str):
     if shipment is None:
         return {"ok": False, "message": "Отгрузка не найдена."}
     return {"ok": True, "shipment": shipment}
+
+
+def get_wms_shipment_tasks_for_access(telegram_id: int):
+    if not can_access_wms(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к складским операциям."}
+    return {"ok": True, "shipments": warehouse_shipment_tasks()}
 
 
 def export_wms_shipment_for_access(telegram_id: int, shipment_number: str, export_format: str):
@@ -5953,6 +5959,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/marketplaces/supply/create-shipment",
                 "/api/wms/catalog/products",
                 "/api/wms/shipment/detail",
+                "/api/wms/shipment/tasks",
                 "/api/wms/shipment/export",
                 "/api/routes/create-batch",
                 "/api/routes/start",
@@ -6193,6 +6200,11 @@ def make_handler(bot_token: str, debug: bool):
             if path == "/api/wms/shipment/detail":
                 result = get_wms_shipment_for_access(telegram_id, payload.get("shipment_number", ""))
                 self.send_json(result, status=200 if result.get("ok") else (403 if result.get("code") == "forbidden" else 404))
+                return
+
+            if path == "/api/wms/shipment/tasks":
+                result = get_wms_shipment_tasks_for_access(telegram_id)
+                self.send_json(result, status=200 if result.get("ok") else 403)
                 return
 
             if path == "/api/wms/shipment/export":

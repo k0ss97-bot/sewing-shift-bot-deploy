@@ -31,6 +31,43 @@ class FakeOzonClient:
 
 
 class MarketplaceTests(unittest.TestCase):
+    def test_only_actionable_ozon_supplies_are_working_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "bot.db")
+
+            def connection(**_kwargs):
+                conn = sqlite3.connect(path)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON")
+                return conn
+
+            with patch.dict(os.environ, {"OZON_CLIENT_ID": "client"}, clear=False):
+                with patch.object(marketplaces, "get_db_connection", side_effect=connection):
+                    with connection() as conn:
+                        marketplaces.ensure_schema(conn)
+                        account_id = marketplaces._account(conn, "ozon", "Основной Ozon", "client")
+                        marketplaces.upsert_marketplace_supply(
+                            conn,
+                            {"id": "ACTIVE", "status": "DATA_FILLING", "items": [{"sku": "1", "quantity": 2}]},
+                            marketplace="ozon",
+                            account_id=account_id,
+                        )
+                        marketplaces.upsert_marketplace_supply(
+                            conn,
+                            {"id": "OLD", "status": "COMPLETED", "items": [{"sku": "2", "quantity": 3}]},
+                            marketplace="ozon",
+                            account_id=account_id,
+                        )
+                        conn.commit()
+                        rows = marketplaces._supply_rows(conn, marketplace="ozon", active_only=True)
+                        old_id = conn.execute("SELECT id FROM marketplace_supplies WHERE external_supply_id='OLD'").fetchone()[0]
+
+                    rejected = marketplaces.create_internal_shipment_for_supply(old_id)
+
+            self.assertEqual([row["external_supply_id"] for row in rows], ["ACTIVE"])
+            self.assertTrue(rows[0]["is_actionable"])
+            self.assertEqual(rejected["code"], "supply_not_actionable")
+
     def test_postgres_supply_projection_preserves_internal_shipment_link(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "bot.db")
@@ -69,12 +106,14 @@ class MarketplaceTests(unittest.TestCase):
                     shipment = marketplaces.create_internal_shipment_for_supply(supply_id)
                     projected_again = marketplaces.project_ozon_supplies_from_postgres(rows)
                     detail = marketplaces.marketplace_supply_detail(supply_id)
+                    shipment_tasks = marketplaces.warehouse_shipment_tasks()
 
             self.assertEqual(projected["projected"], 1)
             self.assertTrue(shipment["created"])
             self.assertEqual(projected_again["projected"], 1)
             self.assertEqual(detail["warehouse_shipment_id"], shipment["shipment"]["id"])
             self.assertEqual(detail["items"][0]["mapped_status"], "matched")
+            self.assertEqual(shipment_tasks[0]["number"], shipment["shipment"]["number"])
 
     def test_product_group_uses_article_and_name_without_variant_split(self):
         self.assertEqual(

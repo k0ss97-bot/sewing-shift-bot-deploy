@@ -289,10 +289,23 @@ MARKETPLACE_SUPPLY_STATUSES = (
     "PARTIALLY_ACCEPTED", "CANCELLED", "SYNC_ERROR",
 )
 
+# Only these Ozon states still require preparation by the seller. The Ozon
+# list endpoint also returns transferred, accepted, completed and cancelled
+# history; those rows must not become new warehouse work.
+OZON_ACTIONABLE_SUPPLY_STATES = frozenset({"DATA_FILLING", "READY_TO_SUPPLY"})
+
+
+def supply_is_actionable(marketplace: str, external_status: object) -> bool:
+    if _text(marketplace).lower() != "ozon":
+        return True
+    return _text(external_status).upper() in OZON_ACTIONABLE_SUPPLY_STATES
+
 
 def canonical_supply_status(marketplace: str, external_status: object) -> str:
     """Map a marketplace status to the internal, read-only warehouse state."""
     status = _text(external_status).lower().replace("-", "_").replace(" ", "_")
+    if status in {"data_filling", "ready_to_supply"}:
+        return "PLANNED"
     if any(token in status for token in ("cancel", "reject", "declin")):
         return "CANCELLED"
     if any(token in status for token in ("accept", "received", "delivered", "complete")):
@@ -424,7 +437,8 @@ def project_ozon_supplies_from_postgres(rows: list[dict]) -> dict:
         conn.close()
 
 
-def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str = "", search: str = "", limit: int = 100) -> list[dict]:
+def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str = "", search: str = "", limit: int = 100,
+                 active_only: bool = False) -> list[dict]:
     clauses, args = [], []
     if marketplace and marketplace != "all":
         clauses.append("s.marketplace=?"); args.append(marketplace)
@@ -434,6 +448,10 @@ def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str
         term = f"%{search.lower()}%"
         clauses.append("(lower(s.external_supply_id) LIKE ? OR lower(s.destination_name) LIKE ? OR lower(s.external_status) LIKE ?)")
         args.extend([term, term, term])
+    if active_only:
+        placeholders = ",".join("?" for _ in OZON_ACTIONABLE_SUPPLY_STATES)
+        clauses.append(f"(s.marketplace<>'ozon' OR upper(s.external_status) IN ({placeholders}))")
+        args.extend(sorted(OZON_ACTIONABLE_SUPPLY_STATES))
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     args.append(max(1, min(500, int(limit or 100))))
     rows = conn.execute(f"""SELECT s.id,s.marketplace,s.external_supply_id,s.external_preorder_id,s.external_status,
@@ -443,7 +461,10 @@ def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str
             SUM(CASE WHEN i.mapped_status='unmatched' THEN 1 ELSE 0 END) AS unmatched_count
         FROM marketplace_supplies s LEFT JOIN marketplace_supply_items i ON i.supply_id=s.id
         {where} GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ?""", args).fetchall()
-    return [dict(row) for row in rows]
+    result = [dict(row) for row in rows]
+    for row in result:
+        row["is_actionable"] = supply_is_actionable(row.get("marketplace", ""), row.get("external_status", ""))
+    return result
 
 
 def marketplace_supplies(*, marketplace: str = "", status: str = "", search: str = "", limit: int = 100) -> dict:
@@ -476,6 +497,16 @@ def create_internal_shipment_for_supply(supply_id: int) -> dict:
     supply = conn.execute("SELECT * FROM marketplace_supplies WHERE id=?", (int(supply_id),)).fetchone()
     if supply is None:
         conn.close(); return {"ok": False, "message": "Поставка не найдена."}
+    existing = conn.execute("SELECT id,number,status FROM warehouse_shipments WHERE source_type='marketplace_supply' AND source_id=?", (int(supply_id),)).fetchone()
+    if existing:
+        conn.close(); return {"ok": True, "shipment": dict(existing), "created": False}
+    if not supply_is_actionable(supply["marketplace"], supply["external_status"]):
+        conn.close()
+        return {
+            "ok": False,
+            "code": "supply_not_actionable",
+            "message": "Задание складу можно создать только для актуальной поставки Ozon.",
+        }
     unmatched = conn.execute("SELECT COUNT(*) FROM marketplace_supply_items WHERE supply_id=? AND mapped_status='unmatched'", (int(supply_id),)).fetchone()[0]
     if unmatched:
         _sync_event(conn, supply["marketplace"], "mapping_required", "Поставка не передана на склад: есть не сопоставленные товары.", severity="critical", external_id=supply["external_supply_id"])
@@ -488,9 +519,6 @@ def create_internal_shipment_for_supply(supply_id: int) -> dict:
     if not item_count:
         conn.close()
         return {"ok": False, "code": "empty_supply", "message": "Ozon ещё не передал состав этой поставки."}
-    existing = conn.execute("SELECT id,number,status FROM warehouse_shipments WHERE source_type='marketplace_supply' AND source_id=?", (int(supply_id),)).fetchone()
-    if existing:
-        conn.close(); return {"ok": True, "shipment": dict(existing), "created": False}
     now = _now()
     number = f"MP-{int(supply_id):06d}"
     items = conn.execute("SELECT * FROM marketplace_supply_items WHERE supply_id=? ORDER BY id", (int(supply_id),)).fetchall()
@@ -504,6 +532,26 @@ def create_internal_shipment_for_supply(supply_id: int) -> dict:
     conn.execute("UPDATE marketplace_supplies SET warehouse_shipment_id=?,canonical_status='WAITING_RESERVATION',updated_at=? WHERE id=?", (shipment_id, now, int(supply_id)))
     conn.commit(); conn.close()
     return {"ok": True, "created": True, "shipment": {"id": shipment_id, "number": number, "status": "WAITING_RESERVATION", "total_quantity": total}}
+
+
+def warehouse_shipment_tasks(*, limit: int = 100) -> list[dict]:
+    """Return open marketplace shipment tasks for the operational WMS screen."""
+    conn = get_db_connection(); ensure_schema(conn)
+    rows = conn.execute(
+        """SELECT s.id,s.number,s.marketplace,s.external_supply_id,s.status,s.destination_name,
+                  s.total_quantity,s.reserved_quantity,s.picked_quantity,s.packed_quantity,
+                  s.planned_at,s.updated_at,COUNT(i.id) AS item_count
+             FROM warehouse_shipments s
+        LEFT JOIN warehouse_shipment_items i ON i.shipment_id=s.id
+            WHERE s.status NOT IN ('HANDED_OVER','ACCEPTED','CANCELLED')
+         GROUP BY s.id
+         ORDER BY s.updated_at DESC
+            LIMIT ?""",
+        (max(1, min(500, int(limit or 100))),),
+    ).fetchall()
+    result = [dict(row) for row in rows]
+    conn.close()
+    return result
 
 
 def product_group_for(*values: object) -> tuple[str, str]:
@@ -1555,7 +1603,7 @@ def dashboard(*, read_only: bool = False) -> dict:
     recent = conn.execute("SELECT id,status,products_count,prices_count,stocks_count,orders_count,error_message,started_at,finished_at FROM marketplace_sync_runs WHERE account_id=? ORDER BY id DESC LIMIT 5", (account_id,)).fetchall()
     configured = bool(os.getenv("OZON_CLIENT_ID", "").strip() and os.getenv("OZON_API_KEY", "").strip())
     wildberries_configured = bool(os.getenv("WB_API_TOKEN", "").strip())
-    supply_rows = _supply_rows(conn, limit=20)
+    supply_rows = _supply_rows(conn, limit=20, active_only=True)
     supply_counts = {key: 0 for key in MARKETPLACE_SUPPLY_STATUSES}
     for status_row in conn.execute("SELECT canonical_status,COUNT(*) AS count FROM marketplace_supplies GROUP BY canonical_status"):
         supply_counts[status_row[0]] = int(status_row[1])
