@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import base64
+import re
 import threading
 import time
 from datetime import datetime, timedelta
@@ -70,6 +71,7 @@ from database import (
     get_employees_by_status,
     get_feedback_entries,
     get_feedback_entries_by_shift,
+    get_db_connection,
     get_fabric_stock_rows,
     get_all_fabric_stock_rows_with_ids,
     get_fabric_stock_rows_with_ids,
@@ -191,7 +193,7 @@ MAX_DEFECT_PHOTO_BYTES = 2 * 1024 * 1024
 MAX_REQUEST_BODY_BYTES = 15 * 1024 * 1024
 MAX_CONCURRENT_REQUESTS = 32
 REQUEST_SOCKET_TIMEOUT_SECONDS = 30
-CONTENT_SECURITY_POLICY = (
+CONTENT_SECURITY_POLICY_BASE = (
     "default-src 'self'; "
     "base-uri 'self'; "
     "connect-src 'self'; "
@@ -200,10 +202,8 @@ CONTENT_SECURITY_POLICY = (
     "frame-ancestors 'self'; "
     "img-src 'self' data: blob: https://ir.ozone.ru https://cdn1.ozone.ru https://*.wbbasket.ru; "
     "media-src 'self' blob:; "
+    "manifest-src 'self'; "
     "object-src 'none'; "
-    "script-src 'self' 'unsafe-inline' https://telegram.org; "
-    "style-src 'self' 'unsafe-inline'; "
-    "worker-src 'self' blob:"
 )
 ROUTES_MINIAPP_ENABLED = False
 LOGGER = logging.getLogger(__name__)
@@ -239,6 +239,30 @@ PWA_HTML = inject_pwa_markup(MINIAPP_HTML)
 PWA_SHELL_REVISION = app_shell_revision(PWA_HTML)
 
 
+def _csp_inline_hashes(html_text: str, tag: str) -> tuple[str, ...]:
+    """Hash static inline blocks so CSP does not need blanket unsafe-inline."""
+    pattern = re.compile(rf"<{tag}(?:\s[^>]*)?>(.*?)</{tag}>", re.IGNORECASE | re.DOTALL)
+    hashes = []
+    for match in pattern.finditer(html_text):
+        content = match.group(1)
+        if not content:
+            continue
+        digest = base64.b64encode(hashlib.sha256(content.encode("utf-8")).digest()).decode("ascii")
+        hashes.append(f"'sha256-{digest}'")
+    return tuple(dict.fromkeys(hashes))
+
+
+CONTENT_SECURITY_POLICY = (
+    CONTENT_SECURITY_POLICY_BASE
+    + "script-src 'self' https://telegram.org "
+    + " ".join(_csp_inline_hashes(PWA_HTML, "script"))
+    + "; script-src-attr 'none'; "
+    + "style-src 'self'; style-src-elem 'self' "
+    + " ".join(_csp_inline_hashes(PWA_HTML, "style"))
+    + "; style-src-attr 'unsafe-inline'; worker-src 'self' blob:; upgrade-insecure-requests"
+)
+
+
 def get_admin_ids():
     admin_ids = []
     raw_admin_ids = os.getenv("ADMIN_IDS", "").replace("ADMIN_IDS=", "")
@@ -260,6 +284,43 @@ def get_admin_ids():
 def set_marketplace_health_state(*, supplies: str, reason: str = "") -> None:
     MARKETPLACE_HEALTH_STATE["supplies"] = supplies if supplies in {"idle", "syncing", "ready", "error"} else "error"
     MARKETPLACE_HEALTH_STATE["reason"] = str(reason or "")[:80]
+
+
+def health_snapshot() -> dict:
+    """Return a shallow, secret-free readiness snapshot for monitoring.
+
+    SQLite is always required by the application.  The marketplace PostgreSQL
+    projection becomes required when Phase 1A is enabled; a failed projection
+    must not be hidden behind an unconditional ``ok: true`` response.
+    """
+    components = {"sqlite": "ready", "marketplace_postgres": "disabled"}
+    try:
+        conn = get_db_connection(timeout=0.5)
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        LOGGER.exception("Health check failed for SQLite")
+        components["sqlite"] = "error"
+
+    if phase1a_enabled():
+        try:
+            phase = (phase1a_data_quality().get("phase1a") or {})
+            components["marketplace_postgres"] = (
+                "error" if phase.get("state") == "unavailable" else "ready"
+            )
+        except Exception:
+            LOGGER.exception("Health check failed for marketplace PostgreSQL")
+            components["marketplace_postgres"] = "error"
+
+    ready = components["sqlite"] == "ready" and components["marketplace_postgres"] != "error"
+    return {
+        "ok": ready,
+        "status": "ready" if ready else "not_ready",
+        "components": components,
+        "marketplace": dict(MARKETPLACE_HEALTH_STATE),
+    }
 
 
 def is_admin(telegram_id: int):
@@ -430,7 +491,7 @@ def get_analytics_overview_for_admin(telegram_id: int, payload: dict | None = No
         return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
     return build_analytics_overview(
         payload,
-        dashboard_reader=lambda: marketplace_dashboard(read_only=True),
+        dashboard_reader=lambda: get_marketplace_dashboard_for_admin(telegram_id),
         data_quality_reader=phase1a_data_quality,
         production_reader=get_production_control_payload,
     )
@@ -5799,7 +5860,8 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             if path == "/health":
-                self.send_json({"ok": True, "marketplace": dict(MARKETPLACE_HEALTH_STATE)})
+                health = health_snapshot()
+                self.send_json(health, status=200 if health["ok"] else 503)
                 return
 
             if path == "/api/web/session":
@@ -6538,11 +6600,20 @@ def make_handler(bot_token: str, debug: bool):
             self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
 
         def send_html(self, html_text: str, status: int = 200):
+            etag = f'"{PWA_SHELL_REVISION}"'
+            if status == 200 and self.headers.get("If-None-Match", "").strip() == etag:
+                self.send_response(304)
+                self.send_header("Cache-Control", "private, no-cache, max-age=0")
+                self.send_header("ETag", etag)
+                self.send_security_headers()
+                self.end_headers()
+                return
             body = html_text.encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "private, no-cache, max-age=0")
+            self.send_header("ETag", etag)
             self.send_security_headers()
             self.end_headers()
             self.wfile.write(body)

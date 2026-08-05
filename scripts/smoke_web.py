@@ -240,9 +240,20 @@ def run_smoke() -> None:
             status, headers, root_body = http_request(f"{base_url}/")
             require(status == 200, f"GET / returned HTTP {status}.")
             require(headers.get_content_type() == "text/html", "GET / did not return HTML.")
-            require(headers.get("Cache-Control") == "no-store", "GET / is missing no-store caching.")
+            require(
+                headers.get("Cache-Control") == "private, no-cache, max-age=0",
+                "GET / is missing private shell revalidation caching.",
+            )
+            csp = headers.get("Content-Security-Policy") or ""
+            require("script-src-attr 'none'" in csp, "CSP must block inline event handlers.")
+            script_policy = csp.split("script-src ", 1)[1].split(";", 1)[0] if "script-src " in csp else ""
+            require("'unsafe-inline'" not in script_policy, "CSP script-src still permits unsafe-inline.")
             html_text = root_body.decode("utf-8")
             require(len(html_text) > 1_000, "Miniapp HTML response is unexpectedly small.")
+            require(
+                not re.search(r"\son(?:click|change|input|focus|blur|mouse|touch)\s*=", html_text, re.IGNORECASE),
+                "HTML still contains inline event handlers blocked by CSP.",
+            )
             for registration_marker in (
                 'id="webRegisterForm"',
                 'id="webFullName"',
@@ -343,10 +354,24 @@ def run_smoke() -> None:
             require(status == 200, f"GET /app returned HTTP {status}.")
             require(headers.get_content_type() == "text/html", "GET /app did not return HTML.")
             require(app_body == root_body, "GET / and GET /app returned different assets.")
+            shell_etag = headers.get("ETag")
+            require(bool(shell_etag), "GET /app is missing its shell ETag.")
+            cached_status, cached_headers, cached_body = http_request(
+                f"{base_url}/app", headers={"If-None-Match": shell_etag}
+            )
+            require(cached_status == 304 and not cached_body, "GET /app did not honor If-None-Match.")
+            require(cached_headers.get("ETag") == shell_etag, "304 response changed the shell ETag.")
 
             status, headers, health_body = http_request(f"{base_url}/health")
             health_payload = parse_json_response(status, headers, health_body)
             require(status == 200 and health_payload.get("ok") is True, "Health endpoint failed.")
+            require(health_payload.get("status") == "ready", "Health endpoint is not ready.")
+            health_components = health_payload.get("components") or {}
+            require(health_components.get("sqlite") == "ready", "Health endpoint did not verify SQLite.")
+            require(
+                health_components.get("marketplace_postgres") in {"disabled", "ready"},
+                "Health endpoint did not verify marketplace PostgreSQL readiness.",
+            )
             marketplace_health = health_payload.get("marketplace") or {}
             require(
                 marketplace_health.get("supplies") in {"idle", "syncing", "ready", "error"},

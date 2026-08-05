@@ -24,6 +24,10 @@ def main() -> int:
         environment = os.environ.copy()
         environment["DB_DIR"] = str(database_directory)
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        # HTTP authorization, CSRF and readiness checks also use their own
+        # temporary database and loopback ephemeral server.  They are part of
+        # the normal quality gate rather than an easy-to-forget opt-in suite.
+        environment["RUN_HTTP_TESTS"] = "1"
         environment.pop("SHARED_DIR", None)
 
         existing_python_path = environment.get("PYTHONPATH", "")

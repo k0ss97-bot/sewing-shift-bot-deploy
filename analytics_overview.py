@@ -1524,6 +1524,7 @@ def analytics_overview(
         "marketplaceBreakdown": providers,
         "risks": risks,
         "supplies": supplies,
+        "catalog_reconciliation": _as_dict(dashboard.get("catalog_reconciliation")),
         "data_quality": data_quality,
         "production": production,
         "meta": meta,

@@ -784,7 +784,27 @@ class WebAppHttpTest(unittest.TestCase):
         health_payload = json.loads(health.read().decode("utf-8"))
         connection.close()
         self.assertEqual(health.status, 200)
-        self.assertEqual(health_payload, {"ok": True})
+        self.assertTrue(health_payload["ok"])
+        self.assertEqual(health_payload["status"], "ready")
+        self.assertEqual(health_payload["components"]["sqlite"], "ready")
+
+    def test_health_reports_required_marketplace_postgres_failure(self):
+        original_enabled = self.server_module.phase1a_enabled
+        original_quality = self.server_module.phase1a_data_quality
+        self.server_module.phase1a_enabled = lambda: True
+        self.server_module.phase1a_data_quality = lambda: {
+            "ok": True,
+            "phase1a": {"enabled": True, "state": "unavailable"},
+        }
+        try:
+            status, payload, _headers = self.request("GET", "/health")
+        finally:
+            self.server_module.phase1a_enabled = original_enabled
+            self.server_module.phase1a_data_quality = original_quality
+        self.assertEqual(status, 503)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "not_ready")
+        self.assertEqual(payload["components"]["marketplace_postgres"], "error")
 
 
 if __name__ == "__main__":

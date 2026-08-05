@@ -17,6 +17,11 @@ class AnalyticsOverviewTests(unittest.TestCase):
                 ],
             },
             "wildberries": {"ok": True, "configured": False},
+            "catalog_reconciliation": {
+                "ok": True,
+                "warehouse_available": True,
+                "marketplace_items": [{"marketplace": "ozon", "article": "SKU-1"}],
+            },
         }
 
         result = analytics_overview(
@@ -34,4 +39,5 @@ class AnalyticsOverviewTests(unittest.TestCase):
         self.assertEqual(provider["net_payout"], "1590.00")
         self.assertEqual(metrics["recognized_sales"]["value"], "2000.00")
         self.assertEqual(metrics["net_payout"]["value"], "1590.00")
-
+        self.assertTrue(result["catalog_reconciliation"]["ok"])
+        self.assertEqual(result["catalog_reconciliation"]["marketplace_items"][0]["article"], "SKU-1")
