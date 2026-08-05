@@ -130,3 +130,22 @@ class OperationResult:
         if self.skipped_duplicate:
             return "duplicate"
         return "ok" if self.ok else "error"
+
+
+@dataclass
+class StockReceiptResult:
+    """Outcome of posting one multi-line stock receipt document."""
+
+    ok: bool
+    receipt_id: int | None = None
+    number: str | None = None
+    lines_count: int = 0
+    total_quantity: int = 0
+    reason: str | None = None
+    skipped_duplicate: bool = False
+
+    @property
+    def status(self) -> str:
+        if self.skipped_duplicate:
+            return "duplicate"
+        return "posted" if self.ok else "error"

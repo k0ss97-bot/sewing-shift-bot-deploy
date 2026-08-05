@@ -18,7 +18,7 @@ import uuid
 from typing import Any
 
 from .connection import get_pg_connection
-from .models import OperationResult, ProductKey
+from .models import OperationResult, ProductKey, StockReceiptResult
 from . import repository as repo
 
 
@@ -169,11 +169,9 @@ def putaway(
 ) -> OperationResult:
     """Put finished goods into an address cell.
 
-    A receiving balance is used as the source when it is available.  If the
-    same finished product has not been accepted into RECEIVE, placement stays
-    a valid independent scanner operation and records a direct putaway into
-    the selected cell.  This supports physical work that starts at a rack,
-    without turning "Приёмка" into a mandatory prerequisite.
+    Placement is allowed only within the available balance of the same product
+    in RECEIVE. New stock must first be posted through production receipt or a
+    manual stock-receipt document.
     """
     if quantity <= 0:
         return OperationResult(False, reason="Количество должно быть больше нуля.")
@@ -198,11 +196,11 @@ def putaway(
             conn.rollback()
             return OperationResult(True, skipped_duplicate=True)
 
-        # A receipt is useful but not mandatory for an address placement.
-        # Lock it if present so an available receipt is moved atomically.
+        # RECEIVE is the only valid source for address placement. Lock the row
+        # so two scanners cannot place the same available quantity twice.
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT id, quantity FROM warehouse_stock
+                """SELECT id, quantity, reserved_quantity FROM warehouse_stock
                    WHERE item_type=%s AND product_name=%s AND product_size=%s
                      AND product_color=%s AND stage_name=%s AND ready_for_position=%s
                      AND item_state='SELLABLE' AND location_id=%s AND unit=%s
@@ -211,20 +209,26 @@ def putaway(
             )
             row = cur.fetchone()
         received_quantity = int(row[1]) if row is not None else 0
-        from_location_id = None
-        movement_type = "putaway_direct"
-        if received_quantity >= quantity:
-            repo.upsert_stock(conn, product_key, delta=-quantity, location_id=receive_loc.id, unit=unit)
-            from_location_id = receive_loc.id
-            movement_type = "putaway"
+        reserved_quantity = int(row[2]) if row is not None else 0
+        available_quantity = max(0, received_quantity - reserved_quantity)
+        if available_quantity < quantity:
+            conn.rollback()
+            return OperationResult(
+                False,
+                reason=(
+                    f"В зоне приёмки доступно {available_quantity} шт. "
+                    "Сначала выполните оприходование или приёмку от производства."
+                ),
+            )
+        repo.upsert_stock(conn, product_key, delta=-quantity, location_id=receive_loc.id, unit=unit)
         repo.upsert_stock(conn, product_key, delta=quantity, location_id=target.id, unit=unit)
         movement_id = repo.insert_movement(
             conn,
             request_key=request_key,
-            movement_type=movement_type,
+            movement_type="putaway",
             product_key=product_key,
             quantity=quantity,
-            from_location_id=from_location_id,
+            from_location_id=receive_loc.id,
             to_location_id=target.id,
             reason=reason,
             actor_employee_id=employee_id,
@@ -232,6 +236,128 @@ def putaway(
         )
         conn.commit()
         return OperationResult(True, movement_id=movement_id)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+# ──────────────────────────────────────────────────────────────────────
+# multi-line stock receipt (Оприходование → RECEIVE)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def post_stock_receipt(
+    lines: list[tuple[str, ProductKey, int]],
+    *,
+    employee_id: int,
+    request_key: str,
+    comment: str | None = None,
+    tsd_device_id: str | None = None,
+) -> StockReceiptResult:
+    """Atomically post a multi-line manual receipt into RECEIVE."""
+
+    request_key = str(request_key or "").strip()
+    if not request_key or len(request_key) > 200:
+        return StockReceiptResult(False, reason="Неверный ключ документа оприходования.")
+    if not lines:
+        return StockReceiptResult(False, reason="Добавьте хотя бы один товар.")
+    if len(lines) > 500:
+        return StockReceiptResult(False, reason="В одном документе можно оприходовать не более 500 позиций.")
+
+    merged: dict[ProductKey, dict[str, object]] = {}
+    for barcode, product_key, quantity in lines:
+        if product_key.item_type != "finished":
+            return StockReceiptResult(False, reason="Оприходование в зону приёмки доступно только для готовой продукции.")
+        if quantity <= 0 or quantity > 1_000_000:
+            return StockReceiptResult(False, reason="Количество каждой позиции должно быть от 1 до 1 000 000.")
+        entry = merged.setdefault(product_key, {"barcode": barcode, "quantity": 0})
+        entry["quantity"] = int(entry["quantity"]) + quantity
+        if int(entry["quantity"]) > 1_000_000:
+            return StockReceiptResult(False, reason="Суммарное количество одного товара не должно превышать 1 000 000.")
+
+    conn = get_pg_connection()
+    try:
+        existing = repo.get_stock_receipt_by_request_key(conn, request_key)
+        if existing:
+            conn.rollback()
+            return StockReceiptResult(
+                True,
+                receipt_id=existing["id"],
+                number=existing["number"],
+                lines_count=existing["lines_count"],
+                total_quantity=existing["total_quantity"],
+                skipped_duplicate=True,
+            )
+        receive_loc = _zone_location(conn, "RECEIVE")
+        document = repo.create_stock_receipt(
+            conn,
+            request_key=request_key,
+            actor_employee_id=employee_id,
+            comment=str(comment or "").strip()[:500] or None,
+        )
+        if document is None:
+            existing = repo.get_stock_receipt_by_request_key(conn, request_key)
+            conn.rollback()
+            return StockReceiptResult(
+                True,
+                receipt_id=existing["id"] if existing else None,
+                number=existing["number"] if existing else None,
+                lines_count=existing["lines_count"] if existing else 0,
+                total_quantity=existing["total_quantity"] if existing else 0,
+                skipped_duplicate=True,
+            )
+
+        total_quantity = 0
+        for line_no, (product_key, entry) in enumerate(merged.items(), start=1):
+            quantity = int(entry["quantity"])
+            total_quantity += quantity
+            repo.upsert_stock(
+                conn,
+                product_key,
+                delta=quantity,
+                item_state="SELLABLE",
+                location_id=receive_loc.id,
+                unit="шт",
+            )
+            movement_id = repo.insert_movement(
+                conn,
+                request_key=f"{request_key}:line:{line_no}",
+                movement_type="stock_receipt",
+                product_key=product_key,
+                quantity=quantity,
+                to_location_id=receive_loc.id,
+                to_state="SELLABLE",
+                source_type="stock_receipt",
+                source_id=document["id"],
+                reason="Оприходование готовой продукции",
+                actor_employee_id=employee_id,
+                tsd_device_id=tsd_device_id,
+            )
+            if movement_id is None:
+                raise RuntimeError("Не удалось записать строку движения.")
+            repo.insert_stock_receipt_line(
+                conn,
+                receipt_id=document["id"],
+                line_no=line_no,
+                barcode=str(entry["barcode"]),
+                product_key=product_key,
+                quantity=quantity,
+                movement_id=movement_id,
+            )
+        posted = repo.post_stock_receipt(
+            conn,
+            receipt_id=document["id"],
+            lines_count=len(merged),
+            total_quantity=total_quantity,
+        )
+        conn.commit()
+        return StockReceiptResult(
+            True,
+            receipt_id=posted["id"],
+            number=posted["number"],
+            lines_count=posted["lines_count"],
+            total_quantity=posted["total_quantity"],
+        )
     except Exception:
         conn.rollback()
         raise

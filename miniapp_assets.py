@@ -5729,6 +5729,7 @@ MINIAPP_HTML = """<!doctype html>
       "passportBatchId",
       "passportReturnScreen",
       "wmsMaterialReceipt",
+      "wmsStockReceipt",
     ];
     let persistedUiState = {};
 
@@ -5828,7 +5829,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsMapSearch: "",
       wmsMapStatusFilter: "all",
       wmsSelectedLocationId: "",
-      wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: [], shipmentTasks: []},
+      wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: [], shipmentTasks: [], stockReceipts: []},
       wmsCatalogSearch: "",
       wmsCatalogGroup: "",
       wmsCatalog: {loading: false, loaded: false, error: "", products: [], lastSyncAt: ""},
@@ -5847,6 +5848,7 @@ MINIAPP_HTML = """<!doctype html>
       pushDeviceSyncing: false,
       wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, matchedStock: null, matchedLocationCode: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
       wmsMaterialReceipt: {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""},
+      wmsStockReceipt: {requestKey: "", lines: [], pending: null, quantity: "1", comment: "", submitting: false},
       marketplaceData: {loading: false, loaded: false, error: "", payload: null},
       marketplaceQuality: {loading: false, syncing: false, polling: false, loaded: false, error: "", payload: null, products: null, page: 1, query: ""},
       analyticsQuality: {loading: false, loaded: false, error: "", payload: null},
@@ -5876,6 +5878,9 @@ MINIAPP_HTML = """<!doctype html>
     if (!state.taskDefectPhotos || typeof state.taskDefectPhotos !== "object") state.taskDefectPhotos = {};
     if (!["all", "free", "in_work", "done"].includes(state.adminTaskStatus)) state.adminTaskStatus = "all";
     if (!state.wmsMaterialReceipt || typeof state.wmsMaterialReceipt !== "object") state.wmsMaterialReceipt = {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""};
+    if (!state.wmsStockReceipt || typeof state.wmsStockReceipt !== "object") state.wmsStockReceipt = {requestKey: "", lines: [], pending: null, quantity: "1", comment: "", submitting: false};
+    if (!Array.isArray(state.wmsStockReceipt.lines)) state.wmsStockReceipt.lines = [];
+    state.wmsStockReceipt.submitting = false;
     if (!state.wmsAdminAdjustment || typeof state.wmsAdminAdjustment !== "object") state.wmsAdminAdjustment = {mode: "inventory", locationId: "", stockId: "", quantity: "", reason: "", targetState: "SCRAPPED", returnView: "admin-stock-control"};
 
     const mount = document.getElementById("mount");
@@ -5936,7 +5941,7 @@ MINIAPP_HTML = """<!doctype html>
       { id: "orders", label: "Задания", icon: "▣" },
     ];
     const productionScreens = new Set(["shift", "report", "analytics", "orders", "admin", "passport", "profile"]);
-    const warehouseMoreViews = new Set(["more", "lookup", "products", "transfer", "stock", "movements", "inventory", "scrap", "admin-stock-control", "reports", "map"]);
+    const warehouseMoreViews = new Set(["more", "stock-receipt", "lookup", "products", "transfer", "stock", "movements", "inventory", "scrap", "admin-stock-control", "reports", "map"]);
 
     if (tg) {
       tg.ready();
@@ -8752,6 +8757,101 @@ MINIAPP_HTML = """<!doctype html>
       state.wmsDraft.productScanned = Boolean(state.wmsDraft.productName);
     }
 
+    function ensureWmsStockReceiptDraft() {
+      const draft = state.wmsStockReceipt;
+      if (!draft.requestKey) draft.requestKey = `wms:stock-receipt:${createRequestId()}`;
+      if (!Array.isArray(draft.lines)) draft.lines = [];
+      return draft;
+    }
+
+    function syncWmsStockReceiptInputs() {
+      const draft = ensureWmsStockReceiptDraft();
+      const quantityInput = document.getElementById("wmsStockReceiptQuantity");
+      const commentInput = document.getElementById("wmsStockReceiptComment");
+      if (quantityInput) draft.quantity = quantityInput.value;
+      if (commentInput) draft.comment = commentInput.value.slice(0, 500);
+      return draft;
+    }
+
+    function resetWmsStockReceiptDraft() {
+      state.wmsStockReceipt = {
+        requestKey: `wms:stock-receipt:${createRequestId()}`,
+        lines: [],
+        pending: null,
+        quantity: "1",
+        comment: "",
+        submitting: false,
+      };
+    }
+
+    function wmsStockReceiptSameProduct(first, second) {
+      return ["item_type", "product_name", "product_size", "product_color", "stage_name", "ready_for_position"]
+        .every((key) => String((first || {})[key] || "") === String((second || {})[key] || ""));
+    }
+
+    function addPendingWmsStockReceiptLine() {
+      const draft = syncWmsStockReceiptInputs();
+      const pending = draft.pending;
+      const quantity = Number(draft.quantity);
+      if (!pending || !pending.productKey) {
+        showToast("Оприходование", "Сначала отсканируйте товар.");
+        return;
+      }
+      if (!quantity || quantity < 1 || quantity > 1_000_000) {
+        showToast("Оприходование", "Количество должно быть от 1 до 1 000 000.");
+        return;
+      }
+      const existing = draft.lines.find((line) => wmsStockReceiptSameProduct(line.productKey, pending.productKey));
+      if (existing) existing.quantity = Number(existing.quantity || 0) + quantity;
+      else draft.lines.push({barcode: pending.barcode, productKey: pending.productKey, quantity});
+      draft.pending = null;
+      draft.quantity = "1";
+      render();
+      focusWmsHardwareScanner();
+      showToast("Оприходование", `Позиция добавлена: ${quantity} шт.`);
+    }
+
+    function removeWmsStockReceiptLine(index) {
+      const draft = syncWmsStockReceiptInputs();
+      if (index < 0 || index >= draft.lines.length) return;
+      draft.lines.splice(index, 1);
+      render();
+      focusWmsHardwareScanner();
+    }
+
+    async function postWmsStockReceipt() {
+      const draft = syncWmsStockReceiptInputs();
+      if (!draft.lines.length) {
+        showToast("Оприходование", "Добавьте товары в документ.");
+        return;
+      }
+      const actionKey = `wms:stock-receipt:post:${draft.requestKey}`;
+      if (!beginAction(actionKey)) return;
+      draft.submitting = true;
+      render();
+      try {
+        const data = await api("/api/wms/stock-receipts/post", {
+          request_key: draft.requestKey,
+          comment: draft.comment,
+          lines: draft.lines.map((line) => ({barcode: line.barcode, quantity: Number(line.quantity || 0)})),
+          tsd_device_id: navigator.userAgent.slice(0, 120),
+        });
+        if (!data.ok) throw new Error(data.message || "Не удалось провести оприходование.");
+        const number = data.number || "документ";
+        const total = Number(data.total_quantity || 0);
+        resetWmsStockReceiptDraft();
+        state.wmsView = "receive";
+        await refreshWmsWorkspace({silent: true});
+        showToast("Оприходование", `${number} проведён · ${total} шт. в зоне приёмки.`);
+      } catch (error) {
+        draft.submitting = false;
+        render();
+        showToast("Ошибка", error.apiMessage || error.message || "Не удалось провести оприходование.");
+      } finally {
+        endAction(actionKey);
+      }
+    }
+
     async function wmsReceive() {
       const d = readWmsDraftFromForm();
       const qty = parseInt(d.quantity, 10);
@@ -9733,6 +9833,7 @@ MINIAPP_HTML = """<!doctype html>
     function scanWms(field) {
       const prompts = {
         product: "Наведите камеру на штрихкод товара",
+        stock_receipt_product: "Наведите камеру на штрихкод товара",
         bind_product: "Наведите камеру на новый штрихкод товара",
         from_location: "Наведите камеру на штрихкод ячейки",
         to_location: "Наведите камеру на штрихкод ячейки",
@@ -9847,9 +9948,32 @@ MINIAPP_HTML = """<!doctype html>
       } else if (/^LPN:/i.test(v)) {
         showToast("ТСД", `Контейнер: ${v} (поддержка LPN — в разработке)`);
       } else {
+        if (field === "stock_receipt_product") {
+          try {
+            syncWmsStockReceiptInputs();
+            const data = await api("/api/wms/barcode/resolve", {barcode: v});
+            const productKey = data.product_key || null;
+            if (!productKey || productKey.item_type !== "finished") {
+              showToast("Оприходование", "Можно добавлять только готовую продукцию.");
+              return;
+            }
+            const draft = ensureWmsStockReceiptDraft();
+            draft.pending = {barcode: v, productKey};
+            draft.quantity = "1";
+            render();
+            const quantityInput = document.getElementById("wmsStockReceiptQuantity");
+            if (quantityInput) quantityInput.focus({preventScroll: true});
+            showToast("Оприходование", `Товар найден: ${wmsProductLabel(productKey)}.`);
+          } catch (error) {
+            showToast("Оприходование", error.apiMessage || "Штрихкод товара не зарегистрирован.");
+            focusWmsHardwareScanner();
+          }
+          return;
+        }
         try {
           const locationCode = state.wmsView === "putaway" ? state.wmsDraft.toLocation : state.wmsDraft.fromLocation;
-          const data = await api("/api/wms/barcode/resolve", {barcode: v, location_code: locationCode || ""});
+          const barcodeLocationCode = state.wmsView === "putaway" ? "RECEIVE-01" : locationCode;
+          const data = await api("/api/wms/barcode/resolve", {barcode: v, location_code: barcodeLocationCode || ""});
           const pk = data.product_key || {};
           if (field === "lookup_product") {
             state.wmsLookup = {barcode: v, productKey: pk, error: ""};
@@ -11132,6 +11256,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="warehouse-v2-actions">
           <button type="button" class="card summary-card clickable" data-wms-view="products"><span>Товары Ozon</span><strong>▤</strong><small>Артикулы и штрихкоды</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="receive"><span>Приёмка</span><strong>↓</strong><small>Проверить поступление</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="stock-receipt"><span>Оприходование</span><strong>+</strong><small>Создать массовый документ</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="map"><span>Карта склада</span><strong>▦</strong><small>Открыть ячейку</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="putaway"><span>Размещение</span><strong>→</strong><small>Положить в ячейку</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="shipments"><span>Отгрузки</span><strong>↑</strong><small>Созданные отправки</small></button>
@@ -11154,6 +11279,7 @@ MINIAPP_HTML = """<!doctype html>
         ${renderWmsDataNotice()}
         <div class="kpi-grid">
           <button type="button" class="card summary-card clickable" data-wms-view="lookup"><span>Проверка товара</span><strong>⌕</strong><small>Штрихкод · ячейки · остаток</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="stock-receipt"><span>Оприходование</span><strong>+</strong><small>Много товаров в один документ</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="products"><span>Товары Ozon</span><strong>▤</strong><small>Артикулы и штрихкоды</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="transfer"><span>Перемещение</span><strong>⇄</strong><small>Между ячейками</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="stock"><span>Остатки</span><strong>▤</strong><small>По адресным ячейкам</small></button>
@@ -11655,16 +11781,18 @@ MINIAPP_HTML = """<!doctype html>
       state.wmsData.error = "";
       if (!silent) render();
       try {
-        const [locations, stock, movements, shipmentTasks] = await Promise.all([
+        const [locations, stock, movements, shipmentTasks, stockReceipts] = await Promise.all([
           api("/api/wms/locations"),
           api("/api/wms/stock"),
           api("/api/wms/movements", {limit: 100}),
           api("/api/wms/shipment/tasks"),
+          api("/api/wms/stock-receipts", {limit: 20}),
         ]);
         state.wmsData.locations = locations.locations || [];
         state.wmsData.stock = stock.stock || [];
         state.wmsData.movements = movements.movements || [];
         state.wmsData.shipmentTasks = shipmentTasks.shipments || [];
+        state.wmsData.stockReceipts = stockReceipts.receipts || [];
         state.wmsData.loaded = true;
       } catch (error) {
         state.wmsData.error = error.apiMessage || "Проверьте соединение и повторите попытку.";
@@ -12643,6 +12771,7 @@ MINIAPP_HTML = """<!doctype html>
       const items = [
         ["overview", "⌂", "Обзор"],
         ["receive", "↓", "Приёмка"],
+        ["stock-receipt", "+", "Оприходование"],
         ["map", "▦", "Карта склада"],
         ["putaway", "→", "Размещение"],
         ["transfer", "⇄", "Перемещение"],
@@ -12656,7 +12785,7 @@ MINIAPP_HTML = """<!doctype html>
         ["more", "•••", "Ещё"],
       ];
       return `<aside class="warehouse-v2-sidebar" aria-label="Разделы склада"><h3>Управление складом</h3>${items.map(([id, icon, label]) => `
-        <button type="button" class="warehouse-v2-nav ${state.wmsView === id || (id === "more" && warehouseMoreViews.has(state.wmsView) && !["map", "reports", "products", "lookup", "inventory", "stock", "transfer", "admin-stock-control"].includes(state.wmsView)) ? "active" : ""}" data-wms-view="${id}"><span class="warehouse-v2-icon">${icon}</span><span>${label}</span></button>
+        <button type="button" class="warehouse-v2-nav ${state.wmsView === id || (id === "more" && warehouseMoreViews.has(state.wmsView) && !["stock-receipt", "map", "reports", "products", "lookup", "inventory", "stock", "transfer", "admin-stock-control"].includes(state.wmsView)) ? "active" : ""}" data-wms-view="${id}"><span class="warehouse-v2-icon">${icon}</span><span>${label}</span></button>
       `).join("")}</aside>`;
     }
 
@@ -12678,6 +12807,7 @@ MINIAPP_HTML = """<!doctype html>
       else if (state.wmsView === "products") renderWmsProducts();
       else if (state.wmsView === "movements") renderWmsMovements();
       else if (state.wmsView === "shipments") renderWmsShipments();
+      else if (state.wmsView === "stock-receipt") renderWmsStockReceipt();
       else if (state.wmsView === "inventory") renderWmsInventory();
       else if (state.wmsView === "admin-stock-control") renderWmsAdminStockControl();
       else if (state.wmsView === "reports") renderWmsReports();
@@ -12711,6 +12841,30 @@ MINIAPP_HTML = """<!doctype html>
       const item = catalog.find((c) => c.product_name === productName);
       const colors = (item && item.colors) || ["Черный", "Белый", "Серый", "Бежевый", "Синий"];
       return colors.map((c) => `<option value="${escapeHtml(c)}" ${c === selected ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
+    }
+
+    function renderWmsStockReceipt() {
+      const draft = ensureWmsStockReceiptDraft();
+      const lines = draft.lines || [];
+      const totalQuantity = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+      const receipts = state.wmsData.stockReceipts || [];
+      mainButton.textContent = draft.submitting ? "Проводим…" : "Выполнить оприходование";
+      mainButton.disabled = draft.submitting || !lines.length;
+      mount.innerHTML = `
+        <div class="screen-head"><div><h2>Оприходование</h2><p>Отсканируйте товары, добавьте количество и проведите единый документ.</p></div><div class="date">${lines.length} поз. · ${escapeHtml(totalQuantity)} шт.</div></div>
+        ${renderWmsDataNotice()}
+        <div class="card field-card wms-guided-scanner">
+          <label>1. Сканируйте товар</label>
+          <div class="field full"><label>Сканер ТСД</label><input id="wmsHardwareScannerInput" class="wms-hardware-scanner-input" data-wms-hardware-field="stock_receipt_product" inputmode="none" autocomplete="off" placeholder="Штрихкод товара" autofocus></div>
+          <div class="button-row"><button type="button" class="small-button" data-wms-scan="stock_receipt_product">📷 Сканировать товар</button></div>
+        </div>
+        ${draft.pending ? `<div class="card field-card"><div class="section-title"><b>2. Укажите количество</b><span>товар распознан</span></div><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(draft.pending.productKey))}</b><span>Штрихкод: ${escapeHtml(draft.pending.barcode)}</span></div><span class="status-chip">✓</span></div><div class="field full"><label>Количество</label><input id="wmsStockReceiptQuantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="${escapeHtml(draft.quantity || "1")}" autofocus></div><div class="button-row"><button type="button" class="small-button" data-wms-stock-receipt-action="add">Добавить в документ</button><button type="button" class="small-button secondary" data-wms-stock-receipt-action="cancel-pending">Отмена</button></div></div>` : ""}
+        <div class="section-title"><b>Состав документа</b><span>${lines.length} поз. · ${escapeHtml(totalQuantity)} шт.</span></div>
+        <div class="op-list">${lines.length ? lines.map((line, index) => `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(line.productKey))}</b><span>Штрихкод: ${escapeHtml(line.barcode)}</span></div><div><span class="status-chip">${escapeHtml(line.quantity)} шт.</span><button type="button" class="link-button" data-wms-stock-receipt-remove="${index}">Удалить</button></div></div>`).join("") : itemEmpty("Отсканируйте первый товар.")}</div>
+        <div class="card field-card"><div class="field full"><label>Комментарий к документу</label><textarea id="wmsStockReceiptComment" rows="2" maxlength="500" placeholder="Партия, причина или примечание">${escapeHtml(draft.comment || "")}</textarea></div><div class="button-row"><button type="button" class="small-button" data-wms-stock-receipt-action="post" ${draft.submitting || !lines.length ? "disabled" : ""}>${draft.submitting ? "Проводим…" : "Выполнить оприходование"}</button><button type="button" class="small-button secondary" data-wms-stock-receipt-action="clear" ${draft.submitting || !lines.length ? "disabled" : ""}>Очистить</button></div></div>
+        <div class="section-title"><b>Последние оприходования</b><span>${receipts.length}</span></div>
+        <div class="op-list">${receipts.length ? receipts.slice(0, 10).map((receipt) => `<div class="card report-row"><div><b>${escapeHtml(receipt.number || "Документ")}</b><span>${escapeHtml(wmsMovementTime(receipt.posted_at || receipt.created_at))}${receipt.comment ? ` · ${escapeHtml(receipt.comment)}` : ""}</span></div><div><span class="status-chip">${escapeHtml(receipt.lines_count || 0)} поз.</span><small>${escapeHtml(receipt.total_quantity || 0)} шт.</small></div></div>`).join("") : itemEmpty("Проведённых документов пока нет.")}</div>
+      `;
     }
 
     function renderWmsReceive() {
@@ -12758,7 +12912,7 @@ MINIAPP_HTML = """<!doctype html>
       mainButton.textContent = "Разместить";
       mainButton.disabled = false;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>Размещение готовой продукции</h2><p>Сначала ячейка, затем товар и количество. Приёмка не является обязательным шагом.</p></div></div>
+        <div class="screen-head"><div><h2>Размещение готовой продукции</h2><p>Сначала ячейка, затем товар и количество. Разместить можно только фактический остаток из зоны приёмки.</p></div></div>
         ${renderWmsGuidedScanner("to_location", locationCode, productDetected, "Ячейка размещения")}
         <div class="card field-card">
           <label>Данные размещения</label>
@@ -14548,6 +14702,31 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const wmsStockReceiptRemove = event.target.closest("[data-wms-stock-receipt-remove]");
+      if (wmsStockReceiptRemove) {
+        removeWmsStockReceiptLine(Number(wmsStockReceiptRemove.dataset.wmsStockReceiptRemove));
+        return;
+      }
+
+      const wmsStockReceiptAction = event.target.closest("[data-wms-stock-receipt-action]");
+      if (wmsStockReceiptAction) {
+        const action = wmsStockReceiptAction.dataset.wmsStockReceiptAction;
+        if (action === "add") addPendingWmsStockReceiptLine();
+        else if (action === "cancel-pending") {
+          syncWmsStockReceiptInputs().pending = null;
+          render();
+          focusWmsHardwareScanner();
+        } else if (action === "post") postWmsStockReceipt();
+        else if (action === "clear") {
+          if (window.confirm("Очистить все позиции документа оприходования?")) {
+            resetWmsStockReceiptDraft();
+            render();
+            focusWmsHardwareScanner();
+          }
+        }
+        return;
+      }
+
       if (wmsScan) {
         scanWms(wmsScan.dataset.wmsScan);
         return;
@@ -15049,6 +15228,7 @@ MINIAPP_HTML = """<!doctype html>
       if (state.screen === "warehouse" || state.screen === "wms") {
         if (state.wmsView === "products") refreshWmsCatalog();
         else if (state.wmsView === "receive") refreshWmsWorkspace();
+        else if (state.wmsView === "stock-receipt") postWmsStockReceipt();
         else if (state.wmsView === "putaway") wmsPutaway();
         else if (state.wmsView === "transfer") wmsTransfer();
         else if (state.wmsView === "pick") wmsPick();

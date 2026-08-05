@@ -322,6 +322,118 @@ def list_movements(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# stock receipt documents (Оприходование)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def get_stock_receipt_by_request_key(conn, request_key: str) -> dict[str, Any] | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT id,number,status,request_key,actor_employee_id,comment,
+                      lines_count,total_quantity,created_at,posted_at
+                 FROM wms_stock_receipts WHERE request_key=%s""",
+            (request_key,),
+        )
+        row = cur.fetchone()
+    return _stock_receipt_payload(row) if row else None
+
+
+def create_stock_receipt(
+    conn,
+    *,
+    request_key: str,
+    actor_employee_id: int,
+    comment: str | None = None,
+) -> dict[str, Any] | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO wms_stock_receipts
+                      (request_key,actor_employee_id,comment)
+                 VALUES (%s,%s,%s)
+                 ON CONFLICT (request_key) DO NOTHING
+              RETURNING id,number,status,request_key,actor_employee_id,comment,
+                        lines_count,total_quantity,created_at,posted_at""",
+            (request_key, actor_employee_id, comment),
+        )
+        row = cur.fetchone()
+    return _stock_receipt_payload(row) if row else None
+
+
+def insert_stock_receipt_line(
+    conn,
+    *,
+    receipt_id: int,
+    line_no: int,
+    barcode: str,
+    product_key: ProductKey,
+    quantity: int,
+    movement_id: int,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO wms_stock_receipt_lines
+                      (receipt_id,line_no,barcode,product_key,quantity,movement_id)
+                 VALUES (%s,%s,%s,%s,%s,%s)""",
+            (
+                receipt_id,
+                line_no,
+                barcode,
+                json.dumps(product_key.to_dict()),
+                quantity,
+                movement_id,
+            ),
+        )
+
+
+def post_stock_receipt(
+    conn,
+    *,
+    receipt_id: int,
+    lines_count: int,
+    total_quantity: int,
+) -> dict[str, Any]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE wms_stock_receipts
+                  SET status='posted',lines_count=%s,total_quantity=%s,posted_at=now()
+                WHERE id=%s
+            RETURNING id,number,status,request_key,actor_employee_id,comment,
+                      lines_count,total_quantity,created_at,posted_at""",
+            (lines_count, total_quantity, receipt_id),
+        )
+        row = cur.fetchone()
+    return _stock_receipt_payload(row)
+
+
+def list_stock_receipts(conn, *, limit: int = 50) -> list[dict[str, Any]]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT id,number,status,request_key,actor_employee_id,comment,
+                      lines_count,total_quantity,created_at,posted_at
+                 FROM wms_stock_receipts
+                ORDER BY created_at DESC LIMIT %s""",
+            (limit,),
+        )
+        rows = cur.fetchall()
+    return [_stock_receipt_payload(row) for row in rows]
+
+
+def _stock_receipt_payload(row) -> dict[str, Any]:
+    return {
+        "id": int(row[0]),
+        "number": str(row[1]),
+        "status": str(row[2]),
+        "request_key": str(row[3]),
+        "actor_employee_id": int(row[4]) if row[4] is not None else None,
+        "comment": str(row[5] or ""),
+        "lines_count": int(row[6] or 0),
+        "total_quantity": int(row[7] or 0),
+        "created_at": str(row[8]) if row[8] is not None else None,
+        "posted_at": str(row[9]) if row[9] is not None else None,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
 # row mappers
 # ──────────────────────────────────────────────────────────────────────
 

@@ -51,6 +51,8 @@ def handle(
             return _receive(payload, employee_id)
         if path == "/api/wms/material-receive":
             return _material_receive(payload, employee_id)
+        if path == "/api/wms/stock-receipts/post":
+            return _post_stock_receipt(payload, employee_id)
         if path == "/api/wms/putaway":
             return _putaway(payload, employee_id)
         if path == "/api/wms/transfer":
@@ -71,6 +73,8 @@ def handle(
             return _stock(payload)
         if path == "/api/wms/movements":
             return _movements(payload)
+        if path == "/api/wms/stock-receipts":
+            return _stock_receipts(payload)
         if path == "/api/wms/barcode/resolve":
             return _resolve_barcode(payload)
         if path == "/api/wms/barcode/register":
@@ -138,6 +142,64 @@ def _material_receive(payload: dict[str, Any], employee_id: int) -> tuple[int, d
         tsd_device_id=payload.get("tsd_device_id"),
     )
     return _result_response(result)
+
+
+def _post_stock_receipt(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
+    raw_lines = payload.get("lines")
+    if not isinstance(raw_lines, list) or not raw_lines:
+        raise ValueError("Добавьте хотя бы один товар в документ.")
+    if len(raw_lines) > 500:
+        raise ValueError("В одном документе можно оприходовать не более 500 позиций.")
+
+    lines: list[tuple[str, ProductKey, int]] = []
+    for index, raw_line in enumerate(raw_lines, start=1):
+        if not isinstance(raw_line, dict):
+            raise ValueError(f"Строка {index}: неверный формат.")
+        barcode = normalize_scanned_barcode(str(raw_line.get("barcode") or ""))
+        if not barcode:
+            raise ValueError(f"Строка {index}: штрихкод не указан.")
+        if len(barcode) > 128:
+            raise ValueError(f"Строка {index}: штрихкод слишком длинный.")
+        product_key = _resolve_known_product(barcode)
+        if product_key is None:
+            raise ValueError(f"Строка {index}: штрихкод {barcode} не зарегистрирован.")
+        if product_key.item_type != "finished":
+            raise ValueError(f"Строка {index}: оприходовать можно только готовую продукцию.")
+        raw_quantity = raw_line.get("quantity")
+        if isinstance(raw_quantity, bool) or (
+            isinstance(raw_quantity, float) and not raw_quantity.is_integer()
+        ) or (
+            isinstance(raw_quantity, str)
+            and not re.fullmatch(r"[+]?[0-9]+", raw_quantity.strip())
+        ):
+            raise ValueError(f"Строка {index}: количество должно быть целым числом.")
+        try:
+            quantity = int(raw_quantity)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"Строка {index}: количество должно быть целым числом.") from error
+        lines.append((barcode, product_key, quantity))
+
+    result = ops.post_stock_receipt(
+        lines,
+        employee_id=employee_id,
+        request_key=str(payload.get("request_key") or ""),
+        comment=str(payload.get("comment") or ""),
+        tsd_device_id=str(payload.get("tsd_device_id") or "")[:120] or None,
+    )
+    body = {
+        "ok": result.ok,
+        "status": result.status,
+        "receipt_id": result.receipt_id,
+        "number": result.number,
+        "lines_count": result.lines_count,
+        "total_quantity": result.total_quantity,
+    }
+    if result.reason:
+        body["reason"] = result.reason
+        body["message"] = result.reason
+    if result.skipped_duplicate:
+        body["duplicate"] = True
+    return (200 if result.skipped_duplicate else 201) if result.ok else 409, body
 
 
 def _putaway(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
@@ -316,6 +378,17 @@ def _stock(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return 200, {"stock": stock_payload}
 
 
+def _stock_receipts(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    conn = get_pg_connection()
+    try:
+        limit = max(1, min(int(payload.get("limit", 20)), 100))
+        receipts = repo.list_stock_receipts(conn, limit=limit)
+        conn.rollback()
+        return 200, {"ok": True, "receipts": receipts}
+    finally:
+        conn.close()
+
+
 def _normalized_identity(value: Any) -> str:
     return " ".join(
         unicodedata.normalize("NFKC", str(value or ""))
@@ -423,19 +496,7 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
                         return _matched_stock_response(stock_row)
             except Exception:
                 logging.exception("Location-aware marketplace barcode lookup failed")
-    product_key = resolve_product_barcode(barcode)
-    if product_key is None:
-        # Marketplace cards are the master for finished-goods labels.  A safe
-        # automatic link is available only for variants already mapped to an
-        # existing production route; legacy/manual WMS bindings keep priority.
-        try:
-            from marketplaces import resolve_production_product_by_barcode
-
-            marketplace_key = resolve_production_product_by_barcode(barcode)
-            if marketplace_key:
-                product_key = ProductKey.from_dict(marketplace_key)
-        except Exception:
-            logging.exception("Marketplace barcode fallback failed")
+    product_key = _resolve_known_product(barcode)
     if product_key is not None and stock_rows:
         stock_row = _stock_row_for_resolved_product(
             stock_rows, marketplace_rows, product_key
@@ -445,6 +506,22 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     if product_key is None:
         return 404, {"ok": False, "message": "Штрихкод товара не зарегистрирован."}
     return 200, {"ok": True, "product_key": product_key.to_dict()}
+
+
+def _resolve_known_product(barcode: str) -> ProductKey | None:
+    product_key = resolve_product_barcode(barcode)
+    if product_key is not None:
+        return product_key
+    # Marketplace cards are the master for finished-goods labels. A safe
+    # automatic link exists only for variants mapped to a production route.
+    try:
+        from marketplaces import resolve_production_product_by_barcode
+
+        marketplace_key = resolve_production_product_by_barcode(barcode)
+        return ProductKey.from_dict(marketplace_key) if marketplace_key else None
+    except Exception:
+        logging.exception("Marketplace barcode fallback failed")
+        return None
 
 
 def _register_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -501,6 +578,7 @@ def _result_response(result) -> tuple[int, dict[str, Any]]:
 WMS_WRITE_ROUTES = {
     "/api/wms/receive",
     "/api/wms/material-receive",
+    "/api/wms/stock-receipts/post",
     "/api/wms/putaway",
     "/api/wms/transfer",
     "/api/wms/pick",
@@ -522,6 +600,7 @@ WMS_READ_ROUTES = {
     "/api/wms/locations",
     "/api/wms/stock",
     "/api/wms/movements",
+    "/api/wms/stock-receipts",
 }
 
 WMS_ROUTES = WMS_WRITE_ROUTES | WMS_READ_ROUTES

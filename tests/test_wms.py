@@ -26,7 +26,13 @@ from wms.barcode import (  # noqa: E402
     LOCATION_PREFIX,
     CONTAINER_PREFIX,
 )
-from wms.models import Location, OperationResult, ProductKey, WarehouseStock  # noqa: E402
+from wms.models import (  # noqa: E402
+    Location,
+    OperationResult,
+    ProductKey,
+    StockReceiptResult,
+    WarehouseStock,
+)
 from marketplaces import _marketplace_payload_barcodes  # noqa: E402
 
 
@@ -120,6 +126,13 @@ class OperationResultTests(unittest.TestCase):
         r = OperationResult(ok=False, reason="bad")
         self.assertEqual(r.status, "error")
 
+    def test_stock_receipt_statuses(self):
+        self.assertEqual(StockReceiptResult(ok=True).status, "posted")
+        self.assertEqual(
+            StockReceiptResult(ok=True, skipped_duplicate=True).status,
+            "duplicate",
+        )
+
 
 class WmsContractTests(unittest.TestCase):
     def _payload(self):
@@ -165,6 +178,70 @@ class WmsContractTests(unittest.TestCase):
         self.assertEqual(receive.call_args.args[0].product_name, "Ткань")
         self.assertEqual(receive.call_args.kwargs["employee_id"], 19)
         self.assertEqual(receive.call_args.kwargs["unit"], "рул")
+
+    def test_stock_receipt_api_resolves_every_barcode_and_uses_authenticated_employee(self):
+        from wms import api
+
+        product = ProductKey("finished", "Брюки", "128", "Черный", "Готово", "Склад")
+        result = StockReceiptResult(
+            ok=True,
+            receipt_id=41,
+            number="OPR-000041",
+            lines_count=1,
+            total_quantity=7,
+        )
+        with patch("wms.api._resolve_known_product", return_value=product) as resolve, patch(
+            "wms.api.ops.post_stock_receipt", return_value=result
+        ) as post:
+            status, body = api.handle(
+                "/api/wms/stock-receipts/post",
+                {
+                    "request_key": "test:stock-receipt:41",
+                    "lines": [{"barcode": "4600000000012", "quantity": 7}],
+                },
+                employee_id=23,
+            )
+        self.assertEqual(status, 201)
+        self.assertEqual(body["number"], "OPR-000041")
+        resolve.assert_called_once_with("4600000000012")
+        self.assertEqual(post.call_args.kwargs["employee_id"], 23)
+
+    def test_stock_receipt_api_rejects_unknown_barcode_before_posting(self):
+        from wms import api
+
+        with patch("wms.api._resolve_known_product", return_value=None), patch(
+            "wms.api.ops.post_stock_receipt"
+        ) as post:
+            status, body = api.handle(
+                "/api/wms/stock-receipts/post",
+                {
+                    "request_key": "test:stock-receipt:unknown",
+                    "lines": [{"barcode": "9999999999999", "quantity": 1}],
+                },
+                employee_id=23,
+            )
+        self.assertEqual(status, 400)
+        self.assertIn("не зарегистрирован", body["message"])
+        post.assert_not_called()
+
+    def test_stock_receipt_api_rejects_fractional_quantity(self):
+        from wms import api
+
+        product = ProductKey("finished", "Брюки", "128", "Черный", "Готово", "Склад")
+        with patch("wms.api._resolve_known_product", return_value=product), patch(
+            "wms.api.ops.post_stock_receipt"
+        ) as post:
+            status, body = api.handle(
+                "/api/wms/stock-receipts/post",
+                {
+                    "request_key": "test:stock-receipt:fraction",
+                    "lines": [{"barcode": "4600000000012", "quantity": 1.5}],
+                },
+                employee_id=23,
+            )
+        self.assertEqual(status, 400)
+        self.assertIn("целым числом", body["message"])
+        post.assert_not_called()
 
     def test_pick_api_uses_authenticated_employee_and_location(self):
         from wms import api
@@ -218,6 +295,16 @@ class WmsContractTests(unittest.TestCase):
         self.assertIn('"admin-stock-control"', assets)
         self.assertIn('"/api/wms/admin/inventory"', assets)
         self.assertIn('"/api/wms/admin/scrap"', assets)
+
+    def test_stock_receipt_ui_is_wired_to_history_and_actions(self):
+        root = Path(__file__).resolve().parents[1]
+        assets = (root / "miniapp_assets.py").read_text(encoding="utf-8")
+        self.assertIn('api("/api/wms/stock-receipts", {limit: 20})', assets)
+        self.assertIn('data-wms-stock-receipt-action="add"', assets)
+        self.assertIn('data-wms-stock-receipt-action="post"', assets)
+        self.assertIn('removeWmsStockReceiptLine(Number(', assets)
+        self.assertIn('state.wmsView === "stock-receipt") postWmsStockReceipt()', assets)
+        self.assertNotIn("Приёмка не является обязательным шагом", assets)
 
     def test_shipment_task_ui_uses_a_position_by_position_scan_flow(self):
         root = Path(__file__).resolve().parents[1]
@@ -419,6 +506,118 @@ class PickOperationTests(unittest.TestCase):
         self.conn.commit.assert_called_once()
 
 
+class PutawayOperationTests(unittest.TestCase):
+    def test_putaway_rejects_product_missing_from_receive(self):
+        from wms import operations as ops
+
+        product = ProductKey("finished", "Брюки", "128", "Черный", "Готово", "Склад")
+        receive = Location(1, 1, "RECEIVE-01", "LOC:RECEIVE-01", None, 0, 0, "active")
+        target = Location(7, 2, "Z1-S1-P1-1", "Z1-S1-P1-1", None, 0, 0, "active")
+        conn = MagicMock()
+        cursor = conn.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = None
+        with patch("wms.operations.get_pg_connection", return_value=conn), patch(
+            "wms.operations.repo.get_location_by_code", return_value=target
+        ), patch("wms.operations._zone_location", return_value=receive), patch(
+            "wms.operations.repo.movement_exists", return_value=False
+        ), patch("wms.operations.repo.upsert_stock") as upsert, patch(
+            "wms.operations.repo.insert_movement"
+        ) as movement:
+            result = ops.putaway(
+                product,
+                2,
+                to_location_code=target.code,
+                request_key="test:putaway:without-receipt",
+            )
+        self.assertFalse(result.ok)
+        self.assertIn("зоне приёмки доступно 0", result.reason)
+        upsert.assert_not_called()
+        movement.assert_not_called()
+        conn.rollback.assert_called_once()
+
+
+class StockReceiptOperationTests(unittest.TestCase):
+    def setUp(self):
+        self.pk = ProductKey("finished", "Брюки", "128", "Черный", "Готово", "Склад")
+        self.receive = Location(1, 1, "RECEIVE-01", "LOC:RECEIVE-01", None, 0, 0, "active")
+        self.conn = MagicMock()
+
+    def test_posts_merged_lines_atomically_into_receive(self):
+        from wms import operations as ops
+
+        created = {"id": 41, "number": "OPR-000041"}
+        posted = {
+            "id": 41,
+            "number": "OPR-000041",
+            "lines_count": 1,
+            "total_quantity": 5,
+        }
+        with patch("wms.operations.get_pg_connection", return_value=self.conn), patch(
+            "wms.operations.repo.get_stock_receipt_by_request_key", return_value=None
+        ), patch("wms.operations._zone_location", return_value=self.receive), patch(
+            "wms.operations.repo.create_stock_receipt", return_value=created
+        ), patch("wms.operations.repo.upsert_stock") as upsert, patch(
+            "wms.operations.repo.insert_movement", return_value=91
+        ) as movement, patch(
+            "wms.operations.repo.insert_stock_receipt_line"
+        ) as insert_line, patch(
+            "wms.operations.repo.post_stock_receipt", return_value=posted
+        ):
+            result = ops.post_stock_receipt(
+                [("4600000000012", self.pk, 2), ("4600000000012", self.pk, 3)],
+                employee_id=23,
+                request_key="test:stock-receipt:41",
+            )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.lines_count, 1)
+        self.assertEqual(result.total_quantity, 5)
+        upsert.assert_called_once_with(
+            self.conn,
+            self.pk,
+            delta=5,
+            item_state="SELLABLE",
+            location_id=self.receive.id,
+            unit="шт",
+        )
+        self.assertEqual(movement.call_args.kwargs["movement_type"], "stock_receipt")
+        insert_line.assert_called_once()
+        self.conn.commit.assert_called_once()
+
+    def test_duplicate_request_returns_existing_document_without_stock_change(self):
+        from wms import operations as ops
+
+        existing = {
+            "id": 41,
+            "number": "OPR-000041",
+            "lines_count": 2,
+            "total_quantity": 7,
+        }
+        with patch("wms.operations.get_pg_connection", return_value=self.conn), patch(
+            "wms.operations.repo.get_stock_receipt_by_request_key", return_value=existing
+        ), patch("wms.operations.repo.upsert_stock") as upsert:
+            result = ops.post_stock_receipt(
+                [("4600000000012", self.pk, 7)],
+                employee_id=23,
+                request_key="test:stock-receipt:41",
+            )
+        self.assertTrue(result.skipped_duplicate)
+        self.assertEqual(result.number, "OPR-000041")
+        upsert.assert_not_called()
+        self.conn.rollback.assert_called_once()
+
+    def test_invalid_merged_quantity_never_opens_database(self):
+        from wms import operations as ops
+
+        with patch("wms.operations.get_pg_connection") as connect:
+            result = ops.post_stock_receipt(
+                [("4600000000012", self.pk, 600_000), ("4600000000012", self.pk, 600_000)],
+                employee_id=23,
+                request_key="test:stock-receipt:too-many",
+            )
+        self.assertFalse(result.ok)
+        connect.assert_not_called()
+
+
 class StockAdjustmentOperationTests(unittest.TestCase):
     def setUp(self):
         self.pk = ProductKey("finished", "Брюки", "128", "Черный", "Готово", "Склад")
@@ -499,6 +698,7 @@ class WmsDbTests(unittest.TestCase):
         conn.autocommit = True
         with conn.cursor() as cur:
             for t in (
+                "wms_stock_receipt_lines", "wms_stock_receipts",
                 "wms_inventory_count_lines", "wms_inventory_counts",
                 "wms_movements", "warehouse_stock", "wms_containers",
                 "wms_barcodes", "wms_locations", "wms_zones",
@@ -656,7 +856,7 @@ class WmsDbTests(unittest.TestCase):
         self.assertEqual(repo.find_stock(self.conn, pk, location_id=locations[0].id).quantity, 2)
         self.assertEqual(repo.find_stock(self.conn, pk, location_id=locations[1].id).quantity, 2)
 
-    def test_direct_putaway_is_valid_without_receipt(self):
+    def test_direct_putaway_is_rejected_without_receipt(self):
         from wms import operations as ops
         from wms import repository as repo
 
@@ -673,11 +873,9 @@ class WmsDbTests(unittest.TestCase):
             product, 6, to_location_code=location.code, request_key="test:direct:putaway"
         )
 
-        self.assertTrue(result.ok)
-        self.assertEqual(repo.find_stock(self.conn, product, location_id=location.id).quantity, 6)
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT movement_type FROM wms_movements WHERE request_key=%s", ("test:direct:putaway",))
-            self.assertEqual(cur.fetchone()[0], "putaway_direct")
+        self.assertFalse(result.ok)
+        self.assertIn("зоне приёмки доступно 0", result.reason)
+        self.assertIsNone(repo.find_stock(self.conn, product, location_id=location.id))
 
     def test_material_receipt_is_not_placed_in_receive_or_address_cell(self):
         from wms import operations as ops
