@@ -219,6 +219,14 @@ class WmsContractTests(unittest.TestCase):
         self.assertIn('"/api/wms/admin/inventory"', assets)
         self.assertIn('"/api/wms/admin/scrap"', assets)
 
+    def test_shipment_task_ui_uses_a_position_by_position_scan_flow(self):
+        root = Path(__file__).resolve().parents[1]
+        assets = (root / "miniapp_assets.py").read_text(encoding="utf-8")
+        self.assertIn('data-wms-task-open-allocation=', assets)
+        self.assertIn('wmsShipmentTaskActiveAllocationId', assets)
+        self.assertIn('data-wms-task-action="back-position"', assets)
+        self.assertIn('state.wmsShipmentTaskActiveAllocationId = "";', assets)
+
     def test_stock_api_passes_postgres_connection_to_repository(self):
         from wms import api
 
