@@ -2003,11 +2003,16 @@ def dashboard(*, read_only: bool = False) -> dict:
             except (TypeError, ValueError):
                 line_payload = {}
             price = line_payload.get("price")
+            price_payload = price if isinstance(price, dict) else {}
+            price = price_payload.get("amount") or price_payload.get("value") or price_payload.get("price") if price_payload else price
             try:
                 line["price"] = float(price) if price is not None and str(price).strip() else None
             except (TypeError, ValueError):
                 line["price"] = None
-            line["currency"] = _text(line_payload.get("currency_code") or line_payload.get("currency") or "RUB")
+            line["currency"] = _text(
+                line_payload.get("currency_code") or line_payload.get("currency")
+                or price_payload.get("currency_code") or price_payload.get("currency") or "RUB"
+            )
             line["amount"] = float(line["quantity"] or 0) * line["price"] if line["price"] is not None else None
             lines.append(line)
         priced_lines = [line for line in lines if line.get("price") is not None]

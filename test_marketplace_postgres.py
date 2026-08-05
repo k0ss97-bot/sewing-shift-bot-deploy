@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from decimal import Decimal
 import unittest
 from unittest.mock import patch
 
@@ -241,7 +242,7 @@ class MarketplacePostgresReadModelTest(unittest.TestCase):
         self.assertEqual(order["items"], [{"sku": "9001", "quantity": 2}])
 
     def test_order_warehouse_name_prefers_real_ozon_warehouse(self):
-        from marketplace_pg import _order_warehouse_name
+        from marketplace_pg import _order_line_price, _order_warehouse_name
 
         self.assertEqual(
             _order_warehouse_name(
@@ -251,6 +252,7 @@ class MarketplacePostgresReadModelTest(unittest.TestCase):
             "Екатеринбург РФЦ Новый",
         )
         self.assertEqual(_order_warehouse_name({}, "FBS"), "FBS")
+        self.assertEqual(_order_line_price({"amount": "3100", "currency": "RUB"}), Decimal("3100"))
 
     def test_production_link_uses_existing_route_contract(self):
         with patch(

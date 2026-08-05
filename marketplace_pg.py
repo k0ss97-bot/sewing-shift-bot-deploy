@@ -91,6 +91,14 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
+def _order_line_price(value: Any) -> Decimal | None:
+    """Parse both legacy scalar and current Ozon MoneyValue item prices."""
+
+    if isinstance(value, dict):
+        value = value.get("amount") or value.get("value") or value.get("price")
+    return _decimal(value)
+
+
 def _money(value: Any) -> Decimal | None:
     """Parse a finite signed monetary value."""
 
@@ -1050,8 +1058,13 @@ class MarketplacePGRepository:
         for line_number, source_item in enumerate(item["items"], start=1):
             external_id, offer_id, sku = product_identity(source_item)
             quantity = _decimal(source_item.get("quantity")) or Decimal(0)
-            price = _decimal(source_item.get("price"))
-            currency = _text(source_item.get("currency_code") or source_item.get("currency") or "RUB").upper()
+            price_value = source_item.get("price")
+            price = _order_line_price(price_value)
+            price_payload = price_value if isinstance(price_value, dict) else {}
+            currency = _text(
+                source_item.get("currency_code") or source_item.get("currency")
+                or price_payload.get("currency_code") or price_payload.get("currency") or "RUB"
+            ).upper()
             if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
                 currency = "RUB"
             cur.execute(
@@ -1628,7 +1641,7 @@ class MarketplacePGRepository:
                 orders = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
                 cur.execute(
                     """SELECT i.external_order_id,i.line_number,i.external_product_id,i.offer_id,
-                              i.sku,i.name,i.quantity,i.price,i.currency
+                              i.sku,i.name,i.quantity,i.price,i.currency,i.payload_json
                          FROM marketplace.order_items_current i
                         WHERE i.account_id=%s
                           AND i.external_order_id IN (
@@ -1642,8 +1655,15 @@ class MarketplacePGRepository:
                 for item_row in cur.fetchall():
                     order_item = _json_value(_row_dict(item_row, cur))
                     quantity = Decimal(str(order_item.get("quantity") or 0))
-                    price = order_item.get("price")
-                    order_item["amount"] = float(quantity * Decimal(str(price))) if price is not None else None
+                    item_payload = order_item.pop("payload_json", {})
+                    price = _order_line_price(order_item.get("price")) or _order_line_price(
+                        item_payload.get("price") if isinstance(item_payload, dict) else None
+                    )
+                    price_payload = item_payload.get("price") if isinstance(item_payload, dict) and isinstance(item_payload.get("price"), dict) else {}
+                    if price_payload.get("currency") or price_payload.get("currency_code"):
+                        order_item["currency"] = _text(price_payload.get("currency") or price_payload.get("currency_code")).upper()
+                    order_item["price"] = float(price) if price is not None else None
+                    order_item["amount"] = float(quantity * price) if price is not None else None
                     order_items.setdefault(_text(order_item.get("external_order_id")), []).append(order_item)
                 for order in orders:
                     payload = order.pop("payload_json", {})
