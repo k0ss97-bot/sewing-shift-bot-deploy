@@ -240,6 +240,18 @@ class MarketplacePostgresReadModelTest(unittest.TestCase):
         self.assertEqual(order["warehouse_type"], "FBS")
         self.assertEqual(order["items"], [{"sku": "9001", "quantity": 2}])
 
+    def test_order_warehouse_name_prefers_real_ozon_warehouse(self):
+        from marketplace_pg import _order_warehouse_name
+
+        self.assertEqual(
+            _order_warehouse_name(
+                {"analytics_data": {"warehouse_name": "Екатеринбург РФЦ Новый"}},
+                "FBO",
+            ),
+            "Екатеринбург РФЦ Новый",
+        )
+        self.assertEqual(_order_warehouse_name({}, "FBS"), "FBS")
+
     def test_production_link_uses_existing_route_contract(self):
         with patch(
             "marketplaces.production_target_for_marketplace_product",

@@ -4248,6 +4248,28 @@ MINIAPP_HTML = """<!doctype html>
     .marketplace-order-bars { height: 210px; display: flex; align-items: flex-end; gap: 7px; padding: 16px 4px 4px; }
     .marketplace-order-bars i { flex: 1; min-width: 7px; height: var(--bar-height); border-radius: 6px 6px 2px 2px; background: linear-gradient(180deg,var(--marketplace-primary),#1647ca); }
 
+    .marketplace-order-view-tabs {
+      display: flex; width: max-content; max-width: 100%; gap: 5px; overflow-x: auto;
+      margin: 14px 0; padding: 5px; border: 1px solid var(--line); border-radius: 13px;
+      background: rgba(255,255,255,.82); box-shadow: var(--inset-shadow); scrollbar-width: none;
+    }
+    .marketplace-order-view-tabs::-webkit-scrollbar { display: none; }
+    .marketplace-order-view-tabs button {
+      flex: 0 0 auto; min-height: 38px; padding: 8px 16px; border: 0; border-radius: 9px;
+      background: transparent; color: var(--muted); font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+    .marketplace-order-view-tabs button.active { color: #fff; background: var(--marketplace-primary); box-shadow: 0 7px 18px rgba(0,91,255,.2); }
+    .marketplace-order-table-card { padding: 10px 14px 14px; }
+    .marketplace-order-table-card .marketplace-table td { vertical-align: middle; }
+    .marketplace-order-table-card .marketplace-table td:first-child { min-width: 210px; }
+    .marketplace-order-product-cell { display: grid; gap: 3px; }
+    .marketplace-order-product-cell b { color: var(--text); }
+    .marketplace-order-product-cell span { color: var(--muted); font-size: 11px; }
+    .marketplace-order-list-row > div { min-width: 0; }
+    .marketplace-order-list-row > div > span { overflow-wrap: anywhere; }
+    .marketplace-order-list-metrics { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    .marketplace-order-detail-composition { margin-top: 14px; padding: 14px; }
+
     .marketplace-product-detail, .marketplace-sales-detail { margin-top: 14px; }
     .marketplace-table-scroll { max-width: 100%; overflow-x: auto; }
     .marketplace-table { font-size: 13px; }
@@ -4283,6 +4305,9 @@ MINIAPP_HTML = """<!doctype html>
       .marketplace-analytic-card { min-height: 250px; }
       .marketplace-v2-head { align-items: flex-start; }
       .marketplace-brand-mark { min-width: 74px; padding: 8px 10px; }
+      .marketplace-order-view-tabs { width: 100%; }
+      .marketplace-order-view-tabs button { flex: 1 0 auto; }
+      .marketplace-order-list-metrics { justify-content: flex-start; }
     }
 
     @media (max-width: 430px) {
@@ -5722,6 +5747,7 @@ MINIAPP_HTML = """<!doctype html>
       marketplaceProvider: "all",
       marketplacePeriod: "30d",
       marketplaceChartMetric: "revenue",
+      marketplaceOrderView: "warehouses",
       marketplaceDateFrom: "",
       marketplaceDateTo: "",
       marketplaceFiltersOpen: false,
@@ -11672,6 +11698,108 @@ MINIAPP_HTML = """<!doctype html>
       return `${Number(value).toLocaleString("ru-RU", {maximumFractionDigits: 2})} ₽`;
     }
 
+    function marketplaceOrderAnalytics(orders, products) {
+      const productIndex = new Map();
+      (products || []).forEach((product) => {
+        [product.external_product_id, product.id, product.offer_id, product.sku].filter(Boolean).forEach((identity) => {
+          productIndex.set(String(identity), product);
+        });
+      });
+      const normalizedOrders = (orders || []).map((order) => {
+        const items = (Array.isArray(order.items) ? order.items : []).map((line) => {
+          const product = productIndex.get(String(line.external_product_id || ""))
+            || productIndex.get(String(line.offer_id || ""))
+            || productIndex.get(String(line.sku || ""))
+            || {};
+          const quantity = Number(line.quantity || 0);
+          const price = line.price === null || line.price === undefined || line.price === "" ? null : Number(line.price);
+          return {
+            ...line,
+            name: line.name || product.name || line.offer_id || line.sku || "Товар без названия",
+            offer_id: line.offer_id || product.offer_id || "",
+            sku: line.sku || product.sku || "",
+            size: line.size || product.size || "",
+            color: line.color || product.color || "",
+            quantity,
+            price,
+            amount: price == null ? null : quantity * price,
+          };
+        });
+        const pricedItems = items.filter((line) => line.amount !== null && Number.isFinite(line.amount));
+        const backendAmountKnown = order.amount_available === true || order.amount_partial === true;
+        const amount = backendAmountKnown
+          ? Number(order.amount || 0)
+          : pricedItems.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+        const amountAvailable = order.amount_available === true || (items.length > 0 && pricedItems.length === items.length);
+        const amountPartial = order.amount_partial === true || (pricedItems.length > 0 && pricedItems.length < items.length);
+        return {
+          ...order,
+          items,
+          warehouse_name: order.warehouse_name || order.warehouse_type || "Склад не указан",
+          quantity: items.length ? items.reduce((sum, line) => sum + line.quantity, 0) : Number(order.quantity || 0),
+          item_count: items.length || Number(order.item_count || 0),
+          amount,
+          amount_available: amountAvailable,
+          amount_partial: amountPartial,
+        };
+      });
+      const warehouses = new Map();
+      const productRows = new Map();
+      normalizedOrders.forEach((order) => {
+        const warehouseKey = String(order.warehouse_name || "Склад не указан");
+        const warehouse = warehouses.get(warehouseKey) || {
+          name: warehouseKey, schemes: new Set(), orders: 0, quantity: 0, amount: 0,
+          amount_complete: true, amount_partial: false,
+        };
+        warehouse.orders += 1;
+        warehouse.quantity += Number(order.quantity || 0);
+        warehouse.amount += Number(order.amount || 0);
+        warehouse.amount_complete = warehouse.amount_complete && Boolean(order.amount_available);
+        warehouse.amount_partial = warehouse.amount_partial || Boolean(order.amount_available || order.amount_partial);
+        if (order.warehouse_type) warehouse.schemes.add(String(order.warehouse_type));
+        warehouses.set(warehouseKey, warehouse);
+        order.items.forEach((line) => {
+          const productKey = String(line.external_product_id || line.offer_id || line.sku || line.name);
+          const product = productRows.get(productKey) || {
+            key: productKey, name: line.name, offer_id: line.offer_id, sku: line.sku,
+            size: line.size, color: line.color, orders: new Set(), quantity: 0, amount: 0,
+            amount_complete: true, amount_partial: false,
+          };
+          product.orders.add(String(order.id || order.external_order_id || order.posting_number));
+          product.quantity += Number(line.quantity || 0);
+          if (line.amount !== null && Number.isFinite(Number(line.amount))) {
+            product.amount += Number(line.amount);
+            product.amount_partial = true;
+          } else {
+            product.amount_complete = false;
+          }
+          productRows.set(productKey, product);
+        });
+      });
+      const amount = normalizedOrders.reduce((sum, order) => sum + Number(order.amount || 0), 0);
+      const amountComplete = normalizedOrders.length > 0 && normalizedOrders.every((order) => order.amount_available);
+      const amountPartial = normalizedOrders.some((order) => order.amount_available || order.amount_partial);
+      return {
+        orders: normalizedOrders,
+        warehouses: [...warehouses.values()].map((row) => ({...row, schemes: [...row.schemes].join(" / ")})).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name, "ru")),
+        products: [...productRows.values()].map((row) => ({...row, orders: row.orders.size})).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name, "ru")),
+        summary: {
+          orders: normalizedOrders.length,
+          quantity: normalizedOrders.reduce((sum, order) => sum + Number(order.quantity || 0), 0),
+          warehouses: warehouses.size,
+          products: productRows.size,
+          amount,
+          amount_complete: amountComplete,
+          amount_partial: amountPartial,
+        },
+      };
+    }
+
+    function marketplaceOrderAmount(value, complete, partial) {
+      if (!complete && !partial) return "—";
+      return `${marketplaceMoney(value)}${complete ? "" : " · частично"}`;
+    }
+
     function marketplaceGroups(payload, products) {
       const groups = Array.isArray(payload.product_groups) ? payload.product_groups : [];
       if (groups.length) return groups;
@@ -11984,16 +12112,24 @@ MINIAPP_HTML = """<!doctype html>
         `;
       }
       if (detail.kind === "order") {
-        const order = orders.find((row) => String(row.id) === String(detail.id));
+        const order = marketplaceOrderAnalytics(orders, products).orders.find((row) => String(row.id) === String(detail.id));
         if (!order) return "";
+        const composition = order.items.length
+          ? `<div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Товар</th><th>Артикул / SKU</th><th>Количество</th><th>Цена</th><th>Сумма</th></tr></thead><tbody>${order.items.map((line) => `<tr><td><div class="marketplace-order-product-cell"><b>${escapeHtml(line.name)}</b><span>${escapeHtml([line.size ? `Размер ${line.size}` : "", line.color ? `Цвет ${line.color}` : ""].filter(Boolean).join(" · ") || "Характеристики не указаны")}</span></div></td><td>${escapeHtml(line.offer_id || line.sku || "—")}</td><td>${escapeHtml(line.quantity)} шт.</td><td>${line.price == null ? "—" : marketplaceMoney(line.price)}</td><td><b>${line.amount == null ? "—" : marketplaceMoney(line.amount)}</b></td></tr>`).join("")}</tbody></table></div>`
+          : itemEmpty("Состав этого заказа пока не загружен из API маркетплейса.");
         return `
-          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К отгрузкам")}</div><div><h3>${escapeHtml(order.posting_number || order.external_order_id || "Отгрузка")}</h3><p>Отгрузка ${escapeHtml(providerLabel)} · подробности доступны только для чтения</p></div></div>
+          <div class="marketplace-detail-head"><div>${marketplaceBackButton("К заказам")}</div><div><h3>${escapeHtml(order.posting_number || order.external_order_id || "Заказ")}</h3><p>Заказ ${escapeHtml(providerLabel)} · подробности доступны только для чтения</p></div></div>
           <div class="marketplace-detail-grid">
             ${marketplaceDetailField("Номер заказа", order.external_order_id)}
+            ${marketplaceDetailField("Склад", order.warehouse_name)}
+            ${marketplaceDetailField("Схема", order.warehouse_type)}
             ${marketplaceDetailField("Статус", order.status)}
+            ${marketplaceDetailField("Количество", `${order.quantity} шт.`)}
+            ${marketplaceDetailField("Сумма товаров", marketplaceOrderAmount(order.amount, order.amount_available, order.amount_partial))}
             ${marketplaceDetailField("Срок отгрузки", order.shipment_date)}
             ${marketplaceDetailField("Обновлено", order.updated_at)}
           </div>
+          <section class="card marketplace-order-detail-composition"><div class="section-title"><b>Состав заказа</b><span>${order.item_count} поз. · ${order.quantity} шт.</span></div>${composition}</section>
         `;
       }
       if (detail.kind === "sync") {
@@ -12279,7 +12415,22 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="card field-card"><div class="section-title"><b>Состояние синхронизации</b><span>${escapeHtml(account.last_sync_at || "нет данных")}</span></div></div>
       `;
-      const ordersBlock = verifiedOrdersAvailable && verifiedOrders.length ? `<div class="op-list">${verifiedOrders.map((row) => `<button type="button" class="card report-row marketplace-clickable" data-marketplace-order-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>Заказ: ${escapeHtml(row.external_order_id)}<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")} ›</span></button>`).join("")}</div>` : itemEmpty(isWildberries && !verifiedOrdersAvailable ? "Выбранный период или источник заказов WB не подтверждён." : "За выбранный период отгрузок нет.");
+      const orderAnalytics = marketplaceOrderAnalytics(verifiedOrders, products);
+      const orderAmountText = marketplaceOrderAmount(orderAnalytics.summary.amount, orderAnalytics.summary.amount_complete, orderAnalytics.summary.amount_partial);
+      const orderAnalyticsKpis = `<div class="marketplace-v2-kpis">
+        <div class="card marketplace-v2-kpi"><span>Заказы</span><strong>${escapeHtml(orderAnalytics.summary.orders)}</strong><small>${escapeHtml(periodMeta.label)}</small></div>
+        <div class="card marketplace-v2-kpi"><span>Товаров в заказах</span><strong>${escapeHtml(orderAnalytics.summary.quantity)} шт.</strong><small>${escapeHtml(orderAnalytics.summary.products)} товарных позиций</small></div>
+        <div class="card marketplace-v2-kpi"><span>Склады</span><strong>${escapeHtml(orderAnalytics.summary.warehouses)}</strong><small>По данным заказов ${escapeHtml(providerName)}</small></div>
+        <div class="card marketplace-v2-kpi ${orderAnalytics.summary.amount_partial && !orderAnalytics.summary.amount_complete ? "unavailable" : ""}"><span>Сумма товаров</span><strong class="marketplace-kpi-value-compact">${escapeHtml(orderAmountText)}</strong><small>${orderAnalytics.summary.amount_complete ? "Цена × количество" : (orderAnalytics.summary.amount_partial ? "Ozon не прислал цену для части строк" : "Цена строк заказа не загружена")}</small></div>
+      </div>`;
+      const orderView = ["warehouses", "products", "list"].includes(state.marketplaceOrderView) ? state.marketplaceOrderView : "warehouses";
+      const orderViewTabs = `<div class="marketplace-order-view-tabs" role="tablist" aria-label="Представление заказов"><button type="button" class="${orderView === "warehouses" ? "active" : ""}" data-marketplace-orders-view="warehouses">По складам</button><button type="button" class="${orderView === "products" ? "active" : ""}" data-marketplace-orders-view="products">По товарам</button><button type="button" class="${orderView === "list" ? "active" : ""}" data-marketplace-orders-view="list">Список заказов</button></div>`;
+      const warehouseOrdersTable = `<section class="card marketplace-order-table-card"><div class="section-title"><b>Заказы по складам</b><span>${orderAnalytics.warehouses.length}</span></div><div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Склад</th><th>Схема</th><th>Заказов</th><th>Количество</th><th>Сумма товаров</th></tr></thead><tbody>${orderAnalytics.warehouses.map((row) => `<tr><td><b>${escapeHtml(row.name)}</b></td><td>${escapeHtml(row.schemes || "—")}</td><td>${escapeHtml(row.orders)}</td><td>${escapeHtml(row.quantity)} шт.</td><td><b>${escapeHtml(marketplaceOrderAmount(row.amount, row.amount_complete, row.amount_partial))}</b></td></tr>`).join("")}</tbody></table></div></section>`;
+      const productOrdersTable = `<section class="card marketplace-order-table-card"><div class="section-title"><b>Заказы по товарам</b><span>${orderAnalytics.products.length}</span></div><div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Товар</th><th>Артикул / SKU</th><th>Заказов</th><th>Количество</th><th>Сумма товаров</th></tr></thead><tbody>${orderAnalytics.products.map((row) => `<tr><td><div class="marketplace-order-product-cell"><b>${escapeHtml(row.name)}</b><span>${escapeHtml([row.size ? `Размер ${row.size}` : "", row.color ? `Цвет ${row.color}` : ""].filter(Boolean).join(" · ") || "Характеристики не указаны")}</span></div></td><td>${escapeHtml(row.offer_id || row.sku || "—")}</td><td>${escapeHtml(row.orders)}</td><td>${escapeHtml(row.quantity)} шт.</td><td><b>${escapeHtml(marketplaceOrderAmount(row.amount, row.amount_complete, row.amount_partial))}</b></td></tr>`).join("")}</tbody></table></div></section>`;
+      const orderList = `<div class="op-list">${orderAnalytics.orders.map((row) => `<button type="button" class="card report-row marketplace-clickable marketplace-order-list-row" data-marketplace-order-id="${escapeHtml(row.id)}"><div><b>${escapeHtml(row.posting_number || row.external_order_id)}</b><span>${escapeHtml(row.warehouse_name)} · ${escapeHtml(row.quantity)} шт.<br>${escapeHtml(row.shipment_date || "Срок не указан")}</span></div><div class="marketplace-order-list-metrics"><b>${escapeHtml(marketplaceOrderAmount(row.amount, row.amount_available, row.amount_partial))}</b><span class="status-chip ${row.status && !["delivering", "awaiting_packaging"].includes(row.status) ? "warn" : "gray"}">${escapeHtml(row.status || "Без статуса")} ›</span></div></button>`).join("")}</div>`;
+      const ordersBlock = verifiedOrdersAvailable && verifiedOrders.length
+        ? `${orderAnalyticsKpis}${orderViewTabs}${orderView === "products" ? productOrdersTable : (orderView === "list" ? orderList : warehouseOrdersTable)}`
+        : itemEmpty(isWildberries && !verifiedOrdersAvailable ? "Выбранный период или источник заказов WB не подтверждён." : "За выбранный период заказов нет.");
       const supplyStatusLabels = {PLANNED:"Актуальная",WAITING_RESERVATION:"Ожидает резерв",SHORTAGE:"Дефицит",READY_TO_PICK:"Готова к отбору",PICKING:"Отбор",PICKED:"Отобрана",PACKING:"Упаковка",READY_TO_HANDOVER:"Готова к передаче",SHIPPED_FROM_PRODUCTION:"Отгружено на производстве"};
       const suppliesBlock = supplies.length
         ? `${isWildberries && !wbSuppliesCurrent ? `<div class="analytics-overview-notice warn"><div><b>Показана сохранённая история поставок WB</b><span>${escapeHtml(wbSuppliesCapability.safe_message || "Текущий источник поставок не подтверждён; создание складских заданий отключено.")}</span></div></div>` : ""}<div class="op-list">${supplies.map((row) => `<div class="card report-row marketplace-supply-card"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id)}</b><span>${escapeHtml(row.destination_name || "Направление не указано")} · ${escapeHtml(row.item_count || 0)} поз. · ${escapeHtml(row.total_quantity || 0)} шт.${row.unmatched_count ? `<br><span class="critical-text">Не сопоставлено: ${escapeHtml(row.unmatched_count)}</span>` : ""}</span></div><div class="supply-actions"><span class="status-chip ${["SHORTAGE","SYNC_ERROR"].includes(row.canonical_status) ? "warn" : ""}">${escapeHtml(supplyStatusLabels[row.canonical_status] || row.canonical_status)}</span>${row.warehouse_shipment_id ? `<span class="status-chip">${escapeHtml(row.warehouse_shipment_number || `MP-${String(row.warehouse_shipment_id).padStart(6, "0")}`)}</span>` : (isWildberries && !wbSuppliesCurrent ? `<span class="status-chip warn">только история</span>` : (!row.is_actionable ? `<span class="status-chip warn">Недоступна для задания</span>` : (Number(row.item_count || 0) <= 0 ? `<span class="status-chip warn">Нет состава</span>` : (!row.unmatched_count ? `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>` : `<span class="status-chip warn">Нужно сопоставление</span>`))))}</div></div>`).join("")}</div>`
@@ -14479,6 +14630,15 @@ MINIAPP_HTML = """<!doctype html>
       const marketplaceProduct = event.target.closest("[data-marketplace-product-id]");
       if (marketplaceProduct) {
         state.marketplaceDetail = {kind: "product", id: marketplaceProduct.dataset.marketplaceProductId || ""};
+        render();
+        return;
+      }
+
+      const marketplaceOrdersView = event.target.closest("[data-marketplace-orders-view]");
+      if (marketplaceOrdersView) {
+        state.marketplaceOrderView = ["warehouses", "products", "list"].includes(marketplaceOrdersView.dataset.marketplaceOrdersView)
+          ? marketplaceOrdersView.dataset.marketplaceOrdersView
+          : "warehouses";
         render();
         return;
       }

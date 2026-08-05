@@ -258,6 +258,23 @@ def _warehouse_key(warehouse_type: Any, warehouse_name: Any) -> str:
     return f"{kind}:{name}" if name else kind
 
 
+def _order_warehouse_name(payload: Any, warehouse_type: Any = "") -> str:
+    """Return the real Ozon warehouse label retained in a posting payload."""
+
+    source = payload if isinstance(payload, dict) else {}
+    analytics = source.get("analytics_data") if isinstance(source.get("analytics_data"), dict) else {}
+    delivery = source.get("delivery_method") if isinstance(source.get("delivery_method"), dict) else {}
+    warehouse = source.get("warehouse") if isinstance(source.get("warehouse"), dict) else {}
+    return _text(
+        source.get("warehouse_name")
+        or analytics.get("warehouse_name")
+        or delivery.get("warehouse_name")
+        or delivery.get("warehouse")
+        or warehouse.get("name")
+        or warehouse_type
+    ) or "Склад не указан"
+
+
 def _wms_finished_stock(conn: Any) -> tuple[dict[tuple[str, str, str], int], bool]:
     """Read physical finished-goods balances without touching marketplace data."""
 
@@ -1602,18 +1619,44 @@ class MarketplacePGRepository:
                 product_stock_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
                 cur.execute(
                     """SELECT o.external_order_id AS id,o.external_order_id,o.posting_number,o.status,
-                              o.warehouse_type,o.shipment_date,o.received_at AS updated_at,
-                              COALESCE(SUM(i.quantity),0) AS quantity
+                              o.warehouse_type,o.shipment_date,o.received_at AS updated_at,o.payload_json
                          FROM marketplace.orders_current o
-                         LEFT JOIN marketplace.order_items_current i
-                           USING(account_id,external_order_id)
                         WHERE o.account_id=%s
-                        GROUP BY o.account_id,o.external_order_id,o.posting_number,o.status,
-                                 o.warehouse_type,o.shipment_date,o.received_at
                         ORDER BY o.received_at DESC LIMIT 500""",
                     (account_id,),
                 )
                 orders = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT i.external_order_id,i.line_number,i.external_product_id,i.offer_id,
+                              i.sku,i.name,i.quantity,i.price,i.currency
+                         FROM marketplace.order_items_current i
+                        WHERE i.account_id=%s
+                          AND i.external_order_id IN (
+                              SELECT external_order_id FROM marketplace.orders_current
+                               WHERE account_id=%s ORDER BY received_at DESC LIMIT 500
+                          )
+                        ORDER BY i.external_order_id,i.line_number""",
+                    (account_id, account_id),
+                )
+                order_items: dict[str, list[dict[str, Any]]] = {}
+                for item_row in cur.fetchall():
+                    order_item = _json_value(_row_dict(item_row, cur))
+                    quantity = Decimal(str(order_item.get("quantity") or 0))
+                    price = order_item.get("price")
+                    order_item["amount"] = float(quantity * Decimal(str(price))) if price is not None else None
+                    order_items.setdefault(_text(order_item.get("external_order_id")), []).append(order_item)
+                for order in orders:
+                    payload = order.pop("payload_json", {})
+                    lines = order_items.get(_text(order.get("external_order_id")), [])
+                    priced_lines = [line for line in lines if line.get("price") is not None]
+                    order["warehouse_name"] = _order_warehouse_name(payload, order.get("warehouse_type"))
+                    order["items"] = lines
+                    order["item_count"] = len(lines)
+                    order["quantity"] = float(sum(Decimal(str(line.get("quantity") or 0)) for line in lines))
+                    order["amount"] = float(sum(Decimal(str(line.get("amount") or 0)) for line in priced_lines))
+                    order["amount_available"] = bool(lines) and len(priced_lines) == len(lines)
+                    order["amount_partial"] = bool(priced_lines) and len(priced_lines) != len(lines)
+                    order["currency"] = _text(priced_lines[0].get("currency")) if priced_lines else "RUB"
                 cur.execute(
                     """SELECT external_supply_id,external_order_id,order_number,state,order_state,
                               bundle_id,is_crossdock,macrolocal_cluster_id,dropoff_warehouse_id,

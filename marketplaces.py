@@ -1974,10 +1974,49 @@ def dashboard(*, read_only: bool = False) -> dict:
         group["price_max"] = max(prices) if prices else None
         group_payload.append(group)
     group_payload.sort(key=lambda item: (item["name"].lower(), item["key"]))
-    order_rows = conn.execute(
-        "SELECT id,external_order_id,posting_number,status,shipment_date,updated_at FROM marketplace_orders WHERE account_id=? ORDER BY updated_at DESC",
+    order_rows = [dict(row) for row in conn.execute(
+        "SELECT id,external_order_id,posting_number,warehouse_type,status,shipment_date,payload_json,updated_at FROM marketplace_orders WHERE account_id=? ORDER BY updated_at DESC",
         (account_id,),
-    ).fetchall()
+    ).fetchall()]
+    for order in order_rows:
+        try:
+            order_payload = json.loads(order.pop("payload_json", "{}") or "{}")
+        except (TypeError, ValueError):
+            order_payload = {}
+        analytics_data = order_payload.get("analytics_data") if isinstance(order_payload.get("analytics_data"), dict) else {}
+        delivery_method = order_payload.get("delivery_method") if isinstance(order_payload.get("delivery_method"), dict) else {}
+        order["warehouse_name"] = _text(
+            order_payload.get("warehouse_name")
+            or analytics_data.get("warehouse_name")
+            or delivery_method.get("warehouse_name")
+            or delivery_method.get("warehouse")
+            or order.get("warehouse_type")
+        ) or "Склад не указан"
+        lines = []
+        for line_row in conn.execute(
+            "SELECT external_product_id,offer_id,sku,name,quantity,payload_json FROM marketplace_order_items WHERE order_id=? ORDER BY id",
+            (order["id"],),
+        ).fetchall():
+            line = dict(line_row)
+            try:
+                line_payload = json.loads(line.pop("payload_json", "{}") or "{}")
+            except (TypeError, ValueError):
+                line_payload = {}
+            price = line_payload.get("price")
+            try:
+                line["price"] = float(price) if price is not None and str(price).strip() else None
+            except (TypeError, ValueError):
+                line["price"] = None
+            line["currency"] = _text(line_payload.get("currency_code") or line_payload.get("currency") or "RUB")
+            line["amount"] = float(line["quantity"] or 0) * line["price"] if line["price"] is not None else None
+            lines.append(line)
+        priced_lines = [line for line in lines if line.get("price") is not None]
+        order["items"] = lines
+        order["item_count"] = len(lines)
+        order["quantity"] = sum(float(line.get("quantity") or 0) for line in lines)
+        order["amount"] = sum(float(line.get("amount") or 0) for line in priced_lines)
+        order["amount_available"] = bool(lines) and len(priced_lines) == len(lines)
+        order["amount_partial"] = bool(priced_lines) and len(priced_lines) != len(lines)
     recent = conn.execute("SELECT id,status,products_count,prices_count,stocks_count,orders_count,error_message,started_at,finished_at FROM marketplace_sync_runs WHERE account_id=? ORDER BY id DESC LIMIT 5", (account_id,)).fetchall()
     configured = bool(os.getenv("OZON_CLIENT_ID", "").strip() and os.getenv("OZON_API_KEY", "").strip())
     wildberries_configured = bool(os.getenv("WB_API_TOKEN", "").strip())
@@ -2007,7 +2046,7 @@ def dashboard(*, read_only: bool = False) -> dict:
         "product_groups": group_payload,
         "products_rows": products_payload,
         "warehouses": warehouse_options,
-        "orders_rows": [dict(row) for row in order_rows],
+        "orders_rows": order_rows,
         "sync_runs": [dict(row) for row in recent],
         "supplies": supply_rows,
         "supply_counts": supply_counts,
