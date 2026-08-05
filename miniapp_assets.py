@@ -4993,10 +4993,69 @@ MINIAPP_HTML = """<!doctype html>
       padding: 4px 7px; border-radius: 7px; background: rgba(237, 242, 250, .9);
       color: var(--muted); font-size: 11px; font-weight: 750;
     }
+    .marketplace-stock-sources {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px;
+    }
+    .marketplace-stock-sources > span {
+      min-width: 0; padding: 7px 9px; display: grid; gap: 2px;
+      border-radius: 9px; background: rgba(237, 242, 250, .9);
+    }
+    .marketplace-stock-sources small { color: var(--muted); font-size: 10px; font-weight: 800; }
+    .marketplace-stock-sources b { font-size: 12px; overflow-wrap: anywhere; }
+    .marketplace-stock-sources .unknown { background: #fff4e3; }
     .marketplace-stock-result { display: grid; justify-items: end; gap: 7px; }
+    .marketplace-stock-result > small { color: var(--muted); font-size: 10px; font-weight: 800; }
     .marketplace-stock-level.enough { color: #176b44; background: #e1f4e9; }
     .marketplace-stock-level.low { color: #9a5a00; background: #fff0d6; }
     .marketplace-stock-level.absent { color: #b42335; background: #ffe4e8; }
+    .marketplace-stock-level.critical { color: #a3172b; background: #ffdce2; }
+    .marketplace-stock-level.unknown { color: #7a4b00; background: #fff0d6; }
+    .marketplace-stock-detail-summary {
+      margin: 14px 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+    }
+    .marketplace-stock-source-card { padding: 17px !important; display: grid; gap: 7px; }
+    .marketplace-stock-source-card > span {
+      color: var(--muted); font-size: 11px; font-weight: 850; text-transform: uppercase; letter-spacing: .05em;
+    }
+    .marketplace-stock-source-card strong { font-size: clamp(23px, 3vw, 34px); line-height: 1; }
+    .marketplace-stock-source-card small { color: var(--muted); font-size: 11px; }
+    .marketplace-stock-alerts {
+      margin: 14px 0; padding: 14px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      border-left: 4px solid #d92d48; border-radius: 0 13px 13px 0; background: #fff0f2;
+    }
+    .marketplace-stock-alerts b { margin-right: 4px; color: #9f1231; font-size: 12px; }
+    .marketplace-stock-alerts span {
+      padding: 5px 8px; border-radius: 8px; background: rgba(255,255,255,.8); color: #8f1d34; font-size: 11px; font-weight: 750;
+    }
+    .marketplace-stock-alerts.ok { border-left-color: #239362; background: #e9f7ef; }
+    .marketplace-stock-alerts.ok b, .marketplace-stock-alerts.ok span { color: #176b44; }
+    .marketplace-stock-detail-columns {
+      margin: 14px 0 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+    }
+    .marketplace-stock-detail-card { min-width: 0; padding: 16px !important; align-content: start; }
+    .marketplace-stock-location-list { display: grid; gap: 8px; }
+    .marketplace-stock-location {
+      min-width: 0; padding: 10px 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center; gap: 9px; border: 1px solid rgba(35, 75, 160, .1); border-radius: 11px;
+      background: rgba(247, 249, 253, .82);
+    }
+    .marketplace-stock-location > div { min-width: 0; display: grid; gap: 3px; }
+    .marketplace-stock-location > div b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .marketplace-stock-location > div span { color: var(--muted); font-size: 10px; }
+    .marketplace-stock-location > strong { font-size: 12px; white-space: nowrap; }
+    .marketplace-stock-production-totals {
+      margin-bottom: 10px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px;
+    }
+    .marketplace-stock-production-totals span {
+      padding: 8px; display: grid; gap: 3px; border-radius: 9px; background: rgba(237, 242, 250, .9);
+      color: var(--muted); font-size: 10px;
+    }
+    .marketplace-stock-production-totals b { color: var(--ink); font-size: 13px; }
+    .marketplace-stock-source-unavailable {
+      padding: 14px; display: grid; gap: 5px; border-radius: 11px; background: #fff4e3;
+    }
+    .marketplace-stock-source-unavailable b { color: #8a5200; font-size: 12px; }
+    .marketplace-stock-source-unavailable span { color: var(--muted); font-size: 11px; }
     .marketplace-stock-empty { display: none; }
     .marketplace-stock-empty.visible { display: block; }
     .marketplace-menu-strip {
@@ -5064,6 +5123,10 @@ MINIAPP_HTML = """<!doctype html>
       .marketplace-stock-grid { grid-template-columns: 1fr; }
       .marketplace-stock-card { grid-template-columns: 48px minmax(0, 1fr) auto; padding: 11px !important; gap: 9px !important; }
       .marketplace-stock-card-body b, .marketplace-stock-card-body > small { white-space: normal; }
+      .marketplace-stock-sources { grid-template-columns: 1fr; }
+      .marketplace-stock-detail-summary, .marketplace-stock-detail-columns { grid-template-columns: 1fr; }
+      .marketplace-stock-location { grid-template-columns: minmax(0, 1fr) auto; }
+      .marketplace-stock-location > .status-chip { grid-column: 1 / -1; justify-self: start; }
       .marketplace-menu-strip {
         display: flex !important; overflow-x: auto; padding: 8px !important; gap: 6px !important;
         border-radius: 14px; position: static !important; scrollbar-width: none;
@@ -11647,35 +11710,61 @@ MINIAPP_HTML = """<!doctype html>
       return {key: "enough", label: "Хватает"};
     }
 
+    function marketplaceProductReconciliation(product, rootPayload, marketplace = "ozon") {
+      const rows = rootPayload?.catalog_reconciliation?.marketplace_items;
+      if (!Array.isArray(rows) || !product) return null;
+      const provider = marketplace === "wildberries" ? "wildberries" : "ozon";
+      const providerRows = rows.filter((row) => String(row.marketplace || "") === provider);
+      const productId = String(product.id ?? product.external_product_id ?? "");
+      const offerId = String(product.offer_id || "");
+      const sku = String(product.sku || "");
+      return providerRows.find((row) => productId && String(row.id || "") === productId)
+        || providerRows.find((row) => offerId && String(row.article || "") === offerId)
+        || providerRows.find((row) => sku && String(row.sku || "") === sku)
+        || null;
+    }
+
+    function marketplaceProductionSource(product, rootPayload, marketplace = "ozon") {
+      const reconciliationRoot = rootPayload?.catalog_reconciliation || {};
+      const reconciliation = marketplaceProductReconciliation(product, rootPayload, marketplace);
+      if (!reconciliationRoot.ok || reconciliationRoot.warehouse_available === false) {
+        return {known: false, quantity: null, reason: "Склад производства недоступен", reconciliation};
+      }
+      if (!reconciliation || !reconciliation.route_configured) {
+        return {known: false, quantity: null, reason: "Нет связи с производством", reconciliation};
+      }
+      return {
+        known: true,
+        quantity: Number(reconciliation.warehouse_available_quantity || 0),
+        reason: "",
+        reconciliation,
+      };
+    }
+
+    function marketplaceCombinedStockLevel(marketplaceQuantity, productionSource) {
+      if (!productionSource?.known) return {key: "unknown", label: "Нет связи"};
+      const marketplaceValue = Number(marketplaceQuantity || 0);
+      const productionValue = Number(productionSource.quantity || 0);
+      if (marketplaceValue <= 0 || productionValue <= 0) return {key: "critical", label: "Критично"};
+      if (marketplaceValue < 10 || productionValue < 10) return {key: "low", label: "Нужно пополнить"};
+      return {key: "enough", label: "Хватает"};
+    }
+
     function filterMarketplaceStocks(control) {
       const section = control.closest(".marketplace-stock-section");
       if (!section) return;
-      const warehouse = section.querySelector('[data-stock-filter="warehouse"]')?.value || "all";
       const product = section.querySelector('[data-stock-filter="product"]')?.value || "all";
       const color = section.querySelector('[data-stock-filter="color"]')?.value || "all";
       const size = section.querySelector('[data-stock-filter="size"]')?.value || "all";
       const criticality = section.querySelector('[data-stock-filter="criticality"]')?.value || "all";
       let visible = 0;
       section.querySelectorAll(".marketplace-stock-card").forEach((card) => {
-        const stocks = Object.fromEntries(String(card.dataset.stockMap || "").split("|").filter(Boolean).map((part) => {
-          const splitAt = part.lastIndexOf(":");
-          return [part.slice(0, splitAt), Number(part.slice(splitAt + 1) || 0)];
-        }));
-        const quantity = warehouse === "all" ? Number(card.dataset.stockTotal || 0) : Number(stocks[warehouse] || 0);
-        const level = marketplaceStockLevel(quantity);
         const matches = (product === "all" || card.dataset.stockProduct === product)
           && (color === "all" || card.dataset.stockColor === color)
           && (size === "all" || card.dataset.stockSize === size)
-          && (criticality === "all" || level.key === criticality);
+          && (criticality === "all" || card.dataset.stockCriticality === criticality);
         card.hidden = !matches;
         if (matches) visible += 1;
-        const quantityNode = card.querySelector("[data-stock-quantity]");
-        const levelNode = card.querySelector("[data-stock-level]");
-        if (quantityNode) quantityNode.textContent = `${quantity} шт.`;
-        if (levelNode) {
-          levelNode.textContent = level.label;
-          levelNode.className = `status-chip marketplace-stock-level ${level.key}`;
-        }
       });
       const countNode = section.querySelector("[data-stock-visible-count]");
       const emptyNode = section.querySelector(".marketplace-stock-empty");
@@ -11752,7 +11841,7 @@ MINIAPP_HTML = """<!doctype html>
 
     function renderMarketplaceDetail(products, orders, runs) {
       const detail = state.marketplaceDetail || {};
-      const providerLabel = state.marketplaceProvider === "wildberries" ? "Wildberries" : (state.marketplaceProvider === "all" ? "маркетплейсы" : "Ozon");
+      const providerLabel = state.marketplaceProvider === "wildberries" ? "Wildberries" : "Ozon";
       const rootPayload = state.marketplaceData.payload || {};
       const selectedPayload = state.marketplaceProvider === "wildberries" ? (rootPayload.wildberries || {}) : rootPayload;
       const selectedAnalytics = selectedPayload.analytics || {};
@@ -11823,6 +11912,24 @@ MINIAPP_HTML = """<!doctype html>
           accruals: result.accruals + Number(row.accruals || 0),
         }), {orders: 0, units: 0, returns: 0, accruals: 0});
         const warehouseStocks = product.warehouse_stocks || {};
+        const productMarketplace = state.marketplaceProvider === "wildberries" ? "wildberries" : "ozon";
+        const productionSource = marketplaceProductionSource(product, rootPayload, productMarketplace);
+        const reconciliation = productionSource.reconciliation;
+        const marketplaceQuantity = selectedStocksUsable && product.available != null ? Number(product.available || 0) : null;
+        const warehouseNames = new Map((Array.isArray(selectedPayload.warehouses) ? selectedPayload.warehouses : []).map((warehouse) => [String(warehouse.key), String(warehouse.name || warehouse.key)]));
+        const marketplaceWarehouseRows = Object.entries(warehouseStocks).map(([key, value]) => ({
+          key,
+          name: warehouseNames.get(String(key)) || String(key).replace(/^ozon:/, ""),
+          quantity: Number(value || 0),
+        })).sort((left, right) => right.quantity - left.quantity || left.name.localeCompare(right.name, "ru"));
+        const productionLocations = Array.isArray(reconciliation?.locations) ? reconciliation.locations : [];
+        const stockAlerts = [];
+        if (marketplaceQuantity != null && marketplaceQuantity <= 0) stockAlerts.push(`${providerLabel}: товар закончился`);
+        else if (marketplaceQuantity != null && marketplaceQuantity < 10) stockAlerts.push(`${providerLabel}: осталось ${marketplaceQuantity} шт.`);
+        if (!productionSource.known) stockAlerts.push(productionSource.reason);
+        else if (productionSource.quantity <= 0) stockAlerts.push("Производство: готовой продукции нет в ячейках");
+        else if (productionSource.quantity < 10) stockAlerts.push(`Производство: доступно только ${productionSource.quantity} шт.`);
+        if (Number(reconciliation?.warehouse_reserved_quantity || 0) > 0) stockAlerts.push(`Производство: в резерве ${Number(reconciliation.warehouse_reserved_quantity)} шт.`);
         const productHistoryValue = (value, suffix = "") => selectedProductHistoryUsable ? `${escapeHtml(value)}${suffix}` : "—";
         const productChart = !selectedProductHistoryUsable
           ? `<div class="marketplace-chart-empty"><b>История товара недоступна</b><span>${escapeHtml(providerLabel)} пока не предоставляет подтверждённую историю заказов, продаж, возвратов и начислений по этой карточке.</span></div>`
@@ -11837,12 +11944,24 @@ MINIAPP_HTML = """<!doctype html>
             ${marketplaceDetailField("Штрихкод", product.barcode)}
             ${marketplaceDetailField("Размер", product.size)}
             ${marketplaceDetailField("Цвет", product.color)}
-            ${marketplaceDetailField(`Остаток ${providerLabel}`, selectedStocksUsable && product.available != null ? `${product.available} шт.` : "—")}
-            ${marketplaceDetailField("Остаток производства", marketplaceProductionStockText(product))}
-            ${marketplaceDetailField(`${providerLabel} · склады`, selectedStocksUsable ? `${Object.values(warehouseStocks).reduce((sum, value) => sum + Number(value || 0), 0)} шт.` : "—")}
             ${marketplaceDetailField("Текущая цена", marketplaceMoney(product.current_price))}
             ${marketplaceDetailField("Старая цена", marketplaceMoney(product.old_price))}
             ${marketplaceDetailField("Обновлено", product.updated_at)}
+          </div>
+          <div class="marketplace-stock-detail-summary">
+            <div class="card marketplace-stock-source-card"><span>${escapeHtml(providerLabel)} · всего</span><strong>${marketplaceQuantity == null ? "—" : `${marketplaceQuantity} шт.`}</strong><small>${marketplaceQuantity == null ? "Источник остатков не подтверждён" : `${marketplaceWarehouseRows.length} складов с данными`}</small></div>
+            <div class="card marketplace-stock-source-card"><span>Производство · готовая продукция</span><strong>${productionSource.known ? `${productionSource.quantity} шт.` : "—"}</strong><small>${productionSource.known ? `Всего ${Number(reconciliation?.warehouse_quantity || 0)} · резерв ${Number(reconciliation?.warehouse_reserved_quantity || 0)}` : productionSource.reason}</small></div>
+          </div>
+          ${stockAlerts.length ? `<div class="marketplace-stock-alerts"><b>Критические места</b>${stockAlerts.map((message) => `<span>${escapeHtml(message)}</span>`).join("")}</div>` : `<div class="marketplace-stock-alerts ok"><b>Критических мест нет</b><span>Остаток есть и на ${escapeHtml(providerLabel)}, и на производстве.</span></div>`}
+          <div class="marketplace-stock-detail-columns">
+            <section class="card marketplace-stock-detail-card">
+              <div class="section-title"><b>${escapeHtml(providerLabel)} · по складам</b><span>${marketplaceWarehouseRows.length}</span></div>
+              <div class="marketplace-stock-location-list">${marketplaceWarehouseRows.length ? marketplaceWarehouseRows.map((warehouse) => { const level = marketplaceStockLevel(warehouse.quantity); return `<div class="marketplace-stock-location"><div><b>${escapeHtml(warehouse.name)}</b><span>Доступно на складе</span></div><strong>${warehouse.quantity} шт.</strong><span class="status-chip marketplace-stock-level ${level.key}">${level.label}</span></div>`; }).join("") : itemEmpty(`Разбивка по складам ${providerLabel} пока не загружена.`)}</div>
+            </section>
+            <section class="card marketplace-stock-detail-card">
+              <div class="section-title"><b>Производство · склад готовой продукции</b><span>${productionLocations.length} ячеек</span></div>
+              ${productionSource.known ? `<div class="marketplace-stock-production-totals"><span>Всего <b>${Number(reconciliation?.warehouse_quantity || 0)}</b></span><span>Резерв <b>${Number(reconciliation?.warehouse_reserved_quantity || 0)}</b></span><span>Доступно <b>${Number(reconciliation?.warehouse_available_quantity || 0)}</b></span></div><div class="marketplace-stock-location-list">${productionLocations.length ? productionLocations.map((location) => { const level = marketplaceStockLevel(location.available_quantity); return `<div class="marketplace-stock-location"><div><b>Ячейка ${escapeHtml(location.code || "Не размещён")}</b><span>Всего ${Number(location.quantity || 0)} · резерв ${Number(location.reserved_quantity || 0)}</span></div><strong>${Number(location.available_quantity || 0)} шт.</strong><span class="status-chip marketplace-stock-level ${level.key}">${level.label}</span></div>`; }).join("") : itemEmpty("Товар связан с производством, но в ячейках готовой продукции остатка нет.")}</div>` : `<div class="marketplace-stock-source-unavailable"><b>${escapeHtml(productionSource.reason)}</b><span>Физический остаток не подменяется данными маркетплейса.</span></div>`}
+            </section>
           </div>
           <div class="marketplace-filter-bar"><label><span>Период по товару</span><select id="marketplaceProductPeriod"><option value="7d" ${productPeriod === "7d" ? "selected" : ""}>Последние 7 дней</option><option value="30d" ${productPeriod === "30d" ? "selected" : ""}>Последние 30 дней</option><option value="all" ${productPeriod === "all" ? "selected" : ""}>Всё время</option></select></label><div class="marketplace-period-label">${productPeriod === "all" ? "Вся загруженная история" : escapeHtml(marketplacePeriodMeta(productPeriod).label)}</div></div>
           <div class="marketplace-v2-kpis">
@@ -12049,10 +12168,11 @@ MINIAPP_HTML = """<!doctype html>
       const kpiValue = (label, value, suffix, hint, view = "") => `${view ? `<button type="button" class="card marketplace-v2-kpi" data-marketplace-view="${view}">` : `<div class="card marketplace-v2-kpi">`}<span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}<small>${escapeHtml(suffix)}</small></strong><small>${escapeHtml(hint)}</small>${view ? "</button>" : "</div>"}`;
       const groupMarketplaceStockText = (group) => isWildberries && !wbStocksUsable || group.available === null || group.available === undefined ? "—" : `${Number(group.available || 0)} шт.`;
       const productsBlock = groups.length ? `<div class="op-list marketplace-group-grid">${groups.map((group) => `<button type="button" class="card marketplace-clickable marketplace-group-card" data-marketplace-group="${escapeHtml(group.key)}"><div class="group-title"><span class="marketplace-product-heading">${marketplaceProductAvatar(group)}<span><b>${escapeHtml(group.name)}</b></span></span><span class="status-chip">›</span></div><div class="marketplace-group-meta"><span>${escapeHtml(group.products || 0)} поз.</span><span>${escapeHtml(group.articles || group.products || 0)} артикулов</span><span>${escapeHtml(providerName)}: ${escapeHtml(groupMarketplaceStockText(group))}</span><span>Производство: ${escapeHtml(marketplaceProductionStockText(group))}</span></div><div class="marketplace-group-meta"><span>Цена: ${marketplaceMoney(group.price_min)}${group.price_max != null && group.price_max !== group.price_min ? ` — ${marketplaceMoney(group.price_max)}` : ""}</span><span>Открыть группу ›</span></div></button>`).join("")}</div>` : itemEmpty("Товары ещё не загружены.");
-      const warehouseOptions = Array.isArray(providerPayload.warehouses) ? providerPayload.warehouses : [{key:"fbo",name:"FBO — склады маркетплейса"},{key:"fbs",name:"FBS — собственный склад"}];
       const stockColors = [...new Set(products.map((row) => String(row.color || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru"));
       const stockSizes = [...new Set(products.map((row) => String(row.size || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru", {numeric: true, sensitivity: "base"}));
-      const stocksBlock = products.length ? `<section class="marketplace-stock-section"><div class="marketplace-stock-filters"><label><span>Реальный склад ${escapeHtml(providerName)}</span><select data-stock-filter="warehouse"><option value="all">Все склады ${escapeHtml(providerName)}</option>${warehouseOptions.map((warehouse) => `<option value="${escapeHtml(warehouse.key)}">${escapeHtml(warehouse.name)}</option>`).join("")}</select></label><label><span>Номенклатура</span><select data-stock-filter="product"><option value="all">Вся номенклатура</option>${groups.map((group) => `<option value="${escapeHtml(group.key)}">${escapeHtml(group.name)}</option>`).join("")}</select></label><label><span>Цвет</span><select data-stock-filter="color"><option value="all">Все цвета</option>${stockColors.map((color) => `<option value="${escapeHtml(color)}">${escapeHtml(color)}</option>`).join("")}</select></label><label><span>Размер</span><select data-stock-filter="size"><option value="all">Все размеры</option>${stockSizes.map((size) => `<option value="${escapeHtml(size)}">${escapeHtml(size)}</option>`).join("")}</select></label><label><span>Критичность</span><select data-stock-filter="criticality"><option value="all">Все состояния</option><option value="enough">Хватает · от 10 шт.</option><option value="low">Нужно пополнить · 1–9 шт.</option><option value="absent">Отсутствует · 0 шт.</option></select></label></div><div class="section-title"><b>Остатки по товарам</b><span data-stock-visible-count>${products.length}</span></div><div class="marketplace-stock-grid">${products.map((row) => { const stockMap = row.warehouse_stocks || {}; const total = Number(row.available || 0); const level = marketplaceStockLevel(total); const nonEmptyWarehouses = warehouseOptions.filter((warehouse) => Number(stockMap[warehouse.key] || 0) > 0); const encodedStockMap = escapeHtml(warehouseOptions.map((warehouse) => `${warehouse.key}:${Number(stockMap[warehouse.key] || 0)}`).join("|")); return `<button type="button" class="card marketplace-clickable marketplace-stock-card" data-marketplace-product-id="${escapeHtml(row.id)}" data-stock-product="${escapeHtml(row.group_key || "other")}" data-stock-color="${escapeHtml(String(row.color || ""))}" data-stock-size="${escapeHtml(String(row.size || ""))}" data-stock-total="${total}" data-stock-map="${encodedStockMap}">${marketplaceProductAvatar(row)}<span class="marketplace-stock-card-body"><b>${escapeHtml(row.name || `Товар ${providerName}`)}</b><small>${escapeHtml(row.group_name || "Прочие товары")} · ${escapeHtml(row.color || "Цвет не указан")} · ${escapeHtml(row.size || "Размер не указан")} · Артикул: ${escapeHtml(row.offer_id || "—")}</small><span class="marketplace-stock-breakdown">${nonEmptyWarehouses.slice(0, 3).map((warehouse) => `<span>${escapeHtml(warehouse.name)}: ${Number(stockMap[warehouse.key] || 0)} шт.</span>`).join("")}${nonEmptyWarehouses.length > 3 ? `<span>Ещё складов: ${nonEmptyWarehouses.length - 3}</span>` : ""}</span></span><span class="marketplace-stock-result"><b data-stock-quantity>${total} шт.</b><span data-stock-level class="status-chip marketplace-stock-level ${level.key}">${level.label}</span></span></button>`; }).join("")}</div><div class="marketplace-stock-empty">${itemEmpty("По выбранным фильтрам товаров нет.")}</div></section>` : itemEmpty("Остатки ещё не загружены.");
+      const stockMarketplace = isWildberries ? "wildberries" : "ozon";
+      const stockMarketplaceLabel = isWildberries ? "Wildberries" : "Ozon";
+      const stocksBlock = products.length ? `<section class="marketplace-stock-section"><div class="marketplace-stock-filters"><label><span>Номенклатура</span><select data-stock-filter="product"><option value="all">Вся номенклатура</option>${groups.map((group) => `<option value="${escapeHtml(group.key)}">${escapeHtml(group.name)}</option>`).join("")}</select></label><label><span>Цвет</span><select data-stock-filter="color"><option value="all">Все цвета</option>${stockColors.map((color) => `<option value="${escapeHtml(color)}">${escapeHtml(color)}</option>`).join("")}</select></label><label><span>Размер</span><select data-stock-filter="size"><option value="all">Все размеры</option>${stockSizes.map((size) => `<option value="${escapeHtml(size)}">${escapeHtml(size)}</option>`).join("")}</select></label><label><span>Критичность</span><select data-stock-filter="criticality"><option value="all">Все состояния</option><option value="critical">Критично · на одном из складов 0</option><option value="low">Нужно пополнить · 1–9 шт.</option><option value="enough">Хватает · от 10 шт.</option><option value="unknown">Нет связи с производством</option></select></label></div><div class="section-title"><b>Остатки по товарам</b><span data-stock-visible-count>${products.length}</span></div><div class="marketplace-stock-grid">${products.map((row) => { const marketplaceQuantity = Number(row.available || 0); const productionSource = marketplaceProductionSource(row, payload, stockMarketplace); const level = marketplaceCombinedStockLevel(marketplaceQuantity, productionSource); const productionText = productionSource.known ? `${productionSource.quantity} шт.` : productionSource.reason; return `<button type="button" class="card marketplace-clickable marketplace-stock-card" data-marketplace-product-id="${escapeHtml(row.id)}" data-stock-product="${escapeHtml(row.group_key || "other")}" data-stock-color="${escapeHtml(String(row.color || ""))}" data-stock-size="${escapeHtml(String(row.size || ""))}" data-stock-criticality="${level.key}">${marketplaceProductAvatar(row)}<span class="marketplace-stock-card-body"><b>${escapeHtml(row.name || `Товар ${stockMarketplaceLabel}`)}</b><small>${escapeHtml(row.group_name || "Прочие товары")} · ${escapeHtml(row.color || "Цвет не указан")} · ${escapeHtml(row.size || "Размер не указан")} · Артикул: ${escapeHtml(row.offer_id || "—")}</small><span class="marketplace-stock-sources"><span><small>${escapeHtml(stockMarketplaceLabel)}</small><b>${marketplaceQuantity} шт.</b></span><span class="${productionSource.known ? "" : "unknown"}"><small>Производство</small><b>${escapeHtml(productionText)}</b></span></span></span><span class="marketplace-stock-result"><span class="status-chip marketplace-stock-level ${level.key}">${level.label}</span><small>Открыть ›</small></span></button>`; }).join("")}</div><div class="marketplace-stock-empty">${itemEmpty("По выбранным фильтрам товаров нет.")}</div></section>` : itemEmpty("Остатки ещё не загружены.");
       const wbPeriodCapability = (name, fallback) => {
         const capability = wbCapabilityStatuses[name] && typeof wbCapabilityStatuses[name] === "object" ? wbCapabilityStatuses[name] : {};
         const status = capability.status || (fallback ? "legacy" : "no_data");

@@ -297,6 +297,25 @@ def run_smoke() -> None:
                     auto_refresh_marker in html_text,
                     f"Active-view auto-refresh marker is missing: {auto_refresh_marker}",
                 )
+            for marketplace_stock_marker in (
+                "function marketplaceProductReconciliation(product, rootPayload",
+                "function marketplaceCombinedStockLevel(marketplaceQuantity, productionSource)",
+                "data-stock-criticality=",
+                "Производство · склад готовой продукции",
+                "Физический остаток не подменяется данными маркетплейса",
+            ):
+                require(
+                    marketplace_stock_marker in html_text,
+                    f"Marketplace stock source marker is missing: {marketplace_stock_marker}",
+                )
+            require(
+                'data-stock-filter="warehouse"' not in html_text,
+                "Marketplace stock list must not expose warehouse selection before product detail.",
+            )
+            require(
+                "Ещё складов:" not in html_text,
+                "Marketplace stock cards must show only marketplace and production totals.",
+            )
             for install_marker in (
                 'id="pwaInstallDock"',
                 'id="pwaInstallButton"',
