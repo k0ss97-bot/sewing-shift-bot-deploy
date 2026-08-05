@@ -226,6 +226,8 @@ class WmsContractTests(unittest.TestCase):
         self.assertIn('wmsShipmentTaskActiveAllocationId', assets)
         self.assertIn('data-wms-task-action="back-position"', assets)
         self.assertIn('Ячейка: ${escapeHtml(allocation.location_code)}', assets)
+        self.assertIn('#wmsHardwareScannerInput, #wmsShipmentTaskCell', assets)
+        self.assertIn('scannedCode === expectedCode', assets)
         self.assertIn('state.wmsShipmentTaskActiveAllocationId = "";', assets)
 
     def test_stock_api_passes_postgres_connection_to_repository(self):

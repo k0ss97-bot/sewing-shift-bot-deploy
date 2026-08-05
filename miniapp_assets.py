@@ -9657,10 +9657,12 @@ MINIAPP_HTML = """<!doctype html>
       const field = state.wmsScanField || "product";
       if (field === "shipment_cell") {
         const location = wmsLocationByScan(v);
-        const code = location ? String(location.code) : v.replace(/^LOC:/i, "").trim().toUpperCase();
+        let code = location ? String(location.code) : v.replace(/^LOC:/i, "").trim().toUpperCase();
         const task = state.wmsShipmentTaskDetail;
         const activeId = String(state.wmsShipmentTaskActiveAllocationId || "");
         const activeAllocation = task && task.items.flatMap((item) => (item.allocations || []).map((allocation) => ({...allocation, item}))).find((allocation) => String(allocation.id) === activeId);
+        const expectedCode = String(activeAllocation && activeAllocation.location_code || "").trim().toUpperCase();
+        if (expectedCode && code === `${expectedCode}${expectedCode}`) code = expectedCode;
         const allowed = Boolean(activeAllocation && String(activeAllocation.location_code || "").toUpperCase() === code);
         if (!allowed) {
           showToast("Отгрузка", activeAllocation ? `Для этой позиции отсканируйте ячейку ${activeAllocation.location_code}.` : "Сначала выберите позицию отгрузки.");
@@ -9669,6 +9671,7 @@ MINIAPP_HTML = """<!doctype html>
         state.wmsShipmentTaskLocation = code;
         state.wmsShipmentTaskExpectedAllocationId = activeId;
         render();
+        focusWmsHardwareScanner();
         showToast("Отгрузка", `Открыта ячейка ${code}.`);
         return;
       }
@@ -9780,13 +9783,12 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function clearWmsHardwareScannerInput() {
-      const input = document.getElementById("wmsHardwareScannerInput");
-      if (input) input.value = "";
+      document.querySelectorAll("#wmsHardwareScannerInput, #wmsShipmentTaskCell").forEach((input) => { input.value = ""; });
     }
 
     function focusWmsHardwareScanner() {
       window.setTimeout(() => {
-        const input = document.getElementById("wmsHardwareScannerInput");
+        const input = document.querySelector("#wmsShipmentTaskCell, #wmsHardwareScannerInput");
         if (!input) return;
         input.value = "";
         input.focus({preventScroll: true});
@@ -14674,7 +14676,7 @@ MINIAPP_HTML = """<!doctype html>
         searchMarketplaceQualityProducts();
         return;
       }
-      const scannerInput = event.target.closest("#wmsHardwareScannerInput");
+      const scannerInput = event.target.closest("#wmsHardwareScannerInput, #wmsShipmentTaskCell");
       if (!scannerInput || event.key !== "Enter") return;
       event.preventDefault();
       const value = scannerInput.value.trim();
@@ -14685,6 +14687,20 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("input", (event) => {
+      const shipmentScannerInput = event.target.closest("#wmsShipmentTaskCell");
+      if (shipmentScannerInput && shipmentScannerInput.dataset.wmsHardwareField === "shipment_cell") {
+        const task = state.wmsShipmentTaskDetail;
+        const activeId = String(state.wmsShipmentTaskActiveAllocationId || "");
+        const allocation = task && task.items.flatMap((item) => item.allocations || []).find((entry) => String(entry.id) === activeId);
+        const expectedCode = String(allocation && allocation.location_code || "").trim().toUpperCase();
+        const scannedCode = normalizeWmsScannedBarcode(shipmentScannerInput.value).replace(/^LOC:/i, "").trim().toUpperCase();
+        if (expectedCode && (scannedCode === expectedCode || scannedCode === `${expectedCode}${expectedCode}`)) {
+          shipmentScannerInput.value = "";
+          state.wmsScanField = "shipment_cell";
+          handleWmsScan(expectedCode);
+          return;
+        }
+      }
       if (event.target.closest("#wmsQuantity, #wmsFromLocation, #wmsToLocation, #wmsReason")) {
         readWmsDraftFromForm();
       }
