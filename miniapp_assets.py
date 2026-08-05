@@ -5809,6 +5809,16 @@ MINIAPP_HTML = """<!doctype html>
     let webSessionRestorePromise = null;
     let qrScannerStream = null;
     let qrScannerFrame = 0;
+    const autoRefreshIntervalsMs = {
+      production: 15_000,
+      warehouse: 10_000,
+      marketplaces: 30_000,
+      analytics: 30_000,
+    };
+    const autoRefreshTickMs = 5_000;
+    const autoRefreshLastAt = new Map();
+    let autoRefreshTimer = null;
+    let autoRefreshRunning = false;
 
     function beginAction(key) {
       if (pendingActions.has(key)) return false;
@@ -13582,12 +13592,13 @@ MINIAPP_HTML = """<!doctype html>
         state.screen = allowed.has(state.productionScreen) ? state.productionScreen : "shift";
       }
       render();
+      window.setTimeout(() => refreshActiveWorkspace({force: true}), 0);
     }
 
-    async function refreshState(message = "") {
+    async function refreshState(message = "", {silent = false} = {}) {
       const actionKey = "refresh-state";
       if (!beginAction(actionKey)) return;
-      mainButton.disabled = true;
+      if (!silent) mainButton.disabled = true;
       try {
         const data = await api("/api/app/state", {message});
 
@@ -13617,6 +13628,7 @@ MINIAPP_HTML = """<!doctype html>
         safeRenderAfterState();
         if (getCompletionQueue().length && navigator.onLine) window.setTimeout(() => flushCompletionQueue(true), 0);
       } catch (error) {
+        if (silent && state.data) return;
         state.data = null;
         document.getElementById("roleLabel").textContent = "Нет соединения";
       mount.innerHTML = `<div class="screen-head"><div><h2>Не удалось загрузить приложение</h2><p class="operational-message">${escapeHtml(error.apiMessage || "Проверьте соединение и повторите попытку.")}</p></div></div>`;
@@ -13628,6 +13640,63 @@ MINIAPP_HTML = """<!doctype html>
       } finally {
         endAction(actionKey);
       }
+    }
+
+    function activeRefreshScope() {
+      return ["warehouse", "marketplaces", "analytics"].includes(state.workspace)
+        ? state.workspace
+        : "production";
+    }
+
+    function autoRefreshIsBlocked() {
+      if (!state.data || document.visibilityState !== "visible" || !navigator.onLine) return true;
+      if (isStandaloneWeb && (!loginView.hidden || !connectionView.hidden)) return true;
+      if (qrScannerStream || !qrScanner.hidden || pendingActions.size) return true;
+      const activeElement = document.activeElement;
+      return Boolean(activeElement && activeElement.matches("input, textarea, select, [contenteditable='true']"));
+    }
+
+    async function refreshActiveWorkspace({force = false} = {}) {
+      if (autoRefreshRunning || autoRefreshIsBlocked()) return;
+      const scope = activeRefreshScope();
+      const interval = autoRefreshIntervalsMs[scope] || autoRefreshIntervalsMs.production;
+      const lastAt = Number(autoRefreshLastAt.get(scope) || 0);
+      if (!force && Date.now() - lastAt < interval) return;
+
+      autoRefreshRunning = true;
+      try {
+        if (scope === "warehouse") {
+          await refreshWmsWorkspace({silent: true});
+          if (state.wmsView === "products") await refreshWmsCatalog({silent: true});
+        } else if (scope === "marketplaces") {
+          await refreshMarketplaces({silent: true});
+          if (state.marketplaceView === "data-quality") await refreshMarketplaceQuality({silent: true});
+        } else if (scope === "analytics") {
+          await refreshMarketplaces({silent: true});
+          await refreshAnalyticsQuality({silent: true});
+          await refreshAnalyticsOverview({silent: true});
+        } else {
+          await refreshState("", {silent: true});
+        }
+      } finally {
+        autoRefreshLastAt.set(scope, Date.now());
+        autoRefreshRunning = false;
+      }
+    }
+
+    function scheduleAutoRefresh(delayMs = autoRefreshTickMs) {
+      if (autoRefreshTimer !== null) window.clearTimeout(autoRefreshTimer);
+      autoRefreshTimer = window.setTimeout(async () => {
+        autoRefreshTimer = null;
+        await refreshActiveWorkspace();
+        scheduleAutoRefresh();
+      }, delayMs);
+    }
+
+    function resumeAutoRefresh() {
+      autoRefreshLastAt.set(activeRefreshScope(), 0);
+      window.setTimeout(() => refreshActiveWorkspace({force: true}), 0);
+      scheduleAutoRefresh();
     }
 
     async function shiftAction(action) {
@@ -15527,7 +15596,9 @@ MINIAPP_HTML = """<!doctype html>
     });
     window.addEventListener("online", () => {
       if (isStandaloneWeb && !connectionView.hidden) runWebSessionRestore({manual: true});
+      resumeAutoRefresh();
     });
+    window.addEventListener("focus", resumeAutoRefresh);
     document.getElementById("qrScannerClose").addEventListener("click", stopWebQrScanner);
     document.getElementById("qrScannerManual").addEventListener("click", () => {
       stopWebQrScanner();
@@ -15538,10 +15609,11 @@ MINIAPP_HTML = """<!doctype html>
       if (document.visibilityState === "visible" && isStandaloneWeb && !connectionView.hidden) {
         runWebSessionRestore({manual: true});
       }
+      if (document.visibilityState === "visible") resumeAutoRefresh();
     });
     webLoginForm.addEventListener("submit", loginWebApp);
     webRegisterForm.addEventListener("submit", registerWebApp);
-    bootstrapApplication();
+    bootstrapApplication().finally(() => scheduleAutoRefresh(1_000));
   </script>
 </body>
 </html>

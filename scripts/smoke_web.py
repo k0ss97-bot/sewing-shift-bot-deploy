@@ -283,6 +283,20 @@ def run_smoke() -> None:
                     session_restore_marker in html_text,
                     f"Web session recovery marker is missing: {session_restore_marker}",
                 )
+            for auto_refresh_marker in (
+                'const autoRefreshIntervalsMs = {',
+                'production: 15_000',
+                'warehouse: 10_000',
+                'marketplaces: 30_000',
+                'function autoRefreshIsBlocked()',
+                'activeElement.matches("input, textarea, select, [contenteditable=\'true\']")',
+                'window.addEventListener("focus", resumeAutoRefresh)',
+                'if (document.visibilityState === "visible") resumeAutoRefresh()',
+            ):
+                require(
+                    auto_refresh_marker in html_text,
+                    f"Active-view auto-refresh marker is missing: {auto_refresh_marker}",
+                )
             for install_marker in (
                 'id="pwaInstallDock"',
                 'id="pwaInstallButton"',
