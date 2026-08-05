@@ -2065,6 +2065,7 @@ def dashboard(*, read_only: bool = False) -> dict:
 def dashboard_supplement() -> dict:
     """Return only SQLite/WB fields appended to the PostgreSQL dashboard."""
 
+    ensure_schema()
     conn = get_db_connection(timeout=2)
     conn.row_factory = sqlite3.Row
     try:
