@@ -12294,7 +12294,7 @@ MINIAPP_HTML = """<!doctype html>
         : (isOzon ? Boolean(payload.configured) : wildberriesConnected);
       const providerLoadFailed = Boolean(state.marketplaceData.error && !state.marketplaceData.loaded);
       const providerStatus = providerLoadFailed
-        ? "Не удалось загрузить данны · подключение будет повторено"
+        ? "Не удалось загрузить данные · подключение будет повторено"
         : isAll
         ? `Ozon: ${payload.configured ? "подключён" : "не подключён"} · Wildberries: ${wildberriesConnected ? "подключён" : "не подключён"}`
         : (isOzon
