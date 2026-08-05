@@ -592,7 +592,7 @@ def warehouse_shipment_tasks(*, limit: int = 100) -> list[dict]:
     rows = conn.execute(
         """SELECT s.id,s.number,s.marketplace,s.external_supply_id,s.status,s.destination_name,
                   s.total_quantity,s.reserved_quantity,s.picked_quantity,s.packed_quantity,
-                  s.planned_at,s.updated_at,COUNT(i.id) AS item_count,ms.external_status
+                  s.planned_at,s.created_at,s.updated_at,COUNT(i.id) AS item_count,ms.external_status
              FROM warehouse_shipments s
         LEFT JOIN warehouse_shipment_items i ON i.shipment_id=s.id
         LEFT JOIN marketplace_supplies ms ON ms.id=s.source_id

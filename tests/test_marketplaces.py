@@ -115,6 +115,7 @@ class MarketplaceTests(unittest.TestCase):
             self.assertEqual(detail["warehouse_shipment_id"], shipment["shipment"]["id"])
             self.assertEqual(detail["items"][0]["mapped_status"], "matched")
             self.assertEqual(shipment_tasks[0]["number"], shipment["shipment"]["number"])
+            self.assertTrue(shipment_tasks[0]["created_at"])
 
     def test_supply_uses_real_warehouse_number_and_keeps_shipped_status_during_sync(self):
         with tempfile.TemporaryDirectory() as directory:
