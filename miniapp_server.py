@@ -166,6 +166,7 @@ from wms.api import WMS_ADMIN_ROUTES, WMS_READ_ROUTES, WMS_ROUTES
 from wms.models import ProductKey
 from wms.shipments import shipment_detail, shipment_excel_bytes, shipment_pdf_bytes
 from marketplaces import dashboard as marketplace_dashboard
+from marketplaces import dashboard_supplement as marketplace_dashboard_supplement
 from marketplaces import warehouse_catalog as marketplace_warehouse_catalog
 from marketplaces import sync_for_admin as sync_marketplace_for_admin
 from marketplaces import (
@@ -340,7 +341,7 @@ def get_marketplace_dashboard_for_admin(telegram_id: int):
         # Wildberries and internal warehouse shipments remain independent
         # read models. Ozon products, prices, stocks and orders above are never
         # replaced with their legacy SQLite copies.
-        supplement = marketplace_dashboard(read_only=True)
+        supplement = marketplace_dashboard_supplement()
         for key in ("wildberries", "supplies", "supply_counts", "warehouse_shipments", "sync_events"):
             if key in supplement:
                 result[key] = supplement[key]

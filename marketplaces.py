@@ -2062,6 +2062,51 @@ def dashboard(*, read_only: bool = False) -> dict:
     }
 
 
+def dashboard_supplement() -> dict:
+    """Return only SQLite/WB fields appended to the PostgreSQL dashboard."""
+
+    conn = get_db_connection(timeout=2)
+    conn.row_factory = sqlite3.Row
+    try:
+        supplies = _supply_rows(conn, limit=20, active_only=True)
+        supply_counts = {key: 0 for key in MARKETPLACE_SUPPLY_STATUSES}
+        for row in conn.execute(
+            "SELECT canonical_status,COUNT(*) AS count FROM marketplace_supplies GROUP BY canonical_status"
+        ):
+            supply_counts[row[0]] = int(row[1])
+        warehouse_shipments = [dict(row) for row in conn.execute(
+            """SELECT id,number,marketplace,external_supply_id,status,destination_name,
+                      total_quantity,reserved_quantity,picked_quantity,packed_quantity,
+                      planned_at,updated_at
+                 FROM warehouse_shipments ORDER BY updated_at DESC LIMIT 20"""
+        )]
+        sync_events = [dict(row) for row in conn.execute(
+            """SELECT id,marketplace,event_type,severity,external_id,message,created_at
+                 FROM marketplace_sync_events ORDER BY id DESC LIMIT 20"""
+        )]
+    finally:
+        conn.close()
+
+    ozon_configured = bool(os.getenv("OZON_CLIENT_ID", "").strip() and os.getenv("OZON_API_KEY", "").strip())
+    wildberries_configured = bool(os.getenv("WB_API_TOKEN", "").strip())
+    try:
+        from wildberries import dashboard as wildberries_dashboard
+        wildberries_payload = wildberries_dashboard(read_only=True)
+    except Exception as error:
+        wildberries_payload = {"ok": False, "configured": wildberries_configured, "error": str(error)}
+    return {
+        "connectors": [
+            {"marketplace": "ozon", "configured": ozon_configured, "read_only": True},
+            {"marketplace": "wildberries", "configured": wildberries_configured, "read_only": True},
+        ],
+        "wildberries": wildberries_payload,
+        "supplies": supplies,
+        "supply_counts": supply_counts,
+        "warehouse_shipments": warehouse_shipments,
+        "sync_events": sync_events,
+    }
+
+
 def warehouse_catalog() -> dict:
     """Return the full, read-only Ozon catalogue for warehouse staff.
 

@@ -1703,7 +1703,8 @@ class MarketplacePGRepository:
                               DATE(COALESCE(o.shipment_date,o.received_at)) AS day
                          FROM marketplace.order_items_current i
                          JOIN marketplace.orders_current o USING(account_id,external_order_id)
-                        WHERE i.account_id=%s""",
+                        WHERE i.account_id=%s
+                          AND COALESCE(o.shipment_date,o.received_at) >= CURRENT_DATE - INTERVAL '31 days'""",
                     (account_id,),
                 )
                 order_history_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
@@ -1743,14 +1744,16 @@ class MarketplacePGRepository:
                 cur.execute(
                     """SELECT external_product_id,offer_id,sku,quantity,DATE(returned_at) AS day
                          FROM marketplace.returns_current
-                        WHERE account_id=%s AND returned_at IS NOT NULL""",
+                        WHERE account_id=%s AND returned_at IS NOT NULL
+                          AND returned_at >= CURRENT_DATE - INTERVAL '31 days'""",
                     (account_id,),
                 )
                 return_history_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
                 cur.execute(
                     """SELECT sku,posting_number,amount,DATE(operation_date) AS day
                          FROM marketplace.finance_transactions
-                        WHERE account_id=%s AND operation_date IS NOT NULL""",
+                        WHERE account_id=%s AND operation_date IS NOT NULL
+                          AND operation_date >= CURRENT_DATE - INTERVAL '31 days'""",
                     (account_id,),
                 )
                 finance_history_rows = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
@@ -1946,6 +1949,7 @@ class MarketplacePGRepository:
                     "finance_available": bool(finance_daily),
                     "returns_available": bool(returns_rows),
                     "rating_available": bool(rating_row),
+                    "product_history_days": 31,
                     "order_counts": {
                         scheme: sum(1 for row in orders if _text(row.get("warehouse_type")) == scheme)
                         for scheme in ("FBO", "FBS")
