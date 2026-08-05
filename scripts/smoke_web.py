@@ -308,6 +308,15 @@ def run_smoke() -> None:
                     marketplace_stock_marker in html_text,
                     f"Marketplace stock source marker is missing: {marketplace_stock_marker}",
                 )
+            for marketplace_layout_marker in (
+                "grid-template-columns: minmax(220px, 300px) minmax(330px, 1fr) auto max-content",
+                "marketplace-kpi-value-compact",
+                "overflow-wrap: anywhere",
+            ):
+                require(
+                    marketplace_layout_marker in html_text,
+                    f"Responsive marketplace layout marker is missing: {marketplace_layout_marker}",
+                )
             require(
                 'data-stock-filter="warehouse"' not in html_text,
                 "Marketplace stock list must not expose warehouse selection before product detail.",

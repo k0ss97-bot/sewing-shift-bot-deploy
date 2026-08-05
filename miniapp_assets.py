@@ -4178,7 +4178,7 @@ MINIAPP_HTML = """<!doctype html>
 
     .marketplace-filter-bar {
       display: grid;
-      grid-template-columns: minmax(220px, 300px) 1fr auto;
+      grid-template-columns: minmax(220px, 300px) minmax(330px, 1fr) auto max-content;
       align-items: end;
       gap: 12px;
       margin: 14px 0;
@@ -4206,8 +4206,10 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .marketplace-v2-kpi {
+      min-width: 0;
       min-height: 118px;
       padding: 16px;
+      overflow: hidden;
       border: 1px solid var(--line);
       border-radius: 14px;
       background: rgba(255,255,255,.92);
@@ -4217,7 +4219,14 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     .marketplace-v2-kpi > span { display: block; min-height: 30px; color: var(--muted); font-size: 12px; font-weight: 750; }
-    .marketplace-v2-kpi strong { display: block; margin: 7px 0 8px; font-size: clamp(23px, 2vw, 30px); line-height: 1; letter-spacing: -.04em; }
+    .marketplace-v2-kpi strong {
+      display: block; max-width: 100%; margin: 7px 0 8px;
+      font-size: clamp(22px, 1.65vw, 28px); line-height: 1.04; letter-spacing: -.04em;
+      overflow-wrap: anywhere;
+    }
+    .marketplace-v2-kpi strong.marketplace-kpi-value-compact {
+      font-size: clamp(18px, 1.35vw, 23px); letter-spacing: -.055em; white-space: nowrap;
+    }
     .marketplace-v2-kpi strong small { font-size: 12px; letter-spacing: 0; }
     .marketplace-v2-kpi > small { display: block; color: #237e52; font-size: 11px; line-height: 1.3; }
     .marketplace-v2-kpi.unavailable { cursor: default; background: rgba(248,250,252,.9); }
@@ -4253,6 +4262,7 @@ MINIAPP_HTML = """<!doctype html>
 
     @media (max-width: 1280px) {
       .marketplace-layout { grid-template-columns: 190px minmax(0, 1fr); }
+      .marketplace-filter-bar { grid-template-columns: minmax(190px, 240px) minmax(300px, 1fr) auto max-content; }
       .marketplace-v2-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .marketplace-v2-analytics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -12165,7 +12175,12 @@ MINIAPP_HTML = """<!doctype html>
       const errorNotice = state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
       const notConfigured = !providerConfigured ? `<div class="card field-card"><div class="task-note"><b>${isAll ? "Маркетплейсы не подключены" : `${providerName} не подключён`}</b></div></div>` : "";
       const kpiUnavailable = (label, hint) => `<div class="card marketplace-v2-kpi unavailable" title="${escapeHtml(hint)}"><span>${escapeHtml(label)}</span><strong>—</strong><small>Нет данных от API</small></div>`;
-      const kpiValue = (label, value, suffix, hint, view = "") => `${view ? `<button type="button" class="card marketplace-v2-kpi" data-marketplace-view="${view}">` : `<div class="card marketplace-v2-kpi">`}<span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}<small>${escapeHtml(suffix)}</small></strong><small>${escapeHtml(hint)}</small>${view ? "</button>" : "</div>"}`;
+      const kpiValue = (label, value, suffix, hint, view = "") => {
+        const compactClass = String(value == null ? "" : value).length + String(suffix || "").length > 10
+          ? "marketplace-kpi-value-compact"
+          : "";
+        return `${view ? `<button type="button" class="card marketplace-v2-kpi" data-marketplace-view="${view}">` : `<div class="card marketplace-v2-kpi">`}<span>${escapeHtml(label)}</span><strong class="${compactClass}">${escapeHtml(value)}<small>${escapeHtml(suffix)}</small></strong><small>${escapeHtml(hint)}</small>${view ? "</button>" : "</div>"}`;
+      };
       const groupMarketplaceStockText = (group) => isWildberries && !wbStocksUsable || group.available === null || group.available === undefined ? "—" : `${Number(group.available || 0)} шт.`;
       const productsBlock = groups.length ? `<div class="op-list marketplace-group-grid">${groups.map((group) => `<button type="button" class="card marketplace-clickable marketplace-group-card" data-marketplace-group="${escapeHtml(group.key)}"><div class="group-title"><span class="marketplace-product-heading">${marketplaceProductAvatar(group)}<span><b>${escapeHtml(group.name)}</b></span></span><span class="status-chip">›</span></div><div class="marketplace-group-meta"><span>${escapeHtml(group.products || 0)} поз.</span><span>${escapeHtml(group.articles || group.products || 0)} артикулов</span><span>${escapeHtml(providerName)}: ${escapeHtml(groupMarketplaceStockText(group))}</span><span>Производство: ${escapeHtml(marketplaceProductionStockText(group))}</span></div><div class="marketplace-group-meta"><span>Цена: ${marketplaceMoney(group.price_min)}${group.price_max != null && group.price_max !== group.price_min ? ` — ${marketplaceMoney(group.price_max)}` : ""}</span><span>Открыть группу ›</span></div></button>`).join("")}</div>` : itemEmpty("Товары ещё не загружены.");
       const stockColors = [...new Set(products.map((row) => String(row.color || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru"));
