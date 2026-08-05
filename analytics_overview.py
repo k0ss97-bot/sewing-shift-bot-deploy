@@ -518,11 +518,19 @@ def _provider_status(
     return "no_data", ["Подтверждённой успешной синхронизации пока нет."], missing
 
 
-def _finance_rows(provider: dict[str, Any], period: PeriodWindow) -> dict[str, Decimal]:
+def _finance_rows(
+    provider: dict[str, Any], period: PeriodWindow, *, amount_key: str = "net"
+) -> dict[str, Decimal]:
+    """Return a confirmed daily finance component for a selected period.
+
+    ``finance_daily`` preserves both the positive accruals (``revenue``) and
+    the final amount after all charges (``net``).  Keeping the key explicit
+    prevents the analytics UI from labelling net payout as sales.
+    """
     result: dict[str, Decimal] = {}
     for row in _as_rows(_as_dict(provider.get("analytics")).get("finance_daily")):
         day = _date_key(row.get("date"))
-        amount = _decimal(row.get("net"))
+        amount = _decimal(row.get(amount_key))
         if day and amount is not None and period.start.isoformat() <= day <= period.end.isoformat():
             result[day] = result.get(day, Decimal("0")) + amount
     return result
@@ -691,6 +699,7 @@ def _provider_payload(
     )
     warnings.extend(stock_warnings)
     finance = _finance_rows(provider, period)
+    recognized_daily = _finance_rows(provider, period, amount_key="revenue")
     orders_daily = _order_rows(provider, period)
 
     if marketplace == "wildberries":
@@ -747,14 +756,19 @@ def _provider_payload(
             # Historical rows cannot override an explicit current capability
             # failure.  Keep them out of both totals and chart series.
             finance = {}
+            recognized_daily = {}
             net = None
+            recognized_sales = None
             finance_status = finance_data_status
         elif finance_covered:
             finance = _complete_daily_series(finance, period)
+            recognized_daily = _complete_daily_series(recognized_daily, period)
             net = sum(finance.values(), Decimal("0"))
+            recognized_sales = sum(recognized_daily.values(), Decimal("0"))
             finance_status = finance_data_status
         elif finance:
             net = sum(finance.values(), Decimal("0"))
+            recognized_sales = sum(recognized_daily.values(), Decimal("0")) if recognized_daily else None
             finance_status = "partial"
             warnings.append(
                 "Wildberries finance: выбранный период не полностью покрыт подтверждённой выгрузкой."
@@ -764,6 +778,7 @@ def _provider_payload(
                 status = "partial"
         else:
             net = None
+            recognized_sales = None
             finance_status = "no_data"
             warnings.append(
                 "Wildberries finance: нет подтверждённого покрытия выбранного периода."
@@ -773,6 +788,7 @@ def _provider_payload(
                 status = "partial"
     else:
         net = sum(finance.values(), Decimal("0")) if finance else None
+        recognized_sales = sum(recognized_daily.values(), Decimal("0")) if recognized_daily else None
         finance_status = (
             _timestamp_freshness(account.get("last_sync_at"), generated_at)
             if finance
@@ -794,11 +810,13 @@ def _provider_payload(
         provider_sources.append("postgres.marketplace_phase1a")
     orders_sources = ["sqlite.marketplace_dashboard"] if orders is not None else []
     finance_sources = ["sqlite.marketplace_dashboard"] if net is not None else []
+    recognized_sources = ["sqlite.marketplace_dashboard"] if recognized_sales is not None else []
     metric_sources = {
         "products": product_sources,
         "stock_available": stock_sources,
         "orders": orders_sources,
         "net_payout": finance_sources,
+        "recognized_sales": recognized_sources,
     }
     metric_timestamps = {
         metric: _provider_metric_timestamp(
@@ -820,7 +838,7 @@ def _provider_payload(
         last_successful_sync_at=last_success,
     )
     metrics_alias = {
-        "recognized": None,
+        "recognized": _money(recognized_sales),
         "gmv": None,
         "net": _money(net),
         "orders": orders,
@@ -836,6 +854,7 @@ def _provider_payload(
         "products": products,
         "stock_available": _quantity(stock),
         "orders": orders,
+        "recognized_sales": _money(recognized_sales),
         "net_payout": _money(net),
         "meta": meta,
         # Compatibility fields for the first overview client.
@@ -845,6 +864,7 @@ def _provider_payload(
             "products": products_status,
             "stock_available": stock_status,
             "orders": orders_status,
+            "recognized_sales": finance_status,
             "net_payout": finance_status,
         },
         "metric_sources": metric_sources,
@@ -936,6 +956,7 @@ def _metrics(providers: list[dict[str, Any]], production: dict[str, Any], genera
     product_values = [row.get("products") for row in providers]
     stock_values = [row.get("stock_available") for row in providers]
     order_values = [row.get("orders") for row in providers]
+    recognized_values = [row.get("recognized_sales") for row in providers]
     net_values = [row.get("net_payout") for row in providers]
 
     def aggregate_status(value_key: str, status_key: str) -> tuple[str, bool]:
@@ -983,6 +1004,7 @@ def _metrics(providers: list[dict[str, Any]], production: dict[str, Any], genera
     products_status, products_partial = aggregate_status("products", "products")
     stocks_status, stocks_partial = aggregate_status("stock_available", "stock_available")
     orders_status, orders_partial = aggregate_status("orders", "orders")
+    recognized_status, recognized_partial = aggregate_status("recognized_sales", "recognized_sales")
     net_status, net_partial = aggregate_status("net_payout", "net_payout")
     production_status = _status(_as_dict(production.get("meta")).get("status"))
     production_sources = _as_dict(production.get("meta")).get("sources")
@@ -1039,6 +1061,7 @@ def _metrics(providers: list[dict[str, Any]], production: dict[str, Any], genera
         marketplace_metric("marketplace_products", "Товары в продаже", _aggregate_known(product_values), "шт.", status=products_status, partial=products_partial, value_key="products", source_key="products"),
         marketplace_metric("stock_available", "Остатки на площадках", _aggregate_known(stock_values, quantity=True), "шт.", status=stocks_status, partial=stocks_partial, value_key="stock_available", source_key="stock_available"),
         marketplace_metric("orders", "Заказы за период", _aggregate_known(order_values), "шт.", status=orders_status, partial=orders_partial, value_key="orders", source_key="orders"),
+        marketplace_metric("recognized_sales", "Продажи до удержаний", _aggregate_known(recognized_values, money=True), "RUB", status=recognized_status, partial=recognized_partial, value_key="recognized_sales", source_key="recognized_sales"),
         marketplace_metric("net_payout", "Начислено после удержаний", _aggregate_known(net_values, money=True), "RUB", status=net_status, partial=net_partial, value_key="net_payout", source_key="net_payout"),
         production_metric("production_plan", "План производства", production.get("plan"), "шт."),
         production_metric("production_fact", "Годная продукция", production.get("fact"), "шт."),
@@ -1046,7 +1069,6 @@ def _metrics(providers: list[dict[str, Any]], production: dict[str, Any], genera
         production_metric("quality_fpy", "Качество FPY", production.get("fpy"), "%"),
     ]
     for code, label, unit in (
-        ("recognized_sales", "Признанные продажи", "RUB"),
         ("contribution_margin", "Маржинальный доход", "RUB"),
         ("recommendations", "Рекомендации", "шт."),
         ("geo", "География продаж", "регионов"),

@@ -13214,7 +13214,7 @@ MINIAPP_HTML = """<!doctype html>
       const pages = [
         ["general", "⌂", "Обзор"], ["sales", "↗", "Продажи"], ["products", "▤", "Товары"],
         ["inventory", "▦", "Остатки"], ["production", "⚙", "Производство"], ["supplies", "↓", "Поставки"],
-        ["finance", "₽", "Финансы"], ["map", "○", "Карта"], ["data-quality", "✓", "Качество данных"],
+        ["finance", "₽", "Финансы"], ["map", "○", "Склады"], ["data-quality", "✓", "Качество данных"],
       ];
       const allowed = new Set(pages.map(([id]) => id));
       const page = allowed.has(state.analyticsHubTab) ? state.analyticsHubTab : "general";
@@ -13223,16 +13223,31 @@ MINIAPP_HTML = """<!doctype html>
       const payload = overviewState.payload && typeof overviewState.payload === "object" ? overviewState.payload : {};
       const root = state.marketplaceData && state.marketplaceData.payload && typeof state.marketplaceData.payload === "object" ? state.marketplaceData.payload : {};
       const marketplace = ["ozon", "wildberries"].includes(state.marketplaceProvider) ? state.marketplaceProvider : "all";
-      const providerRoot = marketplace === "wildberries" && root.wildberries && typeof root.wildberries === "object" ? root.wildberries : root;
+      const providerRoots = marketplace === "all"
+        ? [root, root.wildberries].filter((row) => row && typeof row === "object")
+        : [marketplace === "wildberries" && root.wildberries && typeof root.wildberries === "object" ? root.wildberries : root];
       const providers = Array.isArray(payload.providers) ? payload.providers : [];
       const metricRows = Array.isArray(payload.metrics) ? payload.metrics : [];
-      const metric = (code) => metricRows.find((row) => row.code === code || row.key === code) || {value: null, status: "unavailable"};
+      const aggregateMetric = (code) => metricRows.find((row) => row.code === code || row.key === code) || {value: null, status: "unavailable"};
+      const metric = (code) => {
+        const aggregate = aggregateMetric(code);
+        if (marketplace === "all" || code.startsWith("production_") || code === "quality_fpy" || code === "contribution_margin") return aggregate;
+        const provider = providers.find((row) => row.marketplace === marketplace);
+        if (!provider || !Object.prototype.hasOwnProperty.call(provider, code)) return aggregate;
+        const statuses = provider.metric_status && typeof provider.metric_status === "object" ? provider.metric_status : {};
+        return {...aggregate, value: provider[code], status: statuses[code] || provider.status || aggregate.status};
+      };
       const production = payload.production && typeof payload.production === "object" ? payload.production : {};
       const suppliesEnvelope = payload.supplies && typeof payload.supplies === "object" ? payload.supplies : {};
       const supplyRows = Array.isArray(suppliesEnvelope.shipments) ? suppliesEnvelope.shipments : Array.isArray(suppliesEnvelope.rows) ? suppliesEnvelope.rows : [];
       const risks = Array.isArray(payload.risks) ? payload.risks : [];
-      const products = Array.isArray(providerRoot.products_rows) ? providerRoot.products_rows : [];
-      const orders = Array.isArray(providerRoot.orders_rows) ? providerRoot.orders_rows : [];
+      const rowsForProviders = (field) => providerRoots.flatMap((provider) => {
+        const providerName = provider === root.wildberries ? "wildberries" : "ozon";
+        return (Array.isArray(provider[field]) ? provider[field] : []).map((row) => ({...row, marketplace: row.marketplace || providerName}));
+      });
+      const products = rowsForProviders("products_rows");
+      const orders = rowsForProviders("orders_rows");
+      const warehouses = rowsForProviders("warehouses");
       const period = payload.period && payload.period.label ? payload.period.label : marketplacePeriodMeta(state.marketplacePeriod).label;
       const status = String((payload.meta && payload.meta.status) || (overviewState.loading ? "loading" : overviewState.error ? "error" : "unknown"));
       const businessStatus = ["fresh", "ready", "success"].includes(status)
@@ -13270,7 +13285,7 @@ MINIAPP_HTML = """<!doctype html>
         const cards = `<div class="ac-kpis">${kpi("Продажи", safeValue(sales, money), "Начисления за период")}${kpi("После удержаний", safeValue(net, money), "Чистые начисления")}${kpi("Маржинальный доход", safeValue(margin, money), "По доступным данным")}${kpi("Заказы", safeValue(orderMetric), "За выбранный период")}${kpi("Остатки", safeValue(stock), "На складах площадок")}${kpi("Производство", productionValue, "Факт / план")}</div>`;
         const providerRows = providerCards.map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.label || row.marketplace || "Площадка")}</b><span>${escapeHtml(row.last_sync_at || "Время обновления не подтверждено")}</span></div><strong>${escapeHtml(row.status === "fresh" ? "Актуально" : row.status === "stale" ? "Задерживается" : "Частично")}</strong></div>`).join("");
         const riskRows = filteredRisks.slice(0, 5).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.title || "Товарный риск")}</b><span>${escapeHtml(row.reason || row.detail || "Требует внимания")}</span></div><strong>${escapeHtml(row.severity === "high" ? "Важно" : "Проверить")}</strong></div>`).join("");
-        const supplyList = supplyRows.filter(providerFilter).slice(0, 5).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.name || row.supply_id || row.shipment_id || "Поставка")}</b><span>${escapeHtml(row.status_label || row.status || "Статус не указан")}</span></div><strong>${escapeHtml(row.quantity !== undefined ? fmt(row.quantity) : "")}</strong></div>`).join("");
+        const supplyList = supplyRows.filter(providerFilter).slice(0, 5).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.external_supply_id || row.number || row.name || "Поставка")}</b><span>${escapeHtml(row.destination_name || row.destination || "Склад не указан")} · ${escapeHtml(row.canonical_status || row.status_label || row.status || "Статус не указан")}</span></div><strong>${row.total_quantity !== undefined && row.total_quantity !== null ? `${escapeHtml(fmt(row.total_quantity))} шт.` : row.quantity !== undefined ? `${escapeHtml(fmt(row.quantity))} шт.` : ""}</strong></div>`).join("");
         const stages = Array.isArray(production.stages) ? production.stages.slice(0, 5) : [];
         const stageRows = stages.map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.stage || row.name || "Этап")}</b><span>${fmt(row.tasks || 0)} заданий</span></div><strong>${fmt(row.quantity || 0)} шт.</strong></div>`).join("");
         const recommendations = filteredRisks.slice(0, 3).map((row) => `<div class="ac-recommendation"><b>${escapeHtml(row.title || "Проверить товар")}</b><span>${escapeHtml(row.action || row.recommendation || row.reason || "Откройте детальную карточку и проверьте источник данных.")}</span></div>`).join("");
@@ -13278,8 +13293,8 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       function renderSalesPage() {
-        const orderRows = orders.slice(0, 100).map((row) => `<tr><td>${escapeHtml(row.created_at || row.shipment_date || "—")}</td><td>${escapeHtml(row.order_id || row.posting_number || row.id || "—")}</td><td>${escapeHtml(row.product_name || row.name || row.offer_id || "—")}</td><td>${escapeHtml(row.status || "—")}</td><td>${escapeHtml(row.amount !== undefined ? money(row.amount) : row.price !== undefined ? money(row.price) : "—")}</td></tr>`);
-        return `${filterbar}<div class="ac-kpis">${kpi("Продажи", safeValue(metric("recognized_sales"), money), "Начисления")}${kpi("Заказы", safeValue(metric("orders")), "Подтверждённые заказы")}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению")}</div><div class="ac-grid">${panel("Динамика продаж", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Сравнение Ozon / Wildberries", "Реальные источники", providerCards.map((row) => `<div class="ac-list-row"><b>${escapeHtml(row.label || row.marketplace)}</b><strong>${escapeHtml(row.status === "fresh" ? "Актуально" : "Частично")}</strong></div>`).join("") || empty("Нет данных", "Площадки не вернули продажи."), "span-4")}${panel("Заказы", `${orders.length} записей`, table(["Дата","Заказ","Товар","Статус","Сумма"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
+        const orderRows = orders.slice(0, 100).map((row) => `<tr><td>${escapeHtml(row.shipment_date || row.updated_at || "—")}</td><td>${escapeHtml(row.posting_number || row.external_order_id || row.id || "—")}</td><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.warehouse_type || "—")}</td><td>${escapeHtml(row.status || "—")}</td></tr>`);
+        return `${filterbar}<div class="ac-kpis">${kpi("Продажи", safeValue(metric("recognized_sales"), money), "До удержаний")}${kpi("Заказы", safeValue(metric("orders")), "Подтверждённые заказы")}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению")}</div><div class="ac-grid">${panel("Динамика продаж", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Сравнение Ozon / Wildberries", "Реальные источники", providerCards.map((row) => `<div class="ac-list-row"><b>${escapeHtml(row.label || row.marketplace)}</b><strong>${escapeHtml(row.status === "fresh" ? "Актуально" : "Частично")}</strong></div>`).join("") || empty("Нет данных", "Площадки не вернули продажи."), "span-4")}${panel("Заказы", `${orders.length} записей`, table(["Дата","Отправление","Площадка","Схема","Статус"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
       }
 
       function renderProductsPage() {
@@ -13302,7 +13317,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       function renderSuppliesPage() {
-        const rows = supplyRows.filter(providerFilter).map((row) => `<tr><td>${escapeHtml(row.marketplace || row.provider || "—")}</td><td>${escapeHtml(row.name || row.supply_id || row.shipment_id || "—")}</td><td>${escapeHtml(row.status_label || row.status || "—")}</td><td>${escapeHtml(row.destination || row.warehouse_name || "—")}</td><td>${escapeHtml(row.quantity !== undefined ? fmt(row.quantity) : "—")}</td><td>${escapeHtml(row.updated_at || row.date || "—")}</td></tr>`);
+        const rows = supplyRows.filter(providerFilter).map((row) => `<tr><td>${escapeHtml(row.marketplace || row.provider || "—")}</td><td>${escapeHtml(row.external_supply_id || row.number || row.name || "—")}</td><td>${escapeHtml(row.canonical_status || row.status_label || row.status || "—")}</td><td>${escapeHtml(row.destination_name || row.destination || row.warehouse_name || "—")}</td><td>${row.total_quantity !== undefined && row.total_quantity !== null ? escapeHtml(fmt(row.total_quantity)) : row.quantity !== undefined ? escapeHtml(fmt(row.quantity)) : "—"}</td><td>${escapeHtml(row.last_synced_at || row.updated_at || row.date || "—")}</td></tr>`);
         return `<div class="ac-kpis">${kpi("Поставки", fmt(rows.length), "За выбранный период")}${kpi("Площадка", marketplace === "all" ? "Все" : marketplace === "ozon" ? "Ozon" : "Wildberries", "Текущий фильтр")}</div><div class="ac-grid">${panel("Поставки", `${rows.length} записей`, table(["Площадка","Поставка","Статус","Склад","Количество","Обновлено"], rows, "Поставок за выбранный период нет."), "span-12")}</div>`;
       }
 
@@ -13317,11 +13332,12 @@ MINIAPP_HTML = """<!doctype html>
         const max = Math.max(1, ...waterfall.map(([,value]) => Math.abs(Number(value))));
         const bars = waterfall.length ? `<div class="ac-waterfall">${waterfall.map(([label,value,tone]) => `<div class="${tone}"><span>${escapeHtml(label)}</span><i style="--bar:${Math.max(5, Math.abs(Number(value)) / max * 100)}%"></i><strong>${escapeHtml(money(value))}</strong></div>`).join("")}</div>` : empty("Финансы пока недоступны", "Площадка не предоставила подтверждённые начисления и удержания.");
         const compareRows = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace || "—")}</td><td>${escapeHtml(row.status === "fresh" ? "Данные актуальны" : row.status === "stale" ? "Обновление задерживается" : "Данные загружены частично")}</td><td>${escapeHtml(row.last_sync_at || "—")}</td></tr>`);
-        return `${filterbar}<div class="ac-kpis">${kpi("Продажи", safeValue(recognized, money), "За период")}${kpi("После удержаний", safeValue(net, money), "К перечислению")}${kpi("Маржинальный доход", safeValue(margin, money), "По доступным расходам")}</div><div class="ac-grid">${panel("Финансовая динамика", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Финансовый waterfall", "Только доступные компоненты", bars, "span-4")}${panel("Источники", `${providerCards.length} площадки`, table(["Площадка","Состояние","Обновлено"], compareRows, "Финансовые источники не подключены."), "span-12")}</div>`;
+        return `${filterbar}<div class="ac-kpis">${kpi("Продажи", safeValue(recognized, money), "До удержаний")}${kpi("После удержаний", safeValue(net, money), "К перечислению")}${kpi("Маржинальный доход", safeValue(margin, money), "Нужна подтверждённая себестоимость")}</div><div class="ac-grid">${panel("Финансовая динамика", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Финансовый waterfall", "Только подтверждённые компоненты", bars, "span-4")}${panel("Источники", `${providerCards.length} площадки`, table(["Площадка","Состояние","Обновлено"], compareRows, "Финансовые источники не подключены."), "span-12")}</div>`;
       }
 
       function renderMapPage() {
-        return `<div class="ac-grid">${panel("Карта России", "Склады и продажи по регионам", `<div class="ac-map"><div class="ac-russia-shape"></div>${empty("Региональные данные пока недоступны", "Карта готова к отображению складов и продаж, когда API передаст региональную разбивку.")}</div>`, "span-8")}${panel("Регионы", "Без выдуманных значений", empty("Нет региональной детализации", "Ozon и Wildberries пока не передали данные, необходимые для достоверного рейтинга регионов."), "span-4")}</div>`;
+        const rows = warehouses.map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.name || row.warehouse_name || "—")}</td><td>${escapeHtml(row.key || row.warehouse_type || "—")}</td></tr>`);
+        return `<div class="ac-kpis">${kpi("Склады", fmt(rows.length), "Подтверждённые в текущем снимке")}${kpi("Площадка", marketplace === "all" ? "Все" : marketplace === "ozon" ? "Ozon" : "Wildberries", "Текущий фильтр")}</div><div class="ac-grid">${panel("Склады маркетплейсов", `${rows.length} записей`, table(["Площадка","Склад","Схема"], rows, "Площадки пока не передали перечень складов."), "span-12")}</div>`;
       }
 
       function renderQualityPage() {
@@ -14619,6 +14635,14 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("keydown", (event) => {
+      const analyticsSearch = event.target.closest("#analyticsSearch, #analyticsSearchTop");
+      if (analyticsSearch && event.key === "Enter") {
+        event.preventDefault();
+        state.analyticsSearch = analyticsSearch.value.slice(0, 200);
+        state.analyticsHubTab = "products";
+        render();
+        return;
+      }
       const qualitySearch = event.target.closest("#marketplaceQualitySearch");
       if (qualitySearch && event.key === "Enter") {
         event.preventDefault();
