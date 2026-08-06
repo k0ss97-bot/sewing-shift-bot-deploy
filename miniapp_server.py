@@ -4643,6 +4643,7 @@ def production_control_active_batch_to_dict(batch, step, employee_names):
 
 
 def get_production_control_payload(start_date: str, end_date: str):
+    observed_at = local_now().isoformat()
     route_rows = get_period_route_batch_rows(start_date, end_date)
     defect_rows = get_route_batch_defect_rows(start_date, end_date)
     active_batches = get_active_route_batches()
@@ -4793,6 +4794,7 @@ def get_production_control_payload(start_date: str, end_date: str):
     return {
         "start_date": start_date,
         "end_date": end_date,
+        "updated_at": observed_at,
         "plan": plan,
         "fact": good,
         "defect_quantity": defect_quantity,

@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 
 LOGGER = logging.getLogger(__name__)
-FORMULA_VERSION = "analytics-overview-v1"
+FORMULA_VERSION = "analytics-overview-v2"
 VALID_STATUSES = {
     "fresh",
     "stale",
@@ -952,7 +952,16 @@ def _metric(
     }
 
 
-def _metrics(providers: list[dict[str, Any]], production: dict[str, Any], generated_at: str) -> list[dict[str, Any]]:
+def _metrics(
+    providers: list[dict[str, Any]],
+    production: dict[str, Any],
+    generated_at: str,
+    *,
+    recommendations_count: int,
+    recommendations_status: str,
+    recommendations_sources: Iterable[str],
+    recommendations_updated_at: str | None,
+) -> list[dict[str, Any]]:
     product_values = [row.get("products") for row in providers]
     stock_values = [row.get("stock_available") for row in providers]
     order_values = [row.get("orders") for row in providers]
@@ -1045,6 +1054,8 @@ def _metrics(providers: list[dict[str, Any]], production: dict[str, Any], genera
         status = production_status if known else (
             production_status if production_status in {"error", "unavailable", "permission_required"} else "no_data"
         )
+        if status == "fresh" and not production_updated_at:
+            status = "unknown"
         return _metric(
             code,
             label,
@@ -1067,10 +1078,21 @@ def _metrics(providers: list[dict[str, Any]], production: dict[str, Any], genera
         production_metric("production_fact", "Годная продукция", production.get("fact"), "шт."),
         production_metric("production_active", "Производство в работе", production.get("active_quantity"), "шт."),
         production_metric("quality_fpy", "Качество FPY", production.get("fpy"), "%"),
+        _metric(
+            "recommendations",
+            "Рекомендации",
+            recommendations_count,
+            "шт.",
+            status=recommendations_status,
+            generated_at=generated_at,
+            sources=recommendations_sources,
+            partial=recommendations_status == "partial",
+            max_source_updated_at=recommendations_updated_at,
+            last_successful_sync_at=recommendations_updated_at,
+        ),
     ]
     for code, label, unit in (
         ("contribution_margin", "Маржинальный доход", "RUB"),
-        ("recommendations", "Рекомендации", "шт."),
         ("geo", "География продаж", "регионов"),
     ):
         rows.append(_metric(
@@ -1518,7 +1540,15 @@ def analytics_overview(
     return {
         "ok": True,
         "period": period.as_dict(),
-        "metrics": _metrics(providers, production, generated_at),
+        "metrics": _metrics(
+            providers,
+            production,
+            generated_at,
+            recommendations_count=len(risks),
+            recommendations_status=overall_status,
+            recommendations_sources=meta["sources"],
+            recommendations_updated_at=max_updated,
+        ),
         "series": series,
         "providers": providers,
         "marketplaceBreakdown": providers,
