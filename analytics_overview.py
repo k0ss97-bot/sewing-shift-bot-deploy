@@ -635,6 +635,78 @@ def _region_rows(provider: dict[str, Any], period: PeriodWindow) -> list[dict[st
     ]
 
 
+def _sales_breakdown_rows(
+    provider: dict[str, Any],
+    period: PeriodWindow,
+    marketplace: str,
+    dimension: str,
+) -> list[dict[str, Any]]:
+    """Aggregate persisted daily sales facts for one business dimension."""
+    source_key = f"sales_by_{dimension}_daily"
+    label_key = "warehouse" if dimension == "warehouse" else "product"
+    fallback_label = "Склад не указан" if dimension == "warehouse" else "Товар не указан"
+    aggregated: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in _as_rows(_as_dict(provider.get("analytics")).get(source_key)):
+        day = _date_key(row.get("date"))
+        if not day or not (period.start.isoformat() <= day <= period.end.isoformat()):
+            continue
+        label = _text(row.get(label_key)) or fallback_label
+        offer_id = _text(row.get("offer_id")) if dimension == "product" else ""
+        sku = _text(row.get("sku")) if dimension == "product" else ""
+        key = (label, offer_id, sku)
+        bucket = aggregated.setdefault(key, {
+            "marketplace": marketplace,
+            label_key: label,
+            "offer_id": offer_id,
+            "sku": sku,
+            "orders": 0,
+            "units": Decimal("0"),
+            "amount": Decimal("0"),
+            "unpriced_lines": 0,
+        })
+        bucket["orders"] += _integer(row.get("orders")) or 0
+        bucket["units"] += _decimal(row.get("units")) or Decimal("0")
+        bucket["amount"] += _decimal(row.get("amount")) or Decimal("0")
+        bucket["unpriced_lines"] += _integer(row.get("unpriced_lines")) or 0
+    result = []
+    for row in aggregated.values():
+        result.append({
+            **row,
+            "units": _quantity(row["units"]),
+            "amount": _money(row["amount"]),
+            "amount_status": "partial" if row["unpriced_lines"] else "available",
+        })
+    return sorted(
+        result,
+        key=lambda row: (-(_decimal(row.get("amount")) or Decimal("0")), -(_decimal(row.get("units")) or Decimal("0")), _text(row.get(label_key))),
+    )
+
+
+def _finance_components(provider: dict[str, Any], period: PeriodWindow, marketplace: str) -> dict[str, Any]:
+    analytics = _as_dict(provider.get("analytics"))
+    finance_source_rows = _as_rows(analytics.get("finance_daily"))
+    finance_available = bool(finance_source_rows) or analytics.get("finance_available") is True
+    recognized = sum(_finance_rows(provider, period, amount_key="revenue").values(), Decimal("0"))
+    net = sum(_finance_rows(provider, period, amount_key="net").values(), Decimal("0"))
+    return_rows = [
+        row for row in _as_rows(_as_dict(provider.get("analytics")).get("returns_rows"))
+        if _in_period(row.get("returned_at") or row.get("updated_at"), period)
+    ]
+    return_quantity = sum((_decimal(row.get("quantity")) or Decimal("0") for row in return_rows), Decimal("0"))
+    returns_available = bool(_as_rows(analytics.get("returns_rows"))) or analytics.get("returns_available") is True
+    return_amounts = [_decimal(row.get("amount")) for row in return_rows]
+    known_return_amounts = [value for value in return_amounts if value is not None]
+    return {
+        "marketplace": marketplace,
+        "recognized_sales": _money(recognized) if finance_available else None,
+        "deductions": _money(net - recognized) if finance_available else None,
+        "net_payout": _money(net) if finance_available else None,
+        "returns": len(return_rows) if returns_available else None,
+        "return_units": _quantity(return_quantity) if returns_available else None,
+        "return_amount": _money(sum(known_return_amounts, Decimal("0"))) if return_rows and len(known_return_amounts) == len(return_rows) else None,
+    }
+
+
 def _known_stock_value(
     marketplace: str,
     provider: dict[str, Any],
@@ -1635,6 +1707,20 @@ def analytics_overview(
     series = _combined_series(
         ozon_finance, wb_finance, ozon_orders, wb_orders, ozon_sales, wb_sales
     )
+    breakdowns = {
+        "sales_by_warehouse": (
+            _sales_breakdown_rows(ozon_provider, period, "ozon", "warehouse")
+            + _sales_breakdown_rows(wb_provider, period, "wildberries", "warehouse")
+        ),
+        "sales_by_product": (
+            _sales_breakdown_rows(ozon_provider, period, "ozon", "product")
+            + _sales_breakdown_rows(wb_provider, period, "wildberries", "product")
+        ),
+        "finance_by_marketplace": [
+            _finance_components(ozon_provider, period, "ozon"),
+            _finance_components(wb_provider, period, "wildberries"),
+        ],
+    }
     region_rows = _region_rows(ozon_provider, period)
     known_regions = {row["region"] for row in region_rows if row["region"] != "Регион не указан"}
     ozon_region_status = _status(_as_dict(ozon.get("metric_status")).get("orders"), fallback="no_data")
@@ -1816,6 +1902,7 @@ def analytics_overview(
             region_updated_at=region_updated_at,
         ),
         "series": series,
+        "breakdowns": breakdowns,
         "providers": providers,
         "marketplaceBreakdown": providers,
         "risks": risks,

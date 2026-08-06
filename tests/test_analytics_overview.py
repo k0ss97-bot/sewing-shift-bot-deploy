@@ -129,6 +129,12 @@ class AnalyticsOverviewTests(unittest.TestCase):
                     {"date": "2026-08-05", "region": "Москва", "orders": 2, "units": 3, "amount": 1750},
                     {"date": "2026-08-05", "region": "Урал", "orders": 1, "units": 2, "amount": 1500},
                 ],
+                "sales_by_warehouse_daily": [
+                    {"date": "2026-08-05", "warehouse": "Хоругвино", "orders": 3, "units": 5, "amount": 3250},
+                ],
+                "sales_by_product_daily": [
+                    {"date": "2026-08-05", "product": "Кардиган", "offer_id": "КРД-1/92", "orders": 3, "units": 5, "amount": 3250},
+                ],
             },
             "wildberries": {"ok": True, "configured": False},
         }
@@ -164,6 +170,9 @@ class AnalyticsOverviewTests(unittest.TestCase):
         self.assertEqual([row["region"] for row in result["geography"]["rows"]], ["Москва", "Урал"])
         self.assertEqual(result["series"]["sales"][0]["ozon_units"], "5")
         self.assertEqual(result["series"]["sales"][0]["ozon_amount"], "3250.00")
+        self.assertEqual(result["breakdowns"]["sales_by_warehouse"][0]["warehouse"], "Хоругвино")
+        self.assertEqual(result["breakdowns"]["sales_by_warehouse"][0]["units"], "5")
+        self.assertEqual(result["breakdowns"]["sales_by_product"][0]["offer_id"], "КРД-1/92")
 
     def test_wb_rate_limit_keeps_last_good_order_snapshot_as_partial(self):
         observed_at = "2026-08-06T06:52:59Z"

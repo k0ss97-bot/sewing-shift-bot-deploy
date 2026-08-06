@@ -1607,10 +1607,12 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
         analytics["returns_rows"] = []
         analytics["returns_daily"] = []
     sales_daily_by_date: dict[str, dict] = {}
+    sales_by_warehouse: dict[tuple[str, str], dict] = {}
+    sales_by_product: dict[tuple[str, str, str, str], dict] = {}
     if not capability_statuses.get("orders") or last_good_snapshot_usable("orders"):
         for source in conn.execute(
             """SELECT o.external_order_id,o.shipment_date,o.updated_at,o.status,
-                      i.quantity,i.payload_json
+                      i.quantity,i.payload_json,o.payload_json,i.name,i.offer_id,i.sku
                  FROM marketplace_orders o
                  JOIN marketplace_order_items i ON i.order_id=o.id
                 WHERE o.account_id=?""",
@@ -1632,11 +1634,39 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
                 item = json.loads(source[5] or "{}")
             except (TypeError, json.JSONDecodeError):
                 item = {}
+            try:
+                order_payload = json.loads(source[6] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                order_payload = {}
             price = _first_present(item, "finishedPrice", "priceWithDisc", "totalPrice")
             if price in (None, ""):
                 bucket["unpriced_lines"] += 1
             else:
                 bucket["amount"] += quantity * _number(price)
+            warehouse = _text(_first_present(
+                order_payload, "warehouseName", "warehouse_name", "warehouseType", "warehouse_type"
+            ) or _first_present(item, "warehouseName", "warehouse_name") or "Склад не указан")
+            product = _text(source[7] or source[8] or source[9] or "Товар не указан")
+            for target, key, label_key, label in (
+                (sales_by_warehouse, (day, warehouse), "warehouse", warehouse),
+                (sales_by_product, (day, product, _text(source[8]), _text(source[9])), "product", product),
+            ):
+                row = target.setdefault(key, {
+                    "date": day,
+                    label_key: label,
+                    "offer_id": _text(source[8]) if label_key == "product" else "",
+                    "sku": _text(source[9]) if label_key == "product" else "",
+                    "order_ids": set(),
+                    "units": 0,
+                    "amount": 0.0,
+                    "unpriced_lines": 0,
+                })
+                row["order_ids"].add(_text(source[0]))
+                row["units"] += quantity
+                if price in (None, ""):
+                    row["unpriced_lines"] += 1
+                else:
+                    row["amount"] += quantity * _number(price)
     analytics["sales_daily"] = [
         {
             "date": row["date"],
@@ -1647,6 +1677,22 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
         }
         for row in sorted(sales_daily_by_date.values(), key=lambda value: value["date"])
     ]
+    def sales_breakdown_payload(source_rows, label_key):
+        return [
+            {
+                "date": row["date"],
+                label_key: row[label_key],
+                "offer_id": row.get("offer_id", ""),
+                "sku": row.get("sku", ""),
+                "orders": len(row["order_ids"]),
+                "units": row["units"],
+                "amount": round(row["amount"], 2),
+                "unpriced_lines": row["unpriced_lines"],
+            }
+            for row in sorted(source_rows.values(), key=lambda value: (value["date"], value[label_key]))
+        ]
+    analytics["sales_by_warehouse_daily"] = sales_breakdown_payload(sales_by_warehouse, "warehouse")
+    analytics["sales_by_product_daily"] = sales_breakdown_payload(sales_by_product, "product")
     funnel_daily = [dict(row) for row in conn.execute(
         """SELECT report_date AS date,SUM(open_count) open_count,SUM(cart_count) cart_count,
                   SUM(order_count) order_count,SUM(order_sum) order_sum,SUM(buyout_count) buyout_count,

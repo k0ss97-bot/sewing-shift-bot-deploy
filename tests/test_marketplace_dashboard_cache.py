@@ -32,6 +32,19 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
         self.assertIs(result, snapshot)
         refresh.assert_called_once_with()
 
+    def test_supply_merge_keeps_postgres_ozon_and_independent_wb_rows(self):
+        primary = [{"marketplace": "ozon", "external_supply_id": "OZ-1", "source": "postgres"}]
+        supplement = [
+            {"marketplace": "ozon", "external_supply_id": "OZ-1", "source": "projection"},
+            {"marketplace": "wildberries", "external_supply_id": "WB-1", "source": "sqlite"},
+        ]
+
+        result = miniapp_server._merge_marketplace_supplies(primary, supplement)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["source"], "postgres")
+        self.assertEqual(result[1]["marketplace"], "wildberries")
+
 
 if __name__ == "__main__":
     unittest.main()

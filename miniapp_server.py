@@ -351,6 +351,46 @@ def is_admin(telegram_id: int):
     return telegram_id in get_admin_ids()
 
 
+def _merge_marketplace_supplies(primary, supplement):
+    """Merge provider snapshots without replacing authoritative Ozon rows.
+
+    PostgreSQL owns the Ozon FBO snapshot, while SQLite also contains the WMS
+    projection of those rows and independent WB supplies.  Prefer the original
+    provider row on duplicate keys and retain rows belonging to the other
+    marketplace.
+    """
+    merged = []
+    seen = set()
+    for rows in (primary or [], supplement or []):
+        for source in rows if isinstance(rows, list) else []:
+            if not isinstance(source, dict):
+                continue
+            marketplace = str(source.get("marketplace") or source.get("provider") or "ozon").strip().casefold()
+            external_id = str(
+                source.get("external_supply_id")
+                or source.get("number")
+                or source.get("id")
+                or ""
+            ).strip()
+            key = (marketplace, external_id)
+            if external_id and key in seen:
+                continue
+            if external_id:
+                seen.add(key)
+            merged.append(source)
+    return merged
+
+
+def _marketplace_supply_counts(rows):
+    counts = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("canonical_status") or row.get("status") or "UNKNOWN").strip() or "UNKNOWN"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
 def _build_marketplace_dashboard_payload():
     if phase1a_enabled():
         result = phase1a_dashboard()
@@ -360,9 +400,15 @@ def _build_marketplace_dashboard_payload():
         # read models. Ozon products, prices, stocks and orders above are never
         # replaced with their legacy SQLite copies.
         supplement = marketplace_dashboard_supplement()
-        for key in ("wildberries", "supplies", "supply_counts", "warehouse_shipments", "sync_events"):
+        primary_supplies = result.get("supplies") or []
+        for key in ("wildberries", "warehouse_shipments", "sync_events"):
             if key in supplement:
                 result[key] = supplement[key]
+        result["supplies"] = _merge_marketplace_supplies(
+            primary_supplies,
+            supplement.get("supplies") or [],
+        )
+        result["supply_counts"] = _marketplace_supply_counts(result["supplies"])
         result["connectors"] = supplement.get("connectors", result.get("connectors", []))
         result["catalog_reconciliation"] = marketplace_catalog_reconciliation(
             result.get("products_rows") or [],

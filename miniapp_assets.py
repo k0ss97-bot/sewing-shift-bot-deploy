@@ -5863,6 +5863,7 @@ MINIAPP_HTML = """<!doctype html>
       marketplaceQuality: {loading: false, syncing: false, polling: false, loaded: false, error: "", payload: null, products: null, page: 1, query: ""},
       analyticsQuality: {loading: false, loaded: false, error: "", payload: null},
       analyticsOverview: {loading: false, loaded: false, error: "", payload: null, requestKey: ""},
+      analyticsOverviewCache: {},
       marketplaceDetail: null,
       ...persistedUiState,
       data: null,
@@ -7409,9 +7410,18 @@ MINIAPP_HTML = """<!doctype html>
       return {payload, key: `${payload.start_date}|${payload.end_date}`};
     }
 
-    async function refreshAnalyticsOverview({silent = false} = {}) {
+    async function refreshAnalyticsOverview({silent = false, force = false} = {}) {
       if (!canAccessMarketplaces() || state.analyticsOverview.loading) return;
       const request = analyticsOverviewRequest();
+      const cached = state.analyticsOverviewCache && state.analyticsOverviewCache[request.key];
+      if (!force && cached) {
+        state.analyticsOverview.payload = cached;
+        state.analyticsOverview.loaded = true;
+        state.analyticsOverview.error = "";
+        state.analyticsOverview.requestKey = request.key;
+        if (state.workspace === "analytics") render();
+        return;
+      }
       state.analyticsOverview.loading = true;
       state.analyticsOverview.error = "";
       state.analyticsOverview.requestKey = request.key;
@@ -7421,6 +7431,7 @@ MINIAPP_HTML = """<!doctype html>
         if (!overview.ok) throw new Error(overview.message || "Не удалось загрузить общую аналитику.");
         if (state.analyticsOverview.requestKey !== request.key) return;
         state.analyticsOverview.payload = overview;
+        state.analyticsOverviewCache[request.key] = overview;
         state.analyticsOverview.loaded = true;
       } catch (error) {
         if (state.analyticsOverview.requestKey !== request.key) return;
@@ -7455,6 +7466,9 @@ MINIAPP_HTML = """<!doctype html>
         }
         const data = await api("/api/marketplaces/dashboard");
         state.marketplaceData.payload = data;
+        state.analyticsOverviewCache = {};
+        state.analyticsOverview.loaded = false;
+        state.analyticsOverview.requestKey = "";
         if (state.wmsData.loaded) await refreshWmsWorkspace({silent: true});
         state.marketplaceData.loaded = true;
       } catch (error) {
@@ -13790,6 +13804,7 @@ MINIAPP_HTML = """<!doctype html>
       const reconciliationSummary = reconciliation.summary && typeof reconciliation.summary === "object" ? reconciliation.summary : {};
       const risks = Array.isArray(payload.risks) ? payload.risks : [];
       const geography = payload.geography && typeof payload.geography === "object" ? payload.geography : {};
+      const breakdowns = payload.breakdowns && typeof payload.breakdowns === "object" ? payload.breakdowns : {};
       const rowsForProviders = (field) => providerRoots.flatMap((provider) => {
         const providerName = provider === root.wildberries ? "wildberries" : "ozon";
         return (Array.isArray(provider[field]) ? provider[field] : []).map((row) => ({...row, marketplace: row.marketplace || providerName}));
@@ -13820,6 +13835,9 @@ MINIAPP_HTML = """<!doctype html>
       const panel = (title, meta, body, wide = "") => `<section class="ac-panel ${wide}"><div class="ac-panel-head"><h3>${escapeHtml(title)}</h3><span>${escapeHtml(meta || "")}</span></div>${body}</section>`;
       const table = (headers, rows, emptyText) => rows.length ? `<div class="ac-table-wrap"><table class="ac-table"><thead><tr>${headers.map((head) => `<th>${escapeHtml(head)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>` : empty("Нет данных", emptyText);
       const providerFilter = (row) => marketplace === "all" || String(row.marketplace || row.provider || "ozon").toLowerCase().includes(marketplace === "wildberries" ? "wild" : "ozon");
+      const salesByWarehouse = (Array.isArray(breakdowns.sales_by_warehouse) ? breakdowns.sales_by_warehouse : []).filter(providerFilter);
+      const salesByProduct = (Array.isArray(breakdowns.sales_by_product) ? breakdowns.sales_by_product : []).filter(providerFilter);
+      const financeByMarketplace = (Array.isArray(breakdowns.finance_by_marketplace) ? breakdowns.finance_by_marketplace : []).filter(providerFilter);
       const geographyRows = (Array.isArray(geography.rows) ? geography.rows : []).filter(providerFilter);
       const summaryValue = (key) => {
         const selected = marketplace === "all" ? ["ozon", "wildberries"] : [marketplace];
@@ -13884,13 +13902,23 @@ MINIAPP_HTML = """<!doctype html>
         const visibleOrders = periodOrders.slice(0, 100);
         const orderRows = visibleOrders.map((row) => `<tr><td>${escapeHtml(row.shipment_date || row.updated_at || "—")}</td><td>${escapeHtml(row.posting_number || row.external_order_id || row.id || "—")}</td><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${row.quantity !== null && row.quantity !== undefined ? escapeHtml(fmt(row.quantity)) : "—"}</td><td>${row.amount_available || row.amount_partial ? escapeHtml(money(row.amount)) : "—"}</td><td>${escapeHtml(row.status || "—")}</td></tr>`);
         const providerComparison = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace)}</td><td>${row.sales_units !== null && row.sales_units !== undefined ? escapeHtml(fmt(row.sales_units)) : "—"}</td><td>${row.gross_sales !== null && row.gross_sales !== undefined ? escapeHtml(money(row.gross_sales)) : "—"}</td><td>${row.orders !== null && row.orders !== undefined ? escapeHtml(fmt(row.orders)) : "—"}</td></tr>`);
-        return `${filterbar}<div class="ac-kpis">${kpi("Продано", safeValue(metric("sales_units")), "Штук за период")}${kpi("Сумма заказов", safeValue(metric("gross_sales"), money), "По ценам строк заказа")}${kpi("Заказы", safeValue(metric("orders")), "Количество заказов")}${kpi("Начисления", safeValue(metric("recognized_sales"), money), "До удержаний")}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению")}</div><div class="ac-grid">${panel("Продажи в штуках по дням", period, analyticsHubCombinedChart(salesChartModels("units")), "span-6")}${panel("Продажи в рублях по дням", period, analyticsHubCombinedChart(salesChartModels("amount")), "span-6")}${panel("Ozon / Wildberries", "Раздельные итоги", table(["Площадка","Продано, шт.","Сумма заказов","Заказы"], providerComparison, "Площадки не вернули продажи."), "span-12")}${panel("Последние заказы в выбранном периоде", `Показано ${visibleOrders.length}; итог рассчитан по полному набору ${safeValue(metric("orders"))}`, table(["Дата","Отправление","Площадка","Штук","Сумма","Статус"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
+        const warehouseRows = salesByWarehouse.slice(0, 200).map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.warehouse || "Склад не указан")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${row.amount_status === "partial" ? "Частично" : "Полностью"}</td></tr>`);
+        const productRows = salesByProduct.slice(0, 300).map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.product || "Товар не указан")}</td><td>${escapeHtml(row.offer_id || row.sku || "—")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td></tr>`);
+        return `${filterbar}<div class="ac-kpis">${kpi("Продано", safeValue(metric("sales_units")), "Штук за период")}${kpi("Сумма заказов", safeValue(metric("gross_sales"), money), "По ценам строк заказа")}${kpi("Заказы", safeValue(metric("orders")), "Количество заказов")}${kpi("Начисления", safeValue(metric("recognized_sales"), money), "До удержаний")}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению")}</div><div class="ac-grid">${panel("Продажи в штуках по дням", period, analyticsHubCombinedChart(salesChartModels("units")), "span-6")}${panel("Продажи в рублях по дням", period, analyticsHubCombinedChart(salesChartModels("amount")), "span-6")}${panel("Ozon / Wildberries", "Раздельные итоги", table(["Площадка","Продано, шт.","Сумма заказов","Заказы"], providerComparison, "Площадки не вернули продажи."), "span-12")}${panel("Продажи по складам", `${salesByWarehouse.length} складов за выбранный период`, table(["Площадка","Склад","Заказы","Штук","Сумма","Цены"], warehouseRows, "Складской разрез за выбранный период не получен."), "span-6")}${panel("Продажи по товарам", `${salesByProduct.length} SKU за выбранный период`, table(["Площадка","Товар","Артикул","Заказы","Штук","Сумма"], productRows, "Товарный разрез за выбранный период не получен."), "span-6")}${panel("Последние заказы в выбранном периоде", `Показано ${visibleOrders.length}; итог рассчитан по полному набору ${safeValue(metric("orders"))}`, table(["Дата","Отправление","Площадка","Штук","Сумма","Статус"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
       }
 
       function renderProductsPage() {
-        const visibleProducts = filteredProducts.slice(0, 300);
-        const rows = visibleProducts.map((row) => `<tr><td>${escapeHtml(row.name || row.product_name || "—")}</td><td>${escapeHtml(row.offer_id || row.article || "—")}</td><td>${escapeHtml(row.color || "—")}</td><td>${escapeHtml(row.size || "—")}</td><td>${escapeHtml(row.barcode || "—")}</td><td>${row.available !== null && row.available !== undefined ? escapeHtml(fmt(row.available)) : "—"}</td></tr>`);
-        return `<div class="ac-kpis">${kpi("Активные карточки", fmt(Math.max(0, summaryValue("products") - summaryValue("inactive"))), "В текущем каталоге")}${kpi("Связано с производством", fmt(summaryValue("route_configured")), "Есть маршрут цвета и размера")}${kpi("Неактуальные", fmt(summaryValue("inactive")), "Старше 90 дней и без продаж / сняты")}${kpi("Без маршрута", fmt(summaryValue("route_missing")), "Требуют ручной проверки")}</div><div class="ac-toolbar"><label class="ac-page-search"><span>Поиск по товару, артикулу или штрихкоду</span><input id="analyticsSearch" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Название, артикул, штрихкод"></label><span>${fmt(filteredProducts.length)} из ${fmt(products.length)}</span></div><div class="ac-grid">${panel("Каталог SKU", `Показано ${visibleProducts.length} из ${filteredProducts.length}`, table(["Товар","Артикул","Цвет","Размер","Штрихкод","Остаток"], rows, "Каталог площадки пока не загружен."), "span-12")}</div>`;
+        const productLookup = new Map(products.map((row) => [`${String(row.marketplace || "ozon")}:${String(row.offer_id || row.article || row.sku || row.external_product_id || "")}`, row]));
+        const reconciled = reconciliationRows.filter(providerFilter).filter((row) => !search || [row.name,row.article,row.sku,row.color,row.size,row.production_name].some((value) => String(value || "").toLowerCase().includes(search)));
+        const visibleProducts = reconciled.slice(0, 500);
+        const rows = visibleProducts.map((row) => {
+          const source = productLookup.get(`${row.marketplace}:${row.article}`) || {};
+          const stateLabel = row.is_inactive ? "Неактуален" : !row.route_configured ? "Нет связи" : row.warehouse_found ? "Связан, есть остаток" : "Связан, нужен выпуск";
+          const reason = row.is_inactive ? row.inactive_reason : row.route_configured ? `${row.production_name || row.name} · ${row.production_color || row.color || "—"} · ${row.production_size || row.size || "—"}` : "Требуется проверить название, цвет и размер";
+          return `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.name || "—")}</td><td>${escapeHtml(row.article || row.sku || "—")}</td><td>${escapeHtml(row.color || "—")}</td><td>${escapeHtml(row.size || "—")}</td><td>${source.available !== null && source.available !== undefined ? fmt(source.available) : "—"}</td><td>${reconciliation.warehouse_available === false ? "—" : fmt(row.warehouse_available_quantity || 0)}</td><td><b>${escapeHtml(stateLabel)}</b><br><small>${escapeHtml(reason || "—")}</small></td></tr>`;
+        });
+        const action = `<div class="button-row"><button type="button" class="small-button secondary" data-analytics-matrix-action="links">Открыть связи товаров</button></div>`;
+        return `<div class="ac-kpis">${kpi("Активные карточки", fmt(Math.max(0, summaryValue("products") - summaryValue("inactive"))), "В текущем каталоге")}${kpi("Связано с производством", fmt(summaryValue("route_configured")), "Есть маршрут цвета и размера")}${kpi("Неактуальные", fmt(summaryValue("inactive")), "Старше 90 дней и без продаж / сняты")}${kpi("Без маршрута", fmt(summaryValue("route_missing")), "Требуют ручной проверки")}</div><div class="ac-toolbar"><label class="ac-page-search"><span>Поиск по товару или артикулу</span><input id="analyticsSearch" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Название, артикул, цвет, размер"></label><span>${fmt(reconciled.length)} из ${fmt(reconciliationRows.filter(providerFilter).length)}</span></div><div class="ac-grid">${panel("Каталог и связь с производством", `Показано ${visibleProducts.length} из ${reconciled.length}`, `${table(["Площадка","Товар","Артикул","Цвет","Размер","На площадке","На производстве","Состояние"], rows, "Каталог площадки пока не загружен.")}${action}`, "span-12")}</div>`;
       }
 
       function renderInventoryPage() {
@@ -13906,12 +13934,19 @@ MINIAPP_HTML = """<!doctype html>
         const alerts = Array.isArray(production.alerts) ? production.alerts : [];
         const stageRows = stages.map((row) => `<tr><td>${escapeHtml(row.stage || row.name || "—")}</td><td>${fmt(row.tasks || 0)}</td><td>${fmt(row.free || 0)}</td><td>${fmt(row.quantity || 0)}</td><td>${fmt(row.overdue || 0)}</td></tr>`);
         const alertRows = alerts.slice(0, 12).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.title || "Отклонение")}</b><span>${escapeHtml(row.detail || "Требует внимания")}</span></div><strong>${escapeHtml(row.type === "overdue" ? "Просрочено" : "Проверить")}</strong></div>`).join("");
-        return `<div class="ac-kpis">${kpi("План", production.plan !== undefined && production.plan !== null ? fmt(production.plan) : "—", "Изделий")}${kpi("Факт", production.fact !== undefined && production.fact !== null ? fmt(production.fact) : "—", "Изделий")}${kpi("В работе", production.active_quantity !== undefined && production.active_quantity !== null ? fmt(production.active_quantity) : "—", "Активный WIP")}${kpi("Брак", production.defect_quantity !== undefined && production.defect_quantity !== null ? fmt(production.defect_quantity) : "—", "Подтверждённые записи")}</div><div class="ac-grid">${panel("Этапы производства", `${stages.length} этапов`, table(["Этап","Задания","Свободно","Количество","Просрочено"], stageRows, "Активных производственных этапов нет."), "span-8")}${panel("Требует внимания", `${alerts.length} сигналов`, alertRows || empty("Отклонений нет", "Новых подтверждённых производственных отклонений не найдено."), "span-4")}</div>`;
+        const demandRows = matrixRows.slice(0, 300).map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.name || "—")}</td><td>${escapeHtml(row.article || row.sku || "—")}</td><td>${escapeHtml(row.production_color || row.color || "—")}</td><td>${escapeHtml(row.production_size || row.size || "—")}</td><td>${reconciliation.warehouse_available === false ? "—" : fmt(row.warehouse_available_quantity || 0)}</td><td>${!row.route_configured ? "Нет связи" : Number(row.warehouse_available_quantity || 0) > 0 ? "Готово" : "Нужно произвести"}</td></tr>`);
+        const actions = `<div class="button-row"><button type="button" class="small-button" data-analytics-matrix-action="production">Создать производственное задание</button><button type="button" class="small-button secondary" data-analytics-matrix-action="links">Проверить связи</button></div>`;
+        return `<div class="ac-kpis">${kpi("План", production.plan !== undefined && production.plan !== null ? fmt(production.plan) : "—", "Изделий")}${kpi("Факт", production.fact !== undefined && production.fact !== null ? fmt(production.fact) : "—", "Изделий")}${kpi("В работе", production.active_quantity !== undefined && production.active_quantity !== null ? fmt(production.active_quantity) : "—", "Активный WIP")}${kpi("Брак", production.defect_quantity !== undefined && production.defect_quantity !== null ? fmt(production.defect_quantity) : "—", "Подтверждённые записи")}</div><div class="ac-grid">${panel("Этапы производства", `${stages.length} этапов`, table(["Этап","Задания","Свободно","Количество","Просрочено"], stageRows, "Активных производственных этапов нет."), "span-8")}${panel("Требует внимания", `${alerts.length} сигналов`, alertRows || empty("Отклонений нет", "Новых подтверждённых производственных отклонений не найдено."), "span-4")}${panel("Спрос маркетплейсов → производство", `${matrixRows.length} активных SKU`, `${table(["Площадка","Товар","Артикул","Цвет","Размер","Готовый остаток","Действие"], demandRows, "Активных связанных карточек нет.")}${actions}`, "span-12")}</div>`;
       }
 
       function renderSuppliesPage() {
-        const rows = supplyRows.filter(providerFilter).map((row) => `<tr><td>${escapeHtml(row.marketplace || row.provider || "—")}</td><td>${escapeHtml(row.external_supply_id || row.number || row.name || "—")}</td><td>${escapeHtml(row.canonical_status || row.status_label || row.status || "—")}</td><td>${escapeHtml(row.destination_name || row.destination || row.warehouse_name || "—")}</td><td>${row.total_quantity !== undefined && row.total_quantity !== null ? escapeHtml(fmt(row.total_quantity)) : row.quantity !== undefined ? escapeHtml(fmt(row.quantity)) : "—"}</td><td>${escapeHtml(row.last_synced_at || row.updated_at || row.date || "—")}</td></tr>`);
-        return `<div class="ac-kpis">${kpi("Поставки", fmt(rows.length), "Текущий операционный снимок")}${kpi("Площадка", marketplace === "all" ? "Все" : marketplace === "ozon" ? "Ozon" : "Wildberries", "Текущий фильтр")}</div><div class="ac-grid">${panel("Поставки", `${rows.length} записей`, table(["Площадка","Поставка","Статус","Склад","Количество","Обновлено"], rows, "Активных поставок в текущем снимке нет."), "span-12")}</div>`;
+        const selected = supplyRows.filter(providerFilter).filter((row) => {
+          const day = String(row.planned_at || row.timeslot_from || row.created_at_external || row.updated_at_external || row.last_synced_at || row.updated_at || "").slice(0, 10);
+          return !day || !periodStart || !periodEnd || (day >= periodStart && day <= periodEnd);
+        });
+        const totalQuantity = selected.reduce((sum, row) => sum + Number(row.total_quantity ?? row.quantity ?? 0), 0);
+        const rows = selected.map((row) => `<tr><td>${escapeHtml(String(row.marketplace || row.provider || "—").toLowerCase().includes("wild") ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.external_supply_id || row.number || row.name || "—")}</td><td>${escapeHtml(row.canonical_status || row.status_label || row.status || "—")}</td><td>${escapeHtml(row.destination_name || row.destination || row.warehouse_name || "—")}</td><td>${row.total_quantity !== undefined && row.total_quantity !== null ? escapeHtml(fmt(row.total_quantity)) : row.quantity !== undefined ? escapeHtml(fmt(row.quantity)) : "—"}</td><td>${escapeHtml(row.planned_at || row.timeslot_from || "—")}</td><td>${escapeHtml(row.last_synced_at || row.updated_at || row.date || "—")}</td></tr>`);
+        return `${filterbar}<div class="ac-kpis">${kpi("Поставки", fmt(selected.length), "За выбранный период")}${kpi("Товаров в поставках", fmt(totalQuantity), "Штук")}${kpi("Площадка", marketplace === "all" ? "Все" : marketplace === "ozon" ? "Ozon" : "Wildberries", "Текущий фильтр")}</div><div class="ac-grid">${panel("Поставки Ozon / Wildberries", `${selected.length} записей`, table(["Площадка","Поставка","Статус","Склад","Количество","План","Обновлено"], rows, "Поставок за выбранный период нет."), "span-12")}</div>`;
       }
 
       function renderFinancePage() {
@@ -13924,11 +13959,12 @@ MINIAPP_HTML = """<!doctype html>
         ].filter(([,value]) => value !== null && value !== undefined);
         const max = Math.max(1, ...waterfall.map(([,value]) => Math.abs(Number(value))));
         const bars = waterfall.length ? `<div class="ac-waterfall">${waterfall.map(([label,value,tone]) => `<div class="${tone}"><span>${escapeHtml(label)}</span><i style="--bar:${Math.max(5, Math.abs(Number(value)) / max * 100)}%"></i><strong>${escapeHtml(money(value))}</strong></div>`).join("")}</div>` : empty("Финансы пока недоступны", "Площадка не предоставила подтверждённые начисления и удержания.");
-        const compareRows = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace || "—")}</td><td>${escapeHtml(row.status === "fresh" ? "Данные актуальны" : row.status === "stale" ? "Обновление задерживается" : "Данные загружены частично")}</td><td>${escapeHtml(row.last_sync_at || "—")}</td></tr>`);
-        return `${filterbar}<div class="ac-kpis">${kpi("Сумма заказов", safeValue(gross, money), "По ценам товаров")}${kpi("Начисления", safeValue(recognized, money), "До удержаний")}${kpi("После удержаний", safeValue(net, money), "К перечислению")}${kpi("Маржинальный доход", safeValue(margin, money), "Нужна подтверждённая себестоимость")}</div><div class="ac-grid">${panel("Финансовая динамика", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Финансовый waterfall", "Только подтверждённые компоненты", bars, "span-4")}${panel("Источники", `${providerCards.length} площадки`, table(["Площадка","Состояние","Обновлено"], compareRows, "Финансовые источники не подключены."), "span-12")}</div>`;
+        const compareRows = financeByMarketplace.map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${money(row.recognized_sales)}</td><td>${money(row.deductions)}</td><td>${money(row.net_payout)}</td><td>${fmt(row.return_units)}</td><td>${row.return_amount !== null && row.return_amount !== undefined ? money(row.return_amount) : "—"}</td></tr>`);
+        return `${filterbar}<div class="ac-kpis">${kpi("Сумма заказов", safeValue(gross, money), "По ценам товаров")}${kpi("Начисления", safeValue(recognized, money), "До удержаний")}${kpi("После удержаний", safeValue(net, money), "К перечислению")}${kpi("Маржинальный доход", safeValue(margin, money), "Нужна подтверждённая себестоимость")}</div><div class="ac-grid">${panel("Финансовая динамика", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Финансовый waterfall", "Только подтверждённые компоненты", bars, "span-4")}${panel("Финансы Ozon / Wildberries", "Начисления, удержания, выплаты и возвраты", table(["Площадка","Начисления","Удержания","После удержаний","Возвраты, шт.","Возвраты, ₽"], compareRows, "Финансовые источники не подключены."), "span-12")}</div>`;
       }
 
       function renderMapPage() {
+        const mapProviderLabel = marketplace === "ozon" ? "Ozon" : marketplace === "wildberries" ? "Wildberries" : "маркетплейсов";
         const totalRegionUnits = geographyRows.reduce((sum, row) => sum + Number(row.units || 0), 0);
         const totalRegionAmount = geographyRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
         const totalRegionOrders = geographyRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
@@ -13958,8 +13994,8 @@ MINIAPP_HTML = """<!doctype html>
           const title = `${row.region || "Регион не указан"}: ${fmt(row.units)} шт., ${money(row.amount)}`;
           return `<g class="ac-region-point" tabindex="0" role="img" aria-label="${escapeHtml(title)}"><circle class="ac-region-bubble" cx="${x}" cy="${y}" r="${radius.toFixed(1)}"><title>${escapeHtml(title)}</title></circle>${showLabel ? `<text class="ac-region-label" x="${labelX}" y="${y-2}" text-anchor="${labelAnchor}">${escapeHtml(row.region || "Регион")}</text><text class="ac-region-value" x="${labelX}" y="${y+11}" text-anchor="${labelAnchor}">${escapeHtml(fmt(row.units))} шт. · ${escapeHtml(money(row.amount))}</text>` : ""}</g>`;
         }).join("");
-        const map = geographyRows.length ? `<div class="ac-map"><svg class="ac-region-map" viewBox="0 0 1000 460" role="img" aria-label="Карта продаж по кластерам Ozon"><defs><linearGradient id="acRegionLand" x1="0" x2="1"><stop offset="0" stop-color="#eef3ff"/><stop offset="1" stop-color="#f4edff"/></linearGradient></defs>${[170,250,330].map((y) => `<line class="ac-region-grid" x1="55" y1="${y}" x2="950" y2="${y}"/>`).join("")}<path class="ac-region-land" d="M80 286 L125 242 L155 205 L205 190 L235 132 L295 112 L350 146 L425 116 L500 151 L575 125 L642 156 L715 140 L780 176 L850 160 L932 220 L900 260 L945 302 L900 363 L826 345 L780 315 L720 350 L652 330 L600 365 L530 340 L470 310 L410 332 L350 310 L300 350 L250 322 L205 350 L170 312 L120 306 Z"/>${points}</svg><div class="ac-map-legend"><i></i><span>Размер круга — сумма заказов</span></div><div class="ac-map-note">Кластеры размещены по географии назначения Ozon. Наведите на круг, чтобы увидеть продажи в штуках и рублях.</div></div>` : empty("Карта пока пустая", marketplace === "wildberries" ? "WB не передал региональный разрез в сохранённом snapshot." : "Региональные данные Ozon ещё загружаются.");
-        return `<div class="ac-kpis">${kpi("Регионы", loadingWithoutPayload ? "…" : fmt(geographyRows.length), "Кластеры назначения")}${kpi("Заказы", loadingWithoutPayload ? "…" : fmt(totalRegionOrders), "С региональным разрезом")}${kpi("Продано", loadingWithoutPayload ? "…" : fmt(totalRegionUnits), "Штук")}${kpi("Сумма заказов", loadingWithoutPayload ? "…" : money(totalRegionAmount), "Рубли")}</div><div class="ac-grid">${panel("Карта кластеров Ozon", `${geographyRows.length} регионов`, map, "span-12")}${panel("Продажи по регионам", `${geographyRows.length} регионов`, table(["Площадка","Регион","Заказы","Штук","Сумма","Доля"], rows, marketplace === "wildberries" ? "Wildberries не передал региональный разрез в текущем snapshot." : "Ozon пока не передал региональный разрез."), "span-8")}${panel("Доступность источников", "Ozon / Wildberries", providerRows || empty("Нет данных", "Региональный источник пока не подключён."), "span-4")}</div>`;
+        const map = geographyRows.length ? `<div class="ac-map"><svg class="ac-region-map" viewBox="0 0 1000 460" role="img" aria-label="Карта продаж по регионам ${escapeHtml(mapProviderLabel)}"><defs><linearGradient id="acRegionLand" x1="0" x2="1"><stop offset="0" stop-color="#eef3ff"/><stop offset="1" stop-color="#f4edff"/></linearGradient></defs>${[170,250,330].map((y) => `<line class="ac-region-grid" x1="55" y1="${y}" x2="950" y2="${y}"/>`).join("")}<path class="ac-region-land" d="M80 286 L125 242 L155 205 L205 190 L235 132 L295 112 L350 146 L425 116 L500 151 L575 125 L642 156 L715 140 L780 176 L850 160 L932 220 L900 260 L945 302 L900 363 L826 345 L780 315 L720 350 L652 330 L600 365 L530 340 L470 310 L410 332 L350 310 L300 350 L250 322 L205 350 L170 312 L120 306 Z"/>${points}</svg><div class="ac-map-legend"><i></i><span>Размер круга — сумма заказов</span></div><div class="ac-map-note">Карта использует только подтверждённую географию назначения. Наведите на круг, чтобы увидеть продажи в штуках и рублях.</div></div>` : empty("Карта пока пустая", marketplace === "wildberries" ? "Wildberries не передал региональный разрез в сохранённом snapshot." : "Региональные данные выбранной площадки ещё загружаются.");
+        return `<div class="ac-kpis">${kpi("Регионы", loadingWithoutPayload ? "…" : fmt(geographyRows.length), "Кластеры назначения")}${kpi("Заказы", loadingWithoutPayload ? "…" : fmt(totalRegionOrders), "С региональным разрезом")}${kpi("Продано", loadingWithoutPayload ? "…" : fmt(totalRegionUnits), "Штук")}${kpi("Сумма заказов", loadingWithoutPayload ? "…" : money(totalRegionAmount), "Рубли")}</div><div class="ac-grid">${panel(`Карта регионов: ${mapProviderLabel}`, `${geographyRows.length} регионов`, map, "span-12")}${panel("Продажи по регионам", `${geographyRows.length} регионов`, table(["Площадка","Регион","Заказы","Штук","Сумма","Доля"], rows, marketplace === "wildberries" ? "Wildberries не передал региональный разрез в текущем snapshot." : "Региональный разрез пока не получен."), "span-8")}${panel("Доступность источников", "Ozon / Wildberries", providerRows || empty("Нет данных", "Региональный источник пока не подключён."), "span-4")}</div>`;
       }
 
       function renderQualityPage() {
@@ -15034,7 +15070,7 @@ MINIAPP_HTML = """<!doctype html>
       if (analyticsOverviewAction) {
         if (analyticsOverviewAction.dataset.analyticsOverviewAction === "refresh") {
           state.analyticsOverview.error = "";
-          refreshAnalyticsOverview();
+          refreshAnalyticsOverview({force: true});
         }
         return;
       }
@@ -15074,7 +15110,7 @@ MINIAPP_HTML = """<!doctype html>
       if (analyticsCenterAction) {
         const action = analyticsCenterAction.dataset.acAction;
         if (action === "sync") syncMarketplaces();
-        if (action === "refresh") refreshAnalyticsOverview();
+        if (action === "refresh") refreshAnalyticsOverview({force: true});
         if (action === "diagnostics") {
           state.workspace = "production";
           state.screen = "admin";
