@@ -944,6 +944,17 @@ def product_group_for(*values: object) -> tuple[str, str]:
     text = " ".join(_text(value) for value in values if _text(value)).lower().replace("ё", "е")
     sizes = [int(value) for value in re.findall(r"(?<!\d)(?:8[6-9]|9\d|1[0-7]\d|18\d)(?!\d)", text)]
 
+    # Ozon uses the generic display name «Брюки для малыша» for the БДШВ
+    # variants, so the name alone loses the factory family. The seller article
+    # is stable enough to recover only the family here; size and colour still
+    # have to pass the production-route allow-lists below before a link exists.
+    if any(
+        re.match(r"^бдшв(?:[-_/]|$)", _text(value).strip().lower().replace("ё", "е"))
+        for value in values
+        if _text(value)
+    ):
+        return "trousers-arrows", "Брюки со стрелками"
+
     if "костюм" in text:
         if "классическ" in text and "трикотаж" in text:
             return "suits-classic-knitted", "Костюм классический трикотажный"

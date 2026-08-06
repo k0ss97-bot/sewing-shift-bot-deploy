@@ -223,6 +223,41 @@ class MarketplaceTests(unittest.TestCase):
             ("other", "Прочие товары"),
         )
 
+    def test_bdshv_article_links_generic_ozon_name_to_trouser_route(self):
+        cases = (
+            ("БДШВ-4/122", "122", "капучино", "Капучино"),
+            ("БДШВ-5/104", "104", "черный", "Черный"),
+        )
+        for offer_id, size, source_color, production_color in cases:
+            with self.subTest(offer_id=offer_id):
+                row = {
+                    "name": "Брюки для малыша",
+                    "offer_id": offer_id,
+                    "sku": "synthetic-ozon-sku",
+                    "size": size,
+                    "color": source_color,
+                }
+                self.assertEqual(
+                    marketplaces.product_group_for(
+                        row["name"], row["offer_id"], row["sku"], "", row["size"],
+                    ),
+                    ("trousers-arrows", "Брюки со стрелками"),
+                )
+                self.assertEqual(
+                    marketplaces.production_target_for_marketplace_product(row),
+                    ("Брюки со стрелками детские", size, production_color),
+                )
+
+    def test_bdshv_article_still_rejects_unsupported_route_attributes(self):
+        self.assertIsNone(
+            marketplaces.production_target_for_marketplace_product({
+                "name": "Брюки для малыша",
+                "offer_id": "БДШВ-5/104",
+                "size": "104",
+                "color": "Неизвестный цвет",
+            })
+        )
+
     def test_catalog_reconciliation_keeps_missing_routes_and_cells_visible(self):
         fake_connection = SimpleNamespace(rollback=lambda: None, close=lambda: None)
         location = SimpleNamespace(id=7, code="Z2-S1-P3-1")
