@@ -346,6 +346,22 @@ def _save_capabilities(conn, account_id: int, capabilities: dict[str, dict]) -> 
             details["last_successful_snapshot_started_at"] = current_snapshot
         elif previous_success:
             details["last_successful_snapshot_started_at"] = previous_success
+        # A transient WB failure describes the current request, not the last
+        # committed snapshot.  Keep its verified coverage so read-only
+        # analytics can continue to show the last good data as partial/stale.
+        if payload.get("status") != "available" and previous_success:
+            for key in (
+                "coverage_start_date",
+                "coverage_end_date",
+                "requested_coverage_start_date",
+                "requested_coverage_end_date",
+                "coverage_complete",
+                "coverage_basis",
+                "outside_coverage_status",
+                "partial_reason",
+            ):
+                if key not in details and key in previous_details:
+                    details[key] = previous_details[key]
         conn.execute(
             """INSERT INTO marketplace_wb_capabilities
                (account_id,capability,status,safe_message,http_status,retry_after_seconds,row_count,details_json,checked_at)
@@ -1402,6 +1418,31 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
             row["last_successful_snapshot_started_at"] = _text(
                 row.get("last_successful_snapshot_started_at")
             )
+            # Compatibility repair for rows saved before transient failures
+            # preserved coverage metadata. A last-success marker is written
+            # only after the fixed 90-day orders snapshot is committed.
+            if (
+                row.get("capability") == "orders"
+                and not row.get("coverage_start_date")
+                and row["last_successful_snapshot_started_at"]
+            ):
+                try:
+                    successful_day = datetime.fromisoformat(
+                        row["last_successful_snapshot_started_at"]
+                    ).date()
+                except ValueError:
+                    successful_day = None
+                if successful_day:
+                    row.update({
+                        "coverage_start_date": (
+                            successful_day - timedelta(days=WB_ORDERS_HISTORY_DAYS)
+                        ).isoformat(),
+                        "coverage_end_date": successful_day.isoformat(),
+                        "coverage_complete": True,
+                        "coverage_basis": "last_change_date",
+                        "outside_coverage_status": "partial",
+                        "coverage_reconstructed_from_last_success": True,
+                    })
             capability_rows.append(row)
     capability_statuses = {row["capability"]: row for row in capability_rows}
 
@@ -1442,6 +1483,15 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
         start = _text(payload.get("coverage_start_date"))
         end = _text(payload.get("coverage_end_date"))
         return bool(payload.get("status") in allowed_statuses and start and end and start <= end)
+
+    def last_good_snapshot_usable(name: str) -> bool:
+        payload = capability_statuses.get(name) or {}
+        return bool(
+            payload.get("status") in {"available", "rate_limited", "wb_unavailable"}
+            and payload.get("last_successful_snapshot_started_at")
+            and payload.get("coverage_start_date")
+            and payload.get("coverage_end_date")
+        )
 
     def covered_rows(rows: list[dict], name: str, date_fields: tuple[str, ...], allowed_statuses: set[str]) -> list[dict]:
         usable = coverage_is_usable(name, allowed_statuses)
@@ -1518,7 +1568,7 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
         prices=group.pop("prices"); group["articles"]=len(group["articles"]); group["price_min"]=min(prices) if prices else None; group["price_max"]=max(prices) if prices else None; group_rows.append(group)
     warehouses=[{"key":f"wb:{row[0]}","name":row[0]} for row in conn.execute("SELECT DISTINCT warehouse_name FROM marketplace_stocks WHERE product_id IN (SELECT id FROM marketplace_products WHERE account_id=?) AND (?='' OR observed_at>=?) AND trim(warehouse_name)<>'' ORDER BY warehouse_name",(account_id,stock_snapshot_start,stock_snapshot_start))]
     orders=[dict(row) for row in conn.execute("SELECT id,external_order_id,posting_number,status,shipment_date,updated_at FROM marketplace_orders WHERE account_id=? ORDER BY updated_at DESC",(account_id,))]
-    if capability_statuses.get("orders") and capability_statuses["orders"].get("status") != "available":
+    if capability_statuses.get("orders") and not last_good_snapshot_usable("orders"):
         orders = []
     runs=[dict(row) for row in conn.execute("SELECT id,status,products_count,prices_count,stocks_count,orders_count,error_message,started_at,finished_at FROM marketplace_sync_runs WHERE account_id=? ORDER BY id DESC LIMIT 5",(account_id,))]
     account=conn.execute("SELECT account_name,last_sync_at,last_error FROM marketplace_accounts WHERE id=?",(account_id,)).fetchone()
@@ -1557,7 +1607,7 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
         analytics["returns_rows"] = []
         analytics["returns_daily"] = []
     sales_daily_by_date: dict[str, dict] = {}
-    if not capability_statuses.get("orders") or capability_statuses["orders"].get("status") == "available":
+    if not capability_statuses.get("orders") or last_good_snapshot_usable("orders"):
         for source in conn.execute(
             """SELECT o.external_order_id,o.shipment_date,o.updated_at,o.status,
                       i.quantity,i.payload_json

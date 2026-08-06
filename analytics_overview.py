@@ -353,6 +353,16 @@ def _capability_available(provider: dict[str, Any], name: str, fallback: bool = 
     return bool(explicit) if explicit is not None else fallback
 
 
+def _last_good_snapshot_available(provider: dict[str, Any], name: str) -> bool:
+    """Allow only transient failures to reuse an explicitly dated snapshot."""
+    row = _capability(provider, name)
+    return bool(
+        str(row.get("status") or "").casefold() in {"rate_limited", "wb_unavailable"}
+        and row.get("last_successful_snapshot_started_at")
+        and _capability_coverage(provider, name)
+    )
+
+
 def _capability_data_status(provider: dict[str, Any], name: str, generated_at: str) -> str:
     row = _capability(provider, name)
     if row:
@@ -422,6 +432,24 @@ def _complete_daily_orders(values: dict[str, int], period: PeriodWindow) -> dict
     while current <= period.end:
         key = current.isoformat()
         result[key] = values.get(key, 0)
+        current += timedelta(days=1)
+    return result
+
+
+def _complete_daily_sales(
+    values: dict[str, dict[str, Any]], period: PeriodWindow
+) -> dict[str, dict[str, Any]]:
+    """Fill confirmed zero-sale days while preserving typed sales fields."""
+    result: dict[str, dict[str, Any]] = {}
+    current = period.start
+    while current <= period.end:
+        key = current.isoformat()
+        result[key] = values.get(key, {
+            "orders": 0,
+            "units": Decimal("0"),
+            "amount": Decimal("0"),
+            "unpriced_lines": 0,
+        })
         current += timedelta(days=1)
     return result
 
@@ -820,7 +848,10 @@ def _provider_payload(
     orders_daily = {day: int(row["orders"]) for day, row in sales_daily.items()}
 
     if marketplace == "wildberries":
-        orders_available = _capability_available(provider, "orders", fallback=bool(provider.get("orders_rows")))
+        orders_available = (
+            _capability_available(provider, "orders", fallback=bool(provider.get("orders_rows")))
+            or _last_good_snapshot_available(provider, "orders")
+        )
         orders_data_status = _capability_data_status(provider, "orders", generated_at)
         orders_coverage = _capability_coverage(provider, "orders")
         if not orders_available:
@@ -832,6 +863,7 @@ def _provider_payload(
             orders_status = orders_data_status
         elif _coverage_contains(orders_coverage, period):
             orders_daily = _complete_daily_orders(orders_daily, period)
+            sales_daily = _complete_daily_sales(sales_daily, period)
             orders = sum(orders_daily.values())
             orders_status = orders_data_status
         elif orders_coverage:

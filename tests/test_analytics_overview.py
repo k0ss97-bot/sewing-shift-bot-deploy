@@ -164,3 +164,44 @@ class AnalyticsOverviewTests(unittest.TestCase):
         self.assertEqual([row["region"] for row in result["geography"]["rows"]], ["Москва", "Урал"])
         self.assertEqual(result["series"]["sales"][0]["ozon_units"], "5")
         self.assertEqual(result["series"]["sales"][0]["ozon_amount"], "3250.00")
+
+    def test_wb_rate_limit_keeps_last_good_order_snapshot_as_partial(self):
+        observed_at = "2026-08-06T06:52:59Z"
+        dashboard = {
+            "ok": True,
+            "configured": False,
+            "wildberries": {
+                "ok": True,
+                "configured": True,
+                "accounts": [{"marketplace": "wildberries", "last_sync_at": observed_at}],
+                "orders_rows": [{"external_order_id": "wb-1"}],
+                "analytics": {
+                    "sales_daily": [
+                        {"date": "2026-08-05", "orders": 1, "units": 2, "amount": 1400},
+                    ],
+                    "capability_rows": [{
+                        "capability": "orders",
+                        "status": "rate_limited",
+                        "checked_at": "2026-08-06T07:00:00Z",
+                        "last_successful_snapshot_started_at": observed_at,
+                        "coverage_start_date": "2026-05-08",
+                        "coverage_end_date": "2026-08-06",
+                        "coverage_complete": True,
+                    }],
+                },
+            },
+        }
+        result = analytics_overview(
+            {"start_date": "2026-08-05", "end_date": "2026-08-06"},
+            dashboard_reader=lambda: dashboard,
+            data_quality_reader=lambda: {"ok": True, "enabled": False},
+            production_reader=lambda _start, _end: {},
+            current=datetime(2026, 8, 6, 7, 5, tzinfo=timezone.utc),
+        )
+
+        provider = next(row for row in result["providers"] if row["marketplace"] == "wildberries")
+        self.assertEqual(provider["orders"], 1)
+        self.assertEqual(provider["sales_units"], "2")
+        self.assertEqual(provider["gross_sales"], "1400.00")
+        self.assertEqual(provider["metric_status"]["orders"], "partial")
+        self.assertEqual(len(result["series"]["sales"]), 2)

@@ -7,7 +7,13 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from wildberries import WildberriesAPIError, WildberriesClient, _now, _persisted_retry_remaining
+from wildberries import (
+    WildberriesAPIError,
+    WildberriesClient,
+    _now,
+    _persisted_retry_remaining,
+    _save_capabilities,
+)
 
 
 class FakeResponse:
@@ -128,6 +134,51 @@ class WildberriesClientTests(unittest.TestCase):
 
         self.assertGreater(_persisted_retry_remaining(connection, 1, "finance"), 0)
         self.assertEqual(_persisted_retry_remaining(connection, 1, "catalog"), 0)
+
+    def test_transient_failure_preserves_last_successful_coverage(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute(
+            """CREATE TABLE marketplace_wb_capabilities (
+                   account_id INTEGER, capability TEXT, status TEXT,
+                   safe_message TEXT, http_status INTEGER,
+                   retry_after_seconds REAL, row_count INTEGER,
+                   details_json TEXT, checked_at TEXT,
+                   UNIQUE(account_id, capability)
+               )"""
+        )
+        connection.execute(
+            """INSERT INTO marketplace_wb_capabilities
+               VALUES (1,'orders','available','',200,NULL,12,?,?)""",
+            (
+                json.dumps({
+                    "snapshot_started_at": "2026-08-06T08:00:00+05:00",
+                    "coverage_start_date": "2026-05-08",
+                    "coverage_end_date": "2026-08-06",
+                    "coverage_complete": True,
+                }),
+                _now(),
+            ),
+        )
+
+        _save_capabilities(connection, 1, {
+            "orders": {
+                "status": "rate_limited",
+                "safe_message": "later",
+                "http_status": 429,
+                "retry_after_seconds": 60,
+                "row_count": 0,
+            }
+        })
+
+        status, details_json = connection.execute(
+            "SELECT status,details_json FROM marketplace_wb_capabilities"
+        ).fetchone()
+        details = json.loads(details_json)
+        self.assertEqual(status, "rate_limited")
+        self.assertEqual(details["last_successful_snapshot_started_at"], "2026-08-06T08:00:00+05:00")
+        self.assertEqual(details["coverage_start_date"], "2026-05-08")
+        self.assertEqual(details["coverage_end_date"], "2026-08-06")
+        self.assertTrue(details["coverage_complete"])
 
 
 if __name__ == "__main__":
