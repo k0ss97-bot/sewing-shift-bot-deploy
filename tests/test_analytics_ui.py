@@ -14,6 +14,11 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('Размер круга — сумма заказов', MINIAPP_HTML)
         self.assertIn('class="ac-region-bubble"', MINIAPP_HTML)
 
+    def test_analytics_workspace_is_not_named_report(self):
+        self.assertIn('data-workspace="analytics">Аналитика</button>', MINIAPP_HTML)
+        self.assertNotIn('data-workspace="analytics">Отчёт</button>', MINIAPP_HTML)
+        self.assertIn('data-workspace="analytics">Открыть аналитику ›</button>', MINIAPP_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()

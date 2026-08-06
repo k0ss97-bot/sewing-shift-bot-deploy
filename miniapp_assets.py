@@ -5391,7 +5391,7 @@ MINIAPP_HTML = """<!doctype html>
         <button class="active" type="button" data-workspace="production" aria-current="page">Управление производством</button>
         <button type="button" data-workspace="warehouse">Управление складом</button>
         <button type="button" data-workspace="marketplaces" hidden>Управление маркетплейсами</button>
-        <button type="button" data-workspace="analytics">Отчёт</button>
+        <button type="button" data-workspace="analytics">Аналитика</button>
       </nav>
       <div class="appbar-profile"><span>Должность на проекте</span><small id="roleLabel">Загрузка</small></div>
       <div class="appbar-actions">
@@ -5404,7 +5404,7 @@ MINIAPP_HTML = """<!doctype html>
       <button class="active" type="button" data-workspace="production" aria-current="page">Производство</button>
       <button type="button" data-workspace="warehouse">Склад</button>
       <button type="button" data-workspace="marketplaces" hidden>Маркетплейсы</button>
-      <button type="button" data-workspace="analytics" hidden>Отчёт</button>
+      <button type="button" data-workspace="analytics" hidden>Аналитика</button>
     </nav>
 
     <div class="body">
@@ -12671,7 +12671,7 @@ MINIAPP_HTML = """<!doctype html>
         <section class="card marketplace-chart-panel"><div class="marketplace-chart-head"><div class="marketplace-chart-summary"><span>${escapeHtml(chartMetricTitle)}</span><strong>${financeConfirmed || financePartiallyUsable ? marketplaceMoney(chartMetricTotal) : "—"}</strong><small>${escapeHtml(periodMeta.label)} · ${financeConfirmed || financePartiallyUsable ? `${escapeHtml(verifiedPeriodFinance.length)} дней с операциями${financeConfirmed ? "" : " · частично"}` : "источник или период недоступен"}</small></div><div class="marketplace-chart-switch" aria-label="Показатель графика"><button type="button" class="${chartMetric === "revenue" ? "active" : ""}" data-marketplace-chart-metric="revenue">Начислено</button><button type="button" class="${chartMetric === "net" ? "active" : ""}" data-marketplace-chart-metric="net">После удержаний</button></div></div><div class="marketplace-chart-canvas">${overviewFinanceChart}</div><div class="marketplace-chart-note">Наведите, коснитесь или выберите точку с клавиатуры, чтобы увидеть дату и сумму. Период выбирается над графиком.</div></section>
         <div class="marketplace-wide-grid"><div class="card field-card"><div class="section-title"><b>Последние заказы</b><button type="button" class="small-button secondary" data-marketplace-view="orders">Все заказы ›</button></div>${recentOrdersBlock}</div><div class="card field-card"><div class="section-title"><b>Уведомления</b><span>${(payload.sync_events || []).length}</span></div>${notificationsBlock}</div></div>
         <section class="card field-card marketplace-product-detail"><div class="section-title"><b>Детализация по товарам</b><button type="button" class="small-button secondary" data-marketplace-view="products">Все товары ›</button></div>${(!isWildberries || wbCatalogUsable) && products.length ? `<div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Товар</th><th>Маркетплейс</th><th>Артикул</th><th>В продаже</th><th>Остаток</th></tr></thead><tbody>${products.slice(0, 12).map((row) => `<tr><td><span class="marketplace-table-product">${marketplaceProductAvatar(row, true)}<span><strong>${escapeHtml(row.name || "Без названия")}</strong></span></span></td><td><span class="marketplace-source ${isWildberries ? "wildberries" : "ozon"}">${isWildberries ? "Wildberries" : "Ozon"}</span></td><td>${escapeHtml(row.offer_id || "—")}</td><td>${!isWildberries || wbStocksUsable ? (Number(row.available || 0) > 0 ? "Да" : "Нет") : "—"}</td><td>${!isWildberries || wbStocksUsable ? `${escapeHtml(row.available || 0)} шт.` : "—"}</td></tr>`).join("")}</tbody></table></div>` : itemEmpty(isWildberries && !wbCatalogUsable ? "Текущий каталог Wildberries не подтверждён." : "Товары появятся после синхронизации выбранной площадки.")}</section>
-        <section class="card field-card marketplace-sales-detail"><div class="section-title"><b>Аналитика продаж</b><button type="button" class="small-button secondary" data-workspace="analytics">Открыть общий отчёт ›</button></div>${salesChart}</section>
+        <section class="card field-card marketplace-sales-detail"><div class="section-title"><b>Аналитика продаж</b><button type="button" class="small-button secondary" data-workspace="analytics">Открыть аналитику ›</button></div>${salesChart}</section>
         <div class="marketplace-overview-grid"><div class="card field-card"><div class="section-title"><b>Поставки маркетплейсов</b><button type="button" class="small-button secondary" data-marketplace-view="supplies">Открыть ›</button></div>${suppliesBlock}</div><div class="card field-card"><div class="section-title"><b>Задания складу</b><button type="button" class="small-button secondary" data-marketplace-view="warehouse-shipments">Открыть ›</button></div>${warehouseShipmentsBlock}</div></div>`;
       const financeTableRows = isWildberries ? verifiedPeriodFinance : financeDaily;
       const financeBlock = financeTableRows.length && (financeConfirmed || financePartiallyUsable || !isWildberries) ? `<div class="card field-card"><div class="section-title"><b>Начисления ${escapeHtml(providerName)} по дням</b><span>${financeTableRows.length} дней${isWildberries && !financeConfirmed ? " · частично" : ""}</span></div><div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Дата</th><th>Положительные начисления</th><th>Итог после удержаний</th><th>Операций</th></tr></thead><tbody>${[...financeTableRows].reverse().map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${marketplaceMoney(row.revenue || 0)}</td><td>${marketplaceMoney(row.net || 0)}</td><td>${escapeHtml(row.records || 0)}</td></tr>`).join("")}</tbody></table></div></div>` : itemEmpty(financeConfirmed ? "Финансовый источник доступен; операций в выбранном диапазоне нет." : "Финансовый источник или выбранный период не подтверждён.");
@@ -14144,7 +14144,7 @@ MINIAPP_HTML = """<!doctype html>
         syncMarketplaceLocation();
       } else if (workspace === "analytics") {
         if (!canAccessMarketplaces()) {
-          showToast("Отчёт", "Аналитический центр доступен только администратору.");
+          showToast("Аналитика", "Аналитический центр доступен только администратору.");
           return;
         }
         if (state.workspace === "production" && !["profile", "passport"].includes(state.screen) && productionScreens.has(state.screen)) state.productionScreen = state.screen;
