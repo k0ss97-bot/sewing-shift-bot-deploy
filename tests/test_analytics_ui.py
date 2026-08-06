@@ -9,6 +9,7 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('overviewState.loading ? "Загрузка…" : "Обновить"', MINIAPP_HTML)
         self.assertIn('state.analyticsOverviewCache[request.key] = overview', MINIAPP_HTML)
         self.assertIn('if (!force && cached)', MINIAPP_HTML)
+        self.assertIn('payload.catalog_reconciliation || root.catalog_reconciliation', MINIAPP_HTML)
 
     def test_region_page_contains_interactive_ozon_map(self):
         self.assertIn('Карта регионов:', MINIAPP_HTML)

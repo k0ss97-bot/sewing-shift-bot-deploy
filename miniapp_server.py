@@ -699,7 +699,7 @@ def marketplace_phase1a_http_status(result: dict) -> int:
 def get_analytics_overview_for_admin(telegram_id: int, payload: dict | None = None):
     if not is_admin(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
-    return build_analytics_overview(
+    result = build_analytics_overview(
         payload,
         dashboard_reader=lambda: get_marketplace_dashboard_for_admin(
             telegram_id, include_analytics_detail=True
@@ -707,6 +707,13 @@ def get_analytics_overview_for_admin(telegram_id: int, payload: dict | None = No
         data_quality_reader=phase1a_data_quality,
         production_reader=get_production_control_payload,
     )
+    if result.get("ok"):
+        # The same reconciliation is already delivered by the dashboard and
+        # does not change with the selected period. Avoid sending ~1 MB again
+        # on every period request.
+        result = dict(result)
+        result.pop("catalog_reconciliation", None)
+    return result
 
 
 def get_marketplace_supplies_for_admin(telegram_id: int, payload: dict | None = None):

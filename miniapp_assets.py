@@ -13616,6 +13616,7 @@ MINIAPP_HTML = """<!doctype html>
     function renderAnalyticsOverviewFromApi(hubHead) {
       const overviewState = state.analyticsOverview;
       const payload = overviewState.payload && typeof overviewState.payload === "object" ? overviewState.payload : {};
+      const root = state.marketplaceData && state.marketplaceData.payload && typeof state.marketplaceData.payload === "object" ? state.marketplaceData.payload : {};
       const periodMeta = marketplacePeriodMeta(state.marketplacePeriod);
       const periodLabel = payload.period && payload.period.label ? payload.period.label : periodMeta.label;
       const rows = Array.isArray(payload.metrics) ? payload.metrics : [];
@@ -13718,7 +13719,8 @@ MINIAPP_HTML = """<!doctype html>
         : riskCoverageComplete
           ? `<div class="marketplace-chart-empty"><b>Критичных рисков не найдено</b><span>Все источники проверены; подтверждённых отклонений нет.</span></div>`
           : `<div class="marketplace-chart-empty"><b>Проверка рисков неполная</b><span>Часть источников недоступна или устарела, поэтому ноль рисков не подтверждён.</span></div>`;
-      const reconciliation = payload.catalog_reconciliation && typeof payload.catalog_reconciliation === "object" ? payload.catalog_reconciliation : {};
+      const reconciliationSource = payload.catalog_reconciliation || root.catalog_reconciliation;
+      const reconciliation = reconciliationSource && typeof reconciliationSource === "object" ? reconciliationSource : {};
       const matrixSourceRows = Array.isArray(reconciliation.marketplace_items) ? reconciliation.marketplace_items : [];
       const matrixRows = [...matrixSourceRows].sort((left, right) => {
         const leftPriority = left.route_configured && Number(left.warehouse_available_quantity || 0) <= 0 ? 0 : left.route_configured ? 1 : 2;
@@ -13799,7 +13801,8 @@ MINIAPP_HTML = """<!doctype html>
       const production = payload.production && typeof payload.production === "object" ? payload.production : {};
       const suppliesEnvelope = payload.supplies && typeof payload.supplies === "object" ? payload.supplies : {};
       const supplyRows = Array.isArray(suppliesEnvelope.shipments) ? suppliesEnvelope.shipments : Array.isArray(suppliesEnvelope.rows) ? suppliesEnvelope.rows : [];
-      const reconciliation = payload.catalog_reconciliation && typeof payload.catalog_reconciliation === "object" ? payload.catalog_reconciliation : {};
+      const reconciliationSource = payload.catalog_reconciliation || root.catalog_reconciliation;
+      const reconciliation = reconciliationSource && typeof reconciliationSource === "object" ? reconciliationSource : {};
       const reconciliationRows = Array.isArray(reconciliation.marketplace_items) ? reconciliation.marketplace_items : [];
       const reconciliationSummary = reconciliation.summary && typeof reconciliation.summary === "object" ? reconciliation.summary : {};
       const risks = Array.isArray(payload.risks) ? payload.risks : [];
