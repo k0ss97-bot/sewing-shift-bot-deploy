@@ -507,10 +507,32 @@ def _cached_marketplace_dashboard_payload() -> dict:
     return cached if cached is not None else _build_marketplace_dashboard_payload()
 
 
-def get_marketplace_dashboard_for_admin(telegram_id: int):
+def _marketplace_dashboard_client_payload(snapshot):
+    """Drop server-only daily cubes from the general dashboard response."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    result = dict(snapshot)
+    for provider_key in (None, "wildberries"):
+        provider = result if provider_key is None else result.get(provider_key)
+        if not isinstance(provider, dict):
+            continue
+        provider_copy = dict(provider)
+        analytics = dict(provider_copy.get("analytics") or {})
+        analytics.pop("sales_by_warehouse_daily", None)
+        analytics.pop("sales_by_product_daily", None)
+        provider_copy["analytics"] = analytics
+        if provider_key is None:
+            result = provider_copy
+        else:
+            result[provider_key] = provider_copy
+    return result
+
+
+def get_marketplace_dashboard_for_admin(telegram_id: int, *, include_analytics_detail=False):
     if not is_admin(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
-    return _cached_marketplace_dashboard_payload()
+    snapshot = _cached_marketplace_dashboard_payload()
+    return snapshot if include_analytics_detail else _marketplace_dashboard_client_payload(snapshot)
 
 
 def get_warehouse_catalog_for_access(telegram_id: int):
@@ -648,7 +670,9 @@ def get_analytics_overview_for_admin(telegram_id: int, payload: dict | None = No
         return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
     return build_analytics_overview(
         payload,
-        dashboard_reader=lambda: get_marketplace_dashboard_for_admin(telegram_id),
+        dashboard_reader=lambda: get_marketplace_dashboard_for_admin(
+            telegram_id, include_analytics_detail=True
+        ),
         data_quality_reader=phase1a_data_quality,
         production_reader=get_production_control_payload,
     )

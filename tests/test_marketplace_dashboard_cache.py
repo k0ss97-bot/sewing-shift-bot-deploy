@@ -45,6 +45,21 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
         self.assertEqual(result[0]["source"], "postgres")
         self.assertEqual(result[1]["marketplace"], "wildberries")
 
+    def test_general_dashboard_does_not_send_server_only_sales_cubes(self):
+        snapshot = {
+            "ok": True,
+            "analytics": {"sales_daily": [1], "sales_by_product_daily": [2]},
+            "wildberries": {"analytics": {"sales_daily": [3], "sales_by_warehouse_daily": [4]}},
+        }
+
+        result = miniapp_server._marketplace_dashboard_client_payload(snapshot)
+
+        self.assertEqual(result["analytics"]["sales_daily"], [1])
+        self.assertNotIn("sales_by_product_daily", result["analytics"])
+        self.assertEqual(result["wildberries"]["analytics"]["sales_daily"], [3])
+        self.assertNotIn("sales_by_warehouse_daily", result["wildberries"]["analytics"])
+        self.assertIn("sales_by_product_daily", snapshot["analytics"])
+
 
 if __name__ == "__main__":
     unittest.main()
