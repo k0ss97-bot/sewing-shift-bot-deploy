@@ -14,8 +14,14 @@ class AnalyticsUITests(unittest.TestCase):
     def test_region_page_contains_interactive_ozon_map(self):
         self.assertIn('Карта регионов:', MINIAPP_HTML)
         self.assertIn('Карта продаж по регионам', MINIAPP_HTML)
-        self.assertIn('Размер круга — сумма заказов', MINIAPP_HTML)
+        self.assertIn('Размер круга — ${mapMetric', MINIAPP_HTML)
         self.assertIn('class="ac-region-bubble"', MINIAPP_HTML)
+        self.assertIn('id="analyticsMapProduct"', MINIAPP_HTML)
+        self.assertIn('data-ac-map-metric="units"', MINIAPP_HTML)
+        self.assertIn('data-ac-map-metric="amount"', MINIAPP_HTML)
+        self.assertIn('data-ac-map-zoom="in"', MINIAPP_HTML)
+        self.assertIn('class="ac-region-leader"', MINIAPP_HTML)
+        self.assertIn('class="ac-region-land-detail"', MINIAPP_HTML)
 
     def test_all_analytics_sections_have_business_content(self):
         for label in (

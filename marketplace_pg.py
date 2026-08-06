@@ -1816,6 +1816,32 @@ class MarketplacePGRepository:
                 sales_by_region_daily = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
                 cur.execute(
                     """SELECT DATE(COALESCE(o.shipment_date,o.received_at)) AS date,
+                              COALESCE(NULLIF(o.payload_json->'financial_data'->>'cluster_to',''),
+                                       'Регион не указан') AS region,
+                              COALESCE(NULLIF(i.name,''),NULLIF(i.offer_id,''),NULLIF(i.sku,''),'Товар не указан') AS product,
+                              i.offer_id,i.sku,
+                              COUNT(DISTINCT o.external_order_id) AS orders,
+                              COALESCE(SUM(i.quantity),0) AS units,
+                              COALESCE(SUM(i.quantity*i.price) FILTER (WHERE i.price IS NOT NULL),0) AS amount,
+                              COUNT(*) FILTER (WHERE i.price IS NULL) AS unpriced_lines
+                         FROM marketplace.orders_current o
+                         JOIN marketplace.order_items_current i USING(account_id,external_order_id)
+                        WHERE o.account_id=%s
+                          AND LOWER(COALESCE(o.status,'')) NOT IN ('cancelled','canceled')
+                          AND COALESCE(o.shipment_date,o.received_at) >= CURRENT_DATE - INTERVAL '366 days'
+                        GROUP BY DATE(COALESCE(o.shipment_date,o.received_at)),
+                                 COALESCE(NULLIF(o.payload_json->'financial_data'->>'cluster_to',''),
+                                          'Регион не указан'),
+                                 COALESCE(NULLIF(i.name,''),NULLIF(i.offer_id,''),NULLIF(i.sku,''),'Товар не указан'),
+                                 i.offer_id,i.sku
+                        ORDER BY date,region,product""",
+                    (account_id,),
+                )
+                sales_by_region_product_daily = [
+                    _json_value(_row_dict(row, cur)) for row in cur.fetchall()
+                ]
+                cur.execute(
+                    """SELECT DATE(COALESCE(o.shipment_date,o.received_at)) AS date,
                               COALESCE(NULLIF(o.payload_json->'analytics_data'->>'warehouse_name',''),
                                        NULLIF(o.payload_json->'delivery_method'->>'warehouse',''),
                                        NULLIF(o.payload_json->>'warehouse_name',''),
@@ -2067,6 +2093,7 @@ class MarketplacePGRepository:
                     "finance_daily": finance_daily,
                     "sales_daily": sales_daily,
                     "sales_by_region_daily": sales_by_region_daily,
+                    "sales_by_region_product_daily": sales_by_region_product_daily,
                     "sales_by_warehouse_daily": sales_by_warehouse_daily,
                     "sales_by_product_daily": sales_by_product_daily,
                     "returns_rows": returns_rows,

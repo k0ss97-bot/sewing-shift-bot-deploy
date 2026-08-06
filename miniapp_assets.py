@@ -4552,17 +4552,29 @@ MINIAPP_HTML = """<!doctype html>
     .ac-waterfall-bar { min-height:18px; display:grid; align-items:start; padding-top:5px; border-radius:8px 8px 3px 3px; color:#fff; background:#2563eb; font-size:8px; font-weight:850; }
     .ac-waterfall-item.negative .ac-waterfall-bar { background:#ee6478; }.ac-waterfall-item.total .ac-waterfall-bar { background:#18a979; }
     .ac-waterfall-item span { color:#697589; font-size:8px; line-height:1.3; }
-    .ac-map { min-height:500px; position:relative; overflow:hidden; border:1px solid #e5eaf2; border-radius:14px; background:linear-gradient(180deg,#f8fbff,#edf3fb); }
-    .ac-region-map { display:block; width:100%; min-height:430px; }
-    .ac-region-land { fill:url(#acRegionLand); stroke:#bdcbe0; stroke-width:2.5; }
+    .ac-map-toolbar { display:grid; grid-template-columns:minmax(180px,230px) minmax(260px,1fr) auto auto; gap:10px; align-items:end; margin-bottom:12px; padding:12px; border:1px solid var(--ac-border); border-radius:13px; background:#fff; }
+    .ac-map-toolbar label { display:grid; gap:5px; color:#8792a4; font-size:8px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
+    .ac-map-toolbar select { width:100%; min-height:38px; border:1px solid var(--ac-border); border-radius:9px; background:#fafbfd; color:var(--ac-text); padding:0 10px; font-size:11px; }
+    .ac-map-segment,.ac-map-zoom { display:flex; align-items:center; min-height:38px; padding:3px; border:1px solid var(--ac-border); border-radius:10px; background:#f5f7fb; }
+    .ac-map-segment button,.ac-map-zoom button { min-height:30px; padding:0 11px; border:0; border-radius:7px; color:#64748b; background:transparent; font-size:9px; font-weight:850; cursor:pointer; }
+    .ac-map-segment button.active { color:#fff; background:#2563eb; box-shadow:0 2px 7px rgba(37,99,235,.22); }
+    .ac-map-zoom output { min-width:46px; color:#475569; font-size:9px; font-weight:850; text-align:center; }
+    .ac-map { min-height:680px; position:relative; overflow:hidden; border:1px solid #dce5f2; border-radius:16px; background:radial-gradient(circle at 52% 18%,#fff 0,#f7faff 32%,#edf4fc 100%); }
+    .ac-map-stage { height:630px; overflow:auto; scrollbar-color:#bfcee3 transparent; scrollbar-width:thin; }
+    .ac-region-map { display:block; width:var(--ac-map-width,100%); min-width:1180px; height:auto; min-height:620px; transform-origin:top left; }
+    .ac-region-land { fill:url(#acRegionLand); stroke:#aebfd7; stroke-width:3.2; stroke-linejoin:round; }
+    .ac-region-land-detail { fill:none; stroke:#c8d5e7; stroke-width:1.15; stroke-linecap:round; stroke-dasharray:4 5; opacity:.9; }
+    .ac-region-water { fill:#eaf3fc; stroke:#c1d2e6; stroke-width:1.4; }
     .ac-region-grid { stroke:#dce5f2; stroke-width:1; stroke-dasharray:4 8; }
-    .ac-region-bubble { fill:#2563eb; fill-opacity:.72; stroke:#fff; stroke-width:2; transition:r .18s ease,fill-opacity .18s ease; }
+    .ac-region-bubble { fill:#2563eb; fill-opacity:.76; stroke:#fff; stroke-width:2.6; filter:drop-shadow(0 3px 4px rgba(37,99,235,.22)); transition:r .18s ease,fill-opacity .18s ease; }
     .ac-region-point:hover .ac-region-bubble,.ac-region-point:focus .ac-region-bubble { fill-opacity:.95; }
-    .ac-region-label { fill:#24334c; font-size:11px; font-weight:800; paint-order:stroke; stroke:#fff; stroke-width:4px; stroke-linejoin:round; pointer-events:none; }
-    .ac-region-value { fill:#60708a; font-size:9px; font-weight:750; paint-order:stroke; stroke:#fff; stroke-width:3px; pointer-events:none; }
-    .ac-map-legend { position:absolute; left:14px; top:14px; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid #dce5f2; border-radius:9px; color:#60708a; background:rgba(255,255,255,.92); font-size:9px; font-weight:750; }
+    .ac-region-leader { fill:none; stroke:#9aabc2; stroke-width:1.2; opacity:.9; }
+    .ac-region-label-dot { fill:#2563eb; }
+    .ac-region-label { fill:#1f2f49; font-size:11px; font-weight:850; pointer-events:none; }
+    .ac-region-value { fill:#65758c; font-size:8.8px; font-weight:750; pointer-events:none; }
+    .ac-map-legend { position:absolute; left:14px; top:14px; z-index:2; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid #dce5f2; border-radius:9px; color:#60708a; background:rgba(255,255,255,.94); font-size:9px; font-weight:750; box-shadow:0 4px 14px rgba(60,79,110,.08); }
     .ac-map-legend i { width:13px; height:13px; border:2px solid #fff; border-radius:50%; background:rgba(37,99,235,.72); box-shadow:0 0 0 1px #b9c9df; }
-    .ac-map-note { position:absolute; left:18px; right:18px; bottom:16px; padding:10px; border:1px solid #dce3ef; border-radius:9px; color:#728096; background:rgba(255,255,255,.88); font-size:9px; }
+    .ac-map-note { position:absolute; left:18px; right:18px; bottom:12px; z-index:2; padding:10px; border:1px solid #dce3ef; border-radius:9px; color:#728096; background:rgba(255,255,255,.93); font-size:9px; }
     .ac-recommendations { display:grid; gap:8px; }.ac-recommendation { padding:11px; border:1px solid #e7ebf2; border-radius:11px; background:#fbfcfe; }.ac-recommendation b,.ac-recommendation span { display:block; }.ac-recommendation b { font-size:10px; }.ac-recommendation span { margin-top:4px; color:#7d889a; font-size:9px; line-height:1.45; }
     .ac-skeleton { position:relative; min-height:118px; overflow:hidden; background:#eef2f7; }
     .ac-skeleton::after { content:""; position:absolute; inset:0; transform:translateX(-100%); background:linear-gradient(90deg,transparent,rgba(255,255,255,.85),transparent); animation:analytics-shimmer 1.15s infinite; }
@@ -4580,7 +4592,7 @@ MINIAPP_HTML = """<!doctype html>
     .ac-map>.ac-empty{position:absolute;left:18px;right:18px;bottom:16px;min-height:110px;background:rgba(255,255,255,.92)}
     @media (max-width:1380px) { .ac-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}.ac-span-8,.ac-span-7,.ac-panel.span-8{grid-column:span 12}.ac-span-5,.ac-span-4,.ac-panel.span-4{grid-column:span 6} }
     @media (max-width:899px) {
-      body.web-mode.analytics-mode .body{padding:12px 14px 90px!important}.ac-shell{display:block;min-height:0;border-radius:14px}.ac-sidebar{padding:10px}.ac-brand,.ac-sidebar-status{display:none}.ac-nav{display:flex;overflow-x:auto;margin:0;scrollbar-width:none}.ac-nav button{flex:0 0 auto;width:auto;grid-template-columns:18px auto;padding:0 12px}.ac-nav button.active::before{left:8px;right:8px;top:auto;bottom:-1px;width:auto;height:3px;border-radius:3px}.ac-topbar{flex-wrap:wrap;padding:10px}.ac-search{order:2;flex-basis:100%;max-width:none}.ac-market-switch{margin-left:0}.ac-content{padding:14px}.ac-heading{align-items:flex-start}.ac-filterbar{grid-template-columns:1fr}.ac-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ac-span-6,.ac-span-5,.ac-span-4,.ac-panel.span-8,.ac-panel.span-6,.ac-panel.span-4{grid-column:span 12}.ac-map{min-height:340px}
+      body.web-mode.analytics-mode .body{padding:12px 14px 90px!important}.ac-shell{display:block;min-height:0;border-radius:14px}.ac-sidebar{padding:10px}.ac-brand,.ac-sidebar-status{display:none}.ac-nav{display:flex;overflow-x:auto;margin:0;scrollbar-width:none}.ac-nav button{flex:0 0 auto;width:auto;grid-template-columns:18px auto;padding:0 12px}.ac-nav button.active::before{left:8px;right:8px;top:auto;bottom:-1px;width:auto;height:3px;border-radius:3px}.ac-topbar{flex-wrap:wrap;padding:10px}.ac-search{order:2;flex-basis:100%;max-width:none}.ac-market-switch{margin-left:0}.ac-content{padding:14px}.ac-heading{align-items:flex-start}.ac-filterbar{grid-template-columns:1fr}.ac-map-toolbar{grid-template-columns:1fr 1fr}.ac-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ac-span-6,.ac-span-5,.ac-span-4,.ac-panel.span-8,.ac-panel.span-6,.ac-panel.span-4{grid-column:span 12}.ac-map{min-height:560px}.ac-map-stage{height:515px}
     }
     @media (max-width:520px) { .ac-kpis{grid-template-columns:1fr 1fr;gap:8px}.ac-kpi{min-height:116px;padding:12px}.ac-kpi-value{font-size:21px}.ac-heading{display:grid}.ac-business-state{width:max-content}.ac-sync{width:100%}.ac-topbar{display:grid;grid-template-columns:1fr}.ac-market-switch{width:100%}.ac-market-switch button{flex:1}.ac-search{order:initial}.ac-content{padding:12px}.ac-provider-row{grid-template-columns:86px minmax(0,1fr)}.ac-provider-row strong{grid-column:2}.ac-waterfall{overflow-x:auto}.ac-waterfall-item{flex:0 0 72px}}
 
@@ -5730,6 +5742,9 @@ MINIAPP_HTML = """<!doctype html>
       "analyticsReturnView",
       "analyticsHubTab",
       "analyticsSearch",
+      "analyticsMapProduct",
+      "analyticsMapMetric",
+      "analyticsMapZoom",
       "employeeHomeView",
       "userStartDate",
       "userEndDate",
@@ -5766,6 +5781,9 @@ MINIAPP_HTML = """<!doctype html>
       marketplaceLocationInitialized: false,
       analyticsHubTab: "general",
       analyticsSearch: "",
+      analyticsMapProduct: "all",
+      analyticsMapMetric: "units",
+      analyticsMapZoom: 1,
       screen: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "shift",
       productionScreen: "shift",
       selectedOperation: 0,
@@ -7407,7 +7425,10 @@ MINIAPP_HTML = """<!doctype html>
     function analyticsOverviewRequest() {
       const period = marketplacePeriodMeta(state.marketplacePeriod);
       const payload = {start_date: period.startKey, end_date: period.endKey};
-      return {payload, key: `${payload.start_date}|${payload.end_date}`};
+      if (state.analyticsMapProduct && state.analyticsMapProduct !== "all") {
+        payload.product_key = state.analyticsMapProduct;
+      }
+      return {payload, key: `${payload.start_date}|${payload.end_date}|${payload.product_key || "all"}`};
     }
 
     async function refreshAnalyticsOverview({silent = false, force = false} = {}) {
@@ -13968,37 +13989,61 @@ MINIAPP_HTML = """<!doctype html>
 
       function renderMapPage() {
         const mapProviderLabel = marketplace === "ozon" ? "Ozon" : marketplace === "wildberries" ? "Wildberries" : "маркетплейсов";
+        const mapMetric = state.analyticsMapMetric === "amount" ? "amount" : "units";
+        const mapZoom = [1, 1.25, 1.5].includes(Number(state.analyticsMapZoom)) ? Number(state.analyticsMapZoom) : 1;
         const totalRegionUnits = geographyRows.reduce((sum, row) => sum + Number(row.units || 0), 0);
         const totalRegionAmount = geographyRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
         const totalRegionOrders = geographyRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
-        const rows = geographyRows.map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.region || "Регион не указан")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${totalRegionAmount > 0 ? `${(Number(row.amount || 0) * 100 / totalRegionAmount).toLocaleString("ru-RU", {maximumFractionDigits: 1})}%` : "—"}</td></tr>`);
+        const mapTotal = mapMetric === "amount" ? totalRegionAmount : totalRegionUnits;
+        const rows = geographyRows.map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.region || "Регион не указан")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${mapTotal > 0 ? `${(Number(row[mapMetric] || 0) * 100 / mapTotal).toLocaleString("ru-RU", {maximumFractionDigits: 1})}%` : "—"}</td></tr>`);
         const providerRows = Array.isArray(geography.providers) ? geography.providers.filter(providerFilter).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</b><span>${escapeHtml(row.message || "")}</span></div><strong>${row.regions !== null && row.regions !== undefined ? `${escapeHtml(fmt(row.regions))} рег.` : "—"}</strong></div>`).join("") : "";
+        const productMap = new Map();
+        (Array.isArray(breakdowns.sales_by_product) ? breakdowns.sales_by_product : []).filter((row) => row.marketplace === "ozon").forEach((row) => {
+          const key = String(row.offer_id || row.sku || "").trim();
+          if (key && !productMap.has(key)) productMap.set(key, `${row.product || "Товар"} · ${key}`);
+        });
+        const productOptions = [...productMap.entries()].sort((left, right) => left[1].localeCompare(right[1], "ru"));
+        const selectedProduct = state.analyticsMapProduct || "all";
+        const selectedProductLabel = selectedProduct === "all" ? "Вся номенклатура" : productMap.get(selectedProduct) || selectedProduct;
+        const periodOptionsMap = [["7d","7 дней"],["30d","30 дней"],["month","Месяц"],["previous-month","Прошлый месяц"]];
+        const mapToolbar = `<div class="ac-map-toolbar"><label><span>Срок данных</span><select id="analyticsHubPeriod">${periodOptionsMap.map(([id,label]) => `<option value="${id}" ${state.marketplacePeriod === id ? "selected" : ""}>${label}</option>`).join("")}</select></label><label><span>Номенклатура</span><select id="analyticsMapProduct" ${marketplace === "wildberries" ? "disabled" : ""}><option value="all">Вся номенклатура</option>${productOptions.map(([key,label]) => `<option value="${escapeHtml(key)}" ${selectedProduct === key ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><div><label><span>Показатель</span></label><div class="ac-map-segment" role="group" aria-label="Показатель карты"><button type="button" data-ac-map-metric="units" class="${mapMetric === "units" ? "active" : ""}">Штуки</button><button type="button" data-ac-map-metric="amount" class="${mapMetric === "amount" ? "active" : ""}">Рубли</button></div></div><div><label><span>Масштаб</span></label><div class="ac-map-zoom"><button type="button" data-ac-map-zoom="out" aria-label="Уменьшить">−</button><output>${Math.round(mapZoom * 100)}%</output><button type="button" data-ac-map-zoom="in" aria-label="Увеличить">+</button></div></div></div>`;
         const coordinates = {
-          "калининград":[95,284],"санкт-петербург":[190,165],"москва":[235,238],"тверь":[220,211],"ярославль":[252,202],
-          "воронеж":[252,282],"казань":[323,238],"уфа":[368,250],"самара":[342,282],"саратов":[316,306],
-          "волгоград":[296,335],"ростов":[254,345],"краснодар":[228,370],"невинномысск":[262,377],"махачкала":[312,392],
-          "екатеринбург":[420,245],"пермь":[390,210],"тюмень":[458,258],"омск":[505,288],"новосибирск":[565,292],
-          "красноярск":[650,270],"иркутск":[735,305],"дальний восток":[865,300],"хабаровск":[875,275],"владивосток":[895,360],
-          "архангельск":[310,140],"мурманск":[255,105],"сочи":[220,382]
+          "калининград":[236,337],"санкт-петербург":[342,225],"москва":[396,329],"тверь":[382,293],"ярославль":[425,278],
+          "воронеж":[403,382],"казань":[508,326],"уфа":[568,342],"самара":[535,377],"саратов":[494,406],
+          "волгоград":[467,445],"ростов":[400,462],"краснодар":[363,497],"невинномысск":[404,516],"махачкала":[475,535],
+          "екатеринбург":[632,328],"пермь":[590,276],"тюмень":[684,341],"омск":[743,373],"новосибирск":[807,385],
+          "красноярск":[884,345],"иркутск":[947,402],"дальний восток":[1025,398],"хабаровск":[1012,358],"владивосток":[1033,487],
+          "архангельск":[494,198],"мурманск":[411,151],"сочи":[356,519],"оренбург":[566,410],"астана":[700,425],"алматы":[755,490]
         };
         const coordinateFor = (name, index) => {
           const normalized = String(name || "").toLowerCase();
           const match = Object.entries(coordinates).find(([key]) => normalized.includes(key));
-          return match ? match[1] : [180 + (index % 8) * 88, 205 + Math.floor(index / 8) * 55];
+          return match ? match[1] : [350 + (index % 8) * 82, 275 + Math.floor(index / 8) * 58];
         };
-        const ranked = [...geographyRows].sort((left, right) => Number(right.amount || 0) - Number(left.amount || 0));
-        const maximumAmount = Math.max(1, ...ranked.map((row) => Number(row.amount || 0)));
-        const points = ranked.map((row, index) => {
+        const ranked = [...geographyRows].sort((left, right) => Number(right[mapMetric] || 0) - Number(left[mapMetric] || 0));
+        const maximumValue = Math.max(1, ...ranked.map((row) => Number(row[mapMetric] || 0)));
+        const positioned = ranked.map((row, index) => {
           const [x,y] = coordinateFor(row.region, index);
-          const radius = 6 + 18 * Math.sqrt(Math.max(0, Number(row.amount || 0)) / maximumAmount);
-          const showLabel = index < 10;
-          const labelAnchor = x > 780 ? "end" : "start";
-          const labelX = x > 780 ? x - radius - 5 : x + radius + 5;
+          return {row,index,x,y,side:x < 650 ? "left" : "right"};
+        });
+        ["left","right"].forEach((side) => {
+          const lane = positioned.filter((item) => item.side === side).sort((left,right) => left.y - right.y);
+          const start = 92, end = 565, step = lane.length > 1 ? Math.min(40, (end - start) / (lane.length - 1)) : 0;
+          const offset = lane.length > 1 ? (end - start - step * (lane.length - 1)) / 2 : (end - start) / 2;
+          lane.forEach((item,index) => { item.labelY = start + offset + index * step; });
+        });
+        const points = positioned.map(({row,x,y,side,labelY}) => {
+          const radius = 6 + 20 * Math.sqrt(Math.max(0, Number(row[mapMetric] || 0)) / maximumValue);
+          const labelX = side === "left" ? 25 : 1090;
+          const lineEndX = side === "left" ? 210 : 1070;
+          const elbowX = side === "left" ? 222 : 1058;
           const title = `${row.region || "Регион не указан"}: ${fmt(row.units)} шт., ${money(row.amount)}`;
-          return `<g class="ac-region-point" tabindex="0" role="img" aria-label="${escapeHtml(title)}"><circle class="ac-region-bubble" cx="${x}" cy="${y}" r="${radius.toFixed(1)}"><title>${escapeHtml(title)}</title></circle>${showLabel ? `<text class="ac-region-label" x="${labelX}" y="${y-2}" text-anchor="${labelAnchor}">${escapeHtml(row.region || "Регион")}</text><text class="ac-region-value" x="${labelX}" y="${y+11}" text-anchor="${labelAnchor}">${escapeHtml(fmt(row.units))} шт. · ${escapeHtml(money(row.amount))}</text>` : ""}</g>`;
+          const metricText = mapMetric === "amount" ? `${money(row.amount)} · ${fmt(row.units)} шт.` : `${fmt(row.units)} шт. · ${money(row.amount)}`;
+          return `<g class="ac-region-point" tabindex="0" role="img" aria-label="${escapeHtml(title)}"><path class="ac-region-leader" d="M ${x} ${y} L ${elbowX} ${labelY} L ${lineEndX} ${labelY}"/><circle class="ac-region-bubble" cx="${x}" cy="${y}" r="${radius.toFixed(1)}"><title>${escapeHtml(title)}</title></circle><circle class="ac-region-label-dot" cx="${lineEndX}" cy="${labelY}" r="2.3"/><text class="ac-region-label" x="${labelX}" y="${labelY-3}">${escapeHtml(row.region || "Регион")}</text><text class="ac-region-value" x="${labelX}" y="${labelY+11}">${escapeHtml(metricText)}</text></g>`;
         }).join("");
-        const map = geographyRows.length ? `<div class="ac-map"><svg class="ac-region-map" viewBox="0 0 1000 460" role="img" aria-label="Карта продаж по регионам ${escapeHtml(mapProviderLabel)}"><defs><linearGradient id="acRegionLand" x1="0" x2="1"><stop offset="0" stop-color="#eef3ff"/><stop offset="1" stop-color="#f4edff"/></linearGradient></defs>${[170,250,330].map((y) => `<line class="ac-region-grid" x1="55" y1="${y}" x2="950" y2="${y}"/>`).join("")}<path class="ac-region-land" d="M80 286 L125 242 L155 205 L205 190 L235 132 L295 112 L350 146 L425 116 L500 151 L575 125 L642 156 L715 140 L780 176 L850 160 L932 220 L900 260 L945 302 L900 363 L826 345 L780 315 L720 350 L652 330 L600 365 L530 340 L470 310 L410 332 L350 310 L300 350 L250 322 L205 350 L170 312 L120 306 Z"/>${points}</svg><div class="ac-map-legend"><i></i><span>Размер круга — сумма заказов</span></div><div class="ac-map-note">Карта использует только подтверждённую географию назначения. Наведите на круг, чтобы увидеть продажи в штуках и рублях.</div></div>` : empty("Карта пока пустая", marketplace === "wildberries" ? "Wildberries не передал региональный разрез в сохранённом snapshot." : "Региональные данные выбранной площадки ещё загружаются.");
-        return `<div class="ac-kpis">${kpi("Регионы", loadingWithoutPayload ? "…" : fmt(geographyRows.length), "Кластеры назначения")}${kpi("Заказы", loadingWithoutPayload ? "…" : fmt(totalRegionOrders), "С региональным разрезом")}${kpi("Продано", loadingWithoutPayload ? "…" : fmt(totalRegionUnits), "Штук")}${kpi("Сумма заказов", loadingWithoutPayload ? "…" : money(totalRegionAmount), "Рубли")}</div><div class="ac-grid">${panel(`Карта регионов: ${mapProviderLabel}`, `${geographyRows.length} регионов`, map, "span-12")}${panel("Продажи по регионам", `${geographyRows.length} регионов`, table(["Площадка","Регион","Заказы","Штук","Сумма","Доля"], rows, marketplace === "wildberries" ? "Wildberries не передал региональный разрез в текущем snapshot." : "Региональный разрез пока не получен."), "span-8")}${panel("Доступность источников", "Ozon / Wildberries", providerRows || empty("Нет данных", "Региональный источник пока не подключён."), "span-4")}</div>`;
+        const detailPaths = ["M310 255 C380 245 450 250 525 286 S665 302 735 330","M385 365 C470 345 555 350 632 382 S770 420 865 404","M560 220 C610 260 640 310 660 365","M760 250 C800 300 825 350 842 405","M900 250 C930 300 950 345 965 390"];
+        const map = geographyRows.length ? `<div class="ac-map"><div class="ac-map-stage"><svg class="ac-region-map" style="--ac-map-width:${mapZoom * 100}%" viewBox="0 0 1280 640" role="img" aria-label="Карта продаж по регионам ${escapeHtml(mapProviderLabel)}"><defs><linearGradient id="acRegionLand" x1="0" x2="1"><stop offset="0" stop-color="#edf4ff"/><stop offset=".55" stop-color="#eef1ff"/><stop offset="1" stop-color="#f5edff"/></linearGradient></defs>${[160,260,360,460].map((y) => `<line class="ac-region-grid" x1="210" y1="${y}" x2="1070" y2="${y}"/>`).join("")}<path class="ac-region-land" d="M220 338 L242 312 L258 278 L286 258 L300 225 L335 210 L358 176 L402 158 L442 177 L478 147 L520 172 L563 142 L606 166 L652 145 L700 170 L744 151 L786 178 L835 164 L876 190 L918 181 L952 210 L989 203 L1014 235 L1042 252 L1025 280 L1054 306 L1038 338 L1062 372 L1036 405 L1054 438 L1023 475 L984 461 L950 478 L914 455 L878 469 L840 446 L804 468 L765 445 L731 467 L690 448 L650 472 L613 452 L575 469 L540 441 L498 459 L462 438 L425 459 L393 437 L359 451 L330 422 L298 413 L280 383 L246 371 Z"/><path class="ac-region-water" d="M226 329 l20 -11 12 14 -13 17 -18 -6 z"/><path class="ac-region-water" d="M1048 404 c17 9 20 30 8 47 -8 -13 -15 -28 -8 -47 z"/><path class="ac-region-water" d="M1057 470 l8 9 -7 11 -8 -8 z M1065 497 l7 8 -6 10 -7 -8 z M1070 522 l6 7 -5 9 -6 -7 z"/>${detailPaths.map((path) => `<path class="ac-region-land-detail" d="${path}"/>`).join("")}${points}</svg></div><div class="ac-map-legend"><i></i><span>Размер круга — ${mapMetric === "amount" ? "продажи в рублях" : "продажи в штуках"}</span></div><div class="ac-map-note">${escapeHtml(selectedProductLabel)} · ${escapeHtml(period)}. Подписи вынесены в отдельные колонки и соединены с точками линиями — значения больше не перекрывают друг друга.</div></div>` : empty("Карта пока пустая", marketplace === "wildberries" ? "Wildberries не передал региональный разрез в сохранённом snapshot." : selectedProduct === "all" ? "Региональные данные выбранной площадки ещё загружаются." : "По выбранной номенклатуре за этот срок продаж по регионам нет.");
+        return `${mapToolbar}<div class="ac-kpis">${kpi("Регионы", loadingWithoutPayload ? "…" : fmt(geographyRows.length), "Кластеры назначения")}${kpi("Заказы", loadingWithoutPayload ? "…" : fmt(totalRegionOrders), "С региональным разрезом")}${kpi("Продано", loadingWithoutPayload ? "…" : fmt(totalRegionUnits), "Штук")}${kpi("Сумма заказов", loadingWithoutPayload ? "…" : money(totalRegionAmount), "Рубли")}</div><div class="ac-grid">${panel(`Карта регионов: ${mapProviderLabel}`, `${geographyRows.length} регионов · ${selectedProductLabel}`, map, "span-12")}${panel("Продажи по регионам", `${geographyRows.length} регионов`, table(["Площадка","Регион","Заказы","Штук","Сумма","Доля"], rows, marketplace === "wildberries" ? "Wildberries не передал региональный разрез в текущем snapshot." : "Региональный разрез пока не получен."), "span-8")}${panel("Доступность источников", "Ozon / Wildberries", providerRows || empty("Нет данных", "Региональный источник пока не подключён."), "span-4")}</div>`;
       }
 
       function renderQualityPage() {
@@ -15109,6 +15154,25 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const analyticsMapMetric = event.target.closest("[data-ac-map-metric]");
+      if (analyticsMapMetric) {
+        state.analyticsMapMetric = analyticsMapMetric.dataset.acMapMetric === "amount" ? "amount" : "units";
+        render();
+        return;
+      }
+
+      const analyticsMapZoom = event.target.closest("[data-ac-map-zoom]");
+      if (analyticsMapZoom) {
+        const levels = [1, 1.25, 1.5];
+        const currentIndex = Math.max(0, levels.indexOf(Number(state.analyticsMapZoom) || 1));
+        const nextIndex = analyticsMapZoom.dataset.acMapZoom === "in"
+          ? Math.min(levels.length - 1, currentIndex + 1)
+          : Math.max(0, currentIndex - 1);
+        state.analyticsMapZoom = levels[nextIndex];
+        render();
+        return;
+      }
+
       const analyticsCenterAction = event.target.closest("[data-ac-action]");
       if (analyticsCenterAction) {
         const action = analyticsCenterAction.dataset.acAction;
@@ -15633,6 +15697,15 @@ MINIAPP_HTML = """<!doctype html>
       }
       if (event.target.id === "analyticsHubPeriod") {
         state.marketplacePeriod = event.target.value || "7d";
+        state.analyticsOverview.loaded = false;
+        state.analyticsOverview.payload = null;
+        state.analyticsOverview.error = "";
+        state.analyticsOverview.requestKey = "";
+        render();
+        return;
+      }
+      if (event.target.id === "analyticsMapProduct") {
+        state.analyticsMapProduct = event.target.value || "all";
         state.analyticsOverview.loaded = false;
         state.analyticsOverview.payload = null;
         state.analyticsOverview.error = "";

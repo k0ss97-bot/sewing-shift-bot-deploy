@@ -50,7 +50,7 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
             "ok": True,
             "supplies": [{"marketplace": "ozon", "external_supply_id": "1", "items": [{"sku": "large"}]}],
             "products_rows": [{"id": "1", "name": "Товар", "attributes_json": [{"large": True}]}],
-            "analytics": {"sales_daily": [1], "sales_by_product_daily": [2]},
+            "analytics": {"sales_daily": [1], "sales_by_product_daily": [2], "sales_by_region_product_daily": [5]},
             "wildberries": {"analytics": {"sales_daily": [3], "sales_by_warehouse_daily": [4]}},
         }
 
@@ -58,9 +58,11 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
 
         self.assertEqual(result["analytics"]["sales_daily"], [1])
         self.assertNotIn("sales_by_product_daily", result["analytics"])
+        self.assertNotIn("sales_by_region_product_daily", result["analytics"])
         self.assertEqual(result["wildberries"]["analytics"]["sales_daily"], [3])
         self.assertNotIn("sales_by_warehouse_daily", result["wildberries"]["analytics"])
         self.assertIn("sales_by_product_daily", snapshot["analytics"])
+        self.assertIn("sales_by_region_product_daily", snapshot["analytics"])
         self.assertNotIn("items", result["supplies"][0])
         self.assertEqual(result["products_rows"], [{"id": "1", "name": "Товар"}])
 

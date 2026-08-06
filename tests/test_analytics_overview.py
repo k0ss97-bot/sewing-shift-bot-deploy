@@ -133,6 +133,10 @@ class AnalyticsOverviewTests(unittest.TestCase):
                     {"date": "2026-08-05", "region": "Москва", "orders": 2, "units": 3, "amount": 1750},
                     {"date": "2026-08-05", "region": "Урал", "orders": 1, "units": 2, "amount": 1500},
                 ],
+                "sales_by_region_product_daily": [
+                    {"date": "2026-08-05", "region": "Москва", "product": "Кардиган", "offer_id": "КРД-1/92", "sku": "1001", "orders": 2, "units": 3, "amount": 1750},
+                    {"date": "2026-08-05", "region": "Урал", "product": "Брюки", "offer_id": "БР-1/92", "sku": "1002", "orders": 1, "units": 2, "amount": 1500},
+                ],
                 "sales_by_warehouse_daily": [
                     {"date": "2026-08-05", "warehouse": "Хоругвино", "orders": 3, "units": 5, "amount": 3250},
                 ],
@@ -179,6 +183,17 @@ class AnalyticsOverviewTests(unittest.TestCase):
         self.assertEqual(result["breakdowns"]["sales_by_product"][0]["offer_id"], "КРД-1/92")
         self.assertEqual([row["external_supply_id"] for row in result["supplies"]["rows"]], ["current"])
         self.assertNotIn("items", result["supplies"]["rows"][0])
+
+        filtered = analytics_overview(
+            {"start_date": "2026-08-05", "end_date": "2026-08-05", "product_key": "КРД-1/92"},
+            dashboard_reader=lambda: dashboard,
+            data_quality_reader=lambda: {"ok": True, "enabled": False},
+            production_reader=lambda _start, _end: {"updated_at": observed_at},
+            current=datetime(2026, 8, 5, 5, 10, tzinfo=timezone.utc),
+        )
+        self.assertEqual(filtered["geography"]["selected_product_key"], "КРД-1/92")
+        self.assertEqual([row["region"] for row in filtered["geography"]["rows"]], ["Москва"])
+        self.assertEqual(filtered["geography"]["rows"][0]["units"], "3")
 
     def test_wb_rate_limit_keeps_last_good_order_snapshot_as_partial(self):
         observed_at = "2026-08-06T06:52:59Z"

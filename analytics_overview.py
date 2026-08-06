@@ -608,11 +608,19 @@ def _sales_rows(provider: dict[str, Any], period: PeriodWindow) -> dict[str, dic
     return result
 
 
-def _region_rows(provider: dict[str, Any], period: PeriodWindow) -> list[dict[str, Any]]:
+def _region_rows(
+    provider: dict[str, Any],
+    period: PeriodWindow,
+    product_key: str = "",
+) -> list[dict[str, Any]]:
+    analytics = _as_dict(provider.get("analytics"))
+    source_name = "sales_by_region_product_daily" if product_key else "sales_by_region_daily"
     aggregated: dict[str, dict[str, Any]] = {}
-    for row in _as_rows(_as_dict(provider.get("analytics")).get("sales_by_region_daily")):
+    for row in _as_rows(analytics.get(source_name)):
         day = _date_key(row.get("date"))
         if not day or not (period.start.isoformat() <= day <= period.end.isoformat()):
+            continue
+        if product_key and product_key not in {_text(row.get("offer_id")), _text(row.get("sku"))}:
             continue
         region = _text(row.get("region")) or "Регион не указан"
         bucket = aggregated.setdefault(
@@ -1651,6 +1659,8 @@ def analytics_overview(
     except AnalyticsOverviewRequestError as error:
         return {"ok": False, "code": error.code, "message": str(error)}
 
+    product_key = _text(_as_dict(payload).get("product_key"), limit=200)
+
     now = _now(current)
     generated_at = _generated_at(now)
     dashboard, dashboard_error = _safe_read("marketplace dashboard", dashboard_reader)
@@ -1755,7 +1765,7 @@ def analytics_overview(
             _finance_components(wb_provider, period, "wildberries"),
         ],
     }
-    region_rows = _region_rows(ozon_provider, period)
+    region_rows = _region_rows(ozon_provider, period, product_key)
     known_regions = {row["region"] for row in region_rows if row["region"] != "Регион не указан"}
     ozon_region_status = _status(_as_dict(ozon.get("metric_status")).get("orders"), fallback="no_data")
     if not region_rows and ozon_region_status not in {"error", "permission_required", "unavailable"}:
@@ -1764,6 +1774,7 @@ def analytics_overview(
     region_updated_at = _as_dict(ozon.get("metric_timestamps")).get("orders")
     geography = {
         "rows": region_rows,
+        "selected_product_key": product_key or None,
         "providers": [
             {
                 "marketplace": "ozon",

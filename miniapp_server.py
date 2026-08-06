@@ -542,6 +542,7 @@ def _marketplace_dashboard_client_payload(snapshot):
         analytics.pop("sales_by_warehouse_daily", None)
         analytics.pop("sales_by_product_daily", None)
         analytics.pop("sales_by_region_daily", None)
+        analytics.pop("sales_by_region_product_daily", None)
         provider_copy["analytics"] = analytics
         provider_copy["products_rows"] = [
             {
