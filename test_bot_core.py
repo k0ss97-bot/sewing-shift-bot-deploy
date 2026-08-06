@@ -1671,6 +1671,85 @@ class IsolatedDatabaseTest(unittest.TestCase):
         consumed = self.database.get_warehouse_stock_by_id(stock["id"])
         self.assertEqual((consumed["quantity"], consumed["reserved_quantity"]), (0, 0))
 
+    def test_partial_route_completion_returns_unfinished_quantity_to_free_tasks(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(9122, "Тест Швея Частично", "Швея")
+        self.database.create_employee(9123, "Тест Швея Подхват", "Швея")
+        employee = self.database.get_employee_by_telegram_id(9122)
+        next_employee = self.database.get_employee_by_telegram_id(9123)
+        self.database.update_employee_status(employee[0], "active")
+        self.database.update_employee_status(next_employee[0], "active")
+        self.database.create_shift(employee[0])
+        self.database.create_shift(next_employee[0])
+        step_index = self.route_step_index("Легинсы", "Сборка на оверлоке", "Швея")
+        stock = self.database.add_warehouse_stock(
+            "semifinished", "Легинсы", "92", "Черный", "Раскроенные", "Швея", 50, None,
+        )
+        batch = self.database.create_route_batch("Легинсы", "92", "Черный", 50, None, step_index)
+
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(9122, batch["id"])["ok"])
+        zero_result = miniapp_server.complete_route_task_for_telegram(
+            9122, batch["id"], {"good_quantity": 0, "defect_quantity": 0},
+        )
+        self.assertFalse(zero_result["ok"])
+        excessive_result = miniapp_server.complete_route_task_for_telegram(
+            9122, batch["id"], {"good_quantity": 51, "defect_quantity": 0},
+        )
+        self.assertFalse(excessive_result["ok"])
+
+        payload = {
+            "request_id": "partial-route-25-of-50",
+            "good_quantity": 24,
+            "defect_quantity": 1,
+            "defect_reason": "Повреждение фурнитуры",
+            "defect_disposition": "Списать",
+        }
+        completed = miniapp_server.complete_route_task_for_telegram(9122, batch["id"], payload)
+
+        self.assertTrue(completed["ok"], completed)
+        self.assertEqual(completed["remaining_quantity"], 25)
+        self.assertIn("Остаток 25 шт. возвращён в свободные задания", completed["message"])
+        completed_batch = self.database.get_route_batch_by_id(batch["id"])
+        self.assertEqual(completed_batch["status"], "done")
+        self.assertEqual(completed_batch["quantity"], 25)
+        self.assertEqual(completed_batch["good_quantity"], 24)
+        self.assertEqual(completed_batch["defect_quantity"], 1)
+
+        active_batches = self.database.get_active_route_batches()
+        remainder_batches = [
+            row for row in active_batches
+            if row["route_step_index"] == step_index
+            and row["parent_batch_id"] == batch["id"]
+            and row["assigned_employee_id"] is None
+        ]
+        self.assertEqual(len(remainder_batches), 1)
+        remainder = remainder_batches[0]
+        self.assertEqual(remainder["quantity"], 25)
+        self.assertEqual(remainder["work_state"], "free")
+        self.assertEqual(self.database.get_route_batch_inputs(remainder["id"])[0]["quantity"], 25)
+
+        partially_consumed = self.database.get_warehouse_stock_by_id(stock["id"])
+        self.assertEqual(
+            (partially_consumed["quantity"], partially_consumed["reserved_quantity"]),
+            (25, 25),
+        )
+
+        replayed = miniapp_server.complete_route_task_for_telegram(9122, batch["id"], payload)
+        self.assertTrue(replayed["ok"], replayed)
+        same_step_free = [
+            row for row in self.database.get_active_route_batches()
+            if row["route_step_index"] == step_index
+            and row["parent_batch_id"] == batch["id"]
+            and row["assigned_employee_id"] is None
+        ]
+        self.assertEqual(len(same_step_free), 1)
+
+        taken = miniapp_server.start_route_task_for_telegram(9123, remainder["id"])
+        self.assertTrue(taken["ok"], taken)
+        assigned_remainder = self.database.get_route_batch_by_id(remainder["id"])
+        self.assertEqual(assigned_remainder["assigned_employee_id"], next_employee[0])
+        self.assertEqual(assigned_remainder["quantity"], 25)
+
     def test_stock_shortage_alert_does_not_block_route_task(self):
         miniapp_server = importlib.import_module("miniapp_server")
         self.database.create_employee(9121, "Тест Швея Дефицит", "Швея")

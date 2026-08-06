@@ -5986,6 +5986,196 @@ def _consume_finished_packaging_components(cursor, batch: dict, quantity: int, e
         raise ValueError("packaging components unavailable")
 
 
+def _split_route_batch_remainder_on_completion(
+    cursor,
+    batch: dict,
+    completed_quantity: int,
+    employee_id: int | None,
+    now: str,
+):
+    """Keep the unfinished part as a free task without releasing its stock reservation."""
+    batch_quantity = int(batch.get("quantity") or 0)
+    completed_quantity = int(completed_quantity or 0)
+    if completed_quantity <= 0 or completed_quantity > batch_quantity:
+        raise ValueError("invalid completed quantity")
+    if completed_quantity == batch_quantity:
+        return None, 0
+
+    remaining_quantity = batch_quantity - completed_quantity
+    cursor.execute(
+        """
+        SELECT id, stock_id, input_role, quantity, reservation_state,
+               reserved_at, consumed_at, created_at
+        FROM route_batch_inputs
+        WHERE batch_id = ?
+        ORDER BY id
+        """,
+        (batch["id"],),
+    )
+    input_rows = cursor.fetchall()
+    remainder_parts = []
+    for input_row in input_rows:
+        scaled = int(input_row[3] or 0) * remaining_quantity
+        if scaled % batch_quantity:
+            raise ValueError("inputs cannot be split exactly")
+        remainder_parts.append((input_row, scaled // batch_quantity))
+
+    cursor.execute(
+        """
+        INSERT INTO route_batches (
+            product_name, product_size, product_color, quantity, route_step_index, status,
+            created_by_employee_id, created_at, updated_at, completed_at, source_stock_id,
+            assigned_employee_id, assigned_at, good_quantity, defect_quantity, priority, due_date,
+            parent_batch_id, source_cutting_batch_id, work_state, blocked_reason, paused_at,
+            last_activity_at, handover_count, packaging_option, packaging_output_name, packaging_ratio
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, NULL, NULL, 0, 0, ?, ?, ?, ?,
+                  'free', NULL, NULL, ?, 0, ?, ?, ?)
+        """,
+        (
+            batch["product_name"],
+            batch["product_size"],
+            batch["product_color"],
+            remaining_quantity,
+            batch["route_step_index"],
+            batch.get("created_by_employee_id"),
+            now,
+            now,
+            batch.get("source_stock_id"),
+            batch.get("priority") or "normal",
+            batch.get("due_date") or None,
+            batch["id"],
+            batch.get("source_cutting_batch_id"),
+            now,
+            batch.get("packaging_option") or "",
+            batch.get("packaging_output_name") or "",
+            max(1, int(batch.get("packaging_ratio") or 1)),
+        ),
+    )
+    remainder_batch_id = cursor.lastrowid
+    _initialize_route_batch_trace(
+        cursor,
+        remainder_batch_id,
+        batch["product_name"],
+        employee_id,
+        now,
+        source="partial-completion",
+        route_snapshot=batch.get("route_snapshot") or "",
+        route_version=batch.get("route_version") or "",
+    )
+
+    cursor.execute(
+        """
+        UPDATE route_batches
+        SET quantity = ?, last_activity_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'active' AND quantity = ?
+          AND assigned_employee_id = ?
+        """,
+        (completed_quantity, now, now, batch["id"], batch_quantity, employee_id),
+    )
+    if cursor.rowcount != 1:
+        raise ValueError("batch changed")
+
+    for input_row, remainder_input_quantity in remainder_parts:
+        input_id, stock_id, input_role, _input_quantity, state, reserved_at, consumed_at, created_at = input_row
+        if remainder_input_quantity <= 0:
+            continue
+        cursor.execute(
+            "UPDATE route_batch_inputs SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
+            (remainder_input_quantity, input_id, remainder_input_quantity),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("input changed")
+        cursor.execute(
+            """
+            INSERT INTO route_batch_inputs (
+                batch_id, stock_id, input_role, quantity, reservation_state,
+                reserved_at, consumed_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                remainder_batch_id,
+                stock_id,
+                input_role,
+                remainder_input_quantity,
+                state,
+                reserved_at,
+                consumed_at,
+                created_at,
+            ),
+        )
+
+        cursor.execute(
+            """
+            SELECT route_batch_input_lots.id, route_batch_input_lots.lot_id,
+                   route_batch_input_lots.quantity, route_batch_input_lots.reservation_state,
+                   route_batch_input_lots.reserved_at, route_batch_input_lots.consumed_at,
+                   route_batch_input_lots.created_at
+            FROM route_batch_input_lots
+            JOIN warehouse_stock_lots ON warehouse_stock_lots.id = route_batch_input_lots.lot_id
+            WHERE route_batch_input_lots.batch_id = ?
+              AND route_batch_input_lots.input_role = ?
+              AND warehouse_stock_lots.stock_id = ?
+            ORDER BY route_batch_input_lots.id
+            """,
+            (batch["id"], input_role, stock_id),
+        )
+        lot_rows = cursor.fetchall()
+        if lot_rows:
+            lot_remaining = remainder_input_quantity
+            for lot_row in lot_rows:
+                if lot_remaining <= 0:
+                    break
+                lot_input_id, lot_id, lot_quantity, lot_state, lot_reserved_at, lot_consumed_at, lot_created_at = lot_row
+                transferred = min(lot_remaining, int(lot_quantity or 0))
+                if transferred <= 0:
+                    continue
+                cursor.execute(
+                    "UPDATE route_batch_input_lots SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
+                    (transferred, lot_input_id, transferred),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("input lot changed")
+                cursor.execute(
+                    """
+                    INSERT INTO route_batch_input_lots (
+                        batch_id, lot_id, input_role, quantity, reservation_state,
+                        reserved_at, consumed_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        remainder_batch_id,
+                        lot_id,
+                        input_role,
+                        transferred,
+                        lot_state,
+                        lot_reserved_at,
+                        lot_consumed_at,
+                        lot_created_at,
+                    ),
+                )
+                lot_remaining -= transferred
+            if lot_remaining:
+                raise ValueError("input lots unavailable")
+
+    cursor.execute("DELETE FROM route_batch_inputs WHERE batch_id = ? AND quantity = 0", (batch["id"],))
+    cursor.execute("DELETE FROM route_batch_input_lots WHERE batch_id = ? AND quantity = 0", (batch["id"],))
+    _record_production_event(
+        cursor,
+        "batch_split",
+        batch_id=batch["id"],
+        actor_employee_id=employee_id,
+        quantity=completed_quantity,
+        details={
+            "reason": "partial_completion",
+            "remainder_batch_id": remainder_batch_id,
+            "remaining_quantity": remaining_quantity,
+        },
+        request_key=f"route-batch:{batch['id']}:completion-remainder:{remainder_batch_id}",
+        created_at=now,
+    )
+    return remainder_batch_id, remaining_quantity
+
+
 def complete_route_batch_step_atomic(
     batch_id: int,
     employee_id: int | None,
@@ -6024,6 +6214,8 @@ def complete_route_batch_step_atomic(
     wms_receipt_outbox_id = None
     auto_batch_id = None
     rework_batch_id = None
+    remainder_batch_id = None
+    remaining_quantity = 0
     parallel_waiting = False
 
     try:
@@ -6044,6 +6236,7 @@ def complete_route_batch_step_atomic(
                     "wms_receipt_outbox": get_wms_receipt_outbox_by_batch_id(batch_id),
                     "auto_batch": None,
                     "rework_batch": None,
+                    "remainder_batch": None,
                     "replayed": True,
                 }
         cursor.execute(
@@ -6058,7 +6251,8 @@ def complete_route_batch_step_atomic(
             raise ValueError("batch is not assigned in an open shift")
         if (batch.get("work_state") or "in_work") != "in_work":
             raise ValueError("batch is paused or blocked")
-        if good_quantity < 0 or defect_quantity < 0 or good_quantity + defect_quantity != batch["quantity"]:
+        completed_quantity = good_quantity + defect_quantity
+        if good_quantity < 0 or defect_quantity < 0 or completed_quantity <= 0 or completed_quantity > batch["quantity"]:
             raise ValueError("invalid quantities")
 
         current_route_steps = route_steps_from_snapshot(
@@ -6080,6 +6274,16 @@ def complete_route_batch_step_atomic(
         if next_quantity_divisor > 1 and good_quantity % next_quantity_divisor:
             raise ValueError("quantity is not divisible for the next route step")
         next_batch_quantity = good_quantity // next_quantity_divisor
+
+        remainder_batch_id, remaining_quantity = _split_route_batch_remainder_on_completion(
+            cursor,
+            batch,
+            completed_quantity,
+            employee_id,
+            now,
+        )
+        if remainder_batch_id:
+            batch = {**batch, "quantity": completed_quantity}
 
         # Input batches are reserved when the downstream task appears and are
         # physically issued only once this operation is completed.
@@ -6361,6 +6565,8 @@ def complete_route_batch_step_atomic(
                 "output_stock_id": stock_id,
                 "auto_batch_id": auto_batch_id,
                 "rework_batch_id": rework_batch_id,
+                "remainder_batch_id": remainder_batch_id,
+                "remaining_quantity": remaining_quantity,
             },
             request_key=request_key,
             created_at=now,
@@ -6402,6 +6608,7 @@ def complete_route_batch_step_atomic(
         "wms_receipt_outbox": get_wms_receipt_outbox_by_id(wms_receipt_outbox_id) if wms_receipt_outbox_id else None,
         "auto_batch": get_route_batch_by_id(auto_batch_id) if auto_batch_id else None,
         "rework_batch": get_route_batch_by_id(rework_batch_id) if rework_batch_id else None,
+        "remainder_batch": get_route_batch_by_id(remainder_batch_id) if remainder_batch_id else None,
         "parallel_waiting": parallel_waiting,
         "replayed": False,
     }

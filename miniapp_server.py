@@ -1804,8 +1804,11 @@ def complete_route_task_for_telegram(
     if good_quantity < 0 or defect_quantity < 0:
         return {"ok": False, "message": "Количество не может быть отрицательным."}
 
-    if good_quantity + defect_quantity != batch["quantity"]:
-        return {"ok": False, "message": "Распределите всё количество задания между годным и браком."}
+    completed_quantity = good_quantity + defect_quantity
+    if completed_quantity <= 0:
+        return {"ok": False, "message": "Укажите фактически выполненное количество."}
+    if completed_quantity > batch["quantity"]:
+        return {"ok": False, "message": "Выполненное количество не может превышать количество задания."}
 
     next_quantity_divisor = max(
         1,
@@ -1917,6 +1920,7 @@ def complete_route_task_for_telegram(
     updated_batch = completion["batch"]
     auto_batch = completion["auto_batch"]
     rework_batch = completion["rework_batch"]
+    remainder_batch = completion.get("remainder_batch")
     wms_receipt = (
         sync_wms_receipt_for_route_batch(batch["id"])
         if item_type == "finished" and good_quantity > 0
@@ -1948,6 +1952,9 @@ def complete_route_task_for_telegram(
     else:
         message = "Упаковка завершена." if current_step["operation"] == "Упаковка" else "Этап завершён."
 
+    if remainder_batch:
+        message += f" Остаток {remainder_batch['quantity']} шт. возвращён в свободные задания."
+
     if item_type == "finished" and good_quantity > 0:
         if wms_receipt.get("status") in {"sent", "duplicate"}:
             message += " Готовая продукция автоматически поступила в зону приёмки склада."
@@ -1957,6 +1964,7 @@ def complete_route_task_for_telegram(
     return {
         "ok": True,
         "message": message,
+        "remaining_quantity": int((remainder_batch or {}).get("quantity") or 0),
         "tasks": get_route_tasks_for_telegram(telegram_id)["tasks"],
         "completed_tasks": get_completed_route_tasks_for_telegram(telegram_id),
         "production": get_production_state_for_telegram(telegram_id),
@@ -1992,6 +2000,8 @@ def complete_route_task_for_admin(telegram_id: int, batch_id: int, payload: dict
     )
     if result.get("ok"):
         result["message"] = "Операция закрыта администратором."
+        if result.get("remaining_quantity"):
+            result["message"] += f" Остаток {result['remaining_quantity']} шт. возвращён в свободные задания."
     return result
 
 

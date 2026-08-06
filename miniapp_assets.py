@@ -8067,8 +8067,9 @@ MINIAPP_HTML = """<!doctype html>
           ${(paused || blocked) ? `<div class="task-note">${escapeHtml(task.blocked_reason || (paused ? "Работа приостановлена" : "Задание заблокировано"))}</div>` : ""}
           <div class="form-grid" style="margin-top:11px">
             ${packingOptions.length ? `<div class="field full"><label>Вариант упаковки</label><select id="taskPackagingOption">${packingOptions.map((option) => `<option value="${escapeHtml(option.id)}" ${draft.packaging_option === option.id ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></div>` : ""}
-            <div class="field"><label>Годная продукция</label><input id="taskGoodQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.good ?? task.quantity)}"></div>
-            <div class="field"><label>Брак</label><input id="taskDefectQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.defect ?? 0)}"></div>
+            <div class="field"><label>Годно выполнено сейчас</label><input id="taskGoodQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.good ?? task.quantity)}"></div>
+            <div class="field"><label>Брак сейчас</label><input id="taskDefectQuantity" inputmode="numeric" type="number" min="0" max="${escapeHtml(task.quantity)}" step="1" value="${escapeHtml(draft.defect ?? 0)}"></div>
+            <div class="field full"><div class="task-note">Можно закрыть часть задания. Невыполненный остаток автоматически вернётся в свободные задания.</div></div>
             <div class="field full"><button type="button" class="small-button secondary" data-task-action="all-good" data-task-id="${escapeHtml(task.id)}">Всё годное: ${escapeHtml(task.quantity)} шт</button></div>
             <div class="field full" id="taskDefectDetails" style="display:${defectVisible ? "block" : "none"}">
               <div class="form-grid">
