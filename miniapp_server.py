@@ -162,7 +162,9 @@ from webapp_auth import (
 from webapp_pwa import app_shell_revision, inject_pwa_markup, send_pwa_resource
 from wms import api as wms_api
 from wms import operations as wms_operations
+from wms import repository as wms_repository
 from wms.api import WMS_ADMIN_ROUTES, WMS_READ_ROUTES, WMS_ROUTES
+from wms.connection import get_pg_connection
 from wms.models import ProductKey
 from wms.shipments import shipment_detail, shipment_excel_bytes, shipment_pdf_bytes
 from marketplaces import dashboard as marketplace_dashboard
@@ -4781,6 +4783,15 @@ def date_in_period(value: str | None, start_date: str, end_date: str):
     return bool(value and start_date <= value[:10] <= end_date)
 
 
+def finished_goods_plan_quantity(rows, start_date: str, end_date: str) -> int:
+    """Count each planned finished-goods task item exactly once."""
+    return sum(
+        max(int(row[7] or 0), int(row[8] or 0))
+        for row in rows
+        if row[2] != "cancelled" and date_in_period(row[3], start_date, end_date)
+    )
+
+
 def minutes_between(start_value: str | None, end_value: str | None):
     if not start_value or not end_value:
         return None
@@ -4886,6 +4897,7 @@ def production_control_active_batch_to_dict(batch, step, employee_names):
 def get_production_control_payload(start_date: str, end_date: str):
     observed_at = local_now().isoformat()
     route_rows = get_period_route_batch_rows(start_date, end_date)
+    production_task_item_rows = get_period_production_task_item_rows(start_date, end_date)
     defect_rows = get_route_batch_defect_rows(start_date, end_date)
     active_batches = get_active_route_batches()
     warehouse_rows = get_warehouse_stock_rows()
@@ -4896,11 +4908,34 @@ def get_production_control_payload(start_date: str, end_date: str):
         if row[6] != "cancelled" and date_in_period(row[7], start_date, end_date)
     ]
     completed_rows = [row for row in route_rows if date_in_period(row[9], start_date, end_date)]
-    plan = sum(int(row[4] or 0) for row in planned_rows)
-    good = sum(int(row[14] or 0) for row in completed_rows)
+    planned_finished_rows = [
+        row for row in production_task_item_rows
+        if row[2] != "cancelled" and date_in_period(row[3], start_date, end_date)
+    ]
+    # Route rows represent operations, so summing them counts one garment
+    # several times. A task item is the finished-goods target and is counted
+    # exactly once regardless of how many operations its route contains.
+    plan = finished_goods_plan_quantity(planned_finished_rows, start_date, end_date)
+
+    receipt_warnings = []
+    receipt_summary = None
+    try:
+        pg_conn = get_pg_connection()
+        receipt_summary = wms_repository.finished_production_receipts(
+            pg_conn,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        pg_conn.rollback()
+    except Exception as exc:
+        receipt_warnings.append(
+            f"Журнал приёмки готовой продукции временно недоступен: {type(exc).__name__}."
+        )
+        LOGGER.warning("Finished-goods production fact is unavailable: %s", type(exc).__name__)
+    good = int(receipt_summary["quantity"]) if receipt_summary is not None else None
     defect_quantity = sum(int(row[8] or 0) for row in defect_rows)
-    first_pass_total = good + defect_quantity
-    fpy = round(good * 100 / first_pass_total, 1) if first_pass_total else 0
+    first_pass_total = (good + defect_quantity) if good is not None else None
+    fpy = round(good * 100 / first_pass_total, 1) if first_pass_total else (None if good is None else 0)
 
     cycle_values = [
         value for value in (minutes_between(row[10], row[9]) for row in completed_rows)
@@ -5036,6 +5071,11 @@ def get_production_control_payload(start_date: str, end_date: str):
         "start_date": start_date,
         "end_date": end_date,
         "updated_at": observed_at,
+        "status": "partial" if receipt_warnings else "fresh",
+        "sources": ["sqlite.production_tasks"] + (
+            ["postgres.wms_movements"] if receipt_summary is not None else []
+        ),
+        "warnings": receipt_warnings,
         "plan": plan,
         "fact": good,
         "defect_quantity": defect_quantity,
@@ -5053,6 +5093,7 @@ def get_production_control_payload(start_date: str, end_date: str):
         "details": {
             "planned_tasks": planned_task_details,
             "completed_tasks": completed_task_details,
+            "finished_receipts": (receipt_summary or {}).get("details", []),
             "active_tasks": active_task_details,
             "semifinished": semifinished_details,
             "cycle_tasks": [row for row in completed_task_details if row["cycle_minutes"] is not None],
@@ -5060,6 +5101,7 @@ def get_production_control_payload(start_date: str, end_date: str):
             "schedule_tasks": [row for row in completed_task_details if row["due_date"]],
             "defects": defect_details,
         },
+        "daily_output": (receipt_summary or {}).get("daily", []),
     }
 
 

@@ -4582,7 +4582,7 @@ MINIAPP_HTML = """<!doctype html>
     .ac-nav i{width:20px;height:20px;display:grid;place-items:center;font-style:normal;color:inherit}
     .ac-heading h2{margin:0;color:#101827;font-size:clamp(25px,2.1vw,34px);line-height:1.08;letter-spacing:-.045em}.ac-heading p{margin:6px 0 0}
     .ac-business-state.ok{color:#13795b;border-color:#cce8dd;background:#edf9f4}.ac-business-state.unknown{color:#667085;border-color:#d8dee8;background:#f5f7fa}
-    .ac-market-switch button.active.ozon{color:#fff;background:var(--ac-blue)}.ac-market-switch button.active.wb{color:#fff;background:var(--ac-wb)}
+    .ac-market-switch button.active.ozon{color:#fff;background:var(--ac-blue)}.ac-market-switch button.active.wb{color:#fff;background:var(--ac-wb)}.ac-market-switch button.active.production{color:#fff;background:#16865c}
     .ac-filterbar button,.ac-toolbar button{min-height:38px;padding:0 14px;border:0;border-radius:9px;color:#fff;background:#2563eb;font-size:10px;font-weight:800;cursor:pointer}.ac-period-label{align-self:center;color:#6f7b8e;font-size:10px;font-weight:750}
     .ac-kpi>span{display:block;min-height:27px;color:#758196;font-size:9px;font-weight:750}.ac-kpi>strong{display:block;margin:11px 0 9px;color:#0f172a;font-size:clamp(20px,1.65vw,28px);font-weight:850;line-height:1.05;letter-spacing:-.045em;overflow-wrap:anywhere}.ac-kpi>small{display:block;color:#909aaa;font-size:8px;line-height:1.4}
     .ac-panel.span-12{grid-column:span 12}.ac-panel.span-8{grid-column:span 8}.ac-panel.span-6{grid-column:span 6}.ac-panel.span-4{grid-column:span 4}.ac-panel-head h3{margin:0;color:#172033;font-size:14px}
@@ -5679,6 +5679,7 @@ MINIAPP_HTML = """<!doctype html>
       "workspace",
       "marketplaceView",
       "marketplaceProvider",
+      "analyticsProvider",
       "screen",
       "productionScreen",
       "selectedOrder",
@@ -5771,6 +5772,7 @@ MINIAPP_HTML = """<!doctype html>
       workspace: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "production",
       marketplaceView: "overview",
       marketplaceProvider: "all",
+      analyticsProvider: "all",
       marketplacePeriod: "30d",
       marketplaceChartMetric: "revenue",
       marketplaceOrderView: "warehouses",
@@ -13604,13 +13606,14 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function analyticsHubCombinedChart(models) {
-      const colors = {ozon: "#1764e8", wildberries: "#9c27b0"};
+      const colors = {ozon: "#1764e8", wildberries: "#9c27b0", production: "#16a36a"};
       const series = models.filter((model) => model.commercialAvailable).map((model) => ({
         key: model.key,
         label: `${model.label} · ${model.commercialLabel}`,
         rows: model.commercialRows,
         color: colors[model.key],
         status: model.status,
+        unit: model.unit || "money",
       }));
       if (!series.length) return `<div class="marketplace-chart-empty"><b>Финансовая динамика недоступна</b><span>Ни одна площадка не предоставила подтверждённые операции после удержаний за выбранный период.</span></div>`;
       const dates = [...new Set(series.flatMap((item) => item.rows.map((row) => row.date).filter(Boolean)))].sort();
@@ -13629,7 +13632,7 @@ MINIAPP_HTML = """<!doctype html>
         const points = item.rows.filter((row) => row.date && dates.includes(row.date)).map((row) => `${x(row.date).toFixed(1)},${y(row.value).toFixed(1)}`).join(" ");
         const dash = ["partial", "stale"].includes(item.status) ? ` stroke-dasharray="7 5"` : "";
         const line = item.rows.length > 1 ? `<polyline fill="none" stroke="${item.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"${dash} points="${points}"/>` : "";
-        const dots = item.rows.filter((row) => row.date && dates.includes(row.date)).map((row) => { const pointLabel = `${item.label} · ${row.date} · ${marketplaceMoney(row.value)}`; return `<circle cx="${x(row.date)}" cy="${y(row.value)}" r="4" fill="${item.color}"/><circle class="chart-point-hit" cx="${x(row.date)}" cy="${y(row.value)}" r="13" tabindex="0" role="button" aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(row.date)}" data-chart-value="${escapeHtml(row.value)}" data-chart-tooltip><title>${escapeHtml(pointLabel)}</title></circle>`; }).join("");
+        const dots = item.rows.filter((row) => row.date && dates.includes(row.date)).map((row) => { const pointValue = item.unit === "units" ? `${Number(row.value || 0).toLocaleString("ru-RU")} шт.` : marketplaceMoney(row.value); const pointLabel = `${item.label} · ${row.date} · ${pointValue}`; return `<circle cx="${x(row.date)}" cy="${y(row.value)}" r="4" fill="${item.color}"/><circle class="chart-point-hit" cx="${x(row.date)}" cy="${y(row.value)}" r="13" tabindex="0" role="button" aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(row.date)}" data-chart-value="${escapeHtml(row.value)}" data-chart-tooltip><title>${escapeHtml(pointLabel)}</title></circle>`; }).join("");
         return line + dots;
       }).join("");
       return `<div class="marketplace-line-chart analytics-combined-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Коммерческая динамика Ozon и Wildberries">${[0,.25,.5,.75,1].map((ratio) => { const gridY = top + chartHeight * ratio; const tickValue = maximum - valueRange * ratio; return `<line class="chart-grid" x1="${left}" y1="${gridY}" x2="${width-right}" y2="${gridY}"/><text class="chart-axis-label" x="${left-8}" y="${gridY+4}" text-anchor="end">${compact(tickValue)}</text>`; }).join("")}${minimum < 0 && maximum > 0 ? `<line x1="${left}" y1="${y(0)}" x2="${width-right}" y2="${y(0)}" stroke="#7d8799" stroke-width="1.5"/>` : ""}${svgSeries}${labels.map((index) => `<text class="chart-axis-label" x="${x(dates[index])}" y="${height-9}" text-anchor="middle">${escapeHtml(dates[index].slice(5))}</text>`).join("")}</svg><div class="marketplace-point-tooltip" hidden></div></div><div class="analytics-chart-legend">${series.map((item) => `<span><i style="--legend-color:${item.color}"></i>${escapeHtml(item.label)}</span>`).join("")}</div>`;
@@ -13794,18 +13797,22 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderAnalyticsHub() {
-      const pages = [
+      const allPages = [
         ["general", "⌂", "Обзор"], ["sales", "↗", "Продажи"], ["products", "▤", "Товары"],
         ["inventory", "▦", "Остатки"], ["production", "⚙", "Производство"], ["supplies", "↓", "Поставки"],
         ["finance", "₽", "Финансы"], ["map", "○", "Регионы"], ["data-quality", "✓", "Качество данных"],
       ];
+      const marketplace = ["ozon", "wildberries", "production"].includes(state.analyticsProvider) ? state.analyticsProvider : "all";
+      const productionOnly = marketplace === "production";
+      const pages = productionOnly
+        ? allPages.filter(([id]) => id === "production")
+        : allPages;
       const allowed = new Set(pages.map(([id]) => id));
-      const page = allowed.has(state.analyticsHubTab) ? state.analyticsHubTab : "general";
+      const page = allowed.has(state.analyticsHubTab) ? state.analyticsHubTab : (productionOnly ? "production" : "general");
       state.analyticsHubTab = page;
       const overviewState = state.analyticsOverview || {};
       const payload = overviewState.payload && typeof overviewState.payload === "object" ? overviewState.payload : {};
       const root = state.marketplaceData && state.marketplaceData.payload && typeof state.marketplaceData.payload === "object" ? state.marketplaceData.payload : {};
-      const marketplace = ["ozon", "wildberries"].includes(state.marketplaceProvider) ? state.marketplaceProvider : "all";
       const providerRoots = marketplace === "all"
         ? [root, root.wildberries].filter((row) => row && typeof row === "object")
         : [marketplace === "wildberries" && root.wildberries && typeof root.wildberries === "object" ? root.wildberries : root];
@@ -13859,7 +13866,7 @@ MINIAPP_HTML = """<!doctype html>
       const empty = (title, text, action = "") => `<div class="ac-empty"><b>${escapeHtml(title)}</b><span>${escapeHtml(text)}</span>${action ? `<button type="button" class="small-button secondary" data-ac-action="${escapeHtml(action)}">Перейти к настройке</button>` : ""}</div>`;
       const panel = (title, meta, body, wide = "") => `<section class="ac-panel ${wide}"><div class="ac-panel-head"><h3>${escapeHtml(title)}</h3><span>${escapeHtml(meta || "")}</span></div>${body}</section>`;
       const table = (headers, rows, emptyText) => rows.length ? `<div class="ac-table-wrap"><table class="ac-table"><thead><tr>${headers.map((head) => `<th>${escapeHtml(head)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>` : empty("Нет данных", emptyText);
-      const providerFilter = (row) => marketplace === "all" || String(row.marketplace || row.provider || "ozon").toLowerCase().includes(marketplace === "wildberries" ? "wild" : "ozon");
+      const providerFilter = (row) => marketplace === "all" || (!productionOnly && String(row.marketplace || row.provider || "ozon").toLowerCase().includes(marketplace === "wildberries" ? "wild" : "ozon"));
       const salesByWarehouse = (Array.isArray(breakdowns.sales_by_warehouse) ? breakdowns.sales_by_warehouse : []).filter(providerFilter);
       const salesByProduct = (Array.isArray(breakdowns.sales_by_product) ? breakdowns.sales_by_product : []).filter(providerFilter);
       const financeByMarketplace = (Array.isArray(breakdowns.finance_by_marketplace) ? breakdowns.finance_by_marketplace : []).filter(providerFilter);
@@ -13893,7 +13900,7 @@ MINIAPP_HTML = """<!doctype html>
         return {key, label: provider.label || key, status: provider.status || "unknown", commercialAvailable: rows.length > 0, commercialLabel: dimension === "units" ? "продано, шт." : "сумма заказов, ₽", commercialRows: rows};
       });
       const nav = pages.map(([id, icon, label]) => `<button type="button" class="${page === id ? "active" : ""}" data-ac-page="${id}"><i>${icon}</i><span>${label}</span></button>`).join("");
-      const marketplaceSwitch = `<div class="ac-market-switch" aria-label="Маркетплейс"><button data-ac-provider="all" class="${marketplace === "all" ? "active all" : ""}">Все</button><button data-ac-provider="ozon" class="${marketplace === "ozon" ? "active ozon" : ""}">Ozon</button><button data-ac-provider="wildberries" class="${marketplace === "wildberries" ? "active wb" : ""}">WB</button></div>`;
+      const marketplaceSwitch = `<div class="ac-market-switch" aria-label="Источник аналитики"><button data-ac-provider="all" class="${marketplace === "all" ? "active all" : ""}">Все</button><button data-ac-provider="ozon" class="${marketplace === "ozon" ? "active ozon" : ""}">Ozon</button><button data-ac-provider="wildberries" class="${marketplace === "wildberries" ? "active wb" : ""}">WB</button><button data-ac-provider="production" class="${marketplace === "production" ? "active production" : ""}">Производство</button></div>`;
       const periodOptions = [["7d","7 дней"],["30d","30 дней"],["month","Месяц"],["previous-month","Прошлый месяц"]];
       const filterbar = `<div class="ac-filterbar"><label><span>Период</span><select id="analyticsHubPeriod">${periodOptions.map(([id,label]) => `<option value="${id}" ${state.marketplacePeriod === id ? "selected" : ""}>${label}</option>`).join("")}</select></label><span class="ac-period-label">${escapeHtml(period)}</span><button type="button" data-ac-action="refresh" ${overviewState.loading ? "disabled" : ""}>${overviewState.loading ? "Загрузка…" : "Обновить"}</button></div>`;
       const sourceState = overviewState.loading ? `<div class="ac-skeleton"></div>` : overviewState.error ? empty("Не удалось обновить данные", "Структура экрана сохранена. Повторите загрузку или откройте диагностику.", "diagnostics") : "";
@@ -13957,11 +13964,22 @@ MINIAPP_HTML = """<!doctype html>
       function renderProductionPage() {
         const stages = Array.isArray(production.stages) ? production.stages : [];
         const alerts = Array.isArray(production.alerts) ? production.alerts : [];
+        const productionDetails = production.details && typeof production.details === "object" ? production.details : {};
+        const finishedReceipts = Array.isArray(productionDetails.finished_receipts) ? productionDetails.finished_receipts : [];
+        const dailyOutput = Array.isArray(production.daily_output) ? production.daily_output : [];
         const stageRows = stages.map((row) => `<tr><td>${escapeHtml(row.stage || row.name || "—")}</td><td>${fmt(row.tasks || 0)}</td><td>${fmt(row.free || 0)}</td><td>${fmt(row.quantity || 0)}</td><td>${fmt(row.overdue || 0)}</td></tr>`);
         const alertRows = alerts.slice(0, 12).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.title || "Отклонение")}</b><span>${escapeHtml(row.detail || "Требует внимания")}</span></div><strong>${escapeHtml(row.type === "overdue" ? "Просрочено" : "Проверить")}</strong></div>`).join("");
         const demandRows = matrixRows.slice(0, 300).map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.name || "—")}</td><td>${escapeHtml(row.article || row.sku || "—")}</td><td>${escapeHtml(row.production_color || row.color || "—")}</td><td>${escapeHtml(row.production_size || row.size || "—")}</td><td>${reconciliation.warehouse_available === false ? "—" : fmt(row.warehouse_available_quantity || 0)}</td><td>${!row.route_configured ? "Нет связи" : Number(row.warehouse_available_quantity || 0) > 0 ? "Готово" : "Нужно произвести"}</td></tr>`);
+        const receiptRows = finishedReceipts.map((row) => `<tr><td>${escapeHtml(row.date || "—")}</td><td>${escapeHtml(row.product || "—")}</td><td>${escapeHtml(row.size || "—")}</td><td>${escapeHtml(row.color || "—")}</td><td>${escapeHtml(row.location || "RECEIVE")}</td><td>${fmt(row.quantity || 0)}</td></tr>`);
+        const outputChart = dailyOutput.length ? analyticsHubCombinedChart([{
+          key: "production", label: "Производство", status: production.meta && production.meta.status || "unknown",
+          commercialAvailable: true, commercialLabel: "готовая продукция", unit: "units",
+          commercialRows: dailyOutput.map((row) => ({date: row.date, value: Number(row.quantity || 0)})),
+        }]) : empty("За период приёмок нет", "Готовая продукция ещё не поступала в WMS-зону приёмки.");
         const actions = `<div class="button-row"><button type="button" class="small-button" data-analytics-matrix-action="production">Создать производственное задание</button><button type="button" class="small-button secondary" data-analytics-matrix-action="links">Проверить связи</button></div>`;
-        return `<div class="ac-kpis">${kpi("План", production.plan !== undefined && production.plan !== null ? fmt(production.plan) : "—", "Изделий")}${kpi("Факт", production.fact !== undefined && production.fact !== null ? fmt(production.fact) : "—", "Изделий")}${kpi("В работе", production.active_quantity !== undefined && production.active_quantity !== null ? fmt(production.active_quantity) : "—", "Активный WIP")}${kpi("Брак", production.defect_quantity !== undefined && production.defect_quantity !== null ? fmt(production.defect_quantity) : "—", "Подтверждённые записи")}</div><div class="ac-grid">${panel("Этапы производства", `${stages.length} этапов`, table(["Этап","Задания","Свободно","Количество","Просрочено"], stageRows, "Активных производственных этапов нет."), "span-8")}${panel("Требует внимания", `${alerts.length} сигналов`, alertRows || empty("Отклонений нет", "Новых подтверждённых производственных отклонений не найдено."), "span-4")}${panel("Спрос маркетплейсов → производство", `${matrixRows.length} активных SKU`, `${table(["Площадка","Товар","Артикул","Цвет","Размер","Готовый остаток","Действие"], demandRows, "Активных связанных карточек нет.")}${actions}`, "span-12")}</div>`;
+        const productionOnlyPanels = `${panel("Выпуск готовой продукции", period, outputChart, "span-8")}${panel("Правило расчёта", "План / факт", `<p class="ac-panel-copy">План считается один раз по готовым изделиям в производственных заданиях. Факт — только готовые изделия, принятые из производства в зону RECEIVE. Полуфабрикаты в план и факт не входят.</p>`, "span-4")}${panel("Приёмка готовой продукции", `${finishedReceipts.length} записей`, table(["Дата","Изделие","Размер","Цвет","Зона","Количество"], receiptRows, "За выбранный период готовая продукция в зону приёмки не поступала."), "span-12")}`;
+        const demandPanel = panel("Спрос маркетплейсов → производство", `${matrixRows.length} активных SKU`, `${table(["Площадка","Товар","Артикул","Цвет","Размер","Готовый остаток","Действие"], demandRows, "Активных связанных карточек нет.")}${actions}`, "span-12");
+        return `<div class="ac-kpis">${kpi("План готовой продукции", production.plan !== undefined && production.plan !== null ? fmt(production.plan) : "—", "Изделий в заданиях")}${kpi("Факт готовой продукции", production.fact !== undefined && production.fact !== null ? fmt(production.fact) : "—", "Принято в RECEIVE")}${kpi("В работе", production.active_quantity !== undefined && production.active_quantity !== null ? fmt(production.active_quantity) : "—", "Активный WIP, не входит в факт")}${kpi("Брак", production.defect_quantity !== undefined && production.defect_quantity !== null ? fmt(production.defect_quantity) : "—", "Подтверждённые записи")}</div><div class="ac-grid">${productionOnly ? productionOnlyPanels : ""}${panel("Этапы производства", `${stages.length} этапов`, table(["Этап","Задания","Свободно","Количество","Просрочено"], stageRows, "Активных производственных этапов нет."), "span-8")}${panel("Требует внимания", `${alerts.length} сигналов`, alertRows || empty("Отклонений нет", "Новых подтверждённых производственных отклонений не найдено."), "span-4")}${productionOnly ? "" : demandPanel}</div>`;
       }
 
       function renderSuppliesPage() {
@@ -14064,7 +14082,7 @@ MINIAPP_HTML = """<!doctype html>
       const renderers = {general: renderOverviewPage, sales: renderSalesPage, products: renderProductsPage, inventory: renderInventoryPage, production: renderProductionPage, supplies: renderSuppliesPage, finance: renderFinancePage, map: renderMapPage, "data-quality": renderQualityPage};
       const title = pages.find(([id]) => id === page)[2];
       mainButton.hidden = true;
-      mount.innerHTML = `<div class="ac-shell"><aside class="ac-sidebar"><div class="ac-brand"><b>АНАЛИТИКА</b><span>центр управления</span></div><nav class="ac-nav">${nav}</nav></aside><div class="ac-main"><header class="ac-topbar"><label class="ac-search"><span>⌕</span><input id="analyticsSearchTop" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Найти товар, артикул, поставку"></label>${marketplaceSwitch}<button type="button" class="ac-sync" data-ac-action="sync">↻ Синхронизировать</button></header><main class="ac-content"><div class="ac-heading"><div><h2>${escapeHtml(title)}</h2><p>Продажи, остатки, производство и качество данных в едином центре.</p></div><span class="ac-business-state ${businessStatus[1]}">${escapeHtml(businessStatus[0])}</span></div>${renderers[page]()}</main></div></div>`;
+      mount.innerHTML = `<div class="ac-shell"><aside class="ac-sidebar"><div class="ac-brand"><b>АНАЛИТИКА</b><span>центр управления</span></div><nav class="ac-nav">${nav}</nav></aside><div class="ac-main"><header class="ac-topbar"><label class="ac-search"><span>⌕</span><input id="analyticsSearchTop" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Найти товар, артикул, поставку"></label>${marketplaceSwitch}<button type="button" class="ac-sync" data-ac-action="sync">↻ Синхронизировать</button></header><main class="ac-content"><div class="ac-heading"><div><h2>${escapeHtml(title)}</h2><p>${productionOnly ? "Только производство: готовая продукция, этапы и подтверждённая приёмка." : "Продажи, остатки, производство и качество данных в едином центре."}</p></div><span class="ac-business-state ${businessStatus[1]}">${escapeHtml(businessStatus[0])}</span></div>${renderers[page]()}</main></div></div>`;
     }
 
     function render() {
@@ -15150,7 +15168,9 @@ MINIAPP_HTML = """<!doctype html>
 
       const analyticsCenterProvider = event.target.closest("[data-ac-provider]");
       if (analyticsCenterProvider) {
-        state.marketplaceProvider = analyticsCenterProvider.dataset.acProvider || "all";
+        const provider = analyticsCenterProvider.dataset.acProvider || "all";
+        state.analyticsProvider = ["all", "ozon", "wildberries", "production"].includes(provider) ? provider : "all";
+        state.analyticsHubTab = state.analyticsProvider === "production" ? "production" : "general";
         render();
         return;
       }

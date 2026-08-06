@@ -1713,11 +1713,22 @@ def analytics_overview(
             production_source.get("updated_at"),
         )
     ) if production_has_data else None
+    declared_production_sources = production_source.get("sources")
+    if not isinstance(declared_production_sources, list):
+        declared_production_sources = []
+    declared_production_warnings = production_source.get("warnings")
+    if not isinstance(declared_production_warnings, list):
+        declared_production_warnings = []
+    declared_production_status = _status(production_source.get("status"), fallback="fresh")
     production_meta = _data_meta(
-        status="error" if production_error else ("fresh" if production_has_data else "no_data"),
+        status="error" if production_error else (
+            declared_production_status if production_has_data else "no_data"
+        ),
         generated_at=generated_at,
-        sources=["sqlite.production_control"] if production_has_data else [],
-        warnings=[production_error] if production_error else [],
+        sources=(declared_production_sources or ["sqlite.production_control"])
+        if production_has_data else [],
+        warnings=[production_error] if production_error else declared_production_warnings,
+        partial=declared_production_status == "partial",
         max_source_updated_at=production_source_updated_at,
         last_successful_sync_at=_latest_timestamp(
             (production_source.get("last_successful_sync_at"), production_source_updated_at)

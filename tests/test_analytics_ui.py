@@ -37,6 +37,14 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertNotIn('data-workspace="analytics">Отчёт</button>', MINIAPP_HTML)
         self.assertIn('data-workspace="analytics">Открыть аналитику ›</button>', MINIAPP_HTML)
 
+    def test_production_has_own_analytics_scope_and_finished_goods_rule(self):
+        self.assertIn('analyticsProvider: "all"', MINIAPP_HTML)
+        self.assertIn('data-ac-provider="production"', MINIAPP_HTML)
+        self.assertIn('>Производство</button>', MINIAPP_HTML)
+        self.assertIn('Факт готовой продукции', MINIAPP_HTML)
+        self.assertIn('Принято в RECEIVE', MINIAPP_HTML)
+        self.assertIn('Полуфабрикаты в план и факт не входят.', MINIAPP_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -95,6 +95,79 @@ def list_locations(conn, *, zone_code: str | None = None) -> list[Location]:
     return [_location_from_row(r) for r in rows]
 
 
+def finished_production_receipts(
+    conn,
+    *,
+    start_date: str,
+    end_date: str,
+    timezone_name: str = "Asia/Yekaterinburg",
+) -> dict[str, Any]:
+    """Return finished goods actually received from production.
+
+    The fact comes from the immutable WMS movement journal, not route-step
+    completions. This prevents one garment from being counted once per
+    operation and excludes semi-finished stock.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                (movement.occurred_at AT TIME ZONE %s)::date AS receipt_date,
+                movement.product_key->>'product_name' AS product_name,
+                movement.product_key->>'product_size' AS product_size,
+                movement.product_key->>'product_color' AS product_color,
+                location.code AS location_code,
+                movement.quantity,
+                movement.occurred_at,
+                movement.id
+            FROM wms_movements AS movement
+            JOIN wms_locations AS location ON location.id = movement.to_location_id
+            JOIN wms_zones AS zone ON zone.id = location.zone_id
+            WHERE movement.movement_type = 'production_receipt'
+              AND movement.source_type = 'production'
+              AND movement.product_key->>'item_type' = 'finished'
+              AND movement.quantity > 0
+              AND zone.code = 'RECEIVE'
+              AND (movement.occurred_at AT TIME ZONE %s)::date BETWEEN %s::date AND %s::date
+            ORDER BY movement.occurred_at DESC, movement.id DESC
+            """,
+            (timezone_name, timezone_name, start_date, end_date),
+        )
+        rows = cur.fetchall()
+
+    daily: dict[str, int] = {}
+    details: list[dict[str, Any]] = []
+    latest = None
+    total = 0
+    for row in rows:
+        receipt_date = str(row["receipt_date"])
+        quantity = int(row["quantity"] or 0)
+        occurred_at = row["occurred_at"]
+        total += quantity
+        daily[receipt_date] = daily.get(receipt_date, 0) + quantity
+        if latest is None or occurred_at > latest:
+            latest = occurred_at
+        if len(details) < 200:
+            details.append(
+                {
+                    "date": receipt_date,
+                    "product": str(row["product_name"] or ""),
+                    "size": str(row["product_size"] or ""),
+                    "color": str(row["product_color"] or ""),
+                    "location": str(row["location_code"] or ""),
+                    "quantity": quantity,
+                    "occurred_at": occurred_at.isoformat() if occurred_at else "",
+                }
+            )
+    return {
+        "quantity": total,
+        "movement_count": len(rows),
+        "updated_at": latest.isoformat() if latest else None,
+        "daily": [{"date": day, "quantity": daily[day]} for day in sorted(daily)],
+        "details": details,
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────
 # warehouse_stock
 # ──────────────────────────────────────────────────────────────────────

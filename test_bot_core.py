@@ -1837,10 +1837,12 @@ class IsolatedDatabaseTest(unittest.TestCase):
             self.database.local_today().isoformat(),
             self.database.local_today().isoformat(),
         )
-        self.assertEqual(control["plan"], 20)
-        self.assertEqual(control["fact"], 9)
+        # This route step produces a semi-finished component. Production
+        # plan/fact now count only finished goods accepted into WMS RECEIVE.
+        self.assertEqual(control["plan"], 0)
+        self.assertIsNone(control["fact"])
         self.assertEqual(control["defect_quantity"], 1)
-        self.assertEqual(control["fpy"], 90)
+        self.assertIsNone(control["fpy"])
         self.assertEqual(control["schedule_adherence"], 100)
         self.assertEqual(control["active_tasks"], 2)
         self.assertTrue(any(alert["type"] == "defect" for alert in control["alerts"]))
