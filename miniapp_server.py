@@ -210,6 +210,26 @@ ROUTES_MINIAPP_ENABLED = False
 LOGGER = logging.getLogger(__name__)
 
 
+def _bounded_float_env(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return min(maximum, max(minimum, value))
+
+
+MARKETPLACE_DASHBOARD_CACHE_TTL_SECONDS = _bounded_float_env(
+    "MARKETPLACE_DASHBOARD_CACHE_TTL_SECONDS", 30.0, 5.0, 300.0
+)
+_MARKETPLACE_DASHBOARD_CACHE_LOCK = threading.RLock()
+_MARKETPLACE_DASHBOARD_CACHE_READY = threading.Event()
+_MARKETPLACE_DASHBOARD_CACHE = {
+    "value": None,
+    "loaded_at": 0.0,
+    "refreshing": False,
+}
+
+
 class RequestJSONError(ValueError):
     """A client-safe request-body failure with explicit HTTP semantics."""
 
@@ -331,9 +351,7 @@ def is_admin(telegram_id: int):
     return telegram_id in get_admin_ids()
 
 
-def get_marketplace_dashboard_for_admin(telegram_id: int):
-    if not is_admin(telegram_id):
-        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+def _build_marketplace_dashboard_payload():
     if phase1a_enabled():
         result = phase1a_dashboard()
         if not result.get("ok"):
@@ -357,6 +375,96 @@ def get_marketplace_dashboard_for_admin(telegram_id: int):
         (result.get("wildberries") or {}).get("products_rows") or [],
     )
     return result
+
+
+def _store_marketplace_dashboard_cache(result: dict) -> None:
+    with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
+        if result.get("ok"):
+            _MARKETPLACE_DASHBOARD_CACHE["value"] = result
+            _MARKETPLACE_DASHBOARD_CACHE["loaded_at"] = time.monotonic()
+        _MARKETPLACE_DASHBOARD_CACHE["refreshing"] = False
+        _MARKETPLACE_DASHBOARD_CACHE_READY.set()
+
+
+def _refresh_marketplace_dashboard_cache() -> dict:
+    try:
+        result = _build_marketplace_dashboard_payload()
+    except Exception:
+        LOGGER.exception("Marketplace dashboard cache refresh failed")
+        result = {"ok": False, "code": "cache_refresh_failed", "message": "Снимок маркетплейса временно недоступен."}
+    _store_marketplace_dashboard_cache(result)
+    return result
+
+
+def _start_marketplace_dashboard_cache_refresh() -> bool:
+    with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
+        if _MARKETPLACE_DASHBOARD_CACHE["refreshing"]:
+            return False
+        _MARKETPLACE_DASHBOARD_CACHE["refreshing"] = True
+        _MARKETPLACE_DASHBOARD_CACHE_READY.clear()
+    threading.Thread(
+        target=_refresh_marketplace_dashboard_cache,
+        name="marketplace-dashboard-cache",
+        daemon=True,
+    ).start()
+    return True
+
+
+def _expire_marketplace_dashboard_cache() -> None:
+    """Keep the last snapshot readable while scheduling a fresh one."""
+    with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
+        _MARKETPLACE_DASHBOARD_CACHE["loaded_at"] = 0.0
+
+
+def _reset_marketplace_dashboard_cache_for_tests() -> None:
+    with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
+        _MARKETPLACE_DASHBOARD_CACHE.update({"value": None, "loaded_at": 0.0, "refreshing": False})
+        _MARKETPLACE_DASHBOARD_CACHE_READY.clear()
+
+
+def _cached_marketplace_dashboard_payload() -> dict:
+    now = time.monotonic()
+    with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
+        cached = _MARKETPLACE_DASHBOARD_CACHE["value"]
+        loaded_at = float(_MARKETPLACE_DASHBOARD_CACHE["loaded_at"] or 0.0)
+        refreshing = bool(_MARKETPLACE_DASHBOARD_CACHE["refreshing"])
+        if cached is not None:
+            expired = now - loaded_at >= MARKETPLACE_DASHBOARD_CACHE_TTL_SECONDS
+        else:
+            expired = True
+
+    if cached is not None:
+        if expired and not refreshing:
+            _start_marketplace_dashboard_cache_refresh()
+        return cached
+
+    if refreshing:
+        _MARKETPLACE_DASHBOARD_CACHE_READY.wait(timeout=20)
+        with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
+            cached = _MARKETPLACE_DASHBOARD_CACHE["value"]
+        if cached is not None:
+            return cached
+
+    with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
+        if not _MARKETPLACE_DASHBOARD_CACHE["refreshing"]:
+            _MARKETPLACE_DASHBOARD_CACHE["refreshing"] = True
+            _MARKETPLACE_DASHBOARD_CACHE_READY.clear()
+            build_here = True
+        else:
+            build_here = False
+    if build_here:
+        return _refresh_marketplace_dashboard_cache()
+
+    _MARKETPLACE_DASHBOARD_CACHE_READY.wait(timeout=20)
+    with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
+        cached = _MARKETPLACE_DASHBOARD_CACHE["value"]
+    return cached if cached is not None else _build_marketplace_dashboard_payload()
+
+
+def get_marketplace_dashboard_for_admin(telegram_id: int):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    return _cached_marketplace_dashboard_payload()
 
 
 def get_warehouse_catalog_for_access(telegram_id: int):
@@ -447,7 +555,9 @@ def export_wms_shipment_for_access(telegram_id: int, shipment_number: str, expor
 def sync_marketplace_for_telegram(telegram_id: int):
     if not is_admin(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Синхронизацию маркетплейсов может запускать только администратор."}
-    return sync_marketplace_for_admin()
+    result = sync_marketplace_for_admin()
+    _expire_marketplace_dashboard_cache()
+    return result
 
 
 def get_marketplace_data_quality_for_admin(telegram_id: int):
@@ -6776,5 +6886,7 @@ def start_miniapp_server(bot_token: str, host: str, port: int, debug: bool = Fal
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    if phase1a_enabled():
+        _start_marketplace_dashboard_cache_refresh()
     logging.info("Miniapp server started on %s:%s", host, port)
     return server
