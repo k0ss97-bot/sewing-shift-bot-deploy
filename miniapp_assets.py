@@ -4566,12 +4566,21 @@ MINIAPP_HTML = """<!doctype html>
     .ac-region-land-detail { fill:none; stroke:#c8d5e7; stroke-width:1.15; stroke-linecap:round; stroke-dasharray:4 5; opacity:.9; }
     .ac-region-water { fill:#eaf3fc; stroke:#c1d2e6; stroke-width:1.4; }
     .ac-region-grid { stroke:#dce5f2; stroke-width:1; stroke-dasharray:4 8; }
-    .ac-region-bubble { fill:#2563eb; fill-opacity:.76; stroke:#fff; stroke-width:2.6; filter:drop-shadow(0 3px 4px rgba(37,99,235,.22)); transition:r .18s ease,fill-opacity .18s ease; }
-    .ac-region-point:hover .ac-region-bubble,.ac-region-point:focus .ac-region-bubble { fill-opacity:.95; }
-    .ac-region-leader { fill:none; stroke:#9aabc2; stroke-width:1.2; opacity:.9; }
-    .ac-region-label-dot { fill:#2563eb; }
-    .ac-region-label { fill:#1f2f49; font-size:11px; font-weight:850; pointer-events:none; }
-    .ac-region-value { fill:#65758c; font-size:8.8px; font-weight:750; pointer-events:none; }
+    .ac-region-bubble { fill:#2563eb; fill-opacity:.76; stroke:#fff; stroke-width:2.6; filter:drop-shadow(0 3px 4px rgba(37,99,235,.22)); transform-box:fill-box; transform-origin:center; transition:transform .18s ease,fill .18s ease,fill-opacity .18s ease,stroke-width .18s ease; }
+    .ac-region-point:hover .ac-region-bubble,.ac-region-point:focus .ac-region-bubble,.ac-region-point.is-active .ac-region-bubble { fill:#174dcc; fill-opacity:1; stroke-width:4; transform:scale(1.16); }
+    .ac-region-hover-card { opacity:0; pointer-events:none; transition:opacity .16s ease; }
+    .ac-region-point:hover .ac-region-hover-card,.ac-region-point:focus .ac-region-hover-card,.ac-region-point.is-active .ac-region-hover-card { opacity:1; }
+    .ac-region-hover-card rect { fill:rgba(17,32,57,.94); stroke:#fff; stroke-width:1; rx:8; filter:drop-shadow(0 5px 9px rgba(20,38,69,.22)); }
+    .ac-region-hover-name { fill:#fff; font-size:11px; font-weight:850; }
+    .ac-region-hover-value { fill:#d9e6ff; font-size:9px; font-weight:700; }
+    .ac-region-share-total { display:flex; align-items:flex-end; justify-content:space-between; gap:10px; margin-bottom:12px; padding:12px; border:1px solid #dbe5f2; border-radius:12px; background:#f7faff; }
+    .ac-region-share-total strong { color:#174dcc; font-size:24px; line-height:1; }.ac-region-share-total span { color:#69768b; font-size:9px; text-align:right; }
+    .ac-region-share-chart { display:grid; gap:7px; max-height:500px; overflow:auto; padding-right:3px; scrollbar-width:thin; }
+    .ac-region-share-row { display:grid; grid-template-columns:minmax(88px,1fr) 47px; gap:5px 9px; padding:8px; border:1px solid transparent; border-radius:9px; outline:none; transition:border-color .16s ease,background .16s ease,transform .16s ease; }
+    .ac-region-share-row:hover,.ac-region-share-row:focus,.ac-region-share-row.is-active { border-color:#9cbaf7; background:#edf4ff; transform:translateX(2px); }
+    .ac-region-share-row b { overflow:hidden; color:#26344d; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }.ac-region-share-row strong { color:#174dcc; font-size:9px; text-align:right; }
+    .ac-region-share-row span { color:#7a879a; font-size:8px; }.ac-region-share-track { grid-column:1 / -1; height:6px; overflow:hidden; border-radius:99px; background:#e7edf6; }
+    .ac-region-share-track i { display:block; width:var(--region-share); height:100%; min-width:2px; border-radius:inherit; background:linear-gradient(90deg,#2563eb,#7da2f8); transition:width .2s ease,filter .16s ease; }.ac-region-share-row.is-active .ac-region-share-track i { filter:saturate(1.4) brightness(.9); }
     .ac-map-legend { position:absolute; left:14px; top:14px; z-index:2; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid #dce5f2; border-radius:9px; color:#60708a; background:rgba(255,255,255,.94); font-size:9px; font-weight:750; box-shadow:0 4px 14px rgba(60,79,110,.08); }
     .ac-map-legend i { width:13px; height:13px; border:2px solid #fff; border-radius:50%; background:rgba(37,99,235,.72); box-shadow:0 0 0 1px #b9c9df; }
     .ac-map-note { position:absolute; left:18px; right:18px; bottom:12px; z-index:2; padding:10px; border:1px solid #dce3ef; border-radius:9px; color:#728096; background:rgba(255,255,255,.93); font-size:9px; }
@@ -12199,6 +12208,14 @@ MINIAPP_HTML = """<!doctype html>
       if (tooltip) tooltip.hidden = true;
     }
 
+    function setAnalyticsRegionHighlight(regionKey, active) {
+      if (!regionKey) return;
+      document.querySelectorAll("[data-ac-region-key]").forEach((node) => {
+        const matches = node.dataset.acRegionKey === regionKey;
+        node.classList.toggle("is-active", Boolean(active && matches));
+      });
+    }
+
     function renderMarketplaceDetail(products, orders, runs) {
       const detail = state.marketplaceDetail || {};
       const providerLabel = state.marketplaceProvider === "wildberries" ? "Wildberries" : "Ozon";
@@ -14014,8 +14031,25 @@ MINIAPP_HTML = """<!doctype html>
         const totalRegionAmount = geographyRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
         const totalRegionOrders = geographyRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
         const mapTotal = mapMetric === "amount" ? totalRegionAmount : totalRegionUnits;
-        const rows = geographyRows.map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.region || "Регион не указан")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${mapTotal > 0 ? `${(Number(row[mapMetric] || 0) * 100 / mapTotal).toLocaleString("ru-RU", {maximumFractionDigits: 1})}%` : "—"}</td></tr>`);
-        const providerRows = Array.isArray(geography.providers) ? geography.providers.filter(providerFilter).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</b><span>${escapeHtml(row.message || "")}</span></div><strong>${row.regions !== null && row.regions !== undefined ? `${escapeHtml(fmt(row.regions))} рег.` : "—"}</strong></div>`).join("") : "";
+        const regionKey = (row) => String(row.region || "Регион не указан").trim().toLocaleLowerCase("ru-RU");
+        const regionTotals = new Map();
+        geographyRows.forEach((row) => {
+          const key = regionKey(row);
+          const current = regionTotals.get(key) || {region: row.region || "Регион не указан", units: 0, amount: 0, orders: 0};
+          current.units += Number(row.units || 0);
+          current.amount += Number(row.amount || 0);
+          current.orders += Number(row.orders || 0);
+          regionTotals.set(key, current);
+        });
+        const regionalSummaryRows = [...regionTotals.values()];
+        const rows = geographyRows.map((row) => `<tr data-ac-region-key="${escapeHtml(regionKey(row))}"><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.region || "Регион не указан")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${mapTotal > 0 ? `${(Number(row[mapMetric] || 0) * 100 / mapTotal).toLocaleString("ru-RU", {maximumFractionDigits: 1})}%` : "—"}</td></tr>`);
+        const shares = [...regionalSummaryRows].sort((left, right) => Number(right.units || 0) - Number(left.units || 0));
+        const shareRows = shares.map((row) => {
+          const units = Number(row.units || 0);
+          const share = totalRegionUnits > 0 ? units * 100 / totalRegionUnits : 0;
+          return `<div class="ac-region-share-row" tabindex="0" role="img" aria-label="${escapeHtml(`${row.region || "Регион не указан"}: ${fmt(units)} шт., ${share.toLocaleString("ru-RU", {maximumFractionDigits:1})}%`)}" data-ac-region-key="${escapeHtml(regionKey(row))}"><b>${escapeHtml(row.region || "Регион не указан")}</b><strong>${share.toLocaleString("ru-RU", {maximumFractionDigits:1})}%</strong><span>${fmt(units)} шт.</span><div class="ac-region-share-track"><i style="--region-share:${Math.max(0, Math.min(100, share))}%"></i></div></div>`;
+        }).join("");
+        const shareChart = regionalSummaryRows.length ? `<div class="ac-region-share-total"><strong>100%</strong><span>${fmt(totalRegionUnits)} товаров<br>${escapeHtml(period)}</span></div><div class="ac-region-share-chart">${shareRows}</div>` : empty("Нет региональных данных", "Для выбранного периода распределение товаров пока недоступно.");
         const productMap = new Map();
         (Array.isArray(breakdowns.sales_by_product) ? breakdowns.sales_by_product : []).filter((row) => row.marketplace === "ozon").forEach((row) => {
           const key = String(row.offer_id || row.sku || "").trim();
@@ -14039,30 +14073,24 @@ MINIAPP_HTML = """<!doctype html>
           const match = Object.entries(coordinates).find(([key]) => normalized.includes(key));
           return match ? match[1] : [350 + (index % 8) * 82, 275 + Math.floor(index / 8) * 58];
         };
-        const ranked = [...geographyRows].sort((left, right) => Number(right[mapMetric] || 0) - Number(left[mapMetric] || 0));
+        const ranked = [...regionalSummaryRows].sort((left, right) => Number(right[mapMetric] || 0) - Number(left[mapMetric] || 0));
         const maximumValue = Math.max(1, ...ranked.map((row) => Number(row[mapMetric] || 0)));
         const positioned = ranked.map((row, index) => {
           const [x,y] = coordinateFor(row.region, index);
-          return {row,index,x,y,side:x < 650 ? "left" : "right"};
+          return {row,index,x,y};
         });
-        ["left","right"].forEach((side) => {
-          const lane = positioned.filter((item) => item.side === side).sort((left,right) => left.y - right.y);
-          const start = 92, end = 565, step = lane.length > 1 ? Math.min(40, (end - start) / (lane.length - 1)) : 0;
-          const offset = lane.length > 1 ? (end - start - step * (lane.length - 1)) / 2 : (end - start) / 2;
-          lane.forEach((item,index) => { item.labelY = start + offset + index * step; });
-        });
-        const points = positioned.map(({row,x,y,side,labelY}) => {
+        const points = positioned.map(({row,x,y}) => {
           const radius = 6 + 20 * Math.sqrt(Math.max(0, Number(row[mapMetric] || 0)) / maximumValue);
-          const labelX = side === "left" ? 25 : 1090;
-          const lineEndX = side === "left" ? 210 : 1070;
-          const elbowX = side === "left" ? 222 : 1058;
           const title = `${row.region || "Регион не указан"}: ${fmt(row.units)} шт., ${money(row.amount)}`;
           const metricText = mapMetric === "amount" ? `${money(row.amount)} · ${fmt(row.units)} шт.` : `${fmt(row.units)} шт. · ${money(row.amount)}`;
-          return `<g class="ac-region-point" tabindex="0" role="img" aria-label="${escapeHtml(title)}"><path class="ac-region-leader" d="M ${x} ${y} L ${elbowX} ${labelY} L ${lineEndX} ${labelY}"/><circle class="ac-region-bubble" cx="${x}" cy="${y}" r="${radius.toFixed(1)}"><title>${escapeHtml(title)}</title></circle><circle class="ac-region-label-dot" cx="${lineEndX}" cy="${labelY}" r="2.3"/><text class="ac-region-label" x="${labelX}" y="${labelY-3}">${escapeHtml(row.region || "Регион")}</text><text class="ac-region-value" x="${labelX}" y="${labelY+11}">${escapeHtml(metricText)}</text></g>`;
+          const cardWidth = 180;
+          const cardX = x > 850 ? x - radius - cardWidth - 10 : x + radius + 10;
+          const cardY = Math.max(34, y - 29);
+          return `<g class="ac-region-point" tabindex="0" role="img" aria-label="${escapeHtml(title)}" data-ac-region-key="${escapeHtml(regionKey(row))}"><circle class="ac-region-bubble" cx="${x}" cy="${y}" r="${radius.toFixed(1)}"><title>${escapeHtml(title)}</title></circle><g class="ac-region-hover-card"><rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="48"></rect><text class="ac-region-hover-name" x="${cardX+11}" y="${cardY+19}">${escapeHtml(row.region || "Регион не указан")}</text><text class="ac-region-hover-value" x="${cardX+11}" y="${cardY+35}">${escapeHtml(metricText)}</text></g></g>`;
         }).join("");
         const detailPaths = ["M310 255 C380 245 450 250 525 286 S665 302 735 330","M385 365 C470 345 555 350 632 382 S770 420 865 404","M560 220 C610 260 640 310 660 365","M760 250 C800 300 825 350 842 405","M900 250 C930 300 950 345 965 390"];
-        const map = geographyRows.length ? `<div class="ac-map"><div class="ac-map-stage"><svg class="ac-region-map" style="--ac-map-width:${mapZoom * 100}%" viewBox="0 0 1280 640" role="img" aria-label="Карта продаж по регионам ${escapeHtml(mapProviderLabel)}"><defs><linearGradient id="acRegionLand" x1="0" x2="1"><stop offset="0" stop-color="#edf4ff"/><stop offset=".55" stop-color="#eef1ff"/><stop offset="1" stop-color="#f5edff"/></linearGradient></defs>${[160,260,360,460].map((y) => `<line class="ac-region-grid" x1="210" y1="${y}" x2="1070" y2="${y}"/>`).join("")}<path class="ac-region-land" d="M220 338 L242 312 L258 278 L286 258 L300 225 L335 210 L358 176 L402 158 L442 177 L478 147 L520 172 L563 142 L606 166 L652 145 L700 170 L744 151 L786 178 L835 164 L876 190 L918 181 L952 210 L989 203 L1014 235 L1042 252 L1025 280 L1054 306 L1038 338 L1062 372 L1036 405 L1054 438 L1023 475 L984 461 L950 478 L914 455 L878 469 L840 446 L804 468 L765 445 L731 467 L690 448 L650 472 L613 452 L575 469 L540 441 L498 459 L462 438 L425 459 L393 437 L359 451 L330 422 L298 413 L280 383 L246 371 Z"/><path class="ac-region-water" d="M226 329 l20 -11 12 14 -13 17 -18 -6 z"/><path class="ac-region-water" d="M1048 404 c17 9 20 30 8 47 -8 -13 -15 -28 -8 -47 z"/><path class="ac-region-water" d="M1057 470 l8 9 -7 11 -8 -8 z M1065 497 l7 8 -6 10 -7 -8 z M1070 522 l6 7 -5 9 -6 -7 z"/>${detailPaths.map((path) => `<path class="ac-region-land-detail" d="${path}"/>`).join("")}${points}</svg></div><div class="ac-map-legend"><i></i><span>Размер круга — ${mapMetric === "amount" ? "продажи в рублях" : "продажи в штуках"}</span></div><div class="ac-map-note">${escapeHtml(selectedProductLabel)} · ${escapeHtml(period)}. Подписи вынесены в отдельные колонки и соединены с точками линиями — значения больше не перекрывают друг друга.</div></div>` : empty("Карта пока пустая", marketplace === "wildberries" ? "Wildberries не передал региональный разрез в сохранённом snapshot." : selectedProduct === "all" ? "Региональные данные выбранной площадки ещё загружаются." : "По выбранной номенклатуре за этот срок продаж по регионам нет.");
-        return `${mapToolbar}<div class="ac-kpis">${kpi("Регионы", loadingWithoutPayload ? "…" : fmt(geographyRows.length), "Кластеры назначения")}${kpi("Заказы", loadingWithoutPayload ? "…" : fmt(totalRegionOrders), "С региональным разрезом")}${kpi("Продано", loadingWithoutPayload ? "…" : fmt(totalRegionUnits), "Штук")}${kpi("Сумма заказов", loadingWithoutPayload ? "…" : money(totalRegionAmount), "Рубли")}</div><div class="ac-grid">${panel(`Карта регионов: ${mapProviderLabel}`, `${geographyRows.length} регионов · ${selectedProductLabel}`, map, "span-12")}${panel("Продажи по регионам", `${geographyRows.length} регионов`, table(["Площадка","Регион","Заказы","Штук","Сумма","Доля"], rows, marketplace === "wildberries" ? "Wildberries не передал региональный разрез в текущем snapshot." : "Региональный разрез пока не получен."), "span-8")}${panel("Доступность источников", "Ozon / Wildberries", providerRows || empty("Нет данных", "Региональный источник пока не подключён."), "span-4")}</div>`;
+        const map = geographyRows.length ? `<div class="ac-map"><div class="ac-map-stage"><svg class="ac-region-map" style="--ac-map-width:${mapZoom * 100}%" viewBox="0 0 1280 640" role="img" aria-label="Карта продаж по регионам ${escapeHtml(mapProviderLabel)}"><defs><linearGradient id="acRegionLand" x1="0" x2="1"><stop offset="0" stop-color="#edf4ff"/><stop offset=".55" stop-color="#eef1ff"/><stop offset="1" stop-color="#f5edff"/></linearGradient></defs>${[160,260,360,460].map((y) => `<line class="ac-region-grid" x1="210" y1="${y}" x2="1070" y2="${y}"/>`).join("")}<path class="ac-region-land" d="M220 338 L242 312 L258 278 L286 258 L300 225 L335 210 L358 176 L402 158 L442 177 L478 147 L520 172 L563 142 L606 166 L652 145 L700 170 L744 151 L786 178 L835 164 L876 190 L918 181 L952 210 L989 203 L1014 235 L1042 252 L1025 280 L1054 306 L1038 338 L1062 372 L1036 405 L1054 438 L1023 475 L984 461 L950 478 L914 455 L878 469 L840 446 L804 468 L765 445 L731 467 L690 448 L650 472 L613 452 L575 469 L540 441 L498 459 L462 438 L425 459 L393 437 L359 451 L330 422 L298 413 L280 383 L246 371 Z"/><path class="ac-region-water" d="M226 329 l20 -11 12 14 -13 17 -18 -6 z"/><path class="ac-region-water" d="M1048 404 c17 9 20 30 8 47 -8 -13 -15 -28 -8 -47 z"/><path class="ac-region-water" d="M1057 470 l8 9 -7 11 -8 -8 z M1065 497 l7 8 -6 10 -7 -8 z M1070 522 l6 7 -5 9 -6 -7 z"/>${detailPaths.map((path) => `<path class="ac-region-land-detail" d="${path}"/>`).join("")}${points}</svg></div><div class="ac-map-legend"><i></i><span>Размер круга — ${mapMetric === "amount" ? "продажи в рублях" : "продажи в штуках"}</span></div><div class="ac-map-note">${escapeHtml(selectedProductLabel)} · ${escapeHtml(period)}. Наведите на круг: появятся регион и значения, а соответствующая строка диаграммы подсветится.</div></div>` : empty("Карта пока пустая", marketplace === "wildberries" ? "Wildberries не передал региональный разрез в сохранённом snapshot." : selectedProduct === "all" ? "Региональные данные выбранной площадки ещё загружаются." : "По выбранной номенклатуре за этот срок продаж по регионам нет.");
+        return `${mapToolbar}<div class="ac-kpis">${kpi("Регионы", loadingWithoutPayload ? "…" : fmt(regionalSummaryRows.length), "Кластеры назначения")}${kpi("Заказы", loadingWithoutPayload ? "…" : fmt(totalRegionOrders), "С региональным разрезом")}${kpi("Продано", loadingWithoutPayload ? "…" : fmt(totalRegionUnits), "Штук")}${kpi("Сумма заказов", loadingWithoutPayload ? "…" : money(totalRegionAmount), "Рубли")}</div><div class="ac-grid">${panel(`Карта регионов: ${mapProviderLabel}`, `${regionalSummaryRows.length} регионов · ${selectedProductLabel}`, map, "span-12")}${panel("Продажи по регионам", `${geographyRows.length} строк`, table(["Площадка","Регион","Заказы","Штук","Сумма","Доля"], rows, marketplace === "wildberries" ? "Wildberries не передал региональный разрез в текущем snapshot." : "Региональный разрез пока не получен."), "span-8")}${panel("Распределение товаров", "Все регионы = 100%", shareChart, "span-4")}</div>`;
       }
 
       function renderQualityPage() {
@@ -15896,18 +15924,28 @@ MINIAPP_HTML = """<!doctype html>
     document.addEventListener("mouseover", (event) => {
       const point = event.target.closest("[data-chart-tooltip]");
       if (point) showMarketplaceChartTooltip(point);
+      const region = event.target.closest("[data-ac-region-key]");
+      if (region) setAnalyticsRegionHighlight(region.dataset.acRegionKey, true);
     });
     document.addEventListener("mouseout", (event) => {
       const point = event.target.closest("[data-chart-tooltip]");
       if (point && !point.contains(event.relatedTarget)) hideMarketplaceChartTooltip(point);
+      const region = event.target.closest("[data-ac-region-key]");
+      if (region && !region.contains(event.relatedTarget)) {
+        setAnalyticsRegionHighlight(region.dataset.acRegionKey, false);
+      }
     });
     document.addEventListener("focusin", (event) => {
       const point = event.target.closest("[data-chart-tooltip]");
       if (point) showMarketplaceChartTooltip(point);
+      const region = event.target.closest("[data-ac-region-key]");
+      if (region) setAnalyticsRegionHighlight(region.dataset.acRegionKey, true);
     });
     document.addEventListener("focusout", (event) => {
       const point = event.target.closest("[data-chart-tooltip]");
       if (point) hideMarketplaceChartTooltip(point);
+      const region = event.target.closest("[data-ac-region-key]");
+      if (region) setAnalyticsRegionHighlight(region.dataset.acRegionKey, false);
     });
     document.addEventListener("touchstart", (event) => {
       const point = event.target.closest("[data-chart-tooltip]");

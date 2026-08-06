@@ -20,8 +20,13 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('data-ac-map-metric="units"', MINIAPP_HTML)
         self.assertIn('data-ac-map-metric="amount"', MINIAPP_HTML)
         self.assertIn('data-ac-map-zoom="in"', MINIAPP_HTML)
-        self.assertIn('class="ac-region-leader"', MINIAPP_HTML)
         self.assertIn('class="ac-region-land-detail"', MINIAPP_HTML)
+        self.assertNotIn('class="ac-region-leader"', MINIAPP_HTML)
+        self.assertIn('data-ac-region-key=', MINIAPP_HTML)
+        self.assertIn('class="ac-region-hover-card"', MINIAPP_HTML)
+        self.assertIn('Распределение товаров', MINIAPP_HTML)
+        self.assertIn('Все регионы = 100%', MINIAPP_HTML)
+        self.assertIn('setAnalyticsRegionHighlight', MINIAPP_HTML)
 
     def test_all_analytics_sections_have_business_content(self):
         for label in (
