@@ -248,17 +248,29 @@ class MarketplaceTests(unittest.TestCase):
                     ("Брюки со стрелками детские", size, production_color),
                 )
 
-    def test_bdshv_article_still_rejects_unsupported_route_attributes(self):
-        self.assertIsNone(
+    def test_bdshv_article_keeps_new_ozon_color_linked_to_production(self):
+        self.assertEqual(
             marketplaces.production_target_for_marketplace_product({
                 "name": "Брюки для малыша",
                 "offer_id": "БДШВ-5/104",
                 "size": "104",
-                "color": "Неизвестный цвет",
-            })
+                "color": "коричневый",
+            }),
+            ("Брюки со стрелками детские", "104", "Коричневый"),
         )
 
-    def test_catalog_reconciliation_keeps_missing_routes_and_cells_visible(self):
+    def test_new_ozon_product_keeps_its_name_size_and_color_in_production(self):
+        self.assertEqual(
+            marketplaces.production_target_for_marketplace_product({
+                "name": "Рубашка детская",
+                "offer_id": "РДШВ-1/86",
+                "size": "86",
+                "color": "молочный",
+            }),
+            ("Рубашка детская", "86", "Молочный"),
+        )
+
+    def test_catalog_reconciliation_keeps_new_products_and_cells_visible(self):
         fake_connection = SimpleNamespace(rollback=lambda: None, close=lambda: None)
         location = SimpleNamespace(id=7, code="Z2-S1-P3-1")
         stock = SimpleNamespace(
@@ -282,7 +294,8 @@ class MarketplaceTests(unittest.TestCase):
         self.assertTrue(result["warehouse_available"])
         self.assertEqual(result["summary"]["ozon"]["products"], 2)
         self.assertEqual(result["summary"]["ozon"]["warehouse_found"], 1)
-        self.assertEqual(result["summary"]["ozon"]["route_missing"], 1)
+        self.assertEqual(result["summary"]["ozon"]["route_missing"], 0)
+        self.assertEqual(result["summary"]["ozon"]["not_in_warehouse"], 1)
         self.assertEqual(result["summary"]["production"]["visible_on_ozon"], 1)
         self.assertEqual(result["summary"]["production"]["visible_on_wildberries"], 1)
         ready = next(item for item in result["marketplace_items"] if item["article"] == "BMB-98")

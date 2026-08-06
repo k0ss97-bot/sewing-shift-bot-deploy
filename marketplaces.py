@@ -1075,8 +1075,42 @@ def _production_color(value: object, allowed: list[str]) -> str:
     return ""
 
 
+def _marketplace_production_identity(
+    row: dict,
+    *,
+    preferred_product_name: str = "",
+) -> tuple[str, str, str] | None:
+    """Keep a complete Ozon variant linked even before its route is catalogued.
+
+    Factory option lists remain the preferred source of canonical spelling for
+    products, sizes and colours.  Ozon, however, is also the active selling
+    catalogue: a new colour or model must not disappear from the production
+    stock comparison merely because its sewing operations have not yet been
+    described in ``PRODUCT_OPTIONS``.  Such variants retain their exact Ozon
+    size and colour and use the marketplace title as the production identity.
+    """
+
+    product_name = " ".join(
+        _text(preferred_product_name or row.get("name")).split()
+    )
+    size_match = re.search(r"(?<!\d)(\d{2,3})(?!\d)", _text(row.get("size")))
+    size = size_match.group(1) if size_match else _text(row.get("size"))
+    color = " ".join(_text(row.get("color")).split())
+    if color:
+        color = color[:1].upper() + color[1:]
+    if not product_name or not size or not color:
+        return None
+    return product_name, size, color
+
+
 def production_target_for_marketplace_product(row: dict) -> tuple[str, str, str] | None:
-    """Map one marketplace variant to one existing factory route, if safe."""
+    """Map every complete marketplace variant to a production stock identity.
+
+    Existing factory routes still supply their canonical product, size and
+    colour.  When Ozon introduces a valid variant outside those allow-lists,
+    keep it linked under the same marketplace size and colour instead of
+    showing the misleading status ``Нет связи с производством``.
+    """
     from catalog import COMMON_COLORS, PRODUCT_OPTIONS
 
     group_key, _ = product_group_for(
@@ -1101,9 +1135,9 @@ def production_target_for_marketplace_product(row: dict) -> tuple[str, str, str]
         ]))
         size = _production_size(row.get("size"), allowed_sizes)
         color = _production_color(row.get("color"), allowed_colors)
-        if not size or not color:
-            return None
-        return "Костюм: брюки + кардиган", size, color
+        if size and color:
+            return "Костюм: брюки + кардиган", size, color
+        return _marketplace_production_identity(row)
     if group_key == "trousers-arrows":
         raw_size = _production_size(row.get("size"), [str(size) for size in range(80, 170)])
         if raw_size and int(raw_size) <= 128:
@@ -1115,13 +1149,15 @@ def production_target_for_marketplace_product(row: dict) -> tuple[str, str, str]
     else:
         product_name = PRODUCTION_TARGET_BY_GROUP.get(group_key, "")
     options = PRODUCT_OPTIONS.get(product_name)
-    if not options:
-        return None
-    size = _production_size(row.get("size"), list(options.get("sizes") or []))
-    color = _production_color(row.get("color"), list(options.get("colors") or []))
-    if not size or not color:
-        return None
-    return product_name, size, color
+    if options:
+        size = _production_size(row.get("size"), list(options.get("sizes") or []))
+        color = _production_color(row.get("color"), list(options.get("colors") or []))
+        if size and color:
+            return product_name, size, color
+    return _marketplace_production_identity(
+        row,
+        preferred_product_name=product_name,
+    )
 
 
 def sync_production_links(conn: sqlite3.Connection, account_id: int) -> dict[str, int]:
