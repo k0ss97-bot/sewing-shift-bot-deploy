@@ -6110,11 +6110,24 @@ def make_handler(bot_token: str, debug: bool):
             allowed_paths.update(WMS_ROUTES)
 
             if path not in allowed_paths:
-                self.send_json({"ok": False, "message": "Not found"}, status=404)
+                # An unknown request can still have an unread body. Keeping the
+                # upstream socket alive would let a reverse proxy prepend those
+                # bytes to the next valid request line.
+                self.close_connection = True
+                self.send_json(
+                    {"ok": False, "message": "Not found"},
+                    status=404,
+                    extra_headers={"Connection": "close"},
+                )
                 return
 
             if not self.headers.get("Content-Type", "").lower().split(";", 1)[0].strip() == "application/json":
-                self.send_json({"ok": False, "message": "Ожидается JSON-запрос."}, status=415)
+                self.close_connection = True
+                self.send_json(
+                    {"ok": False, "message": "Ожидается JSON-запрос."},
+                    status=415,
+                    extra_headers={"Connection": "close"},
+                )
                 return
 
             try:

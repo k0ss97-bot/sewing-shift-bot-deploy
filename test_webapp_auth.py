@@ -788,6 +788,35 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertEqual(health_payload["status"], "ready")
         self.assertEqual(health_payload["components"]["sqlite"], "ready")
 
+    def test_early_post_rejections_close_connection_with_unread_body(self):
+        scanner_body = '<?php echo(md5("Hello PHPUnit"));'
+        cases = (
+            ("/unknown-scanner-target", "application/x-httpd-php", 404),
+            ("/api/app/state", "application/x-httpd-php", 415),
+        )
+        for path, content_type, expected_status in cases:
+            with self.subTest(path=path):
+                connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+                connection.request(
+                    "POST",
+                    path,
+                    body=scanner_body,
+                    headers={"Content-Type": content_type},
+                )
+                rejected = connection.getresponse()
+                rejected.read()
+                self.assertEqual(rejected.status, expected_status)
+                self.assertEqual(rejected.getheader("Connection"), "close")
+
+                # http.client opens a clean socket after the forced close. The
+                # unread scanner body must never prefix this valid request.
+                connection.request("GET", "/health")
+                health = connection.getresponse()
+                health_payload = json.loads(health.read().decode("utf-8"))
+                connection.close()
+                self.assertEqual(health.status, 200)
+                self.assertTrue(health_payload["ok"])
+
     def test_health_reports_required_marketplace_postgres_failure(self):
         original_enabled = self.server_module.phase1a_enabled
         original_quality = self.server_module.phase1a_data_quality
