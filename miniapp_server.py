@@ -541,7 +541,17 @@ def _marketplace_dashboard_client_payload(snapshot):
         analytics = dict(provider_copy.get("analytics") or {})
         analytics.pop("sales_by_warehouse_daily", None)
         analytics.pop("sales_by_product_daily", None)
+        analytics.pop("sales_by_region_daily", None)
         provider_copy["analytics"] = analytics
+        provider_copy["products_rows"] = [
+            {
+                key: value
+                for key, value in row.items()
+                if key not in {"attributes_json", "barcodes_json", "payload_json"}
+            }
+            for row in provider_copy.get("products_rows") or []
+            if isinstance(row, dict)
+        ]
         if provider_key is None:
             result = provider_copy
         else:
