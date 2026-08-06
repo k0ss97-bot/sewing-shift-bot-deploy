@@ -368,13 +368,14 @@ def _save_capabilities(conn, account_id: int, capabilities: dict[str, dict]) -> 
         )
 
 
-def _persisted_retry_remaining(conn, account_id: int) -> float:
-    """Return the longest active token cooldown saved by a previous worker."""
+def _persisted_retry_remaining(conn, account_id: int, capability: str) -> float:
+    """Return an active cooldown only for the requested WB capability."""
     rows = conn.execute(
         """SELECT checked_at,retry_after_seconds
              FROM marketplace_wb_capabilities
-            WHERE account_id=? AND status='rate_limited' AND retry_after_seconds IS NOT NULL""",
-        (account_id,),
+            WHERE account_id=? AND capability=? AND status='rate_limited'
+              AND retry_after_seconds IS NOT NULL""",
+        (account_id, capability),
     ).fetchall()
     remaining = 0.0
     for checked_at, retry_after in rows:
@@ -900,16 +901,6 @@ def sync_wildberries() -> dict:
     conn = get_db_connection()
     ensure_wildberries_schema(conn)
     account_id = _account(conn, "wildberries", os.getenv("WB_ACCOUNT_NAME", "Основной Wildberries"), _token_seller_id(token))
-    retry_remaining = _persisted_retry_remaining(conn, account_id)
-    if retry_remaining > 0:
-        conn.close()
-        return {
-            "ok": False,
-            "status": "deferred",
-            "read_only": True,
-            "retry_after_seconds": retry_remaining,
-            "message": f"Wildberries sync отложен ещё на {retry_remaining:.0f} с из-за лимита API.",
-        }
     started = _now()
     run_id = conn.execute(
         "INSERT INTO marketplace_sync_runs (account_id,status,started_at) VALUES (?,'running',?)",
@@ -923,6 +914,18 @@ def sync_wildberries() -> dict:
     links: dict = {}
 
     def safe(name, callback, default):
+        retry_remaining = _persisted_retry_remaining(conn, account_id, name)
+        if retry_remaining > 0:
+            message = f"Раздел WB «{name}» отложен ещё на {retry_remaining:.0f} с из-за лимита API."
+            capabilities[name] = {
+                "status": "rate_limited",
+                "safe_message": message,
+                "http_status": 429,
+                "retry_after_seconds": retry_remaining,
+                "row_count": 0,
+            }
+            errors.append(f"{name}: {message}")
+            return default
         try:
             value = callback()
             capabilities[name] = {

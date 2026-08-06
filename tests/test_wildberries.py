@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from wildberries import WildberriesAPIError, WildberriesClient
+from wildberries import WildberriesAPIError, WildberriesClient, _now, _persisted_retry_remaining
 
 
 class FakeResponse:
@@ -111,6 +112,22 @@ class WildberriesClientTests(unittest.TestCase):
         self.assertEqual([call[1] for call in calls[1:]], [{"chrtIds": [111, 222]}, {"chrtIds": [111, 222]}])
         self.assertEqual([row["warehouseId"] for row in rows], [10, 20])
         self.assertEqual([row["warehouseName"] for row in rows], ["Склад 10", "Склад 20"])
+
+    def test_persisted_rate_limit_is_scoped_to_one_capability(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute(
+            """CREATE TABLE marketplace_wb_capabilities (
+                   account_id INTEGER, capability TEXT, status TEXT,
+                   retry_after_seconds REAL, checked_at TEXT
+               )"""
+        )
+        connection.execute(
+            "INSERT INTO marketplace_wb_capabilities VALUES (1,'finance','rate_limited',600,?)",
+            (_now(),),
+        )
+
+        self.assertGreater(_persisted_retry_remaining(connection, 1, "finance"), 0)
+        self.assertEqual(_persisted_retry_remaining(connection, 1, "catalog"), 0)
 
 
 if __name__ == "__main__":
