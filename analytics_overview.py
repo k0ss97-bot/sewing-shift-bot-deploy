@@ -707,6 +707,40 @@ def _finance_components(provider: dict[str, Any], period: PeriodWindow, marketpl
     }
 
 
+def _analytics_supply_rows(rows: object, period: PeriodWindow) -> list[dict[str, Any]]:
+    """Return a bounded, flat supply view for the selected analytics period."""
+    terminal = {"ACCEPTED", "CANCELLED", "SHIPPED_FROM_PRODUCTION"}
+    result = []
+    for row in _as_rows(rows):
+        status = _text(row.get("canonical_status") or row.get("status")).upper()
+        observed = next((
+            _date_key(row.get(key))
+            for key in (
+                "planned_at", "timeslot_from", "created_at_external", "updated_at_external",
+                "last_synced_at", "updated_at",
+            )
+            if _date_key(row.get(key))
+        ), None)
+        if status in terminal and (not observed or not _in_period(observed, period)):
+            continue
+        result.append({
+            key: row.get(key)
+            for key in (
+                "id", "marketplace", "external_supply_id", "number", "canonical_status",
+                "status", "destination_name", "total_quantity", "quantity", "planned_at",
+                "timeslot_from", "last_synced_at", "updated_at", "items_count", "unmatched_count",
+            )
+            if key in row
+        })
+    result.sort(
+        key=lambda row: str(
+            row.get("planned_at") or row.get("timeslot_from") or row.get("updated_at") or row.get("last_synced_at") or ""
+        ),
+        reverse=True,
+    )
+    return result[:500]
+
+
 def _known_stock_value(
     marketplace: str,
     provider: dict[str, Any],
@@ -1756,7 +1790,7 @@ def analytics_overview(
     }
 
     supply_counts = _as_dict(ozon_provider.get("supply_counts"))
-    canonical_supplies = _as_rows(ozon_provider.get("supplies"))
+    canonical_supplies = _analytics_supply_rows(ozon_provider.get("supplies"), period)
     warehouse_shipments = _as_rows(ozon_provider.get("warehouse_shipments"))
     shipments = canonical_supplies or warehouse_shipments
     supplies_meta = _supplies_meta(

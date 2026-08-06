@@ -121,6 +121,10 @@ class AnalyticsOverviewTests(unittest.TestCase):
                 {"available": 4, "current_price": 500},
                 {"available": 2, "current_price": 750},
             ],
+            "supplies": [
+                {"marketplace": "ozon", "external_supply_id": "current", "canonical_status": "PLANNED", "planned_at": "2026-08-05", "items": [{"sku": "hidden"}]},
+                {"marketplace": "ozon", "external_supply_id": "old", "canonical_status": "ACCEPTED", "planned_at": "2026-07-01", "items": [{"sku": "hidden"}]},
+            ],
             "analytics": {
                 "sales_daily": [
                     {"date": "2026-08-05", "orders": 3, "units": 5, "amount": 3250, "unpriced_lines": 0},
@@ -173,6 +177,8 @@ class AnalyticsOverviewTests(unittest.TestCase):
         self.assertEqual(result["breakdowns"]["sales_by_warehouse"][0]["warehouse"], "Хоругвино")
         self.assertEqual(result["breakdowns"]["sales_by_warehouse"][0]["units"], "5")
         self.assertEqual(result["breakdowns"]["sales_by_product"][0]["offer_id"], "КРД-1/92")
+        self.assertEqual([row["external_supply_id"] for row in result["supplies"]["rows"]], ["current"])
+        self.assertNotIn("items", result["supplies"]["rows"][0])
 
     def test_wb_rate_limit_keeps_last_good_order_snapshot_as_partial(self):
         observed_at = "2026-08-06T06:52:59Z"

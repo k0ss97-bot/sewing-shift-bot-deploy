@@ -512,6 +512,27 @@ def _marketplace_dashboard_client_payload(snapshot):
     if not isinstance(snapshot, dict):
         return snapshot
     result = dict(snapshot)
+    compact_supplies = []
+    terminal_supply_statuses = {"ACCEPTED", "CANCELLED", "SHIPPED_FROM_PRODUCTION"}
+    supply_rows = [row for row in result.get("supplies") or [] if isinstance(row, dict)]
+    supply_rows.sort(
+        key=lambda row: (
+            str(row.get("canonical_status") or row.get("status") or "") in terminal_supply_statuses,
+            str(row.get("updated_at") or row.get("last_synced_at") or row.get("planned_at") or ""),
+        ),
+        reverse=False,
+    )
+    for row in supply_rows[:100]:
+        compact_supplies.append({
+            key: row.get(key)
+            for key in (
+                "id", "marketplace", "external_supply_id", "number", "canonical_status",
+                "status", "destination_name", "total_quantity", "quantity", "planned_at",
+                "timeslot_from", "last_synced_at", "updated_at", "items_count", "unmatched_count",
+            )
+            if key in row
+        })
+    result["supplies"] = compact_supplies
     for provider_key in (None, "wildberries"):
         provider = result if provider_key is None else result.get(provider_key)
         if not isinstance(provider, dict):

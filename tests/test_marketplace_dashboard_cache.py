@@ -48,6 +48,7 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
     def test_general_dashboard_does_not_send_server_only_sales_cubes(self):
         snapshot = {
             "ok": True,
+            "supplies": [{"marketplace": "ozon", "external_supply_id": "1", "items": [{"sku": "large"}]}],
             "analytics": {"sales_daily": [1], "sales_by_product_daily": [2]},
             "wildberries": {"analytics": {"sales_daily": [3], "sales_by_warehouse_daily": [4]}},
         }
@@ -59,6 +60,7 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
         self.assertEqual(result["wildberries"]["analytics"]["sales_daily"], [3])
         self.assertNotIn("sales_by_warehouse_daily", result["wildberries"]["analytics"])
         self.assertIn("sales_by_product_daily", snapshot["analytics"])
+        self.assertNotIn("items", result["supplies"][0])
 
 
 if __name__ == "__main__":
