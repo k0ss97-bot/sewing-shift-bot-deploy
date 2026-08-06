@@ -414,12 +414,24 @@ def _build_marketplace_dashboard_payload():
             result.get("products_rows") or [],
             (result.get("wildberries") or {}).get("products_rows") or [],
         )
+        try:
+            from unified_catalog import unified_catalog_summary
+
+            result["unified_catalog"] = unified_catalog_summary()
+        except Exception:
+            result["unified_catalog"] = {"ok": False, "products": 0}
         return result
     result = marketplace_dashboard()
     result["catalog_reconciliation"] = marketplace_catalog_reconciliation(
         result.get("products_rows") or [],
         (result.get("wildberries") or {}).get("products_rows") or [],
     )
+    try:
+        from unified_catalog import unified_catalog_summary
+
+        result["unified_catalog"] = unified_catalog_summary()
+    except Exception:
+        result["unified_catalog"] = {"ok": False, "products": 0}
     return result
 
 

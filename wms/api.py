@@ -67,6 +67,8 @@ def handle(
                 employee_id,
                 require_reason=path == "/api/wms/admin/inventory",
             )
+        if path == "/api/wms/admin/bulk-writeoff":
+            return _bulk_writeoff(payload, employee_id)
         if path == "/api/wms/locations":
             return _locations(payload)
         if path == "/api/wms/stock":
@@ -279,6 +281,44 @@ def _inventory(
         reason=reason,
     )
     return _result_response(result)
+
+
+def _bulk_writeoff(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, Any]]:
+    confirmation = str(payload.get("confirmation") or "").strip()
+    if confirmation != "ОЧИСТИТЬ ВЕСЬ СКЛАД":
+        raise ValueError("Для полного списания введите: ОЧИСТИТЬ ВЕСЬ СКЛАД")
+    reason = str(payload.get("reason") or "").strip()
+    if len(reason) < 10:
+        raise ValueError("Подробно укажите причину полного списания (не менее 10 символов).")
+    request_key = str(payload.get("request_key") or "").strip()
+    result = ops.bulk_writeoff_goods(
+        reason=reason,
+        employee_id=employee_id,
+        request_key=request_key,
+    )
+    if not result.ok:
+        return 409, {"ok": False, "status": result.status, "message": result.reason}
+
+    # PostgreSQL is the physical-stock master. Reconcile the retained SQLite
+    # shipment documents afterwards; retrying the same request is safe and
+    # repairs this projection even if the first HTTP request was interrupted.
+    from marketplaces import release_open_warehouse_shipment_reservations_after_stock_clear
+
+    shipment_projection = release_open_warehouse_shipment_reservations_after_stock_clear()
+    return 200, {
+        "ok": True,
+        "status": result.status,
+        "writeoff_id": result.writeoff_id,
+        "rows_count": result.rows_count,
+        "total_quantity": result.total_quantity,
+        "released_reserved_quantity": result.released_reserved_quantity,
+        "skipped_duplicate": result.skipped_duplicate,
+        "shipment_projection": shipment_projection,
+        "message": (
+            f"Склад обнулён: списано {result.total_quantity} шт. "
+            f"по {result.rows_count} строкам; снято резервов {result.released_reserved_quantity} шт."
+        ),
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -586,6 +626,7 @@ WMS_WRITE_ROUTES = {
     "/api/wms/inventory",
     "/api/wms/admin/scrap",
     "/api/wms/admin/inventory",
+    "/api/wms/admin/bulk-writeoff",
     "/api/wms/barcode/resolve",
     "/api/wms/barcode/register",
     "/api/wms/locations/create",
@@ -594,6 +635,7 @@ WMS_WRITE_ROUTES = {
 WMS_ADMIN_ROUTES = {
     "/api/wms/admin/scrap",
     "/api/wms/admin/inventory",
+    "/api/wms/admin/bulk-writeoff",
 }
 
 WMS_READ_ROUTES = {

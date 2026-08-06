@@ -95,14 +95,23 @@ def run_sync() -> dict:
             "message": "Wildberries sync ещё свежее 30-минутной cadence.",
         }
     )
-    ok = bool(ozon.get("ok")) and bool(wildberries.get("ok"))
+    try:
+        from unified_catalog import sync_unified_product_catalog
+
+        internal_catalog = sync_unified_product_catalog()
+    except Exception as error:
+        internal_catalog = {
+            "ok": False,
+            "message": f"Внутренний каталог не сверен: {error.__class__.__name__}",
+        }
+    ok = bool(ozon.get("ok")) and bool(wildberries.get("ok")) and bool(internal_catalog.get("ok"))
     status = "success" if ok else ("partial" if ozon.get("ok") or wildberries.get("ok") else "error")
     return {
         "ok": ok,
         "status": status,
         "read_only": True,
         "message": "Фоновая синхронизация маркетплейсов завершена." if ok else "Фоновая синхронизация завершена частично.",
-        "results": {"ozon": ozon, "wildberries": wildberries},
+        "results": {"ozon": ozon, "wildberries": wildberries, "internal_catalog": internal_catalog},
     }
 
 

@@ -27,6 +27,7 @@ from wms.barcode import (  # noqa: E402
     CONTAINER_PREFIX,
 )
 from wms.models import (  # noqa: E402
+    BulkWriteoffResult,
     Location,
     OperationResult,
     ProductKey,
@@ -279,12 +280,48 @@ class WmsContractTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("причину", body["message"])
 
+    def test_bulk_writeoff_requires_exact_confirmation_and_reconciles_shipments(self):
+        from wms import api
+
+        payload = {
+            "confirmation": "ОЧИСТИТЬ ВЕСЬ СКЛАД",
+            "reason": "Полный контрольный пересчёт склада",
+            "request_key": "admin:bulk-writeoff:2026-08-06",
+        }
+        result = BulkWriteoffResult(
+            True, writeoff_id=7, rows_count=12, total_quantity=85,
+            released_reserved_quantity=4,
+        )
+        with patch("wms.api.ops.bulk_writeoff_goods", return_value=result) as writeoff, patch(
+            "marketplaces.release_open_warehouse_shipment_reservations_after_stock_clear",
+            return_value={"ok": True, "changed_shipments": 2, "released_quantity": 4},
+        ) as reconcile:
+            status, body = api.handle(
+                "/api/wms/admin/bulk-writeoff", payload, employee_id=29,
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total_quantity"], 85)
+        self.assertEqual(writeoff.call_args.kwargs["employee_id"], 29)
+        reconcile.assert_called_once_with()
+
+        status, body = api.handle(
+            "/api/wms/admin/bulk-writeoff",
+            {**payload, "confirmation": "очистить"},
+            employee_id=29,
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("ОЧИСТИТЬ ВЕСЬ СКЛАД", body["message"])
+
     def test_manual_routes_are_admin_only_contract(self):
         from wms.api import WMS_ADMIN_ROUTES, WMS_ROUTES
 
         self.assertEqual(
             WMS_ADMIN_ROUTES,
-            {"/api/wms/admin/scrap", "/api/wms/admin/inventory"},
+            {
+                "/api/wms/admin/scrap",
+                "/api/wms/admin/inventory",
+                "/api/wms/admin/bulk-writeoff",
+            },
         )
         self.assertTrue(WMS_ADMIN_ROUTES <= WMS_ROUTES)
 
@@ -698,6 +735,8 @@ class WmsDbTests(unittest.TestCase):
         conn.autocommit = True
         with conn.cursor() as cur:
             for t in (
+                "marketplace.product_master_sources", "marketplace.product_master",
+                "wms_bulk_writeoff_lines", "wms_bulk_writeoffs",
                 "wms_stock_receipt_lines", "wms_stock_receipts",
                 "wms_inventory_count_lines", "wms_inventory_counts",
                 "wms_movements", "warehouse_stock", "wms_containers",
@@ -729,7 +768,46 @@ class WmsDbTests(unittest.TestCase):
     def test_seed_zones_present(self):
         with self.conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM wms_zones")
-            self.assertGreaterEqual(cur.fetchone()[0], 11)
+        self.assertGreaterEqual(cur.fetchone()[0], 11)
+
+    def test_bulk_writeoff_zeros_goods_releases_reserve_and_is_idempotent(self):
+        from wms import operations as ops
+        from wms import repository as repo
+
+        location = repo.get_location_by_code(self.conn, "RECEIVE-01")
+        product = self._pk(product_name="Тест-Полное-Списание")
+        material = self._pk(
+            item_type="material", product_name="Тест-Материал-Сохранить",
+            product_size="—", stage_name="Материал",
+        )
+        stock_id = repo.upsert_stock(self.conn, product, delta=9, location_id=location.id)
+        repo.upsert_stock(self.conn, material, delta=3, location_id=None, unit="рул")
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE warehouse_stock SET reserved_quantity=2 WHERE id=%s", (stock_id,))
+        self.conn.commit()
+
+        result = ops.bulk_writeoff_goods(
+            reason="Контрольное полное списание тестовой базы",
+            employee_id=23,
+            request_key="test:bulk-writeoff:one",
+        )
+        repeated = ops.bulk_writeoff_goods(
+            reason="Контрольное полное списание тестовой базы",
+            employee_id=23,
+            request_key="test:bulk-writeoff:one",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertGreaterEqual(result.total_quantity, 9)
+        self.assertGreaterEqual(result.released_reserved_quantity, 2)
+        self.assertTrue(repeated.skipped_duplicate)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT COALESCE(SUM(quantity),0) FROM warehouse_stock
+                    WHERE item_type IN ('finished','semifinished')"""
+            )
+            self.assertEqual(cur.fetchone()[0], 0)
+        self.assertEqual(repo.find_stock(self.conn, material, location_id=None, unit="рул").quantity, 3)
 
     def test_physical_storage_cells_present_with_unchanged_barcodes(self):
         with self.conn.cursor() as cur:

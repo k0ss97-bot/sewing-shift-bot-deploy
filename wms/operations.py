@@ -18,7 +18,7 @@ import uuid
 from typing import Any
 
 from .connection import get_pg_connection
-from .models import OperationResult, ProductKey, StockReceiptResult
+from .models import BulkWriteoffResult, OperationResult, ProductKey, StockReceiptResult
 from . import repository as repo
 
 
@@ -799,6 +799,168 @@ def inventory_count(
             )
         conn.commit()
         return OperationResult(True, reason=f"count_id={count_id}, adjustments={adjustments}")
+    except Exception:
+        conn.rollback()
+        raise
+
+
+# ──────────────────────────────────────────────────────────────────────
+# full goods write-off (admin-only, explicit confirmation in HTTP layer)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def bulk_writeoff_goods(
+    *,
+    reason: str,
+    employee_id: int,
+    request_key: str,
+) -> BulkWriteoffResult:
+    """Empty every non-material WMS balance and retain a complete audit trail.
+
+    This is intentionally different from :func:`scrap`: creating positive
+    ``SCRAPPED`` stock rows would leave the warehouse non-empty.  Every source
+    row is instead reduced to zero and receives one signed outbound movement.
+    Product cards, locations, production documents and history are preserved.
+
+    The operation also releases physical reservations.  The HTTP handler then
+    reconciles the SQLite shipment projection so unfinished shipment documents
+    become shortages rather than silently keeping stale cell reservations.
+    """
+
+    reason = str(reason or "").strip()
+    request_key = str(request_key or "").strip()
+    if not reason:
+        return BulkWriteoffResult(False, reason="Укажите причину полного списания.")
+    if not request_key or len(request_key) > 200:
+        return BulkWriteoffResult(False, reason="Укажите корректный ключ операции списания.")
+
+    conn = get_pg_connection()
+    try:
+        with conn.cursor() as cur:
+            # Serialise destructive stock maintenance with itself. Normal WMS
+            # writes still remain protected by the row locks acquired below.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("wms:bulk-writeoff-goods",))
+            cur.execute(
+                """INSERT INTO wms_bulk_writeoffs
+                          (request_key,reason,actor_employee_id)
+                     VALUES (%s,%s,%s)
+                     ON CONFLICT (request_key) DO NOTHING
+                  RETURNING id""",
+                (request_key, reason[:1000], int(employee_id)),
+            )
+            header = cur.fetchone()
+            if header is None:
+                cur.execute(
+                    """SELECT id,rows_count,total_quantity,released_reserved_quantity,status
+                         FROM wms_bulk_writeoffs WHERE request_key=%s""",
+                    (request_key,),
+                )
+                existing = cur.fetchone()
+                conn.rollback()
+                if existing is None:
+                    raise RuntimeError("Не удалось прочитать повторную операцию списания.")
+                return BulkWriteoffResult(
+                    bool(existing[4] == "posted"),
+                    writeoff_id=int(existing[0]),
+                    rows_count=int(existing[1] or 0),
+                    total_quantity=int(existing[2] or 0),
+                    released_reserved_quantity=int(existing[3] or 0),
+                    skipped_duplicate=True,
+                )
+            writeoff_id = int(header[0])
+            # Prevent a concurrent receipt/transfer from inserting a new
+            # positive row after the snapshot but before this transaction
+            # commits. The lock lasts only for this explicitly requested
+            # maintenance operation.
+            cur.execute("LOCK TABLE warehouse_stock IN SHARE ROW EXCLUSIVE MODE")
+            cur.execute(
+                """SELECT id,item_type,product_name,product_size,product_color,
+                          stage_name,ready_for_position,quantity,reserved_quantity,
+                          item_state,location_id,unit
+                     FROM warehouse_stock
+                    WHERE quantity > 0 AND item_type IN ('finished','semifinished')
+                 ORDER BY id FOR UPDATE"""
+            )
+            rows = list(cur.fetchall())
+
+        total_quantity = 0
+        released_reserved = 0
+        for row in rows:
+            stock_id = int(row[0])
+            product_key = ProductKey(
+                item_type=str(row[1]),
+                product_name=str(row[2]),
+                product_size=str(row[3]),
+                product_color=str(row[4]),
+                stage_name=str(row[5]),
+                ready_for_position=str(row[6]),
+            )
+            quantity = int(row[7] or 0)
+            reserved = int(row[8] or 0)
+            item_state = str(row[9])
+            location_id = int(row[10]) if row[10] is not None else None
+            unit = str(row[11])
+            movement_id = repo.insert_movement(
+                conn,
+                request_key=f"{request_key}:stock:{stock_id}",
+                movement_type="bulk_writeoff",
+                product_key=product_key,
+                quantity=-quantity,
+                from_location_id=location_id,
+                from_state=item_state,
+                to_state="SCRAPPED",
+                source_type="bulk_writeoff",
+                source_id=writeoff_id,
+                reason=reason[:1000],
+                actor_employee_id=int(employee_id),
+            )
+            if movement_id is None:
+                raise RuntimeError(f"Не удалось записать движение для остатка {stock_id}.")
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE warehouse_stock
+                          SET quantity=0,reserved_quantity=0,updated_at=now()
+                        WHERE id=%s AND quantity=%s AND reserved_quantity=%s""",
+                    (stock_id, quantity, reserved),
+                )
+                if cur.rowcount != 1:
+                    raise RuntimeError(f"Остаток {stock_id} изменился во время списания.")
+                cur.execute(
+                    """INSERT INTO wms_bulk_writeoff_lines
+                              (writeoff_id,stock_id,product_key,item_state,location_id,unit,
+                               quantity,released_reserved_quantity,movement_id)
+                         VALUES (%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s)""",
+                    (
+                        writeoff_id,
+                        stock_id,
+                        __import__("json").dumps(product_key.to_dict(), ensure_ascii=False),
+                        item_state,
+                        location_id,
+                        unit,
+                        quantity,
+                        reserved,
+                        movement_id,
+                    ),
+                )
+            total_quantity += quantity
+            released_reserved += reserved
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE wms_bulk_writeoffs
+                      SET status='posted',rows_count=%s,total_quantity=%s,
+                          released_reserved_quantity=%s,posted_at=now()
+                    WHERE id=%s""",
+                (len(rows), total_quantity, released_reserved, writeoff_id),
+            )
+        conn.commit()
+        return BulkWriteoffResult(
+            True,
+            writeoff_id=writeoff_id,
+            rows_count=len(rows),
+            total_quantity=total_quantity,
+            released_reserved_quantity=released_reserved,
+        )
     except Exception:
         conn.rollback()
         raise

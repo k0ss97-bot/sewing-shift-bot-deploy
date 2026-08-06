@@ -670,6 +670,83 @@ def _refresh_shipment_counters(conn: sqlite3.Connection, shipment_id: int, *, st
     )
 
 
+def release_open_warehouse_shipment_reservations_after_stock_clear() -> dict:
+    """Remove stale cell reservations after an authorised full WMS clear.
+
+    Already picked quantities remain part of the document and its history.
+    Only the unpicked reservation is released; unfinished tasks move to
+    ``SHORTAGE`` so they can be reserved again after a future receipt.
+    Completed/handover history is never changed.
+    """
+
+    conn = get_db_connection()
+    ensure_schema(conn)
+    final_statuses = {"SHIPPED", "HANDED_OVER", "ACCEPTED", "CANCELLED"}
+    changed_shipments = 0
+    released_quantity = 0
+    now = _now()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        shipments = conn.execute(
+            """SELECT id,status,total_quantity,picked_quantity
+                 FROM warehouse_shipments
+                WHERE status NOT IN ('SHIPPED','HANDED_OVER','ACCEPTED','CANCELLED')"""
+        ).fetchall()
+        for shipment in shipments:
+            shipment_id = int(shipment[0])
+            if str(shipment[1]) in final_statuses:
+                continue
+            allocations = conn.execute(
+                """SELECT a.id,a.reserved_quantity,a.picked_quantity
+                     FROM warehouse_shipment_allocations a
+                     JOIN warehouse_shipment_items i ON i.id=a.shipment_item_id
+                    WHERE i.shipment_id=?""",
+                (shipment_id,),
+            ).fetchall()
+            for allocation in allocations:
+                reserved = int(allocation[1] or 0)
+                picked = int(allocation[2] or 0)
+                released_quantity += max(0, reserved - picked)
+                conn.execute(
+                    """UPDATE warehouse_shipment_allocations
+                          SET reserved_quantity=picked_quantity,updated_at=?
+                        WHERE id=?""",
+                    (now, int(allocation[0])),
+                )
+            conn.execute(
+                """UPDATE warehouse_shipment_items
+                      SET reserved_quantity=picked_quantity,
+                          from_location_code=CASE
+                              WHEN picked_quantity >= quantity THEN from_location_code ELSE '' END
+                    WHERE shipment_id=?""",
+                (shipment_id,),
+            )
+            totals = conn.execute(
+                """SELECT COALESCE(SUM(quantity),0),COALESCE(SUM(picked_quantity),0)
+                     FROM warehouse_shipment_items WHERE shipment_id=?""",
+                (shipment_id,),
+            ).fetchone()
+            total = int(totals[0] or 0)
+            picked = int(totals[1] or 0)
+            _refresh_shipment_counters(
+                conn,
+                shipment_id,
+                status="PICKED" if total > 0 and picked >= total else "SHORTAGE",
+            )
+            changed_shipments += 1
+        conn.commit()
+        return {
+            "ok": True,
+            "changed_shipments": changed_shipments,
+            "released_quantity": released_quantity,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _reserve_shipment_positions(items: list[tuple[int, dict, int, str]]) -> list[tuple[int, str, dict, int]]:
     """Reserve unbound address stock in one Postgres transaction.
 

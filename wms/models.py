@@ -149,3 +149,22 @@ class StockReceiptResult:
         if self.skipped_duplicate:
             return "duplicate"
         return "posted" if self.ok else "error"
+
+
+@dataclass
+class BulkWriteoffResult:
+    """Outcome of the explicitly confirmed full WMS balance write-off."""
+
+    ok: bool
+    writeoff_id: int | None = None
+    rows_count: int = 0
+    total_quantity: int = 0
+    released_reserved_quantity: int = 0
+    reason: str | None = None
+    skipped_duplicate: bool = False
+
+    @property
+    def status(self) -> str:
+        if self.skipped_duplicate:
+            return "duplicate"
+        return "posted" if self.ok else "error"

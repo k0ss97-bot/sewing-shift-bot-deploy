@@ -515,6 +515,7 @@ def run_phase1a_sync(
     require_enabled: bool = True,
 ) -> dict[str, Any]:
     """Synchronize the verified Phase 1A datasets into PostgreSQL."""
+    sync_internal_registry = client is None and repository is None
     if require_enabled and not phase1a_enabled():
         return {"ok": False, "code": "phase1a_disabled", "message": f"Включите {FEATURE_FLAG}=1 для PostgreSQL sync."}
     if client is None and not phase1a_configured():
@@ -559,13 +560,26 @@ def run_phase1a_sync(
         ]
         successful = sum(item["status"] == "success" for item in results)
         partial = sum(item["status"] == "partial" for item in results)
-        return {
+        response = {
             "ok": all(item.get("usable", item.get("ok")) for item in results),
             "status": "success" if successful == len(results) else ("partial" if successful or partial else "failed"),
             "read_only": True,
             "datasets": results,
             "message": f"Phase 1A: успешно {successful} из {len(results)}; partial {partial}.",
         }
+        if sync_internal_registry and "catalog" in selected:
+            try:
+                from unified_catalog import sync_unified_product_catalog
+
+                response["internal_catalog"] = sync_unified_product_catalog()
+            except Exception:
+                response["internal_catalog"] = {
+                    "ok": False,
+                    "message": "Маркетплейс синхронизирован, но внутренний реестр товаров требует повторной сверки.",
+                }
+                response["ok"] = False
+                response["status"] = "partial"
+        return response
     except MarketplacePGUnavailable:
         return {"ok": False, "code": "postgres_unavailable", "message": "PostgreSQL schema marketplace недоступна; сохранённые SQLite-данные не изменены."}
     except OzonClientError as error:
