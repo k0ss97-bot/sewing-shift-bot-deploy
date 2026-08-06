@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -269,6 +270,36 @@ class MarketplaceTests(unittest.TestCase):
             }),
             ("Рубашка детская", "86", "Молочный"),
         )
+
+    def test_old_product_without_sales_moves_to_inactive_group(self):
+        now = datetime(2026, 8, 6, tzinfo=timezone.utc)
+        lifecycle = marketplaces.marketplace_product_lifecycle({
+            "product_created_at": "2026-01-01T10:00:00Z",
+            "sales_units_total": 0,
+            "ozon_status_name": "Готов к продаже",
+        }, now=now)
+
+        self.assertTrue(lifecycle["is_inactive"])
+        self.assertEqual(lifecycle["inactive_reason"], "Нет продаж за всю загруженную историю")
+
+    def test_recent_zero_sales_and_old_selling_products_stay_active(self):
+        now = datetime(2026, 8, 6, tzinfo=timezone.utc)
+        recent = marketplaces.marketplace_product_lifecycle({
+            "product_created_at": "2026-07-01T10:00:00Z", "sales_units_total": 0,
+        }, now=now)
+        selling = marketplaces.marketplace_product_lifecycle({
+            "product_created_at": "2025-01-01T10:00:00Z", "sales_units_total": 1,
+            "ozon_status_name": "Продается",
+        }, now=now)
+
+        self.assertFalse(recent["is_inactive"])
+        self.assertFalse(selling["is_inactive"])
+
+    def test_inactive_product_is_not_connected_to_production(self):
+        self.assertIsNone(marketplaces.production_target_for_marketplace_product({
+            "name": "Платье для девочки", "size": "104", "color": "розовый",
+            "is_inactive": True,
+        }))
 
     def test_catalog_reconciliation_keeps_new_products_and_cells_visible(self):
         fake_connection = SimpleNamespace(rollback=lambda: None, close=lambda: None)

@@ -232,7 +232,24 @@ def _normalized_barcode(value: Any) -> str:
 def _production_link_fields(item: dict[str, Any]) -> dict[str, Any]:
     """Build the same safe production/WMS link without a SQLite side table."""
 
-    from marketplaces import product_group_for, production_target_for_marketplace_product
+    from marketplaces import (
+        marketplace_product_lifecycle,
+        product_group_for,
+        production_target_for_marketplace_product,
+    )
+
+    lifecycle = marketplace_product_lifecycle(item)
+    if lifecycle["is_inactive"]:
+        return {
+            **lifecycle,
+            "group_key": "inactive",
+            "group_name": "Неактуальные",
+            "production_status": "inactive",
+            "route_configured": 0,
+            "production_product_name": "",
+            "production_size": "",
+            "production_color": "",
+        }
 
     group_key, group_name = product_group_for(
         item.get("name"), item.get("offer_id"), item.get("sku"),
@@ -250,6 +267,7 @@ def _production_link_fields(item: dict[str, Any]) -> dict[str, Any]:
         color = _text(item.get("color")) or "Не указан"
         route_configured = 0
     return {
+        **lifecycle,
         "group_key": group_key,
         "group_name": group_name,
         "production_status": "linked",
@@ -1556,6 +1574,11 @@ class MarketplacePGRepository:
                 cur.execute(
                     f"""SELECT p.external_product_id,p.offer_id,p.sku,p.barcode,p.name,p.size,p.color,
                                p.image_url,p.barcodes_json,p.attributes_json,p.visibility,p.is_archived,
+                               p.payload_json->>'created_at' AS product_created_at,
+                               p.payload_json->'statuses'->>'status_name' AS ozon_status_name,
+                               p.payload_json->'statuses'->>'status_description' AS ozon_status_description,
+                               COALESCE(os.sales_units_total,0) AS sales_units_total,
+                               os.last_sale_at,
                                p.received_at,pr.current_price,pr.old_price,pr.marketing_price,pr.currency,
                                s.stock,s.reserved,s.available
                           FROM marketplace.products_current p
@@ -1565,6 +1588,15 @@ class MarketplacePGRepository:
                                      SUM(reserved) reserved,SUM(available) available
                                 FROM marketplace.stocks_current GROUP BY account_id,external_product_id,offer_id
                           ) s USING(account_id,external_product_id,offer_id)
+                          LEFT JOIN (
+                              SELECT oi.account_id,oi.offer_id,
+                                     SUM(CASE WHEN LOWER(COALESCE(o.status,'')) NOT IN ('cancelled','canceled') THEN oi.quantity ELSE 0 END) AS sales_units_total,
+                                     MAX(o.shipment_date) FILTER (WHERE LOWER(COALESCE(o.status,'')) NOT IN ('cancelled','canceled')) AS last_sale_at
+                                FROM marketplace.order_items_current oi
+                                JOIN marketplace.orders_current o
+                                  ON o.account_id=oi.account_id AND o.external_order_id=oi.external_order_id
+                               GROUP BY oi.account_id,oi.offer_id
+                          ) os ON os.account_id=p.account_id AND os.offer_id=p.offer_id
                          WHERE {predicate}
                          ORDER BY p.name,p.offer_id,p.external_product_id LIMIT %s OFFSET %s""",
                     tuple(params + [page_size, (page - 1) * page_size]),
@@ -1600,6 +1632,10 @@ class MarketplacePGRepository:
                 cur.execute(
                     """SELECT p.external_product_id AS id,p.external_product_id,p.name,p.offer_id,p.sku,
                               p.barcode,p.size,p.color,p.image_url,p.barcodes_json,p.attributes_json,
+                              p.is_archived,p.payload_json->>'created_at' AS product_created_at,
+                              p.payload_json->'statuses'->>'status_name' AS ozon_status_name,
+                              p.payload_json->'statuses'->>'status_description' AS ozon_status_description,
+                              COALESCE(os.sales_units_total,0) AS sales_units_total,os.last_sale_at,
                               p.received_at AS updated_at,pr.current_price,pr.old_price,
                               COALESCE(s.stock,0) AS available
                          FROM marketplace.products_current p
@@ -1610,6 +1646,15 @@ class MarketplacePGRepository:
                                FROM marketplace.stocks_current
                               GROUP BY account_id,external_product_id,offer_id
                          ) s USING(account_id,external_product_id,offer_id)
+                         LEFT JOIN (
+                             SELECT oi.account_id,oi.offer_id,
+                                    SUM(CASE WHEN LOWER(COALESCE(o.status,'')) NOT IN ('cancelled','canceled') THEN oi.quantity ELSE 0 END) AS sales_units_total,
+                                    MAX(o.shipment_date) FILTER (WHERE LOWER(COALESCE(o.status,'')) NOT IN ('cancelled','canceled')) AS last_sale_at
+                               FROM marketplace.order_items_current oi
+                               JOIN marketplace.orders_current o
+                                 ON o.account_id=oi.account_id AND o.external_order_id=oi.external_order_id
+                              GROUP BY oi.account_id,oi.offer_id
+                         ) os ON os.account_id=p.account_id AND os.offer_id=p.offer_id
                         WHERE p.account_id=%s AND p.is_archived=FALSE
                         ORDER BY p.name,p.offer_id,p.external_product_id""",
                     (account_id,),

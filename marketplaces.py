@@ -1061,6 +1061,56 @@ def _normalized_value(value: object) -> str:
     return re.sub(r"[^a-zа-я0-9]+", "", _text(value).lower().replace("ё", "е"))
 
 
+def marketplace_product_lifecycle(row: dict, *, now: datetime | None = None) -> dict:
+    """Classify old Ozon variants without hiding recently added products.
+
+    A variant becomes inactive only after 90 days and only when the retained
+    order history has no sales for it or Ozon explicitly says that it was
+    removed from sale.  Missing/invalid creation dates stay active so a broken
+    provider field can never silently remove a product from production.
+    """
+
+    raw_created_at = _text(row.get("product_created_at") or row.get("created_at"))
+    created_at = None
+    if raw_created_at:
+        try:
+            created_at = datetime.fromisoformat(raw_created_at.replace("Z", "+00:00"))
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            created_at = None
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    old_enough = bool(created_at and created_at.astimezone(timezone.utc) < current.astimezone(timezone.utc) - timedelta(days=90))
+    try:
+        sales_units = max(0, int(float(row.get("sales_units_total") or 0)))
+    except (TypeError, ValueError):
+        sales_units = 0
+    status_name = _text(row.get("ozon_status_name") or row.get("status_name"))
+    status_description = _text(row.get("ozon_status_description") or row.get("status_description"))
+    status_text = f"{status_name} {status_description}".casefold().replace("ё", "е")
+    removed_from_sale = bool(
+        row.get("is_archived")
+        or "не продается" in status_text
+        or "убран из продажи" in status_text
+        or "снят с продажи" in status_text
+    )
+    inactive = old_enough and (removed_from_sale or sales_units == 0)
+    reason = ""
+    if inactive:
+        reason = "Снят с продажи" if removed_from_sale else "Нет продаж за всю загруженную историю"
+    return {
+        "product_created_at": created_at.isoformat() if created_at else raw_created_at,
+        "sales_units_total": sales_units,
+        "last_sale_at": _text(row.get("last_sale_at")),
+        "ozon_status_name": status_name,
+        "ozon_status_description": status_description,
+        "is_inactive": inactive,
+        "inactive_reason": reason,
+    }
+
+
 def _production_size(value: object, allowed: list[str]) -> str:
     match = re.search(r"(?<!\d)(\d{2,3})(?!\d)", _text(value))
     candidate = match.group(1) if match else _text(value)
@@ -1111,6 +1161,9 @@ def production_target_for_marketplace_product(row: dict) -> tuple[str, str, str]
     keep it linked under the same marketplace size and colour instead of
     showing the misleading status ``Нет связи с производством``.
     """
+    if row.get("is_inactive"):
+        return None
+
     from catalog import COMMON_COLORS, PRODUCT_OPTIONS
 
     group_key, _ = product_group_for(
@@ -2295,7 +2348,9 @@ def marketplace_catalog_reconciliation(
         for source in source_rows:
             if not isinstance(source, dict):
                 continue
-            target = production_target_for_marketplace_product(source)
+            lifecycle = marketplace_product_lifecycle(source)
+            inactive = bool(lifecycle["is_inactive"])
+            target = None if inactive else production_target_for_marketplace_product(source)
             production_name, size, color = target if target else ("", "", "")
             identity = _catalog_identity(production_name, size, color) if target else None
             stock = wms_by_identity.get(identity) if identity else None
@@ -2310,13 +2365,18 @@ def marketplace_catalog_reconciliation(
                 "production_name": production_name,
                 "production_size": size,
                 "production_color": color,
+                "is_inactive": inactive,
+                "inactive_reason": lifecycle["inactive_reason"],
+                "product_created_at": lifecycle["product_created_at"],
+                "sales_units_total": lifecycle["sales_units_total"],
+                "last_sale_at": lifecycle["last_sale_at"],
                 "route_configured": bool(target),
                 "warehouse_found": bool(stock),
                 "warehouse_quantity": int(stock["quantity"]) if stock else 0,
                 "warehouse_reserved_quantity": int(stock["reserved_quantity"]) if stock else 0,
                 "warehouse_available_quantity": int(stock["available_quantity"]) if stock else 0,
                 "locations": list(stock["locations"]) if stock else [],
-                "status": "ready" if target and stock else ("route_missing" if not target else "not_in_warehouse"),
+                "status": "inactive" if inactive else ("ready" if target and stock else ("route_missing" if not target else "not_in_warehouse")),
             }
             marketplace_items.append(item)
             if identity:
@@ -2343,7 +2403,8 @@ def marketplace_catalog_reconciliation(
         return {
             "products": len(rows),
             "route_configured": sum(1 for item in rows if item["route_configured"]),
-            "route_missing": sum(1 for item in rows if not item["route_configured"]),
+            "route_missing": sum(1 for item in rows if not item["route_configured"] and not item["is_inactive"]),
+            "inactive": sum(1 for item in rows if item["is_inactive"]),
             "warehouse_found": sum(1 for item in rows if item["warehouse_found"]),
             "not_in_warehouse": sum(1 for item in rows if item["route_configured"] and not item["warehouse_found"]),
         }
