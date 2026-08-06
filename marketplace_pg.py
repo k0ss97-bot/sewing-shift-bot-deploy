@@ -1781,6 +1781,40 @@ class MarketplacePGRepository:
                 )
                 finance_daily = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
                 cur.execute(
+                    """SELECT DATE(COALESCE(o.shipment_date,o.received_at)) AS date,
+                              COUNT(DISTINCT o.external_order_id) AS orders,
+                              COALESCE(SUM(i.quantity),0) AS units,
+                              COALESCE(SUM(i.quantity*i.price) FILTER (WHERE i.price IS NOT NULL),0) AS amount,
+                              COUNT(*) FILTER (WHERE i.price IS NULL) AS unpriced_lines
+                         FROM marketplace.orders_current o
+                         JOIN marketplace.order_items_current i USING(account_id,external_order_id)
+                        WHERE o.account_id=%s
+                          AND LOWER(COALESCE(o.status,'')) NOT IN ('cancelled','canceled')
+                        GROUP BY DATE(COALESCE(o.shipment_date,o.received_at))
+                        ORDER BY DATE(COALESCE(o.shipment_date,o.received_at))""",
+                    (account_id,),
+                )
+                sales_daily = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT DATE(COALESCE(o.shipment_date,o.received_at)) AS date,
+                              COALESCE(NULLIF(o.payload_json->'financial_data'->>'cluster_to',''),
+                                       'Регион не указан') AS region,
+                              COUNT(DISTINCT o.external_order_id) AS orders,
+                              COALESCE(SUM(i.quantity),0) AS units,
+                              COALESCE(SUM(i.quantity*i.price) FILTER (WHERE i.price IS NOT NULL),0) AS amount,
+                              COUNT(*) FILTER (WHERE i.price IS NULL) AS unpriced_lines
+                         FROM marketplace.orders_current o
+                         JOIN marketplace.order_items_current i USING(account_id,external_order_id)
+                        WHERE o.account_id=%s
+                          AND LOWER(COALESCE(o.status,'')) NOT IN ('cancelled','canceled')
+                        GROUP BY DATE(COALESCE(o.shipment_date,o.received_at)),
+                                 COALESCE(NULLIF(o.payload_json->'financial_data'->>'cluster_to',''),
+                                          'Регион не указан')
+                        ORDER BY DATE(COALESCE(o.shipment_date,o.received_at)),region""",
+                    (account_id,),
+                )
+                sales_by_region_daily = [_json_value(_row_dict(row, cur)) for row in cur.fetchall()]
+                cur.execute(
                     """SELECT observed_date,rating,payload_json FROM marketplace.ratings_history
                         WHERE account_id=%s ORDER BY observed_date DESC LIMIT 1""",
                     (account_id,),
@@ -1987,6 +2021,8 @@ class MarketplacePGRepository:
                 "sync_runs": runs,
                 "analytics": {
                     "finance_daily": finance_daily,
+                    "sales_daily": sales_daily,
+                    "sales_by_region_daily": sales_by_region_daily,
                     "returns_rows": returns_rows,
                     "returns_daily": returns_daily,
                     "rating": rating_row.get("rating"),

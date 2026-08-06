@@ -109,3 +109,58 @@ class AnalyticsOverviewTests(unittest.TestCase):
         self.assertGreater(len(result["risks"]), 0)
         self.assertEqual(metrics["recommendations"]["value"], len(result["risks"]))
         self.assertNotEqual(metrics["recommendations"]["status"], "unavailable")
+
+    def test_marketplace_units_money_stock_value_and_regions_are_separate(self):
+        observed_at = "2026-08-05T05:09:00Z"
+        dashboard = {
+            "ok": True,
+            "configured": True,
+            "source": "postgresql",
+            "accounts": [{"marketplace": "ozon", "last_sync_at": observed_at}],
+            "products_rows": [
+                {"available": 4, "current_price": 500},
+                {"available": 2, "current_price": 750},
+            ],
+            "analytics": {
+                "sales_daily": [
+                    {"date": "2026-08-05", "orders": 3, "units": 5, "amount": 3250, "unpriced_lines": 0},
+                ],
+                "sales_by_region_daily": [
+                    {"date": "2026-08-05", "region": "Москва", "orders": 2, "units": 3, "amount": 1750},
+                    {"date": "2026-08-05", "region": "Урал", "orders": 1, "units": 2, "amount": 1500},
+                ],
+            },
+            "wildberries": {"ok": True, "configured": False},
+        }
+        datasets = [
+            {"dataset": name, "status": "success", "freshness": "fresh", "finished_at": observed_at}
+            for name in ("catalog", "prices", "stocks", "orders")
+        ]
+        result = analytics_overview(
+            {"start_date": "2026-08-05", "end_date": "2026-08-05"},
+            dashboard_reader=lambda: dashboard,
+            data_quality_reader=lambda: {
+                "ok": True,
+                "enabled": True,
+                "state": "fresh",
+                "datasets": datasets,
+                "totals": {"products": 2, "stock_available": 6},
+            },
+            production_reader=lambda _start, _end: {"updated_at": observed_at},
+            current=datetime(2026, 8, 5, 5, 10, tzinfo=timezone.utc),
+        )
+
+        provider = next(row for row in result["providers"] if row["marketplace"] == "ozon")
+        metrics = {row["code"]: row for row in result["metrics"]}
+        self.assertEqual(provider["orders"], 3)
+        self.assertEqual(provider["sales_units"], "5")
+        self.assertEqual(provider["gross_sales"], "3250.00")
+        self.assertEqual(provider["stock_available"], "6")
+        self.assertEqual(provider["stock_retail_value"], "3500.00")
+        self.assertEqual(metrics["sales_units"]["value"], "5")
+        self.assertEqual(metrics["gross_sales"]["value"], "3250.00")
+        self.assertEqual(metrics["stock_retail_value"]["value"], "3500.00")
+        self.assertEqual(metrics["geo"]["value"], 2)
+        self.assertEqual([row["region"] for row in result["geography"]["rows"]], ["Москва", "Урал"])
+        self.assertEqual(result["series"]["sales"][0]["ozon_units"], "5")
+        self.assertEqual(result["series"]["sales"][0]["ozon_amount"], "3250.00")

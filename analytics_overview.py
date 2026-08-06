@@ -545,6 +545,109 @@ def _order_rows(provider: dict[str, Any], period: PeriodWindow) -> dict[str, int
     return result
 
 
+def _sales_rows(provider: dict[str, Any], period: PeriodWindow) -> dict[str, dict[str, Any]]:
+    """Return daily order, unit and gross-order-value facts for the period."""
+    result: dict[str, dict[str, Any]] = {}
+    source_rows = _as_rows(_as_dict(provider.get("analytics")).get("sales_daily"))
+    if source_rows:
+        for row in source_rows:
+            day = _date_key(row.get("date"))
+            if not day or not (period.start.isoformat() <= day <= period.end.isoformat()):
+                continue
+            bucket = result.setdefault(
+                day, {"orders": 0, "units": Decimal("0"), "amount": Decimal("0"), "unpriced_lines": 0}
+            )
+            bucket["orders"] += _integer(row.get("orders")) or 0
+            bucket["units"] += _decimal(row.get("units")) or Decimal("0")
+            bucket["amount"] += _decimal(row.get("amount")) or Decimal("0")
+            bucket["unpriced_lines"] += _integer(row.get("unpriced_lines")) or 0
+        return result
+
+    for row in _as_rows(provider.get("orders_rows")):
+        day = _date_key(row.get("shipment_date") or row.get("updated_at"))
+        if not day or not (period.start.isoformat() <= day <= period.end.isoformat()):
+            continue
+        bucket = result.setdefault(
+            day, {"orders": 0, "units": Decimal("0"), "amount": Decimal("0"), "unpriced_lines": 0}
+        )
+        bucket["orders"] += 1
+        bucket["units"] += _decimal(row.get("quantity")) or Decimal("1")
+        amount = _decimal(row.get("amount"))
+        if amount is None:
+            bucket["unpriced_lines"] += 1
+        else:
+            bucket["amount"] += amount
+    return result
+
+
+def _region_rows(provider: dict[str, Any], period: PeriodWindow) -> list[dict[str, Any]]:
+    aggregated: dict[str, dict[str, Any]] = {}
+    for row in _as_rows(_as_dict(provider.get("analytics")).get("sales_by_region_daily")):
+        day = _date_key(row.get("date"))
+        if not day or not (period.start.isoformat() <= day <= period.end.isoformat()):
+            continue
+        region = _text(row.get("region")) or "Регион не указан"
+        bucket = aggregated.setdefault(
+            region, {"region": region, "orders": 0, "units": Decimal("0"), "amount": Decimal("0"), "unpriced_lines": 0}
+        )
+        bucket["orders"] += _integer(row.get("orders")) or 0
+        bucket["units"] += _decimal(row.get("units")) or Decimal("0")
+        bucket["amount"] += _decimal(row.get("amount")) or Decimal("0")
+        bucket["unpriced_lines"] += _integer(row.get("unpriced_lines")) or 0
+    return [
+        {
+            "marketplace": "ozon",
+            "region": row["region"],
+            "orders": row["orders"],
+            "units": _quantity(row["units"]),
+            "amount": _money(row["amount"]),
+            "unpriced_lines": row["unpriced_lines"],
+        }
+        for row in sorted(aggregated.values(), key=lambda value: (-value["units"], value["region"]))
+    ]
+
+
+def _known_stock_value(
+    marketplace: str,
+    provider: dict[str, Any],
+    quality: dict[str, Any],
+    stock: Decimal | None,
+    stock_status: str,
+    generated_at: str,
+) -> tuple[Decimal | None, str, list[str]]:
+    if stock is None:
+        return None, stock_status, []
+    positive_rows = []
+    missing_price_units = Decimal("0")
+    for row in _as_rows(provider.get("products_rows")):
+        available = _decimal(row.get("available"))
+        if available is None or available <= 0:
+            continue
+        price = _decimal(row.get("current_price"))
+        if price is None:
+            missing_price_units += available
+        else:
+            positive_rows.append((available, price))
+    if missing_price_units > 0:
+        return None, "partial", [
+            f"{marketplace.title()}: для {_quantity(missing_price_units)} шт. остатка нет подтверждённой текущей цены."
+        ]
+    if stock == 0:
+        return Decimal("0"), stock_status, []
+    if not positive_rows:
+        return None, "no_data", [f"{marketplace.title()}: стоимость остатков не подтверждена ценами."]
+    price_status = (
+        _dataset_data_status(_quality_dataset(quality, "prices"), generated_at)
+        if marketplace == "ozon" and _quality_dataset(quality, "prices")
+        else _capability_data_status(provider, "prices", generated_at)
+        if marketplace == "wildberries"
+        else "unknown"
+    )
+    statuses = {stock_status, price_status}
+    status = "fresh" if statuses == {"fresh"} else "stale" if statuses <= {"fresh", "stale"} and "stale" in statuses else "partial"
+    return sum((available * price for available, price in positive_rows), Decimal("0")), status, []
+
+
 def _known_stock(
     marketplace: str,
     provider: dict[str, Any],
@@ -647,16 +750,25 @@ def _provider_metric_timestamp(
     source_set = set(sources)
     candidates: list[object] = []
     if "postgres.marketplace_phase1a" in source_set:
-        dataset_name = {"products": "catalog", "stock_available": "stocks"}.get(metric)
-        if dataset_name:
-            candidates.append(_dataset_timestamp(_quality_dataset(quality, dataset_name)))
+        dataset_names = {
+            "products": ("catalog",),
+            "stock_available": ("stocks",),
+            "stock_retail_value": ("stocks", "prices"),
+            "orders": ("orders",),
+            "sales_units": ("orders",),
+            "gross_sales": ("orders",),
+        }.get(metric, ())
+        candidates.extend(_dataset_timestamp(_quality_dataset(quality, name)) for name in dataset_names)
     if "sqlite.marketplace_dashboard" in source_set:
         account = _account(provider, marketplace)
         if marketplace == "wildberries":
             capability_name = {
                 "products": "catalog",
                 "stock_available": "stocks",
+                "stock_retail_value": "stocks",
                 "orders": "orders",
+                "sales_units": "orders",
+                "gross_sales": "orders",
                 "net_payout": "finance",
             }.get(metric)
             capability = _capability(provider, capability_name or "")
@@ -681,7 +793,7 @@ def _provider_payload(
     quality: dict[str, Any],
     period: PeriodWindow,
     generated_at: str,
-) -> tuple[dict[str, Any], dict[str, Decimal], dict[str, int]]:
+) -> tuple[dict[str, Any], dict[str, Decimal], dict[str, int], dict[str, dict[str, Any]]]:
     configured = bool(provider.get("configured") or quality.get("configured") or quality.get("account"))
     account = _account(provider, marketplace)
     status, warnings, missing = _provider_status(
@@ -698,9 +810,14 @@ def _provider_payload(
         marketplace, provider, quality, generated_at
     )
     warnings.extend(stock_warnings)
+    stock_value, stock_value_status, stock_value_warnings = _known_stock_value(
+        marketplace, provider, quality, stock, stock_status, generated_at
+    )
+    warnings.extend(stock_value_warnings)
     finance = _finance_rows(provider, period)
     recognized_daily = _finance_rows(provider, period, amount_key="revenue")
-    orders_daily = _order_rows(provider, period)
+    sales_daily = _sales_rows(provider, period)
+    orders_daily = {day: int(row["orders"]) for day, row in sales_daily.items()}
 
     if marketplace == "wildberries":
         orders_available = _capability_available(provider, "orders", fallback=bool(provider.get("orders_rows")))
@@ -710,6 +827,7 @@ def _provider_payload(
             # Explicit permission/transport failures invalidate historical rows
             # for both the KPI and the chart.
             orders_daily = {}
+            sales_daily = {}
             orders = None
             orders_status = orders_data_status
         elif _coverage_contains(orders_coverage, period):
@@ -718,6 +836,7 @@ def _provider_payload(
             orders_status = orders_data_status
         elif orders_coverage:
             orders_daily = {}
+            sales_daily = {}
             orders = None
             orders_status = "partial"
             warnings.append(
@@ -728,6 +847,7 @@ def _provider_payload(
                 status = "partial"
         else:
             orders_daily = {}
+            sales_daily = {}
             orders = None
             orders_status = "no_data"
             warnings.append(
@@ -740,13 +860,29 @@ def _provider_payload(
         # The legacy Ozon reader used to swallow a postings error and save a
         # zero in an otherwise successful run.  Only actual stored rows prove
         # that this dataset exists until a fail-closed orders adapter lands.
-        orders_available = bool(provider.get("orders_rows"))
+        orders_available = bool(sales_daily or provider.get("orders_rows"))
         orders_status = (
             _timestamp_freshness(account.get("last_sync_at"), generated_at)
             if orders_available
             else "no_data"
         )
         orders = sum(orders_daily.values()) if orders_available else None
+    sales_units = (
+        sum((row["units"] for row in sales_daily.values()), Decimal("0"))
+        if orders is not None and sales_daily else None
+    )
+    gross_sales = (
+        sum((row["amount"] for row in sales_daily.values()), Decimal("0"))
+        if orders is not None and sales_daily else None
+    )
+    unpriced_sales_lines = sum(int(row["unpriced_lines"]) for row in sales_daily.values())
+    if gross_sales == 0 and unpriced_sales_lines:
+        gross_sales = None
+    sales_status = "partial" if unpriced_sales_lines else orders_status
+    if unpriced_sales_lines:
+        warnings.append(
+            f"{label}: сумма заказов неполная — без цены осталось строк: {unpriced_sales_lines}."
+        )
     if marketplace == "wildberries":
         finance_available = _capability_available(provider, "finance", fallback=bool(finance))
         finance_data_status = _capability_data_status(provider, "finance", generated_at)
@@ -803,18 +939,24 @@ def _provider_payload(
         [account.get("last_sync_at")]
         + [row.get("last_success_at") or row.get("last_usable_at") for row in _as_rows(quality.get("datasets"))]
     )
+    marketplace_source = "postgres.marketplace_phase1a" if marketplace == "ozon" and provider.get("source") == "postgresql" else "sqlite.marketplace_dashboard"
     provider_sources = []
     if provider and provider.get("ok") is not False:
-        provider_sources.append("sqlite.marketplace_dashboard")
+        provider_sources.append(marketplace_source)
     if marketplace == "ozon" and _quality_source_available(quality):
         provider_sources.append("postgres.marketplace_phase1a")
-    orders_sources = ["sqlite.marketplace_dashboard"] if orders is not None else []
+    orders_sources = [marketplace_source] if orders is not None else []
+    sales_sources = [marketplace_source] if sales_units is not None else []
+    stock_value_sources = list(dict.fromkeys(stock_sources + product_sources)) if stock_value is not None else []
     finance_sources = ["sqlite.marketplace_dashboard"] if net is not None else []
     recognized_sources = ["sqlite.marketplace_dashboard"] if recognized_sales is not None else []
     metric_sources = {
         "products": product_sources,
         "stock_available": stock_sources,
+        "stock_retail_value": stock_value_sources,
         "orders": orders_sources,
+        "sales_units": sales_sources,
+        "gross_sales": sales_sources if gross_sales is not None else [],
         "net_payout": finance_sources,
         "recognized_sales": recognized_sources,
     }
@@ -839,10 +981,12 @@ def _provider_payload(
     )
     metrics_alias = {
         "recognized": _money(recognized_sales),
-        "gmv": None,
         "net": _money(net),
         "orders": orders,
         "stock": _quantity(stock),
+        "stock_value": _money(stock_value),
+        "sales_units": _quantity(sales_units),
+        "gmv": _money(gross_sales),
     }
     return {
         "marketplace": marketplace,
@@ -853,7 +997,10 @@ def _provider_payload(
         "last_error": _text(account.get("last_error") or provider.get("error") or provider.get("message")) or None,
         "products": products,
         "stock_available": _quantity(stock),
+        "stock_retail_value": _money(stock_value),
         "orders": orders,
+        "sales_units": _quantity(sales_units),
+        "gross_sales": _money(gross_sales),
         "recognized_sales": _money(recognized_sales),
         "net_payout": _money(net),
         "meta": meta,
@@ -863,13 +1010,16 @@ def _provider_payload(
         "metric_status": {
             "products": products_status,
             "stock_available": stock_status,
+            "stock_retail_value": stock_value_status,
             "orders": orders_status,
+            "sales_units": orders_status,
+            "gross_sales": sales_status,
             "recognized_sales": finance_status,
             "net_payout": finance_status,
         },
         "metric_sources": metric_sources,
         "metric_timestamps": metric_timestamps,
-    }, finance, orders_daily
+    }, finance, orders_daily, sales_daily
 
 
 def _combined_series(
@@ -877,6 +1027,8 @@ def _combined_series(
     wb_finance: dict[str, Decimal],
     ozon_orders: dict[str, int],
     wb_orders: dict[str, int],
+    ozon_sales: dict[str, dict[str, Any]],
+    wb_sales: dict[str, dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
     finance = []
     for day in sorted(set(ozon_finance) | set(wb_finance)):
@@ -900,7 +1052,26 @@ def _combined_series(
             "wb": wb,
             "total": ozon + wb if ozon is not None and wb is not None else None,
         })
-    return {"finance": finance, "orders": orders}
+    sales = []
+    for day in sorted(set(ozon_sales) | set(wb_sales)):
+        ozon = ozon_sales.get(day)
+        wb = wb_sales.get(day)
+        ozon_units = ozon.get("units") if ozon else None
+        wb_units = wb.get("units") if wb else None
+        ozon_amount = ozon.get("amount") if ozon else None
+        wb_amount = wb.get("amount") if wb else None
+        sales.append({
+            "date": day,
+            "ozon_units": _quantity(ozon_units),
+            "wildberries_units": _quantity(wb_units),
+            "wb_units": _quantity(wb_units),
+            "total_units": _quantity(ozon_units + wb_units) if ozon_units is not None and wb_units is not None else None,
+            "ozon_amount": _money(ozon_amount),
+            "wildberries_amount": _money(wb_amount),
+            "wb_amount": _money(wb_amount),
+            "total_amount": _money(ozon_amount + wb_amount) if ozon_amount is not None and wb_amount is not None else None,
+        })
+    return {"finance": finance, "orders": orders, "sales": sales}
 
 
 def _aggregate_known(values: Iterable[object], *, money: bool = False, quantity: bool = False) -> object:
@@ -961,10 +1132,17 @@ def _metrics(
     recommendations_status: str,
     recommendations_sources: Iterable[str],
     recommendations_updated_at: str | None,
+    region_count: int | None,
+    region_status: str,
+    region_sources: Iterable[str],
+    region_updated_at: str | None,
 ) -> list[dict[str, Any]]:
     product_values = [row.get("products") for row in providers]
     stock_values = [row.get("stock_available") for row in providers]
+    stock_value_values = [row.get("stock_retail_value") for row in providers]
     order_values = [row.get("orders") for row in providers]
+    sales_unit_values = [row.get("sales_units") for row in providers]
+    gross_sales_values = [row.get("gross_sales") for row in providers]
     recognized_values = [row.get("recognized_sales") for row in providers]
     net_values = [row.get("net_payout") for row in providers]
 
@@ -1012,7 +1190,10 @@ def _metrics(
 
     products_status, products_partial = aggregate_status("products", "products")
     stocks_status, stocks_partial = aggregate_status("stock_available", "stock_available")
+    stock_value_status, stock_value_partial = aggregate_status("stock_retail_value", "stock_retail_value")
     orders_status, orders_partial = aggregate_status("orders", "orders")
+    sales_units_status, sales_units_partial = aggregate_status("sales_units", "sales_units")
+    gross_sales_status, gross_sales_partial = aggregate_status("gross_sales", "gross_sales")
     recognized_status, recognized_partial = aggregate_status("recognized_sales", "recognized_sales")
     net_status, net_partial = aggregate_status("net_payout", "net_payout")
     production_status = _status(_as_dict(production.get("meta")).get("status"))
@@ -1071,7 +1252,10 @@ def _metrics(
     rows = [
         marketplace_metric("marketplace_products", "Товары в продаже", _aggregate_known(product_values), "шт.", status=products_status, partial=products_partial, value_key="products", source_key="products"),
         marketplace_metric("stock_available", "Остатки на площадках", _aggregate_known(stock_values, quantity=True), "шт.", status=stocks_status, partial=stocks_partial, value_key="stock_available", source_key="stock_available"),
+        marketplace_metric("stock_retail_value", "Стоимость остатков", _aggregate_known(stock_value_values, money=True), "RUB", status=stock_value_status, partial=stock_value_partial, value_key="stock_retail_value", source_key="stock_retail_value"),
         marketplace_metric("orders", "Заказы за период", _aggregate_known(order_values), "шт.", status=orders_status, partial=orders_partial, value_key="orders", source_key="orders"),
+        marketplace_metric("sales_units", "Продано товаров", _aggregate_known(sales_unit_values, quantity=True), "шт.", status=sales_units_status, partial=sales_units_partial, value_key="sales_units", source_key="sales_units"),
+        marketplace_metric("gross_sales", "Сумма заказов", _aggregate_known(gross_sales_values, money=True), "RUB", status=gross_sales_status, partial=gross_sales_partial, value_key="gross_sales", source_key="gross_sales"),
         marketplace_metric("recognized_sales", "Продажи до удержаний", _aggregate_known(recognized_values, money=True), "RUB", status=recognized_status, partial=recognized_partial, value_key="recognized_sales", source_key="recognized_sales"),
         marketplace_metric("net_payout", "Начислено после удержаний", _aggregate_known(net_values, money=True), "RUB", status=net_status, partial=net_partial, value_key="net_payout", source_key="net_payout"),
         production_metric("production_plan", "План производства", production.get("plan"), "шт."),
@@ -1090,10 +1274,21 @@ def _metrics(
             max_source_updated_at=recommendations_updated_at,
             last_successful_sync_at=recommendations_updated_at,
         ),
+        _metric(
+            "geo",
+            "Регионы продаж",
+            region_count,
+            "регионов",
+            status=region_status,
+            generated_at=generated_at,
+            sources=region_sources,
+            partial=region_status == "partial",
+            max_source_updated_at=region_updated_at,
+            last_successful_sync_at=region_updated_at,
+        ),
     ]
     for code, label, unit in (
         ("contribution_margin", "Маржинальный доход", "RUB"),
-        ("geo", "География продаж", "регионов"),
     ):
         rows.append(_metric(
             code,
@@ -1398,14 +1593,49 @@ def analytics_overview(
     else:
         production = {**production_source, "meta": production_meta}
 
-    ozon, ozon_finance, ozon_orders = _provider_payload(
+    ozon, ozon_finance, ozon_orders, ozon_sales = _provider_payload(
         "ozon", "Ozon", ozon_provider, quality, period, generated_at
     )
-    wb, wb_finance, wb_orders = _provider_payload(
+    wb, wb_finance, wb_orders, wb_sales = _provider_payload(
         "wildberries", "Wildberries", wb_provider, {}, period, generated_at
     )
     providers = [ozon, wb]
-    series = _combined_series(ozon_finance, wb_finance, ozon_orders, wb_orders)
+    series = _combined_series(
+        ozon_finance, wb_finance, ozon_orders, wb_orders, ozon_sales, wb_sales
+    )
+    region_rows = _region_rows(ozon_provider, period)
+    known_regions = {row["region"] for row in region_rows if row["region"] != "Регион не указан"}
+    ozon_region_status = _status(_as_dict(ozon.get("metric_status")).get("orders"), fallback="no_data")
+    if not region_rows and ozon_region_status not in {"error", "permission_required", "unavailable"}:
+        ozon_region_status = "no_data"
+    region_status = "partial" if region_rows and wb.get("configured") else ozon_region_status
+    region_updated_at = _as_dict(ozon.get("metric_timestamps")).get("orders")
+    geography = {
+        "rows": region_rows,
+        "providers": [
+            {
+                "marketplace": "ozon",
+                "status": ozon_region_status,
+                "regions": len(known_regions),
+                "message": "Регион назначения взят из Ozon financial_data.cluster_to.",
+            },
+            {
+                "marketplace": "wildberries",
+                "status": "unavailable" if wb.get("configured") else "no_data",
+                "regions": None,
+                "message": "Региональный разрез отсутствует в сохранённом WB snapshot.",
+            },
+        ],
+        "meta": _data_meta(
+            status=region_status,
+            generated_at=generated_at,
+            partial=region_status == "partial",
+            sources=["postgres.marketplace_phase1a"] if region_rows else [],
+            warnings=["Wildberries: региональный разрез пока недоступен."] if wb.get("configured") else [],
+            max_source_updated_at=region_updated_at,
+            last_successful_sync_at=region_updated_at,
+        ),
+    }
 
     supply_counts = _as_dict(ozon_provider.get("supply_counts"))
     canonical_supplies = _as_rows(ozon_provider.get("supplies"))
@@ -1548,6 +1778,10 @@ def analytics_overview(
             recommendations_status=overall_status,
             recommendations_sources=meta["sources"],
             recommendations_updated_at=max_updated,
+            region_count=len(known_regions) if region_rows else None,
+            region_status=region_status,
+            region_sources=geography["meta"]["sources"],
+            region_updated_at=region_updated_at,
         ),
         "series": series,
         "providers": providers,
@@ -1556,6 +1790,7 @@ def analytics_overview(
         "supplies": supplies,
         "catalog_reconciliation": _as_dict(dashboard.get("catalog_reconciliation")),
         "data_quality": data_quality,
+        "geography": geography,
         "production": production,
         "meta": meta,
     }

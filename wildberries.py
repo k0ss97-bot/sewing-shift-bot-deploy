@@ -1556,6 +1556,47 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
     if capability_statuses.get("sales") and capability_statuses["sales"].get("status") != "available":
         analytics["returns_rows"] = []
         analytics["returns_daily"] = []
+    sales_daily_by_date: dict[str, dict] = {}
+    if not capability_statuses.get("orders") or capability_statuses["orders"].get("status") == "available":
+        for source in conn.execute(
+            """SELECT o.external_order_id,o.shipment_date,o.updated_at,o.status,
+                      i.quantity,i.payload_json
+                 FROM marketplace_orders o
+                 JOIN marketplace_order_items i ON i.order_id=o.id
+                WHERE o.account_id=?""",
+            (account_id,),
+        ):
+            if _text(source[3]).casefold() in {"cancelled", "canceled", "отменен", "отменён"}:
+                continue
+            day = _text(source[1] or source[2])[:10]
+            if not day:
+                continue
+            bucket = sales_daily_by_date.setdefault(
+                day,
+                {"date": day, "order_ids": set(), "units": 0, "amount": 0.0, "unpriced_lines": 0},
+            )
+            bucket["order_ids"].add(_text(source[0]))
+            quantity = max(0, _int(source[4]))
+            bucket["units"] += quantity
+            try:
+                item = json.loads(source[5] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                item = {}
+            price = _first_present(item, "finishedPrice", "priceWithDisc", "totalPrice")
+            if price in (None, ""):
+                bucket["unpriced_lines"] += 1
+            else:
+                bucket["amount"] += quantity * _number(price)
+    analytics["sales_daily"] = [
+        {
+            "date": row["date"],
+            "orders": len(row["order_ids"]),
+            "units": row["units"],
+            "amount": round(row["amount"], 2),
+            "unpriced_lines": row["unpriced_lines"],
+        }
+        for row in sorted(sales_daily_by_date.values(), key=lambda value: value["date"])
+    ]
     funnel_daily = [dict(row) for row in conn.execute(
         """SELECT report_date AS date,SUM(open_count) open_count,SUM(cart_count) cart_count,
                   SUM(order_count) order_count,SUM(order_sum) order_sum,SUM(buyout_count) buyout_count,

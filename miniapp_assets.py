@@ -13750,7 +13750,7 @@ MINIAPP_HTML = """<!doctype html>
       const pages = [
         ["general", "⌂", "Обзор"], ["sales", "↗", "Продажи"], ["products", "▤", "Товары"],
         ["inventory", "▦", "Остатки"], ["production", "⚙", "Производство"], ["supplies", "↓", "Поставки"],
-        ["finance", "₽", "Финансы"], ["map", "○", "Склады"], ["data-quality", "✓", "Качество данных"],
+        ["finance", "₽", "Финансы"], ["map", "○", "Регионы"], ["data-quality", "✓", "Качество данных"],
       ];
       const allowed = new Set(pages.map(([id]) => id));
       const page = allowed.has(state.analyticsHubTab) ? state.analyticsHubTab : "general";
@@ -13780,6 +13780,7 @@ MINIAPP_HTML = """<!doctype html>
       const reconciliationRows = Array.isArray(reconciliation.marketplace_items) ? reconciliation.marketplace_items : [];
       const reconciliationSummary = reconciliation.summary && typeof reconciliation.summary === "object" ? reconciliation.summary : {};
       const risks = Array.isArray(payload.risks) ? payload.risks : [];
+      const geography = payload.geography && typeof payload.geography === "object" ? payload.geography : {};
       const rowsForProviders = (field) => providerRoots.flatMap((provider) => {
         const providerName = provider === root.wildberries ? "wildberries" : "ozon";
         return (Array.isArray(provider[field]) ? provider[field] : []).map((row) => ({...row, marketplace: row.marketplace || providerName}));
@@ -13808,6 +13809,7 @@ MINIAPP_HTML = """<!doctype html>
       const panel = (title, meta, body, wide = "") => `<section class="ac-panel ${wide}"><div class="ac-panel-head"><h3>${escapeHtml(title)}</h3><span>${escapeHtml(meta || "")}</span></div>${body}</section>`;
       const table = (headers, rows, emptyText) => rows.length ? `<div class="ac-table-wrap"><table class="ac-table"><thead><tr>${headers.map((head) => `<th>${escapeHtml(head)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>` : empty("Нет данных", emptyText);
       const providerFilter = (row) => marketplace === "all" || String(row.marketplace || row.provider || "ozon").toLowerCase().includes(marketplace === "wildberries" ? "wild" : "ozon");
+      const geographyRows = (Array.isArray(geography.rows) ? geography.rows : []).filter(providerFilter);
       const summaryValue = (key) => {
         const selected = marketplace === "all" ? ["ozon", "wildberries"] : [marketplace];
         return selected.reduce((total, providerName) => total + Number((reconciliationSummary[providerName] || {})[key] || 0), 0);
@@ -13829,6 +13831,13 @@ MINIAPP_HTML = """<!doctype html>
         const rows = financeRows.filter((row) => row[key] !== null && row[key] !== undefined).map((row) => ({date: row.date, value: Number(row[key])}));
         return {key, label: provider.label || key, status: provider.status || "unknown", commercialAvailable: rows.length > 0, commercialLabel: "после удержаний", commercialRows: rows};
       });
+      const salesSeries = payload.series && Array.isArray(payload.series.sales) ? payload.series.sales : [];
+      const salesChartModels = (dimension) => providers.filter(providerFilter).map((provider) => {
+        const key = provider.marketplace === "wildberries" ? "wildberries" : "ozon";
+        const field = `${key}_${dimension}`;
+        const rows = salesSeries.filter((row) => row[field] !== null && row[field] !== undefined).map((row) => ({date: row.date, value: Number(row[field])}));
+        return {key, label: provider.label || key, status: provider.status || "unknown", commercialAvailable: rows.length > 0, commercialLabel: dimension === "units" ? "продано, шт." : "сумма заказов, ₽", commercialRows: rows};
+      });
       const nav = pages.map(([id, icon, label]) => `<button type="button" class="${page === id ? "active" : ""}" data-ac-page="${id}"><i>${icon}</i><span>${label}</span></button>`).join("");
       const marketplaceSwitch = `<div class="ac-market-switch" aria-label="Маркетплейс"><button data-ac-provider="all" class="${marketplace === "all" ? "active all" : ""}">Все</button><button data-ac-provider="ozon" class="${marketplace === "ozon" ? "active ozon" : ""}">Ozon</button><button data-ac-provider="wildberries" class="${marketplace === "wildberries" ? "active wb" : ""}">WB</button></div>`;
       const periodOptions = [["7d","7 дней"],["30d","30 дней"],["month","Месяц"],["previous-month","Прошлый месяц"]];
@@ -13836,9 +13845,9 @@ MINIAPP_HTML = """<!doctype html>
       const sourceState = overviewState.loading ? `<div class="ac-skeleton"></div>` : overviewState.error ? empty("Не удалось обновить данные", "Структура экрана сохранена. Повторите загрузку или откройте диагностику.", "diagnostics") : "";
 
       function renderOverviewPage() {
-        const sales = metric("recognized_sales"), net = metric("net_payout"), recommendationsMetric = metric("recommendations"), orderMetric = metric("orders"), stock = metric("stock_available");
+        const grossSales = metric("gross_sales"), salesUnits = metric("sales_units"), orderMetric = metric("orders"), stock = metric("stock_available"), stockValue = metric("stock_retail_value");
         const productionValue = production.plan !== null && production.plan !== undefined && production.fact !== null && production.fact !== undefined ? `${fmt(production.fact)} / ${fmt(production.plan)}` : "—";
-        const cards = `<div class="ac-kpis">${kpi("Продажи", safeValue(sales, money), "Начисления за период")}${kpi("После удержаний", safeValue(net, money), "Чистые начисления")}${kpi("Рекомендации", safeValue(recommendationsMetric), "Подтверждённые сигналы")}${kpi("Заказы", safeValue(orderMetric), "За выбранный период")}${kpi("Остатки", safeValue(stock), "На складах площадок")}${kpi("Производство", productionValue, "Факт / план")}</div>`;
+        const cards = `<div class="ac-kpis">${kpi("Продано", safeValue(salesUnits), "Товаров за период, шт.")}${kpi("Сумма заказов", safeValue(grossSales, money), "По ценам строк заказа")}${kpi("Заказы", safeValue(orderMetric), "За выбранный период")}${kpi("Остатки", safeValue(stock), "На площадках, шт.")}${kpi("Стоимость остатков", safeValue(stockValue, money), "Остаток × текущая цена")}${kpi("Производство", productionValue, "Факт / план")}</div>`;
         const providerRows = providerCards.map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.label || row.marketplace || "Площадка")}</b><span>${escapeHtml(row.last_sync_at || "Время обновления не подтверждено")}</span></div><strong>${escapeHtml(row.status === "fresh" ? "Актуально" : row.status === "stale" ? "Задерживается" : "Частично")}</strong></div>`).join("");
         const riskRows = filteredRisks.slice(0, 5).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.title || "Товарный риск")}</b><span>${escapeHtml(row.reason || row.detail || "Требует внимания")}</span></div><strong>${escapeHtml(row.severity === "high" ? "Важно" : "Проверить")}</strong></div>`).join("");
         const supplyList = supplyRows.filter(providerFilter).slice(0, 5).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.external_supply_id || row.number || row.name || "Поставка")}</b><span>${escapeHtml(row.destination_name || row.destination || "Склад не указан")} · ${escapeHtml(row.canonical_status || row.status_label || row.status || "Статус не указан")}</span></div><strong>${row.total_quantity !== undefined && row.total_quantity !== null ? `${escapeHtml(fmt(row.total_quantity))} шт.` : row.quantity !== undefined ? `${escapeHtml(fmt(row.quantity))} шт.` : ""}</strong></div>`).join("");
@@ -13862,8 +13871,9 @@ MINIAPP_HTML = """<!doctype html>
 
       function renderSalesPage() {
         const visibleOrders = periodOrders.slice(0, 100);
-        const orderRows = visibleOrders.map((row) => `<tr><td>${escapeHtml(row.shipment_date || row.updated_at || "—")}</td><td>${escapeHtml(row.posting_number || row.external_order_id || row.id || "—")}</td><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.warehouse_type || "—")}</td><td>${escapeHtml(row.status || "—")}</td></tr>`);
-        return `${filterbar}<div class="ac-kpis">${kpi("Продажи", safeValue(metric("recognized_sales"), money), "До удержаний")}${kpi("Заказы", safeValue(metric("orders")), "Подтверждённые заказы")}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению")}</div><div class="ac-grid">${panel("Динамика продаж", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Сравнение Ozon / Wildberries", "Реальные источники", providerCards.map((row) => `<div class="ac-list-row"><b>${escapeHtml(row.label || row.marketplace)}</b><strong>${escapeHtml(row.status === "fresh" ? "Актуально" : row.status === "stale" ? "Задерживается" : "Частично")}</strong></div>`).join("") || empty("Нет данных", "Площадки не вернули продажи."), "span-4")}${panel("Заказы", `Показано ${visibleOrders.length} из ${periodOrders.length} за период`, table(["Дата","Отправление","Площадка","Схема","Статус"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
+        const orderRows = visibleOrders.map((row) => `<tr><td>${escapeHtml(row.shipment_date || row.updated_at || "—")}</td><td>${escapeHtml(row.posting_number || row.external_order_id || row.id || "—")}</td><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${row.quantity !== null && row.quantity !== undefined ? escapeHtml(fmt(row.quantity)) : "—"}</td><td>${row.amount_available || row.amount_partial ? escapeHtml(money(row.amount)) : "—"}</td><td>${escapeHtml(row.status || "—")}</td></tr>`);
+        const providerComparison = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace)}</td><td>${row.sales_units !== null && row.sales_units !== undefined ? escapeHtml(fmt(row.sales_units)) : "—"}</td><td>${row.gross_sales !== null && row.gross_sales !== undefined ? escapeHtml(money(row.gross_sales)) : "—"}</td><td>${row.orders !== null && row.orders !== undefined ? escapeHtml(fmt(row.orders)) : "—"}</td></tr>`);
+        return `${filterbar}<div class="ac-kpis">${kpi("Продано", safeValue(metric("sales_units")), "Штук за период")}${kpi("Сумма заказов", safeValue(metric("gross_sales"), money), "По ценам строк заказа")}${kpi("Заказы", safeValue(metric("orders")), "Количество заказов")}${kpi("Начисления", safeValue(metric("recognized_sales"), money), "До удержаний")}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению")}</div><div class="ac-grid">${panel("Продажи в штуках по дням", period, analyticsHubCombinedChart(salesChartModels("units")), "span-6")}${panel("Продажи в рублях по дням", period, analyticsHubCombinedChart(salesChartModels("amount")), "span-6")}${panel("Ozon / Wildberries", "Раздельные итоги", table(["Площадка","Продано, шт.","Сумма заказов","Заказы"], providerComparison, "Площадки не вернули продажи."), "span-12")}${panel("Последние заказы в выбранном периоде", `Показано ${visibleOrders.length}; итог рассчитан по полному набору ${safeValue(metric("orders"))}`, table(["Дата","Отправление","Площадка","Штук","Сумма","Статус"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
       }
 
       function renderProductsPage() {
@@ -13874,9 +13884,10 @@ MINIAPP_HTML = """<!doctype html>
 
       function renderInventoryPage() {
         const visibleInventory = inventoryProducts.slice(0, 300);
-        const rows = visibleInventory.map((row) => `<tr><td>${escapeHtml(row.name || row.product_name || "—")}</td><td>${escapeHtml(row.offer_id || row.article || "—")}</td><td>${escapeHtml(row.size || "—")}</td><td>${escapeHtml(row.color || "—")}</td><td>${fmt(row.available)}</td><td>${row.reserved !== null && row.reserved !== undefined ? fmt(row.reserved) : "—"}</td></tr>`);
+        const rows = visibleInventory.map((row) => `<tr><td>${escapeHtml(row.name || row.product_name || "—")}</td><td>${escapeHtml(row.offer_id || row.article || "—")}</td><td>${escapeHtml(row.size || "—")}</td><td>${escapeHtml(row.color || "—")}</td><td>${fmt(row.available)}</td><td>${row.current_price !== null && row.current_price !== undefined ? escapeHtml(money(row.current_price)) : "—"}</td><td>${row.current_price !== null && row.current_price !== undefined ? escapeHtml(money(Number(row.available) * Number(row.current_price))) : "—"}</td></tr>`);
         const riskList = filteredRisks.slice(0, 8).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.title || "Риск остатка")}</b><span>${escapeHtml(row.reason || "Требует проверки")}</span></div><strong>${escapeHtml(row.severity === "high" ? "Важно" : "Проверить")}</strong></div>`).join("");
-        return `<div class="ac-kpis">${kpi("Доступно", safeValue(metric("stock_available")), "Только подтверждённые остатки")}${kpi("SKU с остатком", fmt(inventoryProducts.length), "Без подмены неизвестного на ноль")}${kpi("Нет готового остатка", fmt(summaryValue("not_in_warehouse")), "Связанные с производством карточки")}${kpi("Сигналы", fmt(filteredRisks.length), "Требуют проверки")}</div><div class="ac-grid">${panel("Остатки по SKU", `Показано ${visibleInventory.length} из ${inventoryProducts.length}`, table(["Товар","Артикул","Размер","Цвет","Доступно","Резерв"], rows, "Подтверждённые остатки выбранной площадки пока недоступны."), "span-8")}${panel("Сигналы для проверки", "Без автоматического создания заданий", riskList || empty("Сигналов нет", "Недостаток товара не подтверждён или данные ещё загружаются."), "span-4")}</div>`;
+        const inventoryComparison = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace)}</td><td>${row.stock_available !== null && row.stock_available !== undefined ? escapeHtml(fmt(row.stock_available)) : "—"}</td><td>${row.stock_retail_value !== null && row.stock_retail_value !== undefined ? escapeHtml(money(row.stock_retail_value)) : "—"}</td></tr>`);
+        return `<div class="ac-kpis">${kpi("Остатки", safeValue(metric("stock_available")), "Подтверждённые, шт.")}${kpi("Стоимость остатков", safeValue(metric("stock_retail_value"), money), "Остаток × текущая цена")}${kpi("SKU с остатком", fmt(inventoryProducts.length), "Без подмены неизвестного на ноль")}${kpi("Нет готового остатка", fmt(summaryValue("not_in_warehouse")), "Связанные с производством карточки")}</div><div class="ac-grid">${panel("Ozon / Wildberries", "Остатки в штуках и рублях", table(["Площадка","Остатки, шт.","Стоимость"], inventoryComparison, "Подтверждённые остатки площадок пока недоступны."), "span-12")}${panel("Остатки по SKU", `Показано ${visibleInventory.length} из ${inventoryProducts.length}`, table(["Товар","Артикул","Размер","Цвет","Доступно","Цена","Стоимость"], rows, "Подтверждённые остатки выбранной площадки пока недоступны."), "span-8")}${panel("Сигналы для проверки", "Без автоматического создания заданий", riskList || empty("Сигналов нет", "Недостаток товара не подтверждён или данные ещё загружаются."), "span-4")}</div>`;
       }
 
       function renderProductionPage() {
@@ -13893,7 +13904,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       function renderFinancePage() {
-        const recognized = metric("recognized_sales"), net = metric("net_payout"), margin = metric("contribution_margin");
+        const gross = metric("gross_sales"), recognized = metric("recognized_sales"), net = metric("net_payout"), margin = metric("contribution_margin");
         const waterfall = [
           ["Продажи", recognized.value, "positive"],
           ["Удержания", recognized.value !== null && recognized.value !== undefined && net.value !== null && net.value !== undefined ? Number(net.value) - Number(recognized.value) : null, "negative"],
@@ -13903,12 +13914,16 @@ MINIAPP_HTML = """<!doctype html>
         const max = Math.max(1, ...waterfall.map(([,value]) => Math.abs(Number(value))));
         const bars = waterfall.length ? `<div class="ac-waterfall">${waterfall.map(([label,value,tone]) => `<div class="${tone}"><span>${escapeHtml(label)}</span><i style="--bar:${Math.max(5, Math.abs(Number(value)) / max * 100)}%"></i><strong>${escapeHtml(money(value))}</strong></div>`).join("")}</div>` : empty("Финансы пока недоступны", "Площадка не предоставила подтверждённые начисления и удержания.");
         const compareRows = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace || "—")}</td><td>${escapeHtml(row.status === "fresh" ? "Данные актуальны" : row.status === "stale" ? "Обновление задерживается" : "Данные загружены частично")}</td><td>${escapeHtml(row.last_sync_at || "—")}</td></tr>`);
-        return `${filterbar}<div class="ac-kpis">${kpi("Продажи", safeValue(recognized, money), "До удержаний")}${kpi("После удержаний", safeValue(net, money), "К перечислению")}${kpi("Маржинальный доход", safeValue(margin, money), "Нужна подтверждённая себестоимость")}</div><div class="ac-grid">${panel("Финансовая динамика", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Финансовый waterfall", "Только подтверждённые компоненты", bars, "span-4")}${panel("Источники", `${providerCards.length} площадки`, table(["Площадка","Состояние","Обновлено"], compareRows, "Финансовые источники не подключены."), "span-12")}</div>`;
+        return `${filterbar}<div class="ac-kpis">${kpi("Сумма заказов", safeValue(gross, money), "По ценам товаров")}${kpi("Начисления", safeValue(recognized, money), "До удержаний")}${kpi("После удержаний", safeValue(net, money), "К перечислению")}${kpi("Маржинальный доход", safeValue(margin, money), "Нужна подтверждённая себестоимость")}</div><div class="ac-grid">${panel("Финансовая динамика", period, analyticsHubCombinedChart(chartModels), "span-8")}${panel("Финансовый waterfall", "Только подтверждённые компоненты", bars, "span-4")}${panel("Источники", `${providerCards.length} площадки`, table(["Площадка","Состояние","Обновлено"], compareRows, "Финансовые источники не подключены."), "span-12")}</div>`;
       }
 
       function renderMapPage() {
-        const rows = warehouses.map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.name || row.warehouse_name || "—")}</td><td>${escapeHtml(row.key || row.warehouse_type || "—")}</td></tr>`);
-        return `<div class="ac-kpis">${kpi("Склады", fmt(rows.length), "Подтверждённые в текущем снимке")}${kpi("Площадка", marketplace === "all" ? "Все" : marketplace === "ozon" ? "Ozon" : "Wildberries", "Текущий фильтр")}</div><div class="ac-grid">${panel("Склады маркетплейсов", `${rows.length} записей`, table(["Площадка","Склад","Схема"], rows, "Площадки пока не передали перечень складов."), "span-12")}</div>`;
+        const totalRegionUnits = geographyRows.reduce((sum, row) => sum + Number(row.units || 0), 0);
+        const totalRegionAmount = geographyRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+        const totalRegionOrders = geographyRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
+        const rows = geographyRows.map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.region || "Регион не указан")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${totalRegionAmount > 0 ? `${(Number(row.amount || 0) * 100 / totalRegionAmount).toLocaleString("ru-RU", {maximumFractionDigits: 1})}%` : "—"}</td></tr>`);
+        const providerRows = Array.isArray(geography.providers) ? geography.providers.filter(providerFilter).map((row) => `<div class="ac-list-row"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</b><span>${escapeHtml(row.message || "")}</span></div><strong>${row.regions !== null && row.regions !== undefined ? `${escapeHtml(fmt(row.regions))} рег.` : "—"}</strong></div>`).join("") : "";
+        return `<div class="ac-kpis">${kpi("Регионы", fmt(geographyRows.length), "Кластеры назначения")}${kpi("Заказы", fmt(totalRegionOrders), "С региональным разрезом")}${kpi("Продано", fmt(totalRegionUnits), "Штук")}${kpi("Сумма заказов", money(totalRegionAmount), "Рубли")}</div><div class="ac-grid">${panel("Продажи по регионам", `${geographyRows.length} регионов`, table(["Площадка","Регион","Заказы","Штук","Сумма","Доля"], rows, marketplace === "wildberries" ? "Wildberries не передал региональный разрез в текущем snapshot." : "Ozon пока не передал региональный разрез."), "span-8")}${panel("Доступность источников", "Ozon / Wildberries", providerRows || empty("Нет данных", "Региональный источник пока не подключён."), "span-4")}</div>`;
       }
 
       function renderQualityPage() {
