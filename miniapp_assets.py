@@ -8511,6 +8511,14 @@ MINIAPP_HTML = """<!doctype html>
       }));
     }
 
+    function readCuttingFormationAdditionalRowsFromDom() {
+      return [...document.querySelectorAll("[data-formation-additional-row]")].map((row) => ({
+        product_size: row.querySelector("[data-formation-additional-size]")?.value || "",
+        product_color: row.querySelector("[data-formation-additional-color]")?.value || "",
+        quantity: row.querySelector("[data-formation-additional-quantity]")?.value || "",
+      }));
+    }
+
     function syncCuttingArbitraryDraftFromDom(current) {
       const key = cuttingDraftKey(current);
       if (!key || !current || current.stage !== "layout") return;
@@ -9395,16 +9403,44 @@ MINIAPP_HTML = """<!doctype html>
         `;
       }
 
+      const formationAdditionalRows = Array.isArray(draft.formation_additions) ? draft.formation_additions : [];
+      const formationAdditionalByKey = {};
+      formationAdditionalRows.forEach((item) => {
+        const key = `${item.product_size || ""}|${item.product_color || ""}`;
+        formationAdditionalByKey[key] = (formationAdditionalByKey[key] || 0) + Math.max(0, Number(item.quantity || 0));
+      });
+      const formationSizes = [...new Set((current.formation_rows || []).map((row) => String(row.product_size || "")).filter(Boolean))];
+      const formationColors = [...new Set((current.formation_rows || []).map((row) => String(row.product_color || "")).filter(Boolean))];
+      const formationAdditionalMarkup = formationAdditionalRows.map((item, index) => `
+        <div class="arbitrary-operation-grid" data-formation-additional-row="${index}">
+          <label>Размер
+            <select data-formation-additional-size>
+              ${formationSizes.map((size) => `<option value="${escapeHtml(size)}" ${String(item.product_size || formationSizes[0] || "") === size ? "selected" : ""}>${escapeHtml(size)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Цвет
+            <select data-formation-additional-color>
+              ${formationColors.map((color) => `<option value="${escapeHtml(color)}" ${String(item.product_color || formationColors[0] || "") === color ? "selected" : ""}>${escapeHtml(color)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Дополнительно, шт.
+            <input data-formation-additional-quantity type="number" inputmode="numeric" min="1" step="1" placeholder="например, 5" value="${escapeHtml(item.quantity || "")}">
+          </label>
+          <button type="button" class="small-button secondary arbitrary-operation-remove" data-formation-additional-remove="${index}">Удалить</button>
+        </div>
+      `).join("");
       const formationRows = (current.formation_rows || []).map((row) => {
         const rowKey = `${row.product_size}|${row.product_color}`;
+        const additional = Number(formationAdditionalByKey[rowKey] || 0);
+        const total = Number(row.planned_quantity || 0) + additional;
         const rawDefect = (draft.formation_defects || {})[rowKey] ?? 0;
-        const defect = Math.max(0, Math.min(Number(row.planned_quantity || 0), Number(rawDefect || 0)));
+        const defect = Math.max(0, Math.min(total, Number(rawDefect || 0)));
         const comment = (draft.formation_comments || {})[rowKey] || "";
         return `
-          <div class="card cutting-formation-row" data-formation-row data-formation-size="${escapeHtml(row.product_size)}" data-formation-color="${escapeHtml(row.product_color)}" data-formation-total="${escapeHtml(row.planned_quantity)}">
-            <div class="cutting-formation-meta"><b>Размер ${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color)}</b><span>Раскроено: ${escapeHtml(row.planned_quantity)} шт.</span></div>
-            <div class="cutting-formation-field"><label>Брак, шт.</label><input data-formation-defect type="number" inputmode="numeric" min="0" max="${escapeHtml(row.planned_quantity)}" step="1" value="${escapeHtml(rawDefect)}"></div>
-            <div class="cutting-formation-field"><label>Годно, шт.</label><div class="cutting-formation-good" data-formation-good>${escapeHtml(Number(row.planned_quantity || 0) - defect)}</div></div>
+          <div class="card cutting-formation-row" data-formation-row data-formation-size="${escapeHtml(row.product_size)}" data-formation-color="${escapeHtml(row.product_color)}" data-formation-total="${escapeHtml(total)}">
+            <div class="cutting-formation-meta"><b>Размер ${escapeHtml(row.product_size)} · ${escapeHtml(row.product_color)}</b><span>По настилу: ${escapeHtml(row.planned_quantity)} шт.${additional > 0 ? ` · Дополнительно: ${escapeHtml(additional)} шт. · Итого: ${escapeHtml(total)} шт.` : ""}</span></div>
+            <div class="cutting-formation-field"><label>Брак, шт.</label><input data-formation-defect type="number" inputmode="numeric" min="0" max="${escapeHtml(total)}" step="1" value="${escapeHtml(rawDefect)}"></div>
+            <div class="cutting-formation-field"><label>Годно, шт.</label><div class="cutting-formation-good" data-formation-good>${escapeHtml(total - defect)}</div></div>
             <div class="cutting-formation-field cutting-formation-comment"><label>Комментарий к браку</label><input data-formation-comment type="text" maxlength="300" placeholder="Причина брака" value="${escapeHtml(comment)}" ${defect > 0 ? "" : "disabled"}></div>
           </div>
         `;
@@ -9414,6 +9450,10 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card order-detail">
           <div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.stage_title)}</b><span>${escapeHtml(current.product_name)}</span></div><span class="status-chip">4 этап</span></div>
           <div class="task-note"><b>Сверьте готовый крой</b><br>Укажите брак отдельно по каждому размеру и цвету. При браке комментарий обязателен.</div>
+          <div class="arbitrary-operation-card">
+            <div class="arbitrary-operation-head"><div><b>Дополнительный готовый крой</b><span>Добавьте изделия, получившиеся после донастила.</span></div><button type="button" class="small-button secondary" data-formation-additional-add>+ Произвольная операция</button></div>
+            ${formationAdditionalMarkup}
+          </div>
           <div class="op-list">${formationRows || itemEmpty("Нет строк готового кроя.")}</div>
         </div>
         ${renderTaskFabricRolls(current)}
@@ -9471,6 +9511,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       if (current.stage === "formation") {
+        payload.additional_operations = readCuttingFormationAdditionalRowsFromDom();
         payload.formation_rows = [...document.querySelectorAll("[data-formation-row]")].map((row) => ({
           product_size: row.dataset.formationSize || "",
           product_color: row.dataset.formationColor || "",
@@ -14223,6 +14264,36 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
 
+      const formationAdditionalAdd = event.target.closest("[data-formation-additional-add]");
+      if (formationAdditionalAdd && cuttingTaskForArbitrary && cuttingTaskForArbitrary.stage === "formation") {
+        const key = cuttingDraftKey(cuttingTaskForArbitrary);
+        const draft = state.cuttingStageDrafts[key] || {};
+        draft.formation_additions = readCuttingFormationAdditionalRowsFromDom();
+        const rows = cuttingTaskForArbitrary.formation_rows || [];
+        draft.formation_additions.push({
+          product_size: String(rows[0]?.product_size || ""),
+          product_color: String(rows[0]?.product_color || ""),
+          quantity: "",
+        });
+        state.cuttingStageDrafts[key] = draft;
+        persistUiState();
+        render();
+        return;
+      }
+
+      const formationAdditionalRemove = event.target.closest("[data-formation-additional-remove]");
+      if (formationAdditionalRemove && cuttingTaskForArbitrary && cuttingTaskForArbitrary.stage === "formation") {
+        const key = cuttingDraftKey(cuttingTaskForArbitrary);
+        const draft = state.cuttingStageDrafts[key] || {};
+        draft.formation_additions = readCuttingFormationAdditionalRowsFromDom();
+        const index = Number(formationAdditionalRemove.dataset.formationAdditionalRemove || -1);
+        if (index >= 0) draft.formation_additions.splice(index, 1);
+        state.cuttingStageDrafts[key] = draft;
+        persistUiState();
+        render();
+        return;
+      }
+
       const taskAction = event.target.closest("[data-task-action]");
       if (taskAction) {
         const action = taskAction.dataset.taskAction;
@@ -15358,7 +15429,7 @@ MINIAPP_HTML = """<!doctype html>
       const cuttingTasks = getMyCuttingTasks();
       const cuttingTask = cuttingTasks[state.selectedCuttingReportTask] || cuttingTasks[0];
 
-      if (cuttingTask && (event.target.matches("[data-contour-key]") || event.target.matches("[data-layer-color]") || event.target.matches("[data-arbitrary-size], [data-arbitrary-color], [data-arbitrary-parts], [data-arbitrary-layers]") || event.target.matches("[data-formation-defect], [data-formation-comment]") || event.target.id === "cuttingProgress")) {
+      if (cuttingTask && (event.target.matches("[data-contour-key]") || event.target.matches("[data-layer-color]") || event.target.matches("[data-arbitrary-size], [data-arbitrary-color], [data-arbitrary-parts], [data-arbitrary-layers]") || event.target.matches("[data-formation-additional-size], [data-formation-additional-color], [data-formation-additional-quantity]") || event.target.matches("[data-formation-defect], [data-formation-comment]") || event.target.id === "cuttingProgress")) {
         const key = cuttingDraftKey(cuttingTask);
         const draft = state.cuttingStageDrafts[key] || {};
         if (event.target.dataset.contourKey) {
@@ -15371,6 +15442,9 @@ MINIAPP_HTML = """<!doctype html>
         }
         if (event.target.closest("[data-arbitrary-row]")) {
           draft.arbitrary_operations = readCuttingArbitraryRowsFromDom();
+        }
+        if (event.target.closest("[data-formation-additional-row]")) {
+          draft.formation_additions = readCuttingFormationAdditionalRowsFromDom();
         }
         const formationRow = event.target.closest("[data-formation-row]");
         if (formationRow) {
@@ -15408,6 +15482,11 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
+      if (event.target.matches("[data-formation-additional-size], [data-formation-additional-color], [data-formation-additional-quantity]")) {
+        event.target.dispatchEvent(new Event("input", {bubbles: true}));
+        render();
+        return;
+      }
       if (event.target.matches("[data-stock-filter]")) {
         filterMarketplaceStocks(event.target);
         return;

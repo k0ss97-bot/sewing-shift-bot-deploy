@@ -3467,6 +3467,42 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
             (str(product_size), str(product_color)): int(quantity or 0)
             for product_size, product_color, quantity in result_rows
         }
+        raw_additional_operations = payload.get("additional_operations") or []
+        if not isinstance(raw_additional_operations, list):
+            return {"ok": False, "message": "Произвольные операции переданы в неверном формате."}
+
+        additional_operations = []
+        seen_additions = set()
+        for item in raw_additional_operations:
+            if not isinstance(item, dict):
+                return {"ok": False, "message": "Проверьте произвольные операции."}
+            product_size = str(item.get("product_size") or "").strip()
+            product_color = str(item.get("product_color") or "").strip()
+            key = (product_size, product_color)
+            try:
+                quantity = int(item.get("quantity") or 0)
+            except (TypeError, ValueError):
+                return {"ok": False, "message": "Количество дополнительного кроя должно быть целым числом."}
+            if key not in expected:
+                return {"ok": False, "message": "Размер и цвет произвольной операции должны входить в эту партию."}
+            if key in seen_additions:
+                return {"ok": False, "message": "Объедините одинаковые размер и цвет в одну произвольную операцию."}
+            if quantity <= 0:
+                return {"ok": False, "message": "Количество дополнительного кроя должно быть больше нуля."}
+            seen_additions.add(key)
+            expected[key] += quantity
+            additional_operations.append({
+                "product_size": product_size,
+                "product_color": product_color,
+                "quantity": quantity,
+            })
+
+        arbitrary_operation = None
+        if additional_operations:
+            arbitrary_operation = get_cutting_operation(batch_row[1], CUTTING_ARBITRARY_OPERATION)
+            if arbitrary_operation is None:
+                return {"ok": False, "message": "Для изделия не найдена операция произвольного кроя."}
+
         raw_review_rows = payload.get("formation_rows")
         if not isinstance(raw_review_rows, list):
             return {"ok": False, "message": "Проверьте каждую строку готового кроя."}
@@ -3501,7 +3537,15 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
         if seen != set(expected):
             return {"ok": False, "message": "Проверьте каждую строку готового кроя."}
 
-        if not mark_cutting_batch_formed(batch_id, shift[0], employee[0], operation["id"], review_rows):
+        if not mark_cutting_batch_formed(
+            batch_id,
+            shift[0],
+            employee[0],
+            operation["id"],
+            review_rows,
+            additional_operations=additional_operations,
+            arbitrary_operation_id=arbitrary_operation["id"] if arbitrary_operation else None,
+        ):
             return {"ok": False, "message": "Готовый крой уже недоступен."}
 
         saved_review = get_cutting_batch_formation_reviews(batch_id)
@@ -3514,12 +3558,12 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
             "Сформировал готовый крой из миниаппа",
             "cutting_batch",
             batch_id,
-            f"Строк сверено: {len(saved_review)}; годно: {good_quantity}; брак: {defect_quantity}",
+            f"Строк сверено: {len(saved_review)}; добавлено произвольно: {sum(item['quantity'] for item in additional_operations)}; годно: {good_quantity}; брак: {defect_quantity}",
         )
 
         return {
             "ok": True,
-            "message": "Готовый крой подтверждён. Следующие задания созданы по годному количеству.",
+            "message": "Готовый крой подтверждён. Дополнительный крой учтён, следующие задания созданы по годному количеству.",
             "production": get_production_state_for_telegram(telegram_id),
         }
 

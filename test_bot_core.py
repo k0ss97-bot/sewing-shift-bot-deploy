@@ -963,6 +963,83 @@ class IsolatedDatabaseTest(unittest.TestCase):
         conn.close()
         self.assertEqual(formed, 14)
 
+    def test_formation_arbitrary_operation_adds_finished_cut_before_defects(self):
+        task = self.database.create_production_task(
+            "Шорты",
+            ["80"],
+            ["Бежевый"],
+            None,
+        )
+        operations = self.database.get_active_operations("Раскройщик", "Шорты", "Раскрой изделий")
+        operation_ids = {row[2]: row[0] for row in operations}
+        batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"],
+            "Шорты",
+            1,
+            1,
+            operation_ids["Нанесение контуров лекал на ткань"],
+            {("80", "Бежевый"): 2},
+        )
+        self.assertTrue(self.database.add_cutting_layout(
+            batch_id,
+            1,
+            1,
+            operation_ids["Формирование настила"],
+            {"Бежевый": 3},
+        ))
+        self.assertTrue(self.database.update_cutting_batch_progress(
+            batch_id,
+            1,
+            1,
+            operation_ids["Раскрой"],
+            100,
+        ))
+        self.assertTrue(self.database.mark_cutting_batch_formed(
+            batch_id,
+            1,
+            1,
+            operation_ids["Формирование готового кроя"],
+            [{
+                "product_size": "80",
+                "product_color": "Бежевый",
+                "defect_quantity": 1,
+                "defect_comment": "Повреждение детали",
+            }],
+            additional_operations=[{
+                "product_size": "80",
+                "product_color": "Бежевый",
+                "quantity": 5,
+            }],
+            arbitrary_operation_id=operation_ids["Произвольная операция"],
+        ))
+
+        review = self.database.get_cutting_batch_formation_reviews(batch_id)
+        self.assertEqual(
+            {key: review[0][key] for key in ("planned_quantity", "good_quantity", "defect_quantity")},
+            {"planned_quantity": 11, "good_quantity": 10, "defect_quantity": 1},
+        )
+        arbitrary_rows = self.database.get_cutting_batch_arbitrary_operations(batch_id)
+        self.assertEqual(
+            {key: arbitrary_rows[0][key] for key in ("product_size", "product_color", "parts_count", "quantity")},
+            {"product_size": "80", "product_color": "Бежевый", "parts_count": 1, "quantity": 5},
+        )
+        conn = sqlite3.connect(self.database.DB_NAME)
+        formed_quantity = conn.execute(
+            "SELECT formed_quantity FROM production_task_items WHERE task_id = ? AND product_size = '80' AND product_color = 'Бежевый'",
+            (task["id"],),
+        ).fetchone()[0]
+        arbitrary_shift_quantity = conn.execute(
+            "SELECT quantity FROM shift_operations WHERE operation_id = ?",
+            (operation_ids["Произвольная операция"],),
+        ).fetchone()[0]
+        stock_quantity = conn.execute(
+            "SELECT quantity FROM warehouse_stock WHERE item_type = 'semifinished' AND product_name = 'Шорты' AND product_size = '80' AND product_color = 'Бежевый' AND stage_name = 'Раскроенные'",
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(formed_quantity, 10)
+        self.assertEqual(arbitrary_shift_quantity, 5)
+        self.assertEqual(stock_quantity, 10)
+
     def test_formation_creates_only_dublerin_before_dubling(self):
         task = self.database.create_production_task(
             "Жакет для девочек",

@@ -7750,6 +7750,8 @@ def mark_cutting_batch_formed(
     employee_id: int,
     operation_id: int,
     review_rows: list[dict],
+    additional_operations: list[dict] | None = None,
+    arbitrary_operation_id: int | None = None,
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -7759,6 +7761,82 @@ def mark_cutting_batch_formed(
 
     try:
         cursor.execute("BEGIN IMMEDIATE")
+        base_rows = _get_cutting_batch_result_rows(cursor, batch_id)
+        allowed_keys = {
+            (str(product_size), str(product_color))
+            for product_size, product_color, _quantity in base_rows
+        }
+        normalized_additions = []
+        seen_additions = set()
+        for item in additional_operations or []:
+            if not isinstance(item, dict):
+                raise ValueError("invalid cutting formation addition")
+            product_size = str(item.get("product_size") or "").strip()
+            product_color = str(item.get("product_color") or "").strip()
+            key = (product_size, product_color)
+            try:
+                quantity = int(item.get("quantity") or 0)
+            except (TypeError, ValueError) as error:
+                raise ValueError("invalid cutting formation addition") from error
+            if key not in allowed_keys or key in seen_additions or quantity <= 0:
+                raise ValueError("invalid cutting formation addition")
+            seen_additions.add(key)
+            normalized_additions.append({
+                "product_size": product_size,
+                "product_color": product_color,
+                "quantity": quantity,
+            })
+
+        if normalized_additions and not arbitrary_operation_id:
+            raise ValueError("missing arbitrary cutting operation")
+
+        if normalized_additions:
+            cursor.executemany(
+                """
+                INSERT INTO cutting_batch_arbitrary_operations (
+                    batch_id, product_size, product_color, layers, parts_count, quantity, created_at
+                ) VALUES (?, ?, ?, ?, 1, ?, ?)
+                """,
+                [
+                    (
+                        batch_id,
+                        item["product_size"],
+                        item["product_color"],
+                        item["quantity"],
+                        item["quantity"],
+                        now_text,
+                    )
+                    for item in normalized_additions
+                ],
+            )
+            cursor.executemany(
+                """
+                INSERT INTO shift_operations (
+                    shift_id, employee_id, operation_id,
+                    product_size, product_color, quantity, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shift_id, operation_id, product_size, product_color)
+                DO UPDATE SET
+                    employee_id = excluded.employee_id,
+                    quantity = shift_operations.quantity + excluded.quantity,
+                    updated_at = excluded.updated_at
+                """,
+                [
+                    (
+                        shift_id,
+                        employee_id,
+                        arbitrary_operation_id,
+                        item["product_size"],
+                        item["product_color"],
+                        item["quantity"],
+                        now_text,
+                        now_text,
+                    )
+                    for item in normalized_additions
+                ],
+            )
+
         reviewed_rows = _normalize_cutting_formation_review(cursor, batch_id, review_rows)
         if reviewed_rows is None:
             raise ValueError("invalid cutting formation review")
