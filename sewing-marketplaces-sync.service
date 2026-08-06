@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=oneshot
 User=deploy
 Group=deploy
+SupplementaryGroups=users
 WorkingDirectory=/opt/sewing-web/current
 EnvironmentFile=/etc/sewing-web/sewing-web.env
 ExecStart=/opt/sewing-web/venv/bin/python /opt/sewing-web/current/marketplace_sync_cli.py

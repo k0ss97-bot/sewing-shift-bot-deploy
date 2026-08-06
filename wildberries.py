@@ -77,12 +77,16 @@ class WildberriesAPIError(WildberriesError):
         capability: str,
         http_status: int | None = None,
         retry_after_seconds: float | None = None,
+        request_id: str = "",
+        safe_response: dict | None = None,
     ):
         super().__init__(message)
         self.code = code
         self.capability = capability
         self.http_status = http_status
         self.retry_after_seconds = retry_after_seconds
+        self.request_id = _text(request_id)
+        self.safe_response = safe_response or {}
 
     def capability_status(self) -> dict:
         payload = {
@@ -90,6 +94,8 @@ class WildberriesAPIError(WildberriesError):
             "safe_message": str(self),
             "http_status": self.http_status,
             "retry_after_seconds": self.retry_after_seconds,
+            "request_id": self.request_id,
+            "safe_response": self.safe_response,
         }
         return {key: value for key, value in payload.items() if value is not None}
 
@@ -101,6 +107,8 @@ WB_RATE_INTERVALS = {
     "catalog": 0.6,
     "prices": 0.6,
     "stocks": 20.0,
+    "fbs_warehouses": 0.6,
+    "fbs_stocks": 0.6,
     "orders": 60.0,
     "sales": 60.0,
     "finance": 60.0,
@@ -385,6 +393,7 @@ class WildberriesClient:
         self,
         token: str | None = None,
         *,
+        client_secret: str | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         max_attempts: int = 3,
@@ -392,6 +401,24 @@ class WildberriesClient:
         self.token = (token or os.getenv("WB_API_TOKEN", "")).strip()
         if not self.token:
             raise WildberriesError("WB_API_TOKEN не настроен.")
+        self.client_secret = (
+            client_secret
+            if client_secret is not None
+            else next(
+                (
+                    os.getenv(name, "").strip()
+                    for name in (
+                        "WB_CLIENT_SECRET",
+                        "WB_API_CLIENT_SECRET",
+                        "WB_SERVICE_SECRET",
+                        "WILDBERRIES_CLIENT_SECRET",
+                        "WILDBERRIES_SERVICE_SECRET",
+                    )
+                    if os.getenv(name, "").strip()
+                ),
+                "",
+            )
+        ).strip()
         self._sleep = sleep
         self._monotonic = monotonic
         self._max_attempts = max(1, int(max_attempts))
@@ -429,7 +456,14 @@ class WildberriesClient:
     def request(self, url: str, payload=None, *, method: str | None = None, scope: str = "generic"):
         body = None if payload is None else _json(payload).encode("utf-8")
         request_method = method or ("POST" if body is not None else "GET")
-        headers = {"Authorization": self.token, "Accept": "application/json"}
+        authorization = self.token if self.token.lower().startswith("bearer ") else f"Bearer {self.token}"
+        headers = {
+            "Authorization": authorization,
+            "Accept": "application/json",
+            "User-Agent": "ShagaemVmeste/1.0",
+        }
+        if self.client_secret:
+            headers["X-Client-Secret"] = self.client_secret
         if body is not None:
             headers["Content-Type"] = "application/json"
         deferred = self._deferred_rate_limit_error(scope)
@@ -447,8 +481,25 @@ class WildberriesClient:
                         return [] if getattr(response, "status", 200) == 204 else {}
                     return json.loads(raw.decode("utf-8"))
             except HTTPError as error:
-                # Close the error response without persisting or logging its
-                # body; provider diagnostics may contain sensitive context.
+                raw_error = error.read(1024 * 1024)
+                safe_response = {}
+                try:
+                    error_payload = json.loads(raw_error.decode("utf-8"))
+                    if isinstance(error_payload, dict):
+                        safe_response = {
+                            key: (_text(value)[:500] if not isinstance(value, (int, float, bool)) else value)
+                            for key, value in error_payload.items()
+                            if key in {"title", "detail", "code", "requestId", "origin", "status", "statusText", "timestamp"}
+                        }
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    safe_response = {}
+                request_id = _text(
+                    safe_response.get("requestId")
+                    or error.headers.get("X-Request-ID")
+                    or error.headers.get("X-Requestid")
+                    or error.headers.get("Request-ID")
+                    or error.headers.get("X-Trace-ID")
+                )
                 error.close()
                 if error.code == 429:
                     delay = _retry_after_seconds(
@@ -469,6 +520,8 @@ class WildberriesClient:
                         capability=capability,
                         http_status=429,
                         retry_after_seconds=delay,
+                        request_id=request_id,
+                        safe_response=safe_response,
                     ) from error
                 if error.code in {500, 502, 503, 504} and attempt + 1 < self._max_attempts:
                     self._next_request_at[scope] = max(
@@ -476,16 +529,28 @@ class WildberriesClient:
                         self._monotonic() + min(2 ** attempt, 16),
                     )
                     continue
-                if error.code in {401, 403}:
-                    code = "unauthorized" if error.code == 401 else "permission_required"
-                    message = (
-                        "Токен Wildberries отклонён."
-                        if error.code == 401
-                        else f"Недостаточно прав токена для раздела «{capability}»; проверьте тип токена и категорию доступа."
-                    )
+                if error.code == 401:
+                    code = "invalid_token"
+                    message = "Токен или Client Secret Wildberries отклонён."
                 elif error.code == 402:
                     code = "payment_required"
                     message = f"Раздел «{capability}» требует оплаченного доступа Wildberries."
+                elif error.code == 403:
+                    code = "forbidden"
+                    detail = " ".join(_text(safe_response.get(key)) for key in ("detail", "code")).lower()
+                    if "base token without secret" in detail or "x-client-secret" in detail:
+                        message = (
+                            "WB отклонил базовый токен без X-Client-Secret; "
+                            "категория доступа выбрана, но сервисный секрет не настроен."
+                        )
+                    else:
+                        message = f"WB запретил доступ к разделу «{capability}»."
+                elif error.code == 404:
+                    code = "endpoint_or_resource_not_found"
+                    message = f"Метод или ресурс WB не найден для раздела «{capability}»."
+                elif 500 <= error.code <= 599:
+                    code = "wb_unavailable"
+                    message = f"WB API временно недоступен для раздела «{capability}»."
                 else:
                     code = "http_error"
                     message = f"WB API вернул HTTP {error.code} для раздела «{capability}»."
@@ -494,6 +559,8 @@ class WildberriesClient:
                     code=code,
                     capability=capability,
                     http_status=error.code,
+                    request_id=request_id,
+                    safe_response=safe_response,
                 ) from error
             except (URLError, TimeoutError) as error:
                 if attempt + 1 < self._max_attempts:
@@ -575,6 +642,39 @@ class WildberriesClient:
             rows.extend(item for item in page if isinstance(item, dict))
             if len(page) < limit:
                 break
+        return rows
+
+    def fbs_warehouses(self) -> list[dict]:
+        response = self.request(
+            "https://marketplace-api.wildberries.ru/api/v3/warehouses",
+            scope="fbs_warehouses",
+        )
+        return _require_list(response, "fbs_warehouses")
+
+    def fbs_stocks(self, chrt_ids: list[int]) -> list[dict]:
+        normalized_ids = list(dict.fromkeys(_int(value) for value in chrt_ids if _int(value)))
+        rows = []
+        for warehouse in self.fbs_warehouses():
+            warehouse_id = _int(warehouse.get("id"))
+            if not warehouse_id:
+                continue
+            for index in range(0, len(normalized_ids), 1000):
+                batch = normalized_ids[index:index + 1000]
+                response = self.request(
+                    f"https://marketplace-api.wildberries.ru/api/v3/stocks/{warehouse_id}",
+                    {"chrtIds": batch},
+                    scope="fbs_stocks",
+                )
+                response = _require_dict(response, "fbs_stocks")
+                stocks = _require_list(response.get("stocks"), "fbs_stocks")
+                for item in stocks:
+                    if not isinstance(item, dict):
+                        continue
+                    rows.append({
+                        **item,
+                        "warehouseId": warehouse_id,
+                        "warehouseName": _text(warehouse.get("name")) or f"Склад {warehouse_id}",
+                    })
         return rows
 
     def orders(self, days: int = WB_ORDERS_HISTORY_DAYS) -> list[dict]:
@@ -817,7 +917,7 @@ def sync_wildberries() -> dict:
     ).lastrowid
     conn.commit()
     client = WildberriesClient(token)
-    counts = {"products": 0, "prices": 0, "stocks": 0, "orders": 0, "sales": 0, "finance": 0, "feedbacks": 0, "supplies": 0, "funnel": 0, "campaigns": 0, "ad_days": 0}
+    counts = {"products": 0, "prices": 0, "stocks": 0, "fbs_stocks": 0, "orders": 0, "sales": 0, "finance": 0, "feedbacks": 0, "supplies": 0, "funnel": 0, "campaigns": 0, "ad_days": 0}
     errors: list[str] = []
     capabilities: dict[str, dict] = {}
     links: dict = {}
@@ -958,6 +1058,30 @@ def sync_wildberries() -> dict:
         conn.commit()
         complete_snapshot("stocks")
         mark_incomplete_snapshot("stocks", len(stocks), counts["stocks"])
+
+        if catalog_available:
+            chrt_ids = sorted({
+                _int(row.get("external_product_id"))
+                for row in flattened
+                if _int(row.get("external_product_id"))
+            })
+            fbs_stocks = safe("fbs_stocks", lambda: client.fbs_stocks(chrt_ids), [])
+        else:
+            fbs_stocks = []
+            block_on_catalog("fbs_stocks")
+        for item in fbs_stocks:
+            pid = product_ids.get(("external", _text(item.get("chrtId"))))
+            if not pid:
+                continue
+            available = max(0, _int(item.get("amount")))
+            conn.execute(
+                "INSERT INTO marketplace_stocks (product_id,warehouse_type,warehouse_name,stock,reserved,available,payload_json,observed_at) VALUES (?,?,?,?,?,?,?,?)",
+                (pid,"fbs",_text(item.get("warehouseName")) or "Склад продавца WB",available,0,available,_json(item),now),
+            )
+            counts["fbs_stocks"] += 1
+        conn.commit()
+        complete_snapshot("fbs_stocks")
+        mark_incomplete_snapshot("fbs_stocks", len(fbs_stocks), counts["fbs_stocks"])
 
         orders = safe("orders", client.orders, [])
         add_date_coverage("orders", WB_ORDERS_HISTORY_DAYS, basis="last_change_date")
