@@ -126,6 +126,101 @@ class ProductionMonitorTest(unittest.TestCase):
             for row in self.database.get_open_critical_notifications()
         ))
 
+    def test_resource_thresholds_create_and_resolve_notifications(self):
+        self.assertFalse(self.monitor.check_disk_health(91.2))
+        self.assertFalse(self.monitor.check_memory_health((81.0, 4.0)))
+        notifications = {
+            row["event_key"]: row for row in self.database.get_open_critical_notifications()
+        }
+        self.assertEqual(notifications["resource-disk"]["severity"], "critical")
+        self.assertEqual(notifications["resource-memory"]["severity"], "warning")
+        self.assertEqual(notifications["resource-swap"]["severity"], "warning")
+
+        self.assertTrue(self.monitor.check_disk_health(79.9))
+        self.assertTrue(self.monitor.check_memory_health((79.0, 0.0)))
+        event_keys = {
+            row["event_key"] for row in self.database.get_open_critical_notifications()
+        }
+        self.assertNotIn("resource-disk", event_keys)
+        self.assertNotIn("resource-memory", event_keys)
+        self.assertNotIn("resource-swap", event_keys)
+
+    def test_stopped_service_and_oom_are_critical(self):
+        self.assertFalse(self.monitor.check_services_health({
+            "sewing-web.service": False,
+            "sewing-web-monitor.timer": True,
+        }))
+        self.assertFalse(self.monitor.check_oom_health(True))
+        notifications = {
+            row["event_key"]: row for row in self.database.get_open_critical_notifications()
+        }
+        self.assertEqual(notifications["service-stopped"]["severity"], "critical")
+        self.assertIn("sewing-web.service", notifications["service-stopped"]["message"])
+        self.assertEqual(notifications["resource-oom"]["severity"], "critical")
+
+    def test_stale_outbox_and_marketplace_dataset_are_reported(self):
+        now = datetime(2026, 8, 7, 9, 0, tzinfo=timezone.utc)
+        with patch.object(
+            self.monitor,
+            "get_pending_wms_receipt_outbox",
+            return_value=[{"id": 7, "created_at": "2026-08-07T08:00:00+00:00"}],
+        ):
+            self.assertFalse(self.monitor.check_outbox_health(now))
+        self.assertFalse(self.monitor.check_marketplace_snapshot_health({
+            "phase1a": {
+                "enabled": True,
+                "datasets": [
+                    {"dataset": "stocks", "freshness": "stale"},
+                    {"dataset": "orders", "freshness": "fresh"},
+                ],
+            }
+        }))
+        notifications = {
+            row["event_key"]: row for row in self.database.get_open_critical_notifications()
+        }
+        self.assertEqual(notifications["wms-outbox-stuck"]["severity"], "critical")
+        self.assertIn("stocks", notifications["marketplace-snapshot-stale"]["message"])
+
+    def test_postgres_health_rolls_back_successful_and_failed_checks(self):
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, _sql):
+                return None
+
+            def fetchone(self):
+                return (1,)
+
+        class Connection:
+            def __init__(self, fail=False):
+                self.fail = fail
+                self.rollbacks = 0
+
+            def cursor(self):
+                if self.fail:
+                    raise RuntimeError("synthetic outage")
+                return Cursor()
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        healthy = Connection()
+        self.assertTrue(self.monitor.check_postgres_health(healthy))
+        self.assertEqual(healthy.rollbacks, 1)
+
+        failed = Connection(fail=True)
+        self.assertFalse(self.monitor.check_postgres_health(failed))
+        self.assertEqual(failed.rollbacks, 1)
+        notification = next(
+            row for row in self.database.get_open_critical_notifications()
+            if row["event_key"] == "postgres-unavailable"
+        )
+        self.assertNotIn("synthetic outage", notification["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
