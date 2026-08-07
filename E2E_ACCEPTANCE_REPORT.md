@@ -17,7 +17,7 @@
 | Wildberries | Есть | PASS contract | Базовая версия | HTTP 403 без secret | BLOCKED EXTERNAL |
 | Единый каталог | Есть | PASS | Базовая версия | Нет | IN PROGRESS |
 | Аналитика | Есть | PASS local | Нет | Нет | IN PROGRESS |
-| Backup и monitoring | Есть | PASS contract | Нет | Restore/live timer pending | IN PROGRESS |
+| Backup и monitoring | Есть | PASS | Нет | Isolated restore PASS; production backup timers active/enabled | IN PROGRESS |
 | Security | Есть | PASS auth tests | Базовая версия | Live headers pending | IN PROGRESS |
 
 ## Автоматическое доказательство
@@ -37,4 +37,4 @@ duplicate_aliases_ignored=6
 
 ## Решение о релизе
 
-**NO-GO на текущем этапе.** Причина — код ещё не опубликован, а A–G, TSD, backup restore и post-deploy бизнес-smoke не имеют живого протокола. Наличие кода и тестов не подменяет живую приёмку.
+**NO-GO на текущем этапе.** Причина — код ещё не опубликован, а A–G, TSD и post-deploy бизнес-smoke не имеют живого протокола. Изолированный restore SQLite/PostgreSQL принят, production backup timers active/enabled, но это не подменяет проверку свежести production-артефактов после публикации.

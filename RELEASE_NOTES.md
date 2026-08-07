@@ -25,4 +25,4 @@
 - Физический TSD.
 - Сверка Ozon с кабинетом.
 - WB FBW до получения фактического `X-Client-Secret`.
-- Test restore обеих баз, live security headers и бизнес-smoke после релиза.
+- Свежесть production backup-артефактов, live security headers и бизнес-smoke после релиза. Изолированный restore SQLite/PostgreSQL уже PASS.

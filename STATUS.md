@@ -4,7 +4,7 @@
 
 **Ветка:** `codex/wms-integration`
 
-**Текущий локальный коммит:** `git HEAD` (код-кандидат `fc7328c` + документация)
+**Текущий локальный коммит:** `git HEAD` (код-кандидат `fc7328c` + эксплуатационная документация)
 
 **Опубликованный коммит:** `f7cae4e`
 
@@ -28,8 +28,8 @@
 | E: Ozon | PENDING | требуется сверка с кабинетом и live WMS supply |
 | F: Wildberries | BLOCKED EXTERNAL | FBW ответил HTTP 403 `base token without secret is not allowed`; secret не подтверждён |
 | G: аналитика | LOCAL PASS | UI-исправления протестированы, ещё не опубликованы |
-| Backup/restore | IN PROGRESS | контрактные тесты PASS; test restore обеих баз и live timers ещё не приняты |
-| Monitoring | CODE/AUTO PASS | диск 80/90%, RAM, swap, OOM, services, backup, snapshots, outbox, PostgreSQL, reconciliation; не опубликован |
+| Backup/restore | ISOLATED PASS | SQLite restore integrity=ok; PostgreSQL 11 миграций, 15 зон, 0 invalid balances; оба production backup timer active/enabled |
+| Monitoring | CODE/AUTO PASS | диск 80/90%, RAM, swap, OOM, services, backup, snapshots, outbox, PostgreSQL, reconciliation; новый код не опубликован |
 | Security review | IN PROGRESS | базовые защиты и CI dependency audit есть; live headers/SAST/threat model ещё не закрыты |
 
 ## Выполнено в текущей стабилизации
@@ -46,6 +46,7 @@
 ## Текущие ограничения
 
 - Коммиты после `f7cae4e` не опубликованы и не развёрнуты.
+- Production metadata: `sewing-web.service`, оба backup timer и monitor timer active/enabled; новый `sewing-production-wms-reconcile.timer` отсутствует до публикации кандидата.
 - Рабочие базы не читались и не изменялись в unit/integration-тестах.
 - На сервере есть failed transient test/sync units; они не удалялись до классификации.
 - В активном релизе нет отдельного `COMMIT` marker.

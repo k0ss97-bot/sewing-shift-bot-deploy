@@ -18,4 +18,16 @@
 - `sewing-wms-backup.timer`: PostgreSQL ежедневно.
 - Кэши, browser profiles, `venv` и сами release-каталоги в ежедневный backup не входят.
 
-**Текущий статус:** контрактные автотесты PASS; фактический test restore обеих баз и сверка live timers ещё не приняты.
+## Протокол изолированного restore 2026-08-07
+
+- SQLite: создана temporary-база, backup скопирован как restored DB, `PRAGMA integrity_check=ok`, найдено 43 таблицы.
+- PostgreSQL: одноразовая source test DB мигрирована, `pg_dump` создал custom archive, `pg_restore` восстановил отдельную test DB; подтверждены 11 миграций, 15 зон и 0 некорректных балансов.
+- Обе test DB, архив и каталог кода удалены после проверки. Production-базы и production-backups не открывались.
+
+## Production timer metadata 2026-08-07
+
+- `sewing-web-backup.timer`: active/enabled; последний запуск 2026-08-07 03:18:41 MSK.
+- `sewing-wms-backup.timer`: active/enabled; последний запуск 2026-08-07 02:30:17 MSK.
+- Содержимое production-backups не открывалось; возраст и пригодность последнего production-артефакта должен подтвердить монитор после публикации кандидата.
+
+**Текущий статус:** isolated restore обеих технологий PASS; production backup timers PASS по unit metadata; post-deploy проверка monitor и свежести артефактов ещё впереди.
