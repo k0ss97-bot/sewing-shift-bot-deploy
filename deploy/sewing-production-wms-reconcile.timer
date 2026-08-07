@@ -1,0 +1,10 @@
+[Unit]
+Description=Run production-to-WMS reconciliation every 10 minutes
+
+[Timer]
+OnCalendar=*-*-* *:05/10:00
+Persistent=true
+Unit=sewing-production-wms-reconcile.service
+
+[Install]
+WantedBy=timers.target

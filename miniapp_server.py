@@ -106,6 +106,7 @@ from database import (
     get_route_batch_input_lots,
     get_route_batch_inputs,
     get_route_batch_passport,
+    get_route_execution_mode_state,
     get_production_task_by_id,
     get_production_task_fabric_rolls,
     get_production_task_fabric_defects,
@@ -129,6 +130,7 @@ from database import (
     route_steps_from_snapshot,
     restore_operation,
     set_route_batch_work_state,
+    set_route_execution_mode,
     set_admin_size_marker_task_status,
     update_cutting_batch_progress,
     update_employee_access_status,
@@ -187,6 +189,7 @@ from marketplace_phase1a import (
 )
 from analytics_overview import analytics_overview as build_analytics_overview
 from analytics_overview import analytics_overview_http_status
+from production_wms_reconciliation import get_latest_production_wms_reconciliation
 from web_push import WebPushDeliveryError, get_public_web_push_config, send_web_push
 
 
@@ -5299,7 +5302,27 @@ def get_admin_dashboard(telegram_id: int):
         ),
         "defect_reasons": DEFECT_REASONS,
         "defect_dispositions": DEFECT_DISPOSITIONS,
+        "route_execution_mode": get_route_execution_mode_state(),
+        "production_wms_reconciliation": get_latest_production_wms_reconciliation(),
     }
+
+
+def set_route_execution_mode_for_admin(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "message": "Нет прав администратора."}
+    mode = str(payload.get("mode") or "").strip().lower()
+    if mode not in {"training", "strict"}:
+        return {"ok": False, "message": "Выберите учебный или строгий режим."}
+    employee = get_employee_for_access(telegram_id)
+    state = set_route_execution_mode(mode, employee[0] if employee else None)
+    dashboard = get_admin_dashboard(telegram_id)
+    dashboard["message"] = (
+        "Учебный режим включён. Новые партии получат все этапы сразу."
+        if mode == "training"
+        else "Строгий маршрут включён. Новые партии будут открываться последовательно."
+    )
+    dashboard["route_execution_mode"] = state
+    return dashboard
 
 
 def set_admin_size_marker_task_status_for_telegram(telegram_id: int, payload: dict):
@@ -6445,6 +6468,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/admin/shift/close",
                 "/api/admin/shift/delete",
                 "/api/admin/operation",
+                "/api/admin/route-execution-mode",
             }
             allowed_paths.update(WMS_ROUTES)
 
@@ -6905,6 +6929,8 @@ def make_handler(bot_token: str, debug: bool):
                 result = delete_shift_for_admin(telegram_id, payload)
             elif path == "/api/admin/operation":
                 result = operation_action_for_admin(telegram_id, payload)
+            elif path == "/api/admin/route-execution-mode":
+                result = set_route_execution_mode_for_admin(telegram_id, payload)
             else:
                 result = get_app_state(telegram_id)
 

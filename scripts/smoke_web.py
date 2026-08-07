@@ -317,6 +317,26 @@ def run_smoke() -> None:
                     marketplace_layout_marker in html_text,
                     f"Responsive marketplace layout marker is missing: {marketplace_layout_marker}",
                 )
+            for interface_regression_marker in (
+                'analyticsHubCombinedChart(salesChartModels("units"), "units")',
+                '"Продажи в штуках недоступны"',
+                "function analyticsHubDateTime(value)",
+                'class="segment-row admin-segment-row"',
+                'for="wmsHardwareScannerInput"',
+                'aria-label="Найти товар, артикул или поставку"',
+                "Ещё разделы — прокрутите вправо →",
+                '"Ячейка размещения": "ячейку размещения"',
+                'data-admin-action="route-mode-training"',
+                'api("/api/admin/route-execution-mode", {mode})',
+            ):
+                require(
+                    interface_regression_marker in html_text,
+                    f"Interface regression marker is missing: {interface_regression_marker}",
+                )
+            require(
+                "Отсканируйте ${locationLabel.toLowerCase()}" not in html_text,
+                "WMS location prompts must use grammatically correct labels.",
+            )
             require(
                 'data-stock-filter="warehouse"' not in html_text,
                 "Marketplace stock list must not expose warehouse selection before product detail.",

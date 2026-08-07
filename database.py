@@ -40,18 +40,140 @@ def resolve_database_path():
 
 DB_NAME = resolve_database_path()
 LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
+ROUTE_EXECUTION_MODE_KEY = "route_execution_mode"
+ROUTE_EXECUTION_MODES = {"strict", "training"}
 
 
-def route_execution_mode():
+def default_route_execution_mode():
+    value = os.getenv("ROUTE_EXECUTION_MODE", "training").strip().lower()
+    return "strict" if value == "strict" else "training"
+
+
+def route_execution_mode(cursor=None):
     """Snapshot the temporary production mode for newly formed batches.
 
     ``training`` publishes every downstream task immediately.  The complete
-    strict route engine remains available and can be restored later by setting
-    ``ROUTE_EXECUTION_MODE=strict`` without rewriting existing batches.
+    strict route engine remains available.  A persisted administrator setting
+    overrides the environment default without rewriting existing batches.
     """
 
-    value = os.getenv("ROUTE_EXECUTION_MODE", "training").strip().lower()
-    return "strict" if value == "strict" else "training"
+    fallback = default_route_execution_mode()
+    owns_connection = cursor is None
+    conn = None
+    try:
+        if owns_connection:
+            conn = get_db_connection(timeout=2)
+            cursor = conn.cursor()
+        cursor.execute(
+            "SELECT setting_value FROM system_settings WHERE setting_key = ?",
+            (ROUTE_EXECUTION_MODE_KEY,),
+        )
+        row = cursor.fetchone()
+        value = str(row[0] if row else fallback).strip().lower()
+        return value if value in ROUTE_EXECUTION_MODES else fallback
+    except sqlite3.OperationalError:
+        # Database initialization calls may reach this helper before the
+        # additive settings table exists.  The environment remains a safe
+        # bootstrap default in that narrow window.
+        return fallback
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_route_execution_mode_state(history_limit: int = 20):
+    safe_limit = max(1, min(int(history_limit or 20), 100))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    mode = route_execution_mode(cursor)
+    cursor.execute(
+        """
+        SELECT setting_value, updated_by_employee_id, updated_at
+        FROM system_settings
+        WHERE setting_key = ?
+        """,
+        (ROUTE_EXECUTION_MODE_KEY,),
+    )
+    setting = cursor.fetchone()
+    cursor.execute(
+        """
+        SELECT
+            history.id,
+            history.old_value,
+            history.new_value,
+            history.actor_employee_id,
+            employees.full_name,
+            history.created_at
+        FROM system_setting_history AS history
+        LEFT JOIN employees ON employees.id = history.actor_employee_id
+        WHERE history.setting_key = ?
+        ORDER BY history.id DESC
+        LIMIT ?
+        """,
+        (ROUTE_EXECUTION_MODE_KEY, safe_limit),
+    )
+    history = [
+        {
+            "id": int(row[0]),
+            "old_value": str(row[1] or ""),
+            "new_value": str(row[2] or ""),
+            "actor_employee_id": row[3],
+            "actor_name": str(row[4] or "Системная настройка"),
+            "created_at": str(row[5] or ""),
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return {
+        "mode": mode,
+        "label": "Учебный" if mode == "training" else "Строгий маршрут",
+        "updated_by_employee_id": setting[1] if setting else None,
+        "updated_at": str(setting[2] or "") if setting else "",
+        "history": history,
+    }
+
+
+def set_route_execution_mode(mode: str, actor_employee_id: int | None):
+    normalized = str(mode or "").strip().lower()
+    if normalized not in ROUTE_EXECUTION_MODES:
+        raise ValueError("route execution mode must be strict or training")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = local_now().isoformat()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        current = route_execution_mode(cursor)
+        if current != normalized:
+            cursor.execute(
+                """
+                INSERT INTO system_settings (
+                    setting_key, setting_value, updated_by_employee_id, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(setting_key) DO UPDATE SET
+                    setting_value = excluded.setting_value,
+                    updated_by_employee_id = excluded.updated_by_employee_id,
+                    updated_at = excluded.updated_at
+                """,
+                (ROUTE_EXECUTION_MODE_KEY, normalized, actor_employee_id, now),
+            )
+            cursor.execute(
+                """
+                INSERT INTO system_setting_history (
+                    setting_key, old_value, new_value, actor_employee_id, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (ROUTE_EXECUTION_MODE_KEY, current, normalized, actor_employee_id, now),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+    state = get_route_execution_mode_state()
+    state["changed"] = current != normalized
+    return state
 
 
 def get_db_connection(timeout=30):
@@ -1890,6 +2012,44 @@ def init_db():
         cursor.execute("ALTER TABLE employees ADD COLUMN lunch_end TEXT NOT NULL DEFAULT '14:00'")
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS system_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_by_employee_id INTEGER,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (updated_by_employee_id) REFERENCES employees (id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS system_setting_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            setting_key TEXT NOT NULL,
+            old_value TEXT NOT NULL,
+            new_value TEXT NOT NULL,
+            actor_employee_id INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (actor_employee_id) REFERENCES employees (id)
+        )
+    """)
+    cursor.execute(
+        """
+        INSERT INTO system_settings (
+            setting_key, setting_value, updated_by_employee_id, updated_at
+        ) VALUES (?, ?, NULL, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+        """,
+        (
+            ROUTE_EXECUTION_MODE_KEY,
+            default_route_execution_mode(),
+            local_now().isoformat(),
+        ),
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_system_setting_history_key "
+        "ON system_setting_history(setting_key, id DESC)"
+    )
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS shifts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             employee_id INTEGER NOT NULL,
@@ -2695,6 +2855,19 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS production_wms_reconciliation_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            status TEXT NOT NULL,
+            issue_count INTEGER NOT NULL DEFAULT 0,
+            summary_json TEXT NOT NULL DEFAULT '{}',
+            details_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL
+        )
+    """)
+
     repair_legacy_uniqueness_conflicts(cursor)
     backfill_traceability(cursor)
 
@@ -2747,6 +2920,10 @@ def init_db():
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_wms_receipt_outbox_pending "
         "ON wms_receipt_outbox(status, created_at, id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_production_wms_reconciliation_finished "
+        "ON production_wms_reconciliation_runs(finished_at DESC, id DESC)"
     )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_batch_handoffs_batch ON route_batch_handoffs (batch_id, created_at)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_route_batches_trace_code ON route_batches (trace_code) WHERE trace_code IS NOT NULL")
@@ -8277,7 +8454,7 @@ def mark_cutting_batch_formed(
         task_due_date = task_row[5] if task_row and task_row[5] else ""
 
         if task_id is not None:
-            execution_mode = route_execution_mode()
+            execution_mode = route_execution_mode(cursor)
             result_rows = [
                 (product_size, product_color, good_quantity)
                 for product_size, product_color, _planned_quantity, good_quantity, _defect_quantity, _defect_comment in reviewed_rows
@@ -10126,7 +10303,7 @@ def get_open_critical_notifications(limit: int = 50):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, severity, title, message, batch_id, product_name, product_size,
+        SELECT id, event_key, severity, title, message, batch_id, product_name, product_size,
                product_color, operation_name, position, needed_quantity,
                available_quantity, missing_quantity, status, created_at,
                acknowledged_at, acknowledged_by_employee_id
@@ -10153,7 +10330,7 @@ def acknowledge_critical_notification(notification_id: int, employee_id: int | N
         """
         UPDATE critical_notifications
         SET status = 'acknowledged', acknowledged_at = ?, acknowledged_by_employee_id = ?
-        WHERE shifts.id = ? AND shifts.status = 'open'
+        WHERE id = ? AND status = 'open'
         """,
         (now_text, employee_id, notification_id),
     )

@@ -1094,7 +1094,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         )
 
     def test_training_mode_publishes_all_tasks_and_only_packaging_moves_stock(self):
-        os.environ["ROUTE_EXECUTION_MODE"] = "training"
+        self.database.set_route_execution_mode("training", None)
         miniapp_server = importlib.import_module("miniapp_server")
         route_maps = importlib.import_module("route_maps")
 
@@ -1175,7 +1175,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual([(row["stage_name"], row["quantity"]) for row in finished], [("Упаковано", 10)])
 
     def test_training_mode_publishes_preparation_route_without_duplicates(self):
-        os.environ["ROUTE_EXECUTION_MODE"] = "training"
+        self.database.set_route_execution_mode("training", None)
         route_maps = importlib.import_module("route_maps")
 
         task = self.database.create_production_task("Жакет для девочек", ["98"], ["Черный"], None)
@@ -1202,6 +1202,31 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(all(count == 1 for count in counts_by_step.values()))
         self.assertTrue(all(batch["execution_mode"] == "training" for batch in active))
         self.assertTrue(all(batch["source_cutting_batch_id"] == cutting_batch_id for batch in active))
+
+    def test_admin_route_mode_setting_is_persisted_and_audited(self):
+        self.database.create_employee(19103, "Администратор Режима", "Администратор")
+        employee = self.database.get_employee_by_telegram_id(19103)
+        self.database.update_employee_status(employee[0], "active")
+
+        initial = self.database.get_route_execution_mode_state()
+        self.assertEqual(initial["mode"], "strict")
+        self.assertEqual(initial["history"], [])
+
+        changed = self.database.set_route_execution_mode("training", employee[0])
+        self.assertTrue(changed["changed"])
+        self.assertEqual(changed["mode"], "training")
+        self.assertEqual(changed["history"][0]["old_value"], "strict")
+        self.assertEqual(changed["history"][0]["new_value"], "training")
+        self.assertEqual(changed["history"][0]["actor_name"], "Администратор Режима")
+
+        unchanged = self.database.set_route_execution_mode("training", employee[0])
+        self.assertFalse(unchanged["changed"])
+        self.assertEqual(len(unchanged["history"]), 1)
+
+        restored = self.database.set_route_execution_mode("strict", employee[0])
+        self.assertTrue(restored["changed"])
+        self.assertEqual(restored["mode"], "strict")
+        self.assertEqual(len(restored["history"]), 2)
 
     def test_cardigan_layout_creates_two_dublerin_pieces_per_garment(self):
         expected = []

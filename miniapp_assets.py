@@ -1440,6 +1440,11 @@ MINIAPP_HTML = """<!doctype html>
       background: rgba(25,89,243,.10);
     }
 
+    .admin-segment-row {
+      scrollbar-color: rgba(25,89,243,.26) transparent;
+      scrollbar-width: thin;
+    }
+
     .button-row {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4473,6 +4478,7 @@ MINIAPP_HTML = """<!doctype html>
     .ac-brand strong { color:#fff; font-size:12px; letter-spacing:.12em; }
     .ac-brand span { margin-top:2px; color:#7f8da5; font-size:9px; }
     .ac-nav { display:grid; gap:4px; margin-top:18px; }
+    .ac-nav-hint { display:none; }
     .ac-nav button {
       position:relative; width:100%; min-height:42px; display:grid; grid-template-columns:22px minmax(0,1fr); align-items:center; gap:10px;
       padding:0 11px; border:0; border-radius:10px; color:#9da9bc; background:transparent; text-align:left; cursor:pointer;
@@ -4602,9 +4608,9 @@ MINIAPP_HTML = """<!doctype html>
     .ac-map>.ac-empty{position:absolute;left:18px;right:18px;bottom:16px;min-height:110px;background:rgba(255,255,255,.92)}
     @media (max-width:1380px) { .ac-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}.ac-span-8,.ac-span-7,.ac-panel.span-8{grid-column:span 12}.ac-span-5,.ac-span-4,.ac-panel.span-4{grid-column:span 6} }
     @media (max-width:899px) {
-      body.web-mode.analytics-mode .body{padding:12px 14px 90px!important}.ac-shell{display:block;min-height:0;border-radius:14px}.ac-sidebar{padding:10px}.ac-brand,.ac-sidebar-status{display:none}.ac-nav{display:flex;overflow-x:auto;margin:0;scrollbar-width:none}.ac-nav button{flex:0 0 auto;width:auto;grid-template-columns:18px auto;padding:0 12px}.ac-nav button.active::before{left:8px;right:8px;top:auto;bottom:-1px;width:auto;height:3px;border-radius:3px}.ac-topbar{flex-wrap:wrap;padding:10px}.ac-search{order:2;flex-basis:100%;max-width:none}.ac-market-switch{margin-left:0}.ac-content{padding:14px}.ac-heading{align-items:flex-start}.ac-filterbar{grid-template-columns:1fr}.ac-map-toolbar{grid-template-columns:1fr 1fr}.ac-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ac-span-6,.ac-span-5,.ac-span-4,.ac-panel.span-8,.ac-panel.span-6,.ac-panel.span-4{grid-column:span 12}.ac-map{min-height:560px}.ac-map-stage{height:515px}
+      body.web-mode.analytics-mode .body{padding:12px 14px 90px!important}.ac-shell{display:block;min-height:0;border-radius:14px}.ac-sidebar{padding:10px}.ac-brand,.ac-sidebar-status{display:none}.ac-nav{display:flex;overflow-x:auto;margin:0;scrollbar-width:thin;scroll-snap-type:x proximity}.ac-nav button{flex:0 0 auto;width:auto;grid-template-columns:18px auto;padding:0 12px;scroll-snap-align:start}.ac-nav button.active::before{left:8px;right:8px;top:auto;bottom:-1px;width:auto;height:3px;border-radius:3px}.ac-nav-hint{display:block;margin:5px 6px 0;color:#8290a6;font-size:8px;text-align:right}.ac-topbar{flex-wrap:wrap;padding:10px}.ac-search{order:2;flex-basis:100%;max-width:none}.ac-market-switch{margin-left:0}.ac-content{padding:14px}.ac-heading{align-items:flex-start}.ac-filterbar{grid-template-columns:1fr}.ac-map-toolbar{grid-template-columns:1fr 1fr}.ac-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ac-span-6,.ac-span-5,.ac-span-4,.ac-panel.span-8,.ac-panel.span-6,.ac-panel.span-4{grid-column:span 12}.ac-panel-head{display:grid;grid-template-columns:minmax(0,1fr);gap:4px}.ac-panel-head span{text-align:left;overflow-wrap:anywhere}.ac-map{min-height:560px}.ac-map-stage{height:515px}
     }
-    @media (max-width:520px) { .ac-kpis{grid-template-columns:1fr 1fr;gap:8px}.ac-kpi{min-height:116px;padding:12px}.ac-kpi-value{font-size:21px}.ac-heading{display:grid}.ac-business-state{width:max-content}.ac-sync{width:100%}.ac-topbar{display:grid;grid-template-columns:1fr}.ac-market-switch{width:100%}.ac-market-switch button{flex:1}.ac-search{order:initial}.ac-content{padding:12px}.ac-provider-row{grid-template-columns:86px minmax(0,1fr)}.ac-provider-row strong{grid-column:2}.ac-waterfall{overflow-x:auto}.ac-waterfall-item{flex:0 0 72px}}
+    @media (max-width:520px) { .ac-kpis{grid-template-columns:1fr 1fr;gap:8px}.ac-kpi{min-height:116px;padding:12px}.ac-kpi-value{font-size:21px}.ac-heading{display:grid}.ac-business-state{width:max-content}.ac-sync{width:100%}.ac-topbar{display:grid;grid-template-columns:1fr}.ac-market-switch{width:100%}.ac-market-switch button{flex:1}.ac-search{order:initial}.ac-content{padding:12px}.ac-provider-row{grid-template-columns:86px minmax(0,1fr)}.ac-provider-row strong{grid-column:2}.ac-waterfall{overflow-x:auto}.ac-waterfall-item{flex:0 0 72px}.admin-segment-row{display:flex;overflow-x:auto;grid-template-columns:none;scroll-snap-type:x proximity;padding-bottom:4px}.admin-segment-row .segment-button{flex:0 0 auto;min-width:112px;white-space:nowrap;overflow-wrap:normal;word-break:normal;scroll-snap-align:start}}
 
     /* Canonical responsive layer. Keep this block last so legacy rules cannot
        silently override the desktop and mobile application shells. */
@@ -7688,6 +7694,25 @@ MINIAPP_HTML = """<!doctype html>
       } catch (error) {
         showToast("Операции", error.message || "Не удалось закрыть операцию.");
         mainButton.disabled = false;
+      }
+    }
+
+    async function adminRouteExecutionMode(mode) {
+      if (!["training", "strict"].includes(mode)) return;
+      const label = mode === "training" ? "учебный режим" : "строгий маршрут";
+      const explanation = mode === "training"
+        ? "Новые партии после готового кроя сразу опубликуют все этапы."
+        : "Новые партии будут публиковать этапы последовательно по маршруту.";
+      if (!window.confirm(`Включить ${label}?\n\n${explanation}\nУже созданные задания не изменятся.`)) return;
+      const actionKey = `route-execution-mode:${mode}`;
+      if (!beginAction(actionKey)) return;
+      try {
+        const data = await api("/api/admin/route-execution-mode", {mode});
+        replaceAdminDashboard(data, `Режим «${label}» включён.`);
+      } catch (error) {
+        showToast("Режим производства", error.apiMessage || "Не удалось изменить режим.");
+      } finally {
+        endAction(actionKey);
       }
     }
 
@@ -10912,13 +10937,16 @@ MINIAPP_HTML = """<!doctype html>
         ["integrations", "Интеграции"],
       ];
 
-      return `<div class="segment-row">${sections.map(([id, label]) => `
-        <button class="segment-button ${state.adminSection === id ? "active" : ""}" data-admin-section="${id}">${label}</button>
+      return `<div class="segment-row admin-segment-row" role="navigation" aria-label="Разделы администратора">${sections.map(([id, label]) => `
+        <button class="segment-button ${state.adminSection === id ? "active" : ""}" data-admin-section="${id}" ${state.adminSection === id ? 'aria-current="page"' : ""}>${label}</button>
       `).join("")}</div>`;
     }
 
-    function renderAdminIntegrations() {
+    function renderAdminIntegrations(admin) {
       const root = state.marketplaceData && state.marketplaceData.payload && typeof state.marketplaceData.payload === "object" ? state.marketplaceData.payload : {};
+      const routeMode = admin && admin.route_execution_mode && typeof admin.route_execution_mode === "object" ? admin.route_execution_mode : {mode: "training", history: []};
+      const routeModeHistory = Array.isArray(routeMode.history) ? routeMode.history : [];
+      const productionWmsReconciliation = admin && admin.production_wms_reconciliation && typeof admin.production_wms_reconciliation === "object" ? admin.production_wms_reconciliation : null;
       const runs = [
         ...(Array.isArray(root.sync_runs) ? root.sync_runs.map((row) => ({...row, marketplace: row.marketplace || "ozon"})) : []),
         ...(root.wildberries && Array.isArray(root.wildberries.sync_runs) ? root.wildberries.sync_runs.map((row) => ({...row, marketplace: row.marketplace || "wildberries"})) : []),
@@ -10930,7 +10958,11 @@ MINIAPP_HTML = """<!doctype html>
       const rows = runs.slice(0, 40).map((row) => `<tr><td>${escapeHtml(row.marketplace || "—")}</td><td>${escapeHtml(row.started_at || "—")}</td><td>${escapeHtml(row.finished_at || "—")}</td><td>${escapeHtml(row.status || "unknown")}</td><td>${escapeHtml(row.error_message || row.message || "—")}</td></tr>`).join("");
       const eventRows = events.slice(0, 20).map((row) => `<div class="report-row"><div><b>${escapeHtml(row.code || row.event_type || "event")}</b><span>${escapeHtml(row.message || row.detail || "—")}</span></div><span class="status-chip gray">${escapeHtml(row.created_at || row.timestamp || "—")}</span></div>`).join("");
       mainButton.hidden = true;
-      return `<div class="screen-head"><div><h2>Интеграции · Диагностика</h2><p>Технические статусы API и журнал синхронизации. Этот экран доступен только администратору.</p></div><div class="date">${runs.length} запусков</div></div>${renderAdminTabs()}<div class="card field-card"><div class="button-row"><button class="small-button" data-ac-action="sync">Синхронизировать площадки</button><button class="small-button secondary" data-ac-action="refresh">Обновить аналитику</button></div></div><div class="card field-card"><div class="section-title"><b>Журнал синхронизации</b><span>Технические статусы</span></div>${rows ? `<div class="ac-table-wrap"><table class="ac-table"><thead><tr><th>Площадка</th><th>Начало</th><th>Завершение</th><th>Статус</th><th>Ошибка / сообщение</th></tr></thead><tbody>${rows}</tbody></table></div>` : itemEmpty("Запусков синхронизации пока нет.")}</div><div class="card field-card"><div class="section-title"><b>События интеграций</b><span>${events.length}</span></div>${eventRows || itemEmpty("Технических событий нет.")}</div>`;
+      const routeHistoryRows = routeModeHistory.map((row) => `<tr><td>${escapeHtml(row.old_value === "training" ? "Учебный" : "Строгий")}</td><td>${escapeHtml(row.new_value === "training" ? "Учебный" : "Строгий")}</td><td>${escapeHtml(row.actor_name || "Системная настройка")}</td><td>${escapeHtml(analyticsHubDateTime(row.created_at))}</td></tr>`).join("");
+      const reconciliationLabels = {packaging_without_outbox: "Упаковки без outbox", outbox_without_receipt: "Outbox без приёмки", receipt_without_outbox: "Приёмки без outbox", duplicate_request_keys: "Повторные ключи", product_key_mismatch: "Расхождение ProductKey", quantity_mismatch: "Расхождение количества", source_mismatch: "Расхождение источника", invalid_sqlite_stock: "Некорректный SQLite-остаток", invalid_wms_stock: "Некорректный WMS-остаток", stuck_outbox: "Зависшие события", postgres_unavailable: "PostgreSQL недоступен"};
+      const reconciliationSummaryRows = productionWmsReconciliation && productionWmsReconciliation.summary ? Object.entries(productionWmsReconciliation.summary).filter(([, value]) => Number(value || 0) > 0).map(([key, value]) => `<div class="report-row"><div><b>${escapeHtml(reconciliationLabels[key] || key)}</b></div><span class="status-chip warn">${escapeHtml(value)}</span></div>`).join("") : "";
+      const reconciliationStatus = !productionWmsReconciliation ? "Не запускалась" : productionWmsReconciliation.status === "ok" ? "Расхождений нет" : productionWmsReconciliation.status === "unavailable" ? "Источник недоступен" : "Требует проверки";
+      return `<div class="screen-head"><div><h2>Интеграции · Диагностика</h2><p>Технические статусы API, производственного режима и журнал синхронизации. Этот экран доступен только администратору.</p></div><div class="date">${runs.length} запусков</div></div>${renderAdminTabs()}<div class="card field-card"><div class="section-title"><b>Режим публикации производственных заданий</b><span class="status-chip ${routeMode.mode === "training" ? "warn" : ""}">${routeMode.mode === "training" ? "Учебный" : "Строгий маршрут"}</span></div><p class="muted">Изменение применяется только к новым партиям после формирования готового кроя. Уже созданные задания и строгие маршрутные карты не удаляются.</p><div class="button-row"><button class="small-button ${routeMode.mode === "training" ? "secondary" : ""}" data-admin-action="route-mode-training" data-route-mode="training" ${routeMode.mode === "training" ? "disabled" : ""}>Включить учебный режим</button><button class="small-button ${routeMode.mode === "strict" ? "secondary" : ""}" data-admin-action="route-mode-strict" data-route-mode="strict" ${routeMode.mode === "strict" ? "disabled" : ""}>Включить строгий маршрут</button></div>${routeHistoryRows ? `<div class="ac-table-wrap"><table class="ac-table"><thead><tr><th>Было</th><th>Стало</th><th>Администратор</th><th>Дата</th></tr></thead><tbody>${routeHistoryRows}</tbody></table></div>` : `<div class="muted">Переключений режима ещё не было.</div>`}</div><div class="card field-card"><div class="section-title"><b>Производство → WMS</b><span class="status-chip ${productionWmsReconciliation && productionWmsReconciliation.status === "ok" ? "" : "warn"}">${escapeHtml(reconciliationStatus)}</span></div><p class="muted">Последняя сверка: ${escapeHtml(analyticsHubDateTime(productionWmsReconciliation && productionWmsReconciliation.finished_at))}. Проверяются упаковки, outbox, приёмки, ProductKey, количество, источники и отрицательные остатки.</p><div class="op-list">${reconciliationSummaryRows || (productionWmsReconciliation && productionWmsReconciliation.status === "ok" ? itemEmpty("Сквозных расхождений не найдено.") : itemEmpty("Плановая сверка ещё не выполнялась."))}</div></div><div class="card field-card"><div class="button-row"><button class="small-button" data-ac-action="sync">Синхронизировать площадки</button><button class="small-button secondary" data-ac-action="refresh">Обновить аналитику</button></div></div><div class="card field-card"><div class="section-title"><b>Журнал синхронизации</b><span>Технические статусы</span></div>${rows ? `<div class="ac-table-wrap"><table class="ac-table"><thead><tr><th>Площадка</th><th>Начало</th><th>Завершение</th><th>Статус</th><th>Ошибка / сообщение</th></tr></thead><tbody>${rows}</tbody></table></div>` : itemEmpty("Запусков синхронизации пока нет.")}</div><div class="card field-card"><div class="section-title"><b>События интеграций</b><span>${events.length}</span></div>${eventRows || itemEmpty("Технических событий нет.")}</div>`;
     }
 
     function renderAdminSizeMarkers(admin) {
@@ -11273,7 +11305,12 @@ MINIAPP_HTML = """<!doctype html>
       const locationWasScanned = locationField === "from_location" ? state.wmsDraft.fromLocationScanned : state.wmsDraft.toLocationScanned;
       const locationReady = Boolean(locationWasScanned && locationCode && wmsLocationByCode(locationCode));
       const expectedField = locationReady ? "product" : locationField;
-      const expectedText = locationReady ? "Отсканируйте товар" : `Отсканируйте ${locationLabel.toLowerCase()}`;
+      const locationPrompt = {
+        "Ячейка размещения": "ячейку размещения",
+        "Исходная ячейка": "исходную ячейку",
+        "Ячейка пересчёта": "ячейку пересчёта",
+      }[locationLabel] || "ячейку";
+      const expectedText = locationReady ? "Отсканируйте товар" : `Отсканируйте ${locationPrompt}`;
       return `
         <div class="card field-card wms-guided-scanner">
           <label>Порядок сканирования</label>
@@ -11282,7 +11319,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="report-row"><div><b>2. Товар</b><span>${productDetected ? escapeHtml(wmsProductLabel(wmsProductKey(state.wmsDraft))) : "Отсканируйте штрихкод изделия"}</span></div><span class="status-chip ${productDetected ? "" : "gray"}">${productDetected ? "✓" : "2"}</span></div>
             <div class="report-row"><div><b>3. Количество</b><span>Введите количество и подтвердите операцию</span></div><span class="status-chip gray">3</span></div>
           </div>
-          <div class="field full"><label>Сканер ТСД</label><input id="wmsHardwareScannerInput" class="wms-hardware-scanner-input" data-wms-hardware-field="${expectedField}" inputmode="none" autocomplete="off" placeholder="${escapeHtml(expectedText)}" autofocus></div>
+          <div class="field full"><label for="wmsHardwareScannerInput">Сканер ТСД</label><input id="wmsHardwareScannerInput" class="wms-hardware-scanner-input" data-wms-hardware-field="${expectedField}" inputmode="none" autocomplete="off" placeholder="${escapeHtml(expectedText)}" autofocus></div>
           <div class="button-row"><button class="small-button" data-wms-scan="${expectedField}">📷 ${escapeHtml(expectedText)}</button></div>
         </div>
       `;
@@ -13091,14 +13128,14 @@ MINIAPP_HTML = """<!doctype html>
         ${renderWmsDataNotice()}
         <div class="card field-card wms-guided-scanner">
           <label>1. Сканируйте товар</label>
-          <div class="field full"><label>Сканер ТСД</label><input id="wmsHardwareScannerInput" class="wms-hardware-scanner-input" data-wms-hardware-field="stock_receipt_product" inputmode="none" autocomplete="off" placeholder="Штрихкод товара" autofocus></div>
+          <div class="field full"><label for="wmsHardwareScannerInput">Сканер ТСД</label><input id="wmsHardwareScannerInput" class="wms-hardware-scanner-input" data-wms-hardware-field="stock_receipt_product" inputmode="none" autocomplete="off" placeholder="Штрихкод товара" autofocus></div>
           <div class="button-row"><button type="button" class="small-button" data-wms-scan="stock_receipt_product">📷 Сканировать товар</button></div>
         </div>
-        ${state.data && state.data.is_admin ? `<div class="card field-card"><div class="section-title"><b>Добавить без сканирования</b><span>только администратор</span></div><div class="field full"><label>Артикул или штрихкод</label><input id="wmsManualReceiptQuery" value="${escapeHtml(draft.manualQuery || "")}" maxlength="128" placeholder="Например, БДШВ-4/122 или EAN-13"></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-manual-lookup="receipt" ${draft.manualLoading ? "disabled" : ""}>${draft.manualLoading ? "Ищем…" : "Найти товар"}</button></div>${renderWmsManualLookupResults("receipt", draft.manualResults)}</div>` : ""}
+        ${state.data && state.data.is_admin ? `<div class="card field-card"><div class="section-title"><b>Добавить без сканирования</b><span>только администратор</span></div><div class="field full"><label for="wmsManualReceiptQuery">Артикул или штрихкод</label><input id="wmsManualReceiptQuery" value="${escapeHtml(draft.manualQuery || "")}" maxlength="128" placeholder="Например, БДШВ-4/122 или EAN-13"></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-manual-lookup="receipt" ${draft.manualLoading ? "disabled" : ""}>${draft.manualLoading ? "Ищем…" : "Найти товар"}</button></div>${renderWmsManualLookupResults("receipt", draft.manualResults)}</div>` : ""}
         ${draft.pending ? `<div class="card field-card"><div class="section-title"><b>2. Укажите количество</b><span>${draft.pending.manual ? "товар подтверждён администратором" : "товар распознан"}</span></div><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(draft.pending.productKey))}</b><span>${draft.pending.article ? `Артикул: ${escapeHtml(draft.pending.article)} · ` : ""}Штрихкод: ${escapeHtml(draft.pending.barcode)}</span></div><span class="status-chip">✓</span></div><div class="field full"><label>Количество</label><input id="wmsStockReceiptQuantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="${escapeHtml(draft.quantity || "1")}" autofocus></div><div class="button-row"><button type="button" class="small-button" data-wms-stock-receipt-action="add">Добавить в документ</button><button type="button" class="small-button secondary" data-wms-stock-receipt-action="cancel-pending">Отмена</button></div></div>` : ""}
         <div class="section-title"><b>Состав документа</b><span>${lines.length} поз. · ${escapeHtml(totalQuantity)} шт.</span></div>
         <div class="op-list">${lines.length ? lines.map((line, index) => `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(line.productKey))}</b><span>Штрихкод: ${escapeHtml(line.barcode)}</span></div><div><span class="status-chip">${escapeHtml(line.quantity)} шт.</span><button type="button" class="link-button" data-wms-stock-receipt-remove="${index}">Удалить</button></div></div>`).join("") : itemEmpty("Отсканируйте первый товар.")}</div>
-        <div class="card field-card"><div class="field full"><label>Комментарий к документу</label><textarea id="wmsStockReceiptComment" rows="2" maxlength="500" placeholder="Партия, причина или примечание">${escapeHtml(draft.comment || "")}</textarea></div><div class="button-row"><button type="button" class="small-button" data-wms-stock-receipt-action="post" ${draft.submitting || !lines.length ? "disabled" : ""}>${draft.submitting ? "Проводим…" : "Выполнить оприходование"}</button><button type="button" class="small-button secondary" data-wms-stock-receipt-action="clear" ${draft.submitting || !lines.length ? "disabled" : ""}>Очистить</button></div></div>
+        <div class="card field-card"><div class="field full"><label for="wmsStockReceiptComment">Комментарий к документу</label><textarea id="wmsStockReceiptComment" rows="2" maxlength="500" placeholder="Партия, причина или примечание">${escapeHtml(draft.comment || "")}</textarea></div><div class="button-row"><button type="button" class="small-button" data-wms-stock-receipt-action="post" ${draft.submitting || !lines.length ? "disabled" : ""}>${draft.submitting ? "Проводим…" : "Выполнить оприходование"}</button><button type="button" class="small-button secondary" data-wms-stock-receipt-action="clear" ${draft.submitting || !lines.length ? "disabled" : ""}>Очистить</button></div></div>
         <div class="section-title"><b>Последние оприходования</b><span>${receipts.length}</span></div>
         <div class="op-list">${receipts.length ? receipts.slice(0, 10).map((receipt) => `<div class="card report-row"><div><b>${escapeHtml(receipt.number || "Документ")}</b><span>${escapeHtml(wmsMovementTime(receipt.posted_at || receipt.created_at))}${receipt.comment ? ` · ${escapeHtml(receipt.comment)}` : ""}</span></div><div><span class="status-chip">${escapeHtml(receipt.lines_count || 0)} поз.</span><small>${escapeHtml(receipt.total_quantity || 0)} шт.</small></div></div>`).join("") : itemEmpty("Проведённых документов пока нет.")}</div>
       `;
@@ -13154,11 +13191,11 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Размещение готовой продукции</h2><p>Сначала ячейка, затем товар и количество. Разместить можно только фактический остаток из зоны приёмки.</p></div></div>
         ${renderWmsGuidedScanner("to_location", locationCode, productDetected, "Ячейка размещения")}
-        ${state.data && state.data.is_admin ? `<div class="card field-card"><div class="section-title"><b>Разместить без сканирования</b><span>только администратор</span></div><div class="field full"><label>Артикул или штрихкод</label><input id="wmsManualPutawayQuery" value="${escapeHtml(d.manualQuery || "")}" maxlength="128" placeholder="Введите артикул или ШК товара"></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-manual-lookup="putaway" ${d.manualLoading ? "disabled" : ""}>${d.manualLoading ? "Ищем…" : "Найти в приёмке"}</button></div>${renderWmsManualLookupResults("putaway", d.manualResults)}</div>` : ""}
+        ${state.data && state.data.is_admin ? `<div class="card field-card"><div class="section-title"><b>Разместить без сканирования</b><span>только администратор</span></div><div class="field full"><label for="wmsManualPutawayQuery">Артикул или штрихкод</label><input id="wmsManualPutawayQuery" value="${escapeHtml(d.manualQuery || "")}" maxlength="128" placeholder="Введите артикул или ШК товара"></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-manual-lookup="putaway" ${d.manualLoading ? "disabled" : ""}>${d.manualLoading ? "Ищем…" : "Найти в приёмке"}</button></div>${renderWmsManualLookupResults("putaway", d.manualResults)}</div>` : ""}
         <div class="card field-card">
           <label>Данные размещения</label>
           <div class="form-grid">
-            ${manualProduct && state.data && state.data.is_admin ? `<div class="field full"><label>Ячейка размещения</label><select id="wmsToLocation"><option value="">Выберите ячейку</option>${manualLocations.map((location) => `<option value="${escapeHtml(location.code)}" ${location.code === locationCode ? "selected" : ""}>${escapeHtml(location.code)}${location.name_ru ? ` · ${escapeHtml(location.name_ru)}` : ""}</option>`).join("")}</select></div>` : `<div class="field full"><label>Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="Сначала отсканируйте ячейку" readonly></div>`}
+            ${manualProduct && state.data && state.data.is_admin ? `<div class="field full"><label for="wmsToLocation">Ячейка размещения</label><select id="wmsToLocation"><option value="">Выберите ячейку</option>${manualLocations.map((location) => `<option value="${escapeHtml(location.code)}" ${location.code === locationCode ? "selected" : ""}>${escapeHtml(location.code)}${location.name_ru ? ` · ${escapeHtml(location.name_ru)}` : ""}</option>`).join("")}</select></div>` : `<div class="field full"><label for="wmsToLocation">Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="Сначала отсканируйте ячейку" readonly></div>`}
             ${productDetected ? `<div class="field full"><label>Товар</label><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(wmsProductKey(d)))}</b><span>${manualProduct ? `Подтверждён администратором · доступно в приёмке ${escapeHtml(receiveAvailable)} шт.` : "Штрихкод распознан"}</span></div><span class="status-chip">✓</span></div></div>` : ""}
             ${productDetected ? `<div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" ${manualProduct ? `max="${escapeHtml(receiveAvailable)}"` : ""} step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>` : ""}
           </div>
@@ -13326,10 +13363,10 @@ MINIAPP_HTML = """<!doctype html>
         ${renderAdminTabs()}
         <div class="card field-card">
           <div class="form-grid">
-            <div class="field full"><label>Тип отчёта</label><select id="adminReportType"><option value="timesheet" ${isTimesheetReport ? "selected" : ""}>Табель — все сотрудники</option><option value="today" ${state.adminReportType === "today" ? "selected" : ""}>Сегодня</option><option value="period" ${state.adminReportType === "period" ? "selected" : ""}>Производственный отчёт за период</option><option value="employee" ${isEmployeeReport ? "selected" : ""}>Один сотрудник</option></select></div>
-            <div class="field"><label>Начало</label><input id="adminStartDate" type="date" value="${escapeHtml(state.adminStartDate)}"></div>
-            <div class="field"><label>Окончание</label><input id="adminEndDate" type="date" value="${escapeHtml(state.adminEndDate)}"></div>
-            ${isEmployeeReport ? `<div class="field full"><label>Сотрудник</label><select id="adminEmployeeId">${employeeOptions || `<option value="">Нет сотрудников</option>`}</select></div>` : ""}
+            <div class="field full"><label for="adminReportType">Тип отчёта</label><select id="adminReportType"><option value="timesheet" ${isTimesheetReport ? "selected" : ""}>Табель — все сотрудники</option><option value="today" ${state.adminReportType === "today" ? "selected" : ""}>Сегодня</option><option value="period" ${state.adminReportType === "period" ? "selected" : ""}>Производственный отчёт за период</option><option value="employee" ${isEmployeeReport ? "selected" : ""}>Один сотрудник</option></select></div>
+            <div class="field"><label for="adminStartDate">Начало</label><input id="adminStartDate" type="date" value="${escapeHtml(state.adminStartDate)}"></div>
+            <div class="field"><label for="adminEndDate">Окончание</label><input id="adminEndDate" type="date" value="${escapeHtml(state.adminEndDate)}"></div>
+            ${isEmployeeReport ? `<div class="field full"><label for="adminEmployeeId">Сотрудник</label><select id="adminEmployeeId">${employeeOptions || `<option value="">Нет сотрудников</option>`}</select></div>` : ""}
           </div>
           <div class="button-row"><button class="small-button secondary" data-admin-action="load-report">Показать</button><button class="small-button" data-admin-action="export-report">Скачать Excel</button></div>
         </div>
@@ -13480,8 +13517,8 @@ MINIAPP_HTML = """<!doctype html>
         ${renderAdminTabs()}
         <div class="card field-card">
           <div class="form-grid">
-            <div class="field"><label>Начало</label><input id="adminStartDate" type="date" value="${escapeHtml(state.adminStartDate)}"></div>
-            <div class="field"><label>Окончание</label><input id="adminEndDate" type="date" value="${escapeHtml(state.adminEndDate)}"></div>
+            <div class="field"><label for="adminStartDate">Начало</label><input id="adminStartDate" type="date" value="${escapeHtml(state.adminStartDate)}"></div>
+            <div class="field"><label for="adminEndDate">Окончание</label><input id="adminEndDate" type="date" value="${escapeHtml(state.adminEndDate)}"></div>
           </div>
           <div class="button-row"><button class="small-button secondary" data-admin-action="refresh">Обновить всё</button><button class="small-button" data-admin-action="load-feedback">Показать связь</button></div>
         </div>
@@ -13529,7 +13566,7 @@ MINIAPP_HTML = """<!doctype html>
         return;
       }
       if (state.adminSection === "integrations") {
-        mount.innerHTML = renderAdminIntegrations();
+        mount.innerHTML = renderAdminIntegrations(admin);
         return;
       }
 
@@ -13585,6 +13622,20 @@ MINIAPP_HTML = """<!doctype html>
         if (/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return value;
       }
       return "";
+    }
+
+    function analyticsHubDateTime(value) {
+      if (!value) return "—";
+      const raw = String(value);
+      const parsed = new Date(raw.includes("T") ? raw : raw.replace(" ", "T"));
+      if (Number.isNaN(parsed.getTime())) return raw;
+      return parsed.toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     }
 
     function analyticsHubPeriodRows(rows, keys, periodMeta) {
@@ -13752,7 +13803,7 @@ MINIAPP_HTML = """<!doctype html>
       return `<div class="card ${classes}"><span>${escapeHtml(label)}</span><strong>${unavailable ? "—" : escapeHtml(value)}${!unavailable && suffix ? `<small>${escapeHtml(suffix)}</small>` : ""}</strong><small>${escapeHtml(unavailable ? hint || "Источник не предоставляет показатель" : hint)}</small></div>`;
     }
 
-    function analyticsHubCombinedChart(models) {
+    function analyticsHubCombinedChart(models, metric = "money") {
       const colors = {ozon: "#1764e8", wildberries: "#9c27b0", production: "#16a36a"};
       const series = models.filter((model) => model.commercialAvailable).map((model) => ({
         key: model.key,
@@ -13762,9 +13813,14 @@ MINIAPP_HTML = """<!doctype html>
         status: model.status,
         unit: model.unit || "money",
       }));
-      if (!series.length) return `<div class="marketplace-chart-empty"><b>Финансовая динамика недоступна</b><span>Ни одна площадка не предоставила подтверждённые операции после удержаний за выбранный период.</span></div>`;
+      const emptyCopy = metric === "units"
+        ? ["Продажи в штуках недоступны", "Ни одна площадка не предоставила подтверждённые продажи в штуках за выбранный период."]
+        : metric === "amount"
+          ? ["Продажи в рублях недоступны", "Ни одна площадка не предоставила подтверждённую сумму заказов за выбранный период."]
+          : ["Финансовая динамика недоступна", "Ни одна площадка не предоставила подтверждённые операции после удержаний за выбранный период."];
+      if (!series.length) return `<div class="marketplace-chart-empty"><b>${emptyCopy[0]}</b><span>${emptyCopy[1]}</span></div>`;
       const dates = [...new Set(series.flatMap((item) => item.rows.map((row) => row.date).filter(Boolean)))].sort();
-      if (!dates.length) return `<div class="marketplace-chart-empty"><b>За выбранный период операций нет</b><span>Источники доступны, но в диапазоне нет финансовых операций или заказов.</span></div><div class="analytics-chart-legend">${series.map((item) => `<span><i style="--legend-color:${item.color}"></i>${escapeHtml(item.label)}</span>`).join("")}</div>`;
+      if (!dates.length) return `<div class="marketplace-chart-empty"><b>За выбранный период данных нет</b><span>${metric === "units" ? "Источники доступны, но в диапазоне нет продаж в штуках." : metric === "amount" ? "Источники доступны, но в диапазоне нет сумм заказов." : "Источники доступны, но в диапазоне нет финансовых операций."}</span></div><div class="analytics-chart-legend">${series.map((item) => `<span><i style="--legend-color:${item.color}"></i>${escapeHtml(item.label)}</span>`).join("")}</div>`;
       const width = 760, height = 250, left = 54, right = 20, top = 20, bottom = 36;
       const chartWidth = width - left - right, chartHeight = height - top - bottom;
       const allValues = series.flatMap((item) => item.rows.map((row) => Number(row.value || 0)));
@@ -13782,7 +13838,8 @@ MINIAPP_HTML = """<!doctype html>
         const dots = item.rows.filter((row) => row.date && dates.includes(row.date)).map((row) => { const pointValue = marketplaceChartValue(row.value, item.unit); const pointLabel = `${item.label} · ${row.date} · ${pointValue}`; return `<circle cx="${x(row.date)}" cy="${y(row.value)}" r="4" fill="${item.color}"/><circle class="chart-point-hit" cx="${x(row.date)}" cy="${y(row.value)}" r="13" tabindex="0" role="button" aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(row.date)}" data-chart-value="${escapeHtml(row.value)}" data-chart-unit="${escapeHtml(item.unit)}" data-chart-tooltip><title>${escapeHtml(pointLabel)}</title></circle>`; }).join("");
         return line + dots;
       }).join("");
-      return `<div class="marketplace-line-chart analytics-combined-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Коммерческая динамика Ozon и Wildberries">${[0,.25,.5,.75,1].map((ratio) => { const gridY = top + chartHeight * ratio; const tickValue = maximum - valueRange * ratio; return `<line class="chart-grid" x1="${left}" y1="${gridY}" x2="${width-right}" y2="${gridY}"/><text class="chart-axis-label" x="${left-8}" y="${gridY+4}" text-anchor="end">${compact(tickValue)}</text>`; }).join("")}${minimum < 0 && maximum > 0 ? `<line x1="${left}" y1="${y(0)}" x2="${width-right}" y2="${y(0)}" stroke="#7d8799" stroke-width="1.5"/>` : ""}${svgSeries}${labels.map((index) => `<text class="chart-axis-label" x="${x(dates[index])}" y="${height-9}" text-anchor="middle">${escapeHtml(dates[index].slice(5))}</text>`).join("")}</svg><div class="marketplace-point-tooltip" hidden></div></div><div class="analytics-chart-legend">${series.map((item) => `<span><i style="--legend-color:${item.color}"></i>${escapeHtml(item.label)}</span>`).join("")}</div>`;
+      const chartLabel = metric === "units" ? "Продажи в штуках по дням" : metric === "amount" ? "Продажи в рублях по дням" : "Финансовая динамика Ozon и Wildberries";
+      return `<div class="marketplace-line-chart analytics-combined-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${chartLabel}">${[0,.25,.5,.75,1].map((ratio) => { const gridY = top + chartHeight * ratio; const tickValue = maximum - valueRange * ratio; return `<line class="chart-grid" x1="${left}" y1="${gridY}" x2="${width-right}" y2="${gridY}"/><text class="chart-axis-label" x="${left-8}" y="${gridY+4}" text-anchor="end">${compact(tickValue)}</text>`; }).join("")}${minimum < 0 && maximum > 0 ? `<line x1="${left}" y1="${y(0)}" x2="${width-right}" y2="${y(0)}" stroke="#7d8799" stroke-width="1.5"/>` : ""}${svgSeries}${labels.map((index) => `<text class="chart-axis-label" x="${x(dates[index])}" y="${height-9}" text-anchor="middle">${escapeHtml(dates[index].slice(5))}</text>`).join("")}</svg><div class="marketplace-point-tooltip" hidden></div></div><div class="analytics-chart-legend">${series.map((item) => `<span><i style="--legend-color:${item.color}"></i>${escapeHtml(item.label)}</span>`).join("")}</div>`;
     }
 
     function renderAnalyticsOverviewFromApi(hubHead) {
@@ -14083,7 +14140,7 @@ MINIAPP_HTML = """<!doctype html>
         const providerComparison = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace)}</td><td>${row.sales_units !== null && row.sales_units !== undefined ? escapeHtml(fmt(row.sales_units)) : "—"}</td><td>${row.gross_sales !== null && row.gross_sales !== undefined ? escapeHtml(money(row.gross_sales)) : "—"}</td><td>${row.orders !== null && row.orders !== undefined ? escapeHtml(fmt(row.orders)) : "—"}</td></tr>`);
         const warehouseRows = salesByWarehouse.slice(0, 200).map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.warehouse || "Склад не указан")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${row.amount_status === "partial" ? "Частично" : "Полностью"}</td></tr>`);
         const productRows = salesByProduct.slice(0, 300).map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.product || "Товар не указан")}</td><td>${escapeHtml(row.offer_id || row.sku || "—")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td></tr>`);
-        return `${filterbar}<div class="ac-kpis">${kpi("Продано", safeValue(metric("sales_units")), "Штук за период")}${kpi("Сумма заказов", safeValue(metric("gross_sales"), money), "По ценам строк заказа")}${kpi("Заказы", safeValue(metric("orders")), "Количество заказов")}${kpi("Начисления", safeValue(metric("recognized_sales"), money), "До удержаний")}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению")}</div><div class="ac-grid">${panel("Продажи в штуках по дням", period, analyticsHubCombinedChart(salesChartModels("units")), "span-6")}${panel("Продажи в рублях по дням", period, analyticsHubCombinedChart(salesChartModels("amount")), "span-6")}${panel("Ozon / Wildberries", "Раздельные итоги", table(["Площадка","Продано, шт.","Сумма заказов","Заказы"], providerComparison, "Площадки не вернули продажи."), "span-12")}${panel("Продажи по складам", `${salesByWarehouse.length} складов за выбранный период`, table(["Площадка","Склад","Заказы","Штук","Сумма","Цены"], warehouseRows, "Складской разрез за выбранный период не получен."), "span-6")}${panel("Продажи по товарам", `${salesByProduct.length} SKU за выбранный период`, table(["Площадка","Товар","Артикул","Заказы","Штук","Сумма"], productRows, "Товарный разрез за выбранный период не получен."), "span-6")}${panel("Последние заказы в выбранном периоде", `Показано ${visibleOrders.length}; итог рассчитан по полному набору ${safeValue(metric("orders"))}`, table(["Дата","Отправление","Площадка","Штук","Сумма","Статус"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
+        return `${filterbar}<div class="ac-kpis">${kpi("Продано", safeValue(metric("sales_units")), "Штук за период")}${kpi("Сумма заказов", safeValue(metric("gross_sales"), money), "По ценам строк заказа")}${kpi("Заказы", safeValue(metric("orders")), "Количество заказов")}${kpi("Начисления", safeValue(metric("recognized_sales"), money), "До удержаний")}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению")}</div><div class="ac-grid">${panel("Продажи в штуках по дням", period, analyticsHubCombinedChart(salesChartModels("units"), "units"), "span-6")}${panel("Продажи в рублях по дням", period, analyticsHubCombinedChart(salesChartModels("amount"), "amount"), "span-6")}${panel("Ozon / Wildberries", "Раздельные итоги", table(["Площадка","Продано, шт.","Сумма заказов","Заказы"], providerComparison, "Площадки не вернули продажи."), "span-12")}${panel("Продажи по складам", `${salesByWarehouse.length} складов за выбранный период`, table(["Площадка","Склад","Заказы","Штук","Сумма","Цены"], warehouseRows, "Складской разрез за выбранный период не получен."), "span-6")}${panel("Продажи по товарам", `${salesByProduct.length} SKU за выбранный период`, table(["Площадка","Товар","Артикул","Заказы","Штук","Сумма"], productRows, "Товарный разрез за выбранный период не получен."), "span-6")}${panel("Последние заказы в выбранном периоде", `Показано ${visibleOrders.length}; итог рассчитан по полному набору ${safeValue(metric("orders"))}`, table(["Дата","Отправление","Площадка","Штук","Сумма","Статус"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
       }
 
       function renderProductsPage() {
@@ -14237,7 +14294,7 @@ MINIAPP_HTML = """<!doctype html>
       }
 
       function renderQualityPage() {
-        const rows = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace || "—")}</td><td>${escapeHtml(row.status === "fresh" ? "Данные актуальны" : row.status === "stale" ? "Обновление задерживается" : row.status === "partial" ? "Данные загружены частично" : "Показатель пока недоступен")}</td><td>${escapeHtml(row.last_sync_at || "—")}</td></tr>`);
+        const rows = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace || "—")}</td><td>${escapeHtml(row.status === "fresh" ? "Данные актуальны" : row.status === "stale" ? "Обновление задерживается" : row.status === "partial" ? "Данные загружены частично" : "Показатель пока недоступен")}</td><td>${escapeHtml(analyticsHubDateTime(row.last_sync_at))}</td></tr>`);
         const quality = payload.data_quality && typeof payload.data_quality === "object" ? payload.data_quality : {};
         const ozonQuality = quality.ozon && typeof quality.ozon === "object" ? quality.ozon : {};
         const wbQuality = quality.wildberries && typeof quality.wildberries === "object" ? quality.wildberries : {};
@@ -14246,14 +14303,14 @@ MINIAPP_HTML = """<!doctype html>
           ...(Array.isArray(wbQuality.capabilities) ? wbQuality.capabilities.map((row) => ({source: "Wildberries", name: row.capability, status: row.status, updated: row.checked_at || row.last_successful_snapshot_started_at})) : []),
         ];
         const statusText = (value) => value === "fresh" || value === "available" ? "Актуально" : value === "stale" ? "Обновление задерживается" : value === "permission_required" ? "Требуется доступ" : value === "partial" ? "Частично" : value === "no_data" ? "Нет данных" : "Недоступно";
-        const detailRows = qualityDetails.map((row) => `<tr><td>${escapeHtml(row.source)}</td><td>${escapeHtml(row.name || "—")}</td><td>${escapeHtml(statusText(row.status))}</td><td>${escapeHtml(row.updated || "—")}</td></tr>`);
-        return `<div class="ac-kpis">${kpi("Источники", fmt(providerCards.length), "Подключённые площадки")}${kpi("Состояние", businessStatus[0], "Без технических кодов")}${kpi("Обновлено", payload.meta && payload.meta.generated_at || payload.as_of || "—", "Время аналитического среза")}</div><div class="ac-grid">${panel("Качество данных", "Понятные бизнес-состояния", table(["Источник","Состояние","Последнее обновление"], rows, "Источники аналитики пока не подключены."), "span-8")}${panel("Диагностика", "Для администратора", `<p class="ac-panel-copy">Технические ответы API и журнал синхронизации доступны отдельно.</p><button type="button" class="small-button" data-ac-action="diagnostics">Открыть диагностику</button>`, "span-4")}${panel("Наборы данных", `${qualityDetails.length} проверок`, table(["Площадка","Раздел","Состояние","Проверено"], detailRows, "Проверки наборов данных пока не выполнялись."), "span-12")}</div>`;
+        const detailRows = qualityDetails.map((row) => `<tr><td>${escapeHtml(row.source)}</td><td>${escapeHtml(row.name || "—")}</td><td>${escapeHtml(statusText(row.status))}</td><td>${escapeHtml(analyticsHubDateTime(row.updated))}</td></tr>`);
+        return `<div class="ac-kpis">${kpi("Источники", fmt(providerCards.length), "Подключённые площадки")}${kpi("Состояние", businessStatus[0], "Без технических кодов")}${kpi("Обновлено", analyticsHubDateTime(payload.meta && payload.meta.generated_at || payload.as_of), "Время аналитического среза")}</div><div class="ac-grid">${panel("Качество данных", "Понятные бизнес-состояния", table(["Источник","Состояние","Последнее обновление"], rows, "Источники аналитики пока не подключены."), "span-8")}${panel("Диагностика", "Для администратора", `<p class="ac-panel-copy">Технические ответы API и журнал синхронизации доступны отдельно.</p><button type="button" class="small-button" data-ac-action="diagnostics">Открыть диагностику</button>`, "span-4")}${panel("Наборы данных", `${qualityDetails.length} проверок`, table(["Площадка","Раздел","Состояние","Проверено"], detailRows, "Проверки наборов данных пока не выполнялись."), "span-12")}</div>`;
       }
 
       const renderers = {general: renderOverviewPage, sales: renderSalesPage, products: renderProductsPage, inventory: renderInventoryPage, production: renderProductionPage, supplies: renderSuppliesPage, finance: renderFinancePage, map: renderMapPage, "data-quality": renderQualityPage};
       const title = pages.find(([id]) => id === page)[2];
       mainButton.hidden = true;
-      mount.innerHTML = `<div class="ac-shell"><aside class="ac-sidebar"><div class="ac-brand"><b>АНАЛИТИКА</b><span>центр управления</span></div><nav class="ac-nav">${nav}</nav></aside><div class="ac-main"><header class="ac-topbar"><label class="ac-search"><span>⌕</span><input id="analyticsSearchTop" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Найти товар, артикул, поставку"></label>${marketplaceSwitch}<button type="button" class="ac-sync" data-ac-action="sync">↻ Синхронизировать</button></header><main class="ac-content"><div class="ac-heading"><div><h2>${escapeHtml(title)}</h2><p>${productionOnly ? "Только производство: готовая продукция, этапы и подтверждённая приёмка." : "Продажи, остатки, производство и качество данных в едином центре."}</p></div><span class="ac-business-state ${businessStatus[1]}">${escapeHtml(businessStatus[0])}</span></div>${renderers[page]()}</main></div></div>`;
+      mount.innerHTML = `<div class="ac-shell"><aside class="ac-sidebar"><div class="ac-brand"><b>АНАЛИТИКА</b><span>центр управления</span></div><nav class="ac-nav" aria-label="Разделы аналитики">${nav}</nav><span class="ac-nav-hint" aria-hidden="true">Ещё разделы — прокрутите вправо →</span></aside><div class="ac-main"><header class="ac-topbar"><label class="ac-search"><span aria-hidden="true">⌕</span><input id="analyticsSearchTop" aria-label="Найти товар, артикул или поставку" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Найти товар, артикул, поставку"></label>${marketplaceSwitch}<button type="button" class="ac-sync" data-ac-action="sync">↻ Синхронизировать</button></header><main class="ac-content"><div class="ac-heading"><div><h2>${escapeHtml(title)}</h2><p>${productionOnly ? "Только производство: готовая продукция, этапы и подтверждённая приёмка." : "Продажи, остатки, производство и качество данных в едином центре."}</p></div><span class="ac-business-state ${businessStatus[1]}">${escapeHtml(businessStatus[0])}</span></div>${renderers[page]()}</main></div></div>`;
     }
 
     function render() {
@@ -15554,6 +15611,7 @@ MINIAPP_HTML = """<!doctype html>
         if (adminAction.dataset.adminAction === "complete-size-marker") adminSizeMarkerStatus(adminAction.dataset.sizeMarkerId, "done");
         if (adminAction.dataset.adminAction === "reopen-size-marker") adminSizeMarkerStatus(adminAction.dataset.sizeMarkerId, "open");
         if (adminAction.dataset.adminAction === "complete-route-operation") adminCompleteRouteOperation(adminAction.dataset.routeBatchId);
+        if (adminAction.dataset.adminAction === "route-mode-training" || adminAction.dataset.adminAction === "route-mode-strict") adminRouteExecutionMode(adminAction.dataset.routeMode);
         if (adminAction.dataset.adminAction === "close-shift") adminCloseShift(adminAction.dataset.shiftId);
         if (adminAction.dataset.adminAction === "delete-shift") adminDeleteShift(adminAction.dataset.shiftId);
         return;

@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -65,6 +66,65 @@ class ProductionMonitorTest(unittest.TestCase):
         self.assertEqual(first, {"sent": 1, "failed": 0, "skipped": 0})
         self.assertEqual(second, {"sent": 0, "failed": 0, "skipped": 1})
         sender.assert_called_once()
+
+    def test_fresh_clean_reconciliation_resolves_alert(self):
+        now = datetime(2026, 8, 7, 9, 0, tzinfo=timezone.utc)
+        self.database.create_or_refresh_operational_notification(
+            "production-wms-reconciliation",
+            "Старая ошибка",
+            "Уже устранена",
+            severity="critical",
+        )
+        with patch.object(
+            self.monitor,
+            "get_latest_production_wms_reconciliation",
+            return_value={
+                "status": "ok",
+                "issue_count": 0,
+                "finished_at": "2026-08-07T08:55:00+00:00",
+            },
+        ):
+            self.assertTrue(self.monitor.check_production_wms_reconciliation(now))
+        self.assertFalse(any(
+            row["event_key"] == "production-wms-reconciliation"
+            for row in self.database.get_open_critical_notifications()
+        ))
+
+    def test_reconciliation_issue_creates_critical_alert(self):
+        now = datetime(2026, 8, 7, 9, 0, tzinfo=timezone.utc)
+        with patch.object(
+            self.monitor,
+            "get_latest_production_wms_reconciliation",
+            return_value={
+                "status": "warning",
+                "issue_count": 2,
+                "finished_at": "2026-08-07T08:59:00+00:00",
+            },
+        ):
+            self.assertFalse(self.monitor.check_production_wms_reconciliation(now))
+        notification = next(
+            row for row in self.database.get_open_critical_notifications()
+            if row["event_key"] == "production-wms-reconciliation"
+        )
+        self.assertEqual(notification["severity"], "critical")
+        self.assertIn("2", notification["message"])
+
+    def test_admin_can_acknowledge_open_critical_notification_once(self):
+        self.database.create_employee(6202, "Администратор Уведомлений", "Администратор")
+        employee = self.database.get_employee_by_telegram_id(6202)
+        self.database.update_employee_status(employee[0], "active")
+        notification_id = self.database.create_or_refresh_operational_notification(
+            "acknowledge-test",
+            "Проверка подтверждения",
+            "Изолированное уведомление.",
+            severity="critical",
+        )
+        self.assertTrue(self.database.acknowledge_critical_notification(notification_id, employee[0]))
+        self.assertFalse(self.database.acknowledge_critical_notification(notification_id, employee[0]))
+        self.assertFalse(any(
+            row["event_key"] == "acknowledge-test"
+            for row in self.database.get_open_critical_notifications()
+        ))
 
 
 if __name__ == "__main__":

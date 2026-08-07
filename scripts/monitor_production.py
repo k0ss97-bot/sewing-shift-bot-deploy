@@ -31,9 +31,11 @@ from database import (
     resolve_operational_notification,
 )
 from web_push import WebPushDeliveryError, send_web_push, web_push_is_ready
+from production_wms_reconciliation import get_latest_production_wms_reconciliation
 
 
 BACKUP_MAX_AGE_HOURS = 26
+RECONCILIATION_MAX_AGE_MINUTES = 30
 
 
 def telegram_token() -> str:
@@ -63,6 +65,40 @@ def check_backup_health(now: datetime | None = None) -> bool:
     create_or_refresh_operational_notification(
         "backup-overdue",
         "Критично: резервная копия не обновлялась",
+        detail,
+        severity="critical",
+    )
+    return False
+
+
+def check_production_wms_reconciliation(now: datetime | None = None) -> bool:
+    now = now or datetime.now(timezone.utc)
+    report = get_latest_production_wms_reconciliation()
+    if report:
+        try:
+            finished_at = datetime.fromisoformat(str(report.get("finished_at") or "").replace("Z", "+00:00"))
+            if finished_at.tzinfo is None:
+                finished_at = finished_at.replace(tzinfo=timezone.utc)
+            age = now - finished_at.astimezone(timezone.utc)
+        except ValueError:
+            age = timedelta.max
+        if (
+            report.get("status") == "ok"
+            and age <= timedelta(minutes=RECONCILIATION_MAX_AGE_MINUTES)
+        ):
+            resolve_operational_notification("production-wms-reconciliation")
+            return True
+        if report.get("status") == "unavailable":
+            detail = "Сверка производства и WMS не может подключиться к PostgreSQL."
+        elif int(report.get("issue_count") or 0) > 0:
+            detail = f"Сверка производства и WMS обнаружила {int(report.get('issue_count') or 0)} расхождений."
+        else:
+            detail = f"Сверка производства и WMS старше {RECONCILIATION_MAX_AGE_MINUTES} минут."
+    else:
+        detail = "Сверка подтверждённых упаковок, outbox и WMS ещё не запускалась."
+    create_or_refresh_operational_notification(
+        "production-wms-reconciliation",
+        "Критично: нарушена сверка производства и WMS",
         detail,
         severity="critical",
     )
@@ -167,6 +203,7 @@ def main() -> int:
     init_db()
     operational = refresh_operational_notifications()
     backup_ok = check_backup_health()
+    reconciliation_ok = check_production_wms_reconciliation()
     telegram_delivery = deliver_open_notifications(telegram_token())
     web_push_delivery = deliver_open_web_push_notifications()
     print(
@@ -175,6 +212,7 @@ def main() -> int:
                 "ok": True,
                 "operational_alerts": len(operational),
                 "backup_ok": backup_ok,
+                "production_wms_reconciliation_ok": reconciliation_ok,
                 "telegram_configured": bool(telegram_token()),
                 "web_push_configured": web_push_is_ready(),
                 "delivery": {"telegram": telegram_delivery, "web_push": web_push_delivery},
