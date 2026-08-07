@@ -62,11 +62,7 @@ def handle(
         if path in {"/api/wms/scrap", "/api/wms/admin/scrap"}:
             return _scrap(payload, employee_id)
         if path in {"/api/wms/inventory", "/api/wms/admin/inventory"}:
-            return _inventory(
-                payload,
-                employee_id,
-                require_reason=path == "/api/wms/admin/inventory",
-            )
+            return _inventory(payload, employee_id)
         if path == "/api/wms/admin/bulk-writeoff":
             return _bulk_writeoff(payload, employee_id)
         if path == "/api/wms/admin/product-lookup":
@@ -269,12 +265,8 @@ def _scrap(payload: dict[str, Any], employee_id: int) -> tuple[int, dict[str, An
 def _inventory(
     payload: dict[str, Any],
     employee_id: int,
-    *,
-    require_reason: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     reason = str(payload.get("reason") or "").strip()
-    if require_reason and not reason:
-        raise ValueError("Укажите причину корректировки остатка.")
     result = ops.inventory_count(
         payload["location_code"],
         payload["counted"],

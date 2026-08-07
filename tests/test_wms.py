@@ -206,6 +206,7 @@ class WmsContractTests(unittest.TestCase):
         self.assertEqual(body["number"], "OPR-000041")
         resolve.assert_called_once_with("4600000000012")
         self.assertEqual(post.call_args.kwargs["employee_id"], 23)
+        self.assertEqual(post.call_args.kwargs["comment"], "")
 
     def test_stock_receipt_api_rejects_unknown_barcode_before_posting(self):
         from wms import api
@@ -269,16 +270,19 @@ class WmsContractTests(unittest.TestCase):
         self.assertTrue(body["ok"])
         self.assertEqual(scrap.call_args.kwargs["employee_id"], 29)
 
-    def test_admin_inventory_requires_reason(self):
+    def test_admin_inventory_allows_empty_reason(self):
         from wms import api
 
-        status, body = api.handle(
-            "/api/wms/admin/inventory",
-            {"location_code": "A-01-01", "counted": []},
-            employee_id=29,
-        )
-        self.assertEqual(status, 400)
-        self.assertIn("причину", body["message"])
+        with patch("wms.api.ops.inventory_count") as inventory:
+            inventory.return_value = OperationResult(ok=True, movement_id=16)
+            status, body = api.handle(
+                "/api/wms/admin/inventory",
+                {"location_code": "A-01-01", "counted": [], "reason": ""},
+                employee_id=29,
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(inventory.call_args.kwargs["reason"], "")
 
     def test_bulk_writeoff_requires_exact_confirmation_and_reconciles_shipments(self):
         from wms import api
@@ -333,6 +337,9 @@ class WmsContractTests(unittest.TestCase):
         self.assertIn('"admin-stock-control"', assets)
         self.assertIn('"/api/wms/admin/inventory"', assets)
         self.assertIn('"/api/wms/admin/scrap"', assets)
+        self.assertIn('draft.mode === "scrap" && !reason', assets)
+        self.assertIn('Причина (необязательно)', assets)
+        self.assertIn('Комментарий к документу (необязательно)', assets)
 
     def test_admin_manual_receipt_and_putaway_lookup_are_wired(self):
         root = Path(__file__).resolve().parents[1]
