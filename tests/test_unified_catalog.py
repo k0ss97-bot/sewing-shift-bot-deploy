@@ -1,11 +1,65 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import MagicMock, patch
 
-from unified_catalog import merge_catalog_sources
+from unified_catalog import lookup_products, merge_catalog_sources
 
 
 class UnifiedCatalogTests(unittest.TestCase):
+    def test_lookup_by_article_keeps_real_barcode_for_stock_receipt(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [{
+            "id": 7,
+            "article": "БДШВ-4/122",
+            "sku": "447000122",
+            "barcode": "4600000000128",
+            "barcodes_json": ["4600000000128", "4600000000135"],
+            "name": "Брюки для малыша",
+            "size": "122",
+            "color": "Капучино",
+            "production_product_name": "Брюки для малыша",
+            "production_size": "122",
+            "production_color": "Капучино",
+            "authoritative_source": "ozon",
+            "validation_status": "complete",
+            "source_article": "БДШВ-4/122",
+            "source_sku": "447000122",
+            "source_barcode": "4600000000128",
+        }]
+        with patch("unified_catalog.get_pg_connection", return_value=connection):
+            products = lookup_products("БДШВ-4/122")
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products[0]["barcode"], "4600000000128")
+        self.assertEqual(products[0]["product_key"]["product_size"], "122")
+        connection.rollback.assert_called_once_with()
+
+    def test_lookup_accepts_alternate_barcode(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [{
+            "id": 8,
+            "article": "БДШВ-4/128",
+            "sku": "447000128",
+            "barcode": "4600000000203",
+            "barcodes_json": ["4600000000203", "4600000000210"],
+            "name": "Брюки для малыша",
+            "size": "128",
+            "color": "Капучино",
+            "production_product_name": "Брюки для малыша",
+            "production_size": "128",
+            "production_color": "Капучино",
+            "authoritative_source": "ozon",
+            "validation_status": "complete",
+            "source_article": "БДШВ-4/128",
+            "source_sku": "447000128",
+            "source_barcode": "4600000000203",
+        }]
+        with patch("unified_catalog.get_pg_connection", return_value=connection):
+            products = lookup_products("4600000000210")
+        self.assertEqual(products[0]["barcode"], "4600000000210")
+
     def test_ozon_wins_conflicting_fields_and_wb_fills_missing_barcode(self):
         rows = merge_catalog_sources([
             {

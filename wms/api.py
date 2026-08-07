@@ -69,6 +69,8 @@ def handle(
             )
         if path == "/api/wms/admin/bulk-writeoff":
             return _bulk_writeoff(payload, employee_id)
+        if path == "/api/wms/admin/product-lookup":
+            return _admin_product_lookup(payload)
         if path == "/api/wms/locations":
             return _locations(payload)
         if path == "/api/wms/stock":
@@ -548,6 +550,67 @@ def _resolve_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return 200, {"ok": True, "product_key": product_key.to_dict()}
 
 
+def _admin_product_lookup(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    query = str(payload.get("query") or "").strip()
+    if len(query) < 2:
+        return 400, {"ok": False, "message": "Введите минимум 2 символа артикула или штрихкода."}
+    if len(query) > 128:
+        return 400, {"ok": False, "message": "Артикул или штрихкод слишком длинный."}
+    context = str(payload.get("context") or "receipt").strip().lower()
+    if context not in {"receipt", "putaway"}:
+        return 400, {"ok": False, "message": "Неизвестный режим ручного поиска."}
+
+    from unified_catalog import lookup_products
+
+    products = lookup_products(query, limit=20)
+    if context == "receipt":
+        products = [product for product in products if product.get("barcode")]
+    else:
+        conn = get_pg_connection()
+        receive = repo.get_location_by_code(conn, "RECEIVE-01")
+        stock_rows = repo.get_stock_rows(conn, location_id=receive.id) if receive else []
+        marketplace_rows: list[dict[str, Any] | None] = [None] * len(stock_rows)
+        if stock_rows:
+            try:
+                from marketplaces import marketplace_metadata_for_wms_product_keys
+
+                marketplace_rows = marketplace_metadata_for_wms_product_keys(
+                    [row.product_key.to_dict() for row in stock_rows]
+                )
+            except Exception:
+                logging.exception("Manual putaway marketplace metadata lookup failed")
+        available_products = []
+        for product in products:
+            stock_row = _stock_row_for_resolved_product(
+                stock_rows,
+                marketplace_rows,
+                ProductKey.from_dict(product["product_key"]),
+            )
+            available = (
+                max(0, int(stock_row.quantity) - int(stock_row.reserved_quantity))
+                if stock_row is not None
+                else 0
+            )
+            if available <= 0:
+                continue
+            product = dict(product)
+            product["product_key"] = stock_row.product_key.to_dict()
+            product["receive_available"] = available
+            product["stock_row"] = _stock_row_payload(stock_row)
+            available_products.append(product)
+        products = available_products
+        conn.rollback()
+
+    if not products:
+        message = (
+            "Товар не найден среди доступных остатков зоны приёмки."
+            if context == "putaway"
+            else "Товар с таким артикулом или штрихкодом не найден."
+        )
+        return 404, {"ok": False, "message": message, "products": []}
+    return 200, {"ok": True, "query": query, "context": context, "products": products}
+
+
 def _resolve_known_product(barcode: str) -> ProductKey | None:
     product_key = resolve_product_barcode(barcode)
     if product_key is not None:
@@ -627,6 +690,7 @@ WMS_WRITE_ROUTES = {
     "/api/wms/admin/scrap",
     "/api/wms/admin/inventory",
     "/api/wms/admin/bulk-writeoff",
+    "/api/wms/admin/product-lookup",
     "/api/wms/barcode/resolve",
     "/api/wms/barcode/register",
     "/api/wms/locations/create",
@@ -636,6 +700,7 @@ WMS_ADMIN_ROUTES = {
     "/api/wms/admin/scrap",
     "/api/wms/admin/inventory",
     "/api/wms/admin/bulk-writeoff",
+    "/api/wms/admin/product-lookup",
 }
 
 WMS_READ_ROUTES = {

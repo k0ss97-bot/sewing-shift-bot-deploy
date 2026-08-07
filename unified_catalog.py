@@ -358,6 +358,137 @@ def sync_unified_product_catalog() -> dict[str, Any]:
         raise
 
 
+def lookup_products(query: str, *, limit: int = 20) -> list[dict[str, Any]]:
+    """Find active finished-goods variants by article, SKU or barcode.
+
+    This is intentionally a database-only lookup used by the administrator's
+    manual WMS flow.  It never refreshes a marketplace and never changes stock.
+    Exact identifiers rank ahead of prefix/name matches so an entered seller
+    article normally produces a single obvious confirmation card.
+    """
+
+    from wms.barcode import barcode_lookup_candidates
+
+    wanted = _text(query)
+    if not wanted:
+        return []
+    wanted_normal = _normal(wanted)
+    wanted_article = _article_key(wanted)
+    wanted_barcodes = set()
+    if any(character.isdigit() for character in wanted):
+        wanted_barcodes = set(barcode_lookup_candidates(wanted))
+
+    conn = get_pg_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT m.id,m.article,m.sku,m.barcode,m.barcodes_json,m.name,m.size,m.color,
+                          m.production_product_name,m.production_size,m.production_color,
+                          m.authoritative_source,m.validation_status,
+                          s.article AS source_article,s.sku AS source_sku,s.barcode AS source_barcode
+                     FROM marketplace.product_master m
+                     LEFT JOIN marketplace.product_master_sources s ON s.product_master_id=m.id
+                    WHERE m.is_active=TRUE
+                      AND m.production_product_name<>''
+                      AND m.production_size<>''
+                      AND m.production_color<>''
+                    ORDER BY m.name,m.size,m.color,m.id"""
+            )
+            rows = cur.fetchall()
+        conn.rollback()
+    except Exception:
+        conn.rollback()
+        raise
+
+    products: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        master_id = int(row["id"])
+        product = products.setdefault(
+            master_id,
+            {
+                "id": master_id,
+                "article": _text(row["article"]),
+                "sku": _text(row["sku"]),
+                "barcode": _barcode(row["barcode"]),
+                "barcodes": _barcodes(
+                    {"barcode": row["barcode"], "barcodes_json": row["barcodes_json"]}
+                ),
+                "name": _text(row["name"]),
+                "size": _text(row["size"]),
+                "color": _text(row["color"]),
+                "source": _text(row["authoritative_source"]),
+                "validation_status": _text(row["validation_status"]),
+                "product_key": ProductKey(
+                    "finished",
+                    _text(row["production_product_name"]),
+                    _text(row["production_size"]),
+                    _text(row["production_color"]),
+                    "Упаковано",
+                    "Склад",
+                ).to_dict(),
+                "source_identifiers": set(),
+                "source_barcodes": set(),
+            },
+        )
+        product["source_identifiers"].update(
+            value
+            for value in (
+                _text(row["source_article"]),
+                _text(row["source_sku"]),
+            )
+            if value
+        )
+        source_barcode = _barcode(row["source_barcode"])
+        if source_barcode:
+            product["source_barcodes"].add(source_barcode)
+
+    ranked: list[tuple[int, str, dict[str, Any]]] = []
+    for product in products.values():
+        identifiers = {
+            product["article"],
+            product["sku"],
+            product["barcode"],
+            *product["barcodes"],
+            *product.pop("source_identifiers"),
+            *product["source_barcodes"],
+        }
+        identifiers.discard("")
+        normalized = {_normal(value) for value in identifiers}
+        article_keys = {_article_key(value) for value in identifiers if value}
+        barcode_values = {
+            candidate
+            for value in {
+                product["barcode"],
+                *product["barcodes"],
+                *product.pop("source_barcodes"),
+            }
+            if value
+            for candidate in barcode_lookup_candidates(value)
+        }
+        exact_barcode = wanted_barcodes.intersection(barcode_values)
+        if exact_barcode:
+            score = 0
+            # Preserve the exact physical code so the receipt route can
+            # independently resolve it again before changing stock.
+            product["barcode"] = sorted(exact_barcode, key=len)[0]
+        elif wanted_normal in normalized:
+            score = 1
+        elif wanted_article and wanted_article in article_keys:
+            score = 2
+        elif any(value.startswith(wanted_normal) for value in normalized):
+            score = 3
+        elif wanted_normal in _normal(product["name"]):
+            score = 4
+        else:
+            continue
+        if not product["barcode"] and product["barcodes"]:
+            product["barcode"] = product["barcodes"][0]
+        ranked.append((score, product["article"].casefold(), product))
+
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]["size"], item[2]["color"]))
+    return [item[2] for item in ranked[: max(1, min(int(limit), 50))]]
+
+
 def unified_catalog_summary() -> dict[str, Any]:
     conn = get_pg_connection()
     try:

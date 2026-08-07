@@ -321,6 +321,7 @@ class WmsContractTests(unittest.TestCase):
                 "/api/wms/admin/scrap",
                 "/api/wms/admin/inventory",
                 "/api/wms/admin/bulk-writeoff",
+                "/api/wms/admin/product-lookup",
             },
         )
         self.assertTrue(WMS_ADMIN_ROUTES <= WMS_ROUTES)
@@ -332,6 +333,77 @@ class WmsContractTests(unittest.TestCase):
         self.assertIn('"admin-stock-control"', assets)
         self.assertIn('"/api/wms/admin/inventory"', assets)
         self.assertIn('"/api/wms/admin/scrap"', assets)
+
+    def test_admin_manual_receipt_and_putaway_lookup_are_wired(self):
+        root = Path(__file__).resolve().parents[1]
+        assets = (root / "miniapp_assets.py").read_text(encoding="utf-8")
+        self.assertIn('api("/api/wms/admin/product-lookup", {query, context})', assets)
+        self.assertIn('data-wms-manual-lookup="receipt"', assets)
+        self.assertIn('data-wms-manual-lookup="putaway"', assets)
+        self.assertIn('data-wms-manual-confirm=', assets)
+        self.assertIn('id="wmsManualReceiptQuery"', assets)
+        self.assertIn('id="wmsManualPutawayQuery"', assets)
+        self.assertIn('id="wmsToLocation"><option value="">Выберите ячейку', assets)
+
+    def test_admin_product_lookup_returns_catalog_product_for_receipt(self):
+        from wms import api
+
+        product = {
+            "id": 7,
+            "article": "БДШВ-4/122",
+            "sku": "447000122",
+            "barcode": "4600000000128",
+            "barcodes": ["4600000000128"],
+            "name": "Брюки для малыша",
+            "size": "122",
+            "color": "Капучино",
+            "product_key": ProductKey(
+                "finished", "Брюки для малыша", "122", "Капучино", "Упаковано", "Склад"
+            ).to_dict(),
+        }
+        with patch("unified_catalog.lookup_products", return_value=[product]):
+            status, body = api.handle(
+                "/api/wms/admin/product-lookup",
+                {"query": "БДШВ-4/122", "context": "receipt"},
+                employee_id=29,
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["products"][0]["barcode"], "4600000000128")
+
+    def test_admin_putaway_lookup_uses_exact_receive_stock_and_available_quantity(self):
+        from wms import api
+
+        linked_key = ProductKey(
+            "finished", "Брюки для малыша", "122", "Капучино", "Упаковано", "Склад"
+        )
+        stock_key = ProductKey(
+            "finished", "Ozon · Брюки для малыша · БДШВ-4/122", "122", "Капучино", "Упаковано", "Склад"
+        )
+        product = {"id": 7, "article": "БДШВ-4/122", "barcode": "4600000000128", "product_key": linked_key.to_dict()}
+        receive = Location(1, 1, "RECEIVE-01", "LOC:RECEIVE-01", "Приёмка", 0, 0, "active")
+        stock = WarehouseStock(51, stock_key, 9, 2, "SELLABLE", receive.id, "шт")
+        metadata = [{
+            "production_product_name": linked_key.product_name,
+            "production_size": linked_key.product_size,
+            "production_color": linked_key.product_color,
+        }]
+        connection = MagicMock()
+        with patch("unified_catalog.lookup_products", return_value=[product]), patch(
+            "wms.api.get_pg_connection", return_value=connection
+        ), patch("wms.api.repo.get_location_by_code", return_value=receive), patch(
+            "wms.api.repo.get_stock_rows", return_value=[stock]
+        ), patch(
+            "marketplaces.marketplace_metadata_for_wms_product_keys", return_value=metadata
+        ):
+            status, body = api.handle(
+                "/api/wms/admin/product-lookup",
+                {"query": "БДШВ-4/122", "context": "putaway"},
+                employee_id=29,
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["products"][0]["receive_available"], 7)
+        self.assertEqual(body["products"][0]["product_key"], stock_key.to_dict())
+        connection.rollback.assert_called_once_with()
 
     def test_stock_receipt_ui_is_wired_to_history_and_actions(self):
         root = Path(__file__).resolve().parents[1]

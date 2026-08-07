@@ -5886,9 +5886,9 @@ MINIAPP_HTML = """<!doctype html>
       wmsAdminAdjustment: {mode: "inventory", locationId: "", stockId: "", quantity: "", reason: "", targetState: "SCRAPPED", returnView: "admin-stock-control"},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
-      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, matchedStock: null, matchedLocationCode: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: ""},
+      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, matchedStock: null, matchedLocationCode: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: "", manualQuery: "", manualResults: [], manualLoading: false, manualSelected: null},
       wmsMaterialReceipt: {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""},
-      wmsStockReceipt: {requestKey: "", lines: [], pending: null, quantity: "1", comment: "", submitting: false},
+      wmsStockReceipt: {requestKey: "", lines: [], pending: null, quantity: "1", comment: "", submitting: false, manualQuery: "", manualResults: [], manualLoading: false},
       marketplaceData: {loading: false, loaded: false, error: "", payload: null},
       marketplaceQuality: {loading: false, syncing: false, polling: false, loaded: false, error: "", payload: null, products: null, page: 1, query: ""},
       analyticsQuality: {loading: false, loaded: false, error: "", payload: null},
@@ -8827,6 +8827,9 @@ MINIAPP_HTML = """<!doctype html>
       const draft = state.wmsStockReceipt;
       if (!draft.requestKey) draft.requestKey = `wms:stock-receipt:${createRequestId()}`;
       if (!Array.isArray(draft.lines)) draft.lines = [];
+      if (!Array.isArray(draft.manualResults)) draft.manualResults = [];
+      if (typeof draft.manualQuery !== "string") draft.manualQuery = "";
+      draft.manualLoading = Boolean(draft.manualLoading);
       return draft;
     }
 
@@ -8847,7 +8850,82 @@ MINIAPP_HTML = """<!doctype html>
         quantity: "1",
         comment: "",
         submitting: false,
+        manualQuery: "",
+        manualResults: [],
+        manualLoading: false,
       };
+    }
+
+    function syncWmsManualLookupInput(context) {
+      const id = context === "putaway" ? "wmsManualPutawayQuery" : "wmsManualReceiptQuery";
+      const input = document.getElementById(id);
+      if (context === "putaway") {
+        if (input) state.wmsDraft.manualQuery = input.value.slice(0, 128);
+        return state.wmsDraft.manualQuery || "";
+      }
+      const draft = ensureWmsStockReceiptDraft();
+      if (input) draft.manualQuery = input.value.slice(0, 128);
+      return draft.manualQuery || "";
+    }
+
+    async function lookupWmsAdminProduct(context) {
+      if (!(state.data && state.data.is_admin)) return;
+      const query = syncWmsManualLookupInput(context).trim();
+      if (query.length < 2) {
+        showToast("Ручной поиск", "Введите минимум 2 символа артикула или штрихкода.");
+        return;
+      }
+      const target = context === "putaway" ? state.wmsDraft : ensureWmsStockReceiptDraft();
+      const actionKey = `wms:admin-product-lookup:${context}:${query}`;
+      if (!beginAction(actionKey)) return;
+      target.manualLoading = true;
+      target.manualResults = [];
+      render();
+      try {
+        const data = await api("/api/wms/admin/product-lookup", {query, context});
+        target.manualResults = Array.isArray(data.products) ? data.products : [];
+        render();
+      } catch (error) {
+        target.manualResults = [];
+        render();
+        showToast("Ручной поиск", error.apiMessage || "Товар не найден.");
+      } finally {
+        target.manualLoading = false;
+        endAction(actionKey);
+        render();
+      }
+    }
+
+    function confirmWmsManualProduct(context, index) {
+      if (!(state.data && state.data.is_admin)) return;
+      const target = context === "putaway" ? state.wmsDraft : ensureWmsStockReceiptDraft();
+      const product = (target.manualResults || [])[index];
+      if (!product || !product.product_key) return;
+      if (context === "receipt") {
+        if (!product.barcode) {
+          showToast("Оприходование", "У выбранного товара нет зарегистрированного штрихкода.");
+          return;
+        }
+        target.pending = {
+          barcode: product.barcode,
+          article: product.article || product.sku || "",
+          productKey: product.product_key,
+          manual: true,
+        };
+        target.quantity = "1";
+        target.manualResults = [];
+      } else {
+        setWmsDraftProductKey(product.product_key);
+        state.wmsDraft.matchedStock = product.stock_row || null;
+        state.wmsDraft.matchedLocationCode = "RECEIVE-01";
+        state.wmsDraft.manualSelected = product;
+        state.wmsDraft.manualResults = [];
+        state.wmsDraft.quantity = "";
+      }
+      render();
+      const quantity = document.getElementById(context === "receipt" ? "wmsStockReceiptQuantity" : "wmsQuantity");
+      if (quantity) quantity.focus({preventScroll: true});
+      showToast("Ручной поиск", `Подтверждён товар: ${wmsProductLabel(product.product_key)}.`);
     }
 
     function wmsStockReceiptSameProduct(first, second) {
@@ -9008,6 +9086,10 @@ MINIAPP_HTML = """<!doctype html>
         showToast("ТСД", "Укажите изделие и количество (≥ 1).");
         return;
       }
+      if (d.manualSelected && qty > Number(d.manualSelected.receive_available || 0)) {
+        showToast("Склад", `В зоне приёмки доступно только ${Number(d.manualSelected.receive_available || 0)} шт.`);
+        return;
+      }
       const toLoc = (d.toLocation || "").replace(/^LOC:/i, "").trim();
       if (!toLoc) {
         showToast("ТСД", "Отсканируйте или введите целевую ячейку.");
@@ -9024,7 +9106,7 @@ MINIAPP_HTML = """<!doctype html>
           unit: "шт",
           request_key: requestKey,
           to_location_code: toLoc,
-          reason: "Размещение готовой продукции (ТСД)",
+          reason: d.manualSelected ? "Ручное размещение администратором" : "Размещение готовой продукции (ТСД)",
           tsd_device_id: navigator.userAgent.slice(0, 40),
         });
         const ok = data.status === "ok" || data.status === "duplicate";
@@ -9039,6 +9121,8 @@ MINIAPP_HTML = """<!doctype html>
           state.wmsDraft.materialUnit = "рул";
           state.wmsDraft.productScanned = false;
           state.wmsDraft.toLocationScanned = false;
+          state.wmsDraft.manualSelected = null;
+          state.wmsDraft.manualResults = [];
           render();
           refreshWmsWorkspace({silent: true});
         }
@@ -10081,6 +10165,7 @@ MINIAPP_HTML = """<!doctype html>
             showToast("ТСД", `Товар найден: ${wmsProductLabel(pk)}.`);
             return;
           }
+          if (state.wmsView === "putaway") state.wmsDraft.manualSelected = null;
           setWmsDraftProductKey(pk);
           const requiresStockInCell = ["pick", "inventory"].includes(state.wmsView);
           const stockRow = requiresStockInCell && locationCode ? (data.stock_row || wmsFindScannedStock(locationCode, pk)) : null;
@@ -12977,6 +13062,16 @@ MINIAPP_HTML = """<!doctype html>
       return colors.map((c) => `<option value="${escapeHtml(c)}" ${c === selected ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
     }
 
+    function renderWmsManualLookupResults(context, products) {
+      if (!Array.isArray(products) || !products.length) return "";
+      return `<div class="op-list">${products.map((product, index) => {
+        const article = product.article || product.sku || "Артикул не указан";
+        const barcode = product.barcode || "нет штрихкода";
+        const available = context === "putaway" ? ` · в приёмке ${escapeHtml(product.receive_available || 0)} шт.` : "";
+        return `<div class="card report-row"><div><b>${escapeHtml(article)} · ${escapeHtml(wmsProductLabel(product.product_key))}</b><span>${escapeHtml(product.name || "Товар из базы")} · ШК ${escapeHtml(barcode)}${available}</span></div><button type="button" class="small-button" data-wms-manual-confirm="${escapeHtml(context)}" data-wms-manual-index="${index}">Это тот товар</button></div>`;
+      }).join("")}</div>`;
+    }
+
     function renderWmsStockReceipt() {
       const draft = ensureWmsStockReceiptDraft();
       const lines = draft.lines || [];
@@ -12992,7 +13087,8 @@ MINIAPP_HTML = """<!doctype html>
           <div class="field full"><label>Сканер ТСД</label><input id="wmsHardwareScannerInput" class="wms-hardware-scanner-input" data-wms-hardware-field="stock_receipt_product" inputmode="none" autocomplete="off" placeholder="Штрихкод товара" autofocus></div>
           <div class="button-row"><button type="button" class="small-button" data-wms-scan="stock_receipt_product">📷 Сканировать товар</button></div>
         </div>
-        ${draft.pending ? `<div class="card field-card"><div class="section-title"><b>2. Укажите количество</b><span>товар распознан</span></div><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(draft.pending.productKey))}</b><span>Штрихкод: ${escapeHtml(draft.pending.barcode)}</span></div><span class="status-chip">✓</span></div><div class="field full"><label>Количество</label><input id="wmsStockReceiptQuantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="${escapeHtml(draft.quantity || "1")}" autofocus></div><div class="button-row"><button type="button" class="small-button" data-wms-stock-receipt-action="add">Добавить в документ</button><button type="button" class="small-button secondary" data-wms-stock-receipt-action="cancel-pending">Отмена</button></div></div>` : ""}
+        ${state.data && state.data.is_admin ? `<div class="card field-card"><div class="section-title"><b>Добавить без сканирования</b><span>только администратор</span></div><div class="field full"><label>Артикул или штрихкод</label><input id="wmsManualReceiptQuery" value="${escapeHtml(draft.manualQuery || "")}" maxlength="128" placeholder="Например, БДШВ-4/122 или EAN-13"></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-manual-lookup="receipt" ${draft.manualLoading ? "disabled" : ""}>${draft.manualLoading ? "Ищем…" : "Найти товар"}</button></div>${renderWmsManualLookupResults("receipt", draft.manualResults)}</div>` : ""}
+        ${draft.pending ? `<div class="card field-card"><div class="section-title"><b>2. Укажите количество</b><span>${draft.pending.manual ? "товар подтверждён администратором" : "товар распознан"}</span></div><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(draft.pending.productKey))}</b><span>${draft.pending.article ? `Артикул: ${escapeHtml(draft.pending.article)} · ` : ""}Штрихкод: ${escapeHtml(draft.pending.barcode)}</span></div><span class="status-chip">✓</span></div><div class="field full"><label>Количество</label><input id="wmsStockReceiptQuantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="${escapeHtml(draft.quantity || "1")}" autofocus></div><div class="button-row"><button type="button" class="small-button" data-wms-stock-receipt-action="add">Добавить в документ</button><button type="button" class="small-button secondary" data-wms-stock-receipt-action="cancel-pending">Отмена</button></div></div>` : ""}
         <div class="section-title"><b>Состав документа</b><span>${lines.length} поз. · ${escapeHtml(totalQuantity)} шт.</span></div>
         <div class="op-list">${lines.length ? lines.map((line, index) => `<div class="card report-row"><div><b>${escapeHtml(wmsProductLabel(line.productKey))}</b><span>Штрихкод: ${escapeHtml(line.barcode)}</span></div><div><span class="status-chip">${escapeHtml(line.quantity)} шт.</span><button type="button" class="link-button" data-wms-stock-receipt-remove="${index}">Удалить</button></div></div>`).join("") : itemEmpty("Отсканируйте первый товар.")}</div>
         <div class="card field-card"><div class="field full"><label>Комментарий к документу</label><textarea id="wmsStockReceiptComment" rows="2" maxlength="500" placeholder="Партия, причина или примечание">${escapeHtml(draft.comment || "")}</textarea></div><div class="button-row"><button type="button" class="small-button" data-wms-stock-receipt-action="post" ${draft.submitting || !lines.length ? "disabled" : ""}>${draft.submitting ? "Проводим…" : "Выполнить оприходование"}</button><button type="button" class="small-button secondary" data-wms-stock-receipt-action="clear" ${draft.submitting || !lines.length ? "disabled" : ""}>Очистить</button></div></div>
@@ -13043,17 +13139,21 @@ MINIAPP_HTML = """<!doctype html>
       const d = state.wmsDraft;
       const locationCode = (d.toLocation || "").replace(/^LOC:/i, "").trim();
       const productDetected = Boolean(d.productScanned && d.productName && d.productSize && d.productColor);
+      const manualProduct = d.manualSelected || null;
+      const receiveAvailable = manualProduct ? Number(manualProduct.receive_available || 0) : 0;
+      const manualLocations = (state.wmsData.locations || []).filter((location) => location.status === "active" && location.code !== "RECEIVE-01");
       mainButton.textContent = "Разместить";
       mainButton.disabled = false;
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Размещение готовой продукции</h2><p>Сначала ячейка, затем товар и количество. Разместить можно только фактический остаток из зоны приёмки.</p></div></div>
         ${renderWmsGuidedScanner("to_location", locationCode, productDetected, "Ячейка размещения")}
+        ${state.data && state.data.is_admin ? `<div class="card field-card"><div class="section-title"><b>Разместить без сканирования</b><span>только администратор</span></div><div class="field full"><label>Артикул или штрихкод</label><input id="wmsManualPutawayQuery" value="${escapeHtml(d.manualQuery || "")}" maxlength="128" placeholder="Введите артикул или ШК товара"></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-manual-lookup="putaway" ${d.manualLoading ? "disabled" : ""}>${d.manualLoading ? "Ищем…" : "Найти в приёмке"}</button></div>${renderWmsManualLookupResults("putaway", d.manualResults)}</div>` : ""}
         <div class="card field-card">
           <label>Данные размещения</label>
           <div class="form-grid">
-            <div class="field full"><label>Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="Сначала отсканируйте ячейку" readonly></div>
-            ${productDetected ? `<div class="field full"><label>Товар</label><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(wmsProductKey(d)))}</b><span>Штрихкод распознан</span></div><span class="status-chip">✓</span></div></div>` : ""}
-            ${productDetected ? `<div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>` : ""}
+            ${manualProduct && state.data && state.data.is_admin ? `<div class="field full"><label>Ячейка размещения</label><select id="wmsToLocation"><option value="">Выберите ячейку</option>${manualLocations.map((location) => `<option value="${escapeHtml(location.code)}" ${location.code === locationCode ? "selected" : ""}>${escapeHtml(location.code)}${location.name_ru ? ` · ${escapeHtml(location.name_ru)}` : ""}</option>`).join("")}</select></div>` : `<div class="field full"><label>Ячейка</label><input id="wmsToLocation" value="${escapeHtml(d.toLocation || "")}" placeholder="Сначала отсканируйте ячейку" readonly></div>`}
+            ${productDetected ? `<div class="field full"><label>Товар</label><div class="report-row"><div><b>${escapeHtml(wmsProductLabel(wmsProductKey(d)))}</b><span>${manualProduct ? `Подтверждён администратором · доступно в приёмке ${escapeHtml(receiveAvailable)} шт.` : "Штрихкод распознан"}</span></div><span class="status-chip">✓</span></div></div>` : ""}
+            ${productDetected ? `<div class="field full"><label>Количество</label><input id="wmsQuantity" type="number" inputmode="numeric" min="1" ${manualProduct ? `max="${escapeHtml(receiveAvailable)}"` : ""} step="1" value="${escapeHtml(d.quantity || "")}" placeholder="0"></div>` : ""}
           </div>
         </div>
         ${renderWmsLocationContents(locationCode)}
@@ -14987,6 +15087,9 @@ MINIAPP_HTML = """<!doctype html>
           if (nextView === "putaway") {
             state.wmsDraft.toLocation = "";
             state.wmsDraft.toLocationScanned = false;
+            state.wmsDraft.manualQuery = "";
+            state.wmsDraft.manualResults = [];
+            state.wmsDraft.manualSelected = null;
           }
           if (nextView === "pick") {
             state.wmsDraft.fromLocation = "";
@@ -15044,6 +15147,21 @@ MINIAPP_HTML = """<!doctype html>
             focusWmsHardwareScanner();
           }
         }
+        return;
+      }
+
+      const wmsManualLookup = event.target.closest("[data-wms-manual-lookup]");
+      if (wmsManualLookup) {
+        lookupWmsAdminProduct(wmsManualLookup.dataset.wmsManualLookup);
+        return;
+      }
+
+      const wmsManualConfirm = event.target.closest("[data-wms-manual-confirm]");
+      if (wmsManualConfirm) {
+        confirmWmsManualProduct(
+          wmsManualConfirm.dataset.wmsManualConfirm,
+          Number(wmsManualConfirm.dataset.wmsManualIndex || 0),
+        );
         return;
       }
 
@@ -15620,6 +15738,12 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("keydown", (event) => {
+      const manualWmsLookup = event.target.closest("#wmsManualReceiptQuery, #wmsManualPutawayQuery");
+      if (manualWmsLookup && event.key === "Enter") {
+        event.preventDefault();
+        lookupWmsAdminProduct(manualWmsLookup.id === "wmsManualPutawayQuery" ? "putaway" : "receipt");
+        return;
+      }
       const analyticsSearch = event.target.closest("#analyticsSearch, #analyticsSearchTop");
       if (analyticsSearch && event.key === "Enter") {
         event.preventDefault();
@@ -15752,6 +15876,11 @@ MINIAPP_HTML = """<!doctype html>
     });
 
     document.addEventListener("change", (event) => {
+      if (event.target.id === "wmsToLocation" && state.wmsDraft.manualSelected) {
+        state.wmsDraft.toLocation = event.target.value || "";
+        state.wmsDraft.toLocationScanned = Boolean(state.wmsDraft.toLocation);
+        return;
+      }
       if (event.target.matches("[data-formation-additional-size], [data-formation-additional-color], [data-formation-additional-quantity]")) {
         event.target.dispatchEvent(new Event("input", {bubbles: true}));
         render();
