@@ -2024,6 +2024,29 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM shifts WHERE employee_id = ?", (employee[0],)).fetchone()[0], 1)
         conn.close()
 
+    def test_production_control_rolls_back_failed_wms_read(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+
+        class FailedReadConnection:
+            def __init__(self):
+                self.rollback_calls = 0
+
+            def rollback(self):
+                self.rollback_calls += 1
+
+        pg_conn = FailedReadConnection()
+        today = self.database.local_today().isoformat()
+        with patch.object(miniapp_server, "get_pg_connection", return_value=pg_conn), patch.object(
+            miniapp_server.wms_repository,
+            "finished_production_receipts",
+            side_effect=RuntimeError("test read failure"),
+        ):
+            payload = miniapp_server.get_production_control_payload(today, today)
+
+        self.assertEqual(pg_conn.rollback_calls, 1)
+        self.assertIsNone(payload["fact"])
+        self.assertTrue(payload["warnings"])
+
     def test_miniapp_excel_export_contains_detailed_production_sheets(self):
         os.environ["ADMIN_IDS"] = "9001"
         miniapp_server = importlib.import_module("miniapp_server")

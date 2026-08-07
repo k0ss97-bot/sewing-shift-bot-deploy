@@ -4929,6 +4929,7 @@ def get_production_control_payload(start_date: str, end_date: str):
 
     receipt_warnings = []
     receipt_summary = None
+    pg_conn = None
     try:
         pg_conn = get_pg_connection()
         receipt_summary = wms_repository.finished_production_receipts(
@@ -4938,6 +4939,14 @@ def get_production_control_payload(start_date: str, end_date: str):
         )
         pg_conn.rollback()
     except Exception as exc:
+        if pg_conn is not None:
+            try:
+                # A failed read leaves psycopg2's cached connection in an
+                # aborted transaction.  Roll it back before the same request
+                # thread reuses it for another WMS query.
+                pg_conn.rollback()
+            except Exception:
+                LOGGER.warning("Failed to rollback unavailable WMS production fact connection")
         receipt_warnings.append(
             f"Журнал приёмки готовой продукции временно недоступен: {type(exc).__name__}."
         )
