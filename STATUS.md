@@ -30,7 +30,7 @@
 | G: аналитика | LOCAL PASS | UI-исправления протестированы, ещё не опубликованы |
 | Backup/restore | ISOLATED PASS | SQLite restore integrity=ok; PostgreSQL 11 миграций, 15 зон, 0 invalid balances; оба production backup timer active/enabled |
 | Monitoring | CODE/AUTO PASS | диск 80/90%, RAM, swap, OOM, services, backup, snapshots, outbox, PostgreSQL, reconciliation; новый код не опубликован |
-| Security review | IN PROGRESS | базовые защиты и CI dependency audit есть; live headers/SAST/threat model ещё не закрыты |
+| Security review | IN PROGRESS | базовые защиты и dependency audit PASS; локальный Bandit: 0 high, 76 medium, 22 low; CI high gate добавлен, live headers/threat model впереди |
 
 ## Выполнено в текущей стабилизации
 
