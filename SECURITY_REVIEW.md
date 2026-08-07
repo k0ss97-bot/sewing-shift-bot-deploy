@@ -16,7 +16,7 @@
 | Uploads | 15 MiB request cap; 10 MiB attachment; 2 MiB defect photo; image MIME allowlist | PASS CODE/TESTS |
 | Reverse proxy | forwarded headers used only when `TRUST_PROXY_HEADERS=1`; production startup requires HTTPS origin/secure cookie/debug off | PASS CODE; LIVE PENDING |
 | CSP | self-default, no object, hashed inline script/style blocks, no script attributes, upgrade insecure requests | PASS SMOKE; LIVE PENDING |
-| Dependencies | GitHub quality job runs `pip check` and pinned `pip-audit 2.10.1` on Python 3.11 | CONFIGURED; CURRENT CI RESULT PENDING |
+| Dependencies | GitHub quality job runs `pip check` and pinned `pip-audit 2.10.1` on Python 3.11; Actions use current Node 24-based major versions | PASS CI |
 | SAST | Bandit 1.8.6 full local scan: 0 high, 76 medium, 22 low; CI rejects every high-severity finding | PASS HIGH GATE; MEDIUM TRIAGE OPEN |
 | Secret rotation | environment-owned secrets, no value in Git/report; rotation requires restart/fingerprint reconciliation | PLAN PRESENT; LIVE PENDING |
 | Personal data | deletion blocked when production history exists; formal retention/anonymization policy absent | GAP |
