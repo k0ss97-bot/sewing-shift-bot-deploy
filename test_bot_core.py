@@ -1047,6 +1047,93 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(arbitrary_shift_quantity, 5)
         self.assertEqual(stock_quantity, 10)
 
+    def test_extra_finished_cut_keeps_original_plan_and_replay_creates_no_duplicate(self):
+        task = self.database.create_production_task(
+            "Кардиган детский",
+            ["116"],
+            ["Черный"],
+            None,
+        )
+        operations = self.database.get_active_operations(
+            "Раскройщик", "Кардиган детский", "Раскрой изделий"
+        )
+        operation_ids = {row[2]: row[0] for row in operations}
+        batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"],
+            "Кардиган детский",
+            1,
+            1,
+            operation_ids["Нанесение контуров лекал на ткань"],
+            {("116", "Черный"): 10},
+        )
+        self.assertTrue(self.database.add_cutting_layout(
+            batch_id,
+            1,
+            1,
+            operation_ids["Формирование настила"],
+            {"Черный": 5},
+        ))
+        self.assertTrue(self.database.update_cutting_batch_progress(
+            batch_id, 1, 1, operation_ids["Раскрой"], 100
+        ))
+        self.assertEqual(
+            self.database.get_cutting_batch_result_rows(batch_id),
+            [("116", "Черный", 50)],
+        )
+
+        formation_args = (
+            batch_id,
+            1,
+            1,
+            operation_ids["Формирование готового кроя"],
+            [{
+                "product_size": "116",
+                "product_color": "Черный",
+                "defect_quantity": 0,
+                "defect_comment": "",
+            }],
+        )
+        formation_kwargs = {
+            "additional_operations": [{
+                "product_size": "116",
+                "product_color": "Черный",
+                "quantity": 5,
+            }],
+            "arbitrary_operation_id": operation_ids["Произвольная операция"],
+        }
+        self.assertTrue(self.database.mark_cutting_batch_formed(*formation_args, **formation_kwargs))
+        self.assertFalse(self.database.mark_cutting_batch_formed(*formation_args, **formation_kwargs))
+
+        conn = sqlite3.connect(self.database.DB_NAME)
+        task_item = conn.execute(
+            """SELECT contour_quantity, formed_quantity
+                 FROM production_task_items
+                WHERE task_id = ? AND product_size = '116' AND product_color = 'Черный'""",
+            (task["id"],),
+        ).fetchone()
+        arbitrary_count, arbitrary_quantity = conn.execute(
+            """SELECT COUNT(*), COALESCE(SUM(quantity), 0)
+                 FROM cutting_batch_arbitrary_operations WHERE batch_id = ?""",
+            (batch_id,),
+        ).fetchone()
+        stock_quantity = conn.execute(
+            """SELECT quantity FROM warehouse_stock
+                WHERE item_type = 'semifinished' AND product_name = 'Кардиган детский'
+                  AND product_size = '116' AND product_color = 'Черный'
+                  AND stage_name = 'Раскроенные'"""
+        ).fetchone()[0]
+        movement_count = conn.execute(
+            """SELECT COUNT(*) FROM warehouse_stock_movements
+                WHERE source_type = 'cutting_batch' AND source_id = ?""",
+            (batch_id,),
+        ).fetchone()[0]
+        conn.close()
+
+        self.assertEqual(task_item, (10, 55))
+        self.assertEqual((arbitrary_count, arbitrary_quantity), (1, 5))
+        self.assertEqual(stock_quantity, 55)
+        self.assertEqual(movement_count, 1)
+
     def test_formation_creates_only_dublerin_before_dubling(self):
         task = self.database.create_production_task(
             "Жакет для девочек",
@@ -1841,21 +1928,29 @@ class IsolatedDatabaseTest(unittest.TestCase):
 
         payload = {
             "request_id": "partial-route-25-of-50",
-            "good_quantity": 24,
-            "defect_quantity": 1,
+            "good_quantity": 25,
+            "defect_quantity": 2,
             "defect_reason": "Повреждение фурнитуры",
             "defect_disposition": "Списать",
         }
         completed = miniapp_server.complete_route_task_for_telegram(9122, batch["id"], payload)
 
         self.assertTrue(completed["ok"], completed)
-        self.assertEqual(completed["remaining_quantity"], 25)
-        self.assertIn("Остаток 25 шт. возвращён в свободные задания", completed["message"])
+        self.assertEqual(completed["remaining_quantity"], 23)
+        self.assertIn("Остаток 23 шт. возвращён в свободные задания", completed["message"])
         completed_batch = self.database.get_route_batch_by_id(batch["id"])
         self.assertEqual(completed_batch["status"], "done")
-        self.assertEqual(completed_batch["quantity"], 25)
-        self.assertEqual(completed_batch["good_quantity"], 24)
-        self.assertEqual(completed_batch["defect_quantity"], 1)
+        self.assertEqual(completed_batch["quantity"], 27)
+        self.assertEqual(completed_batch["good_quantity"], 25)
+        self.assertEqual(completed_batch["defect_quantity"], 2)
+        self.assertEqual(
+            completed_batch["quantity"] + completed["remaining_quantity"],
+            50,
+        )
+
+        defect_rows = self.database.get_route_batch_defects(batch["id"])
+        self.assertEqual(len(defect_rows), 1)
+        self.assertEqual(defect_rows[0]["quantity"], 2)
 
         active_batches = self.database.get_active_route_batches()
         remainder_batches = [
@@ -1866,14 +1961,22 @@ class IsolatedDatabaseTest(unittest.TestCase):
         ]
         self.assertEqual(len(remainder_batches), 1)
         remainder = remainder_batches[0]
-        self.assertEqual(remainder["quantity"], 25)
+        self.assertEqual(remainder["quantity"], 23)
         self.assertEqual(remainder["work_state"], "free")
-        self.assertEqual(self.database.get_route_batch_inputs(remainder["id"])[0]["quantity"], 25)
+        self.assertEqual(self.database.get_route_batch_inputs(remainder["id"])[0]["quantity"], 23)
+
+        next_step_batches = [
+            row for row in active_batches
+            if row["route_step_index"] == step_index + 1
+            and row["parent_batch_id"] == batch["id"]
+        ]
+        self.assertEqual(len(next_step_batches), 1)
+        self.assertEqual(next_step_batches[0]["quantity"], 25)
 
         partially_consumed = self.database.get_warehouse_stock_by_id(stock["id"])
         self.assertEqual(
             (partially_consumed["quantity"], partially_consumed["reserved_quantity"]),
-            (25, 25),
+            (23, 23),
         )
 
         replayed = miniapp_server.complete_route_task_for_telegram(9122, batch["id"], payload)
@@ -1890,7 +1993,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(taken["ok"], taken)
         assigned_remainder = self.database.get_route_batch_by_id(remainder["id"])
         self.assertEqual(assigned_remainder["assigned_employee_id"], next_employee[0])
-        self.assertEqual(assigned_remainder["quantity"], 25)
+        self.assertEqual(assigned_remainder["quantity"], 23)
 
     def test_stock_shortage_alert_does_not_block_route_task(self):
         miniapp_server = importlib.import_module("miniapp_server")
