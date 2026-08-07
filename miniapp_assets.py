@@ -12012,6 +12012,11 @@ MINIAPP_HTML = """<!doctype html>
       return `${Number(value).toLocaleString("ru-RU", {maximumFractionDigits: 2})} ₽`;
     }
 
+    function marketplaceChartValue(value, unit = "money") {
+      if (unit === "units") return `${Number(value || 0).toLocaleString("ru-RU", {maximumFractionDigits: 0})} шт.`;
+      return marketplaceMoney(value);
+    }
+
     function marketplaceOrderAnalytics(orders, products) {
       const productIndex = new Map();
       (products || []).forEach((product) => {
@@ -12245,7 +12250,7 @@ MINIAPP_HTML = """<!doctype html>
       if (emptyNode) emptyNode.hidden = visible !== 0;
     }
 
-    function marketplaceLineChart(rows, primaryKey = "revenue", secondaryKey = "net") {
+    function marketplaceLineChart(rows, primaryKey = "revenue", secondaryKey = "net", primaryUnit = "money", secondaryUnit = primaryUnit) {
       const source = Array.isArray(rows) ? rows.filter(Boolean) : [];
       if (!source.length) return itemEmpty("За выбранный период данных нет.");
       const width = 720, height = 230, left = 48, right = 18, top = 18, bottom = 34;
@@ -12263,8 +12268,8 @@ MINIAPP_HTML = """<!doctype html>
       const areaPoints = source.length > 1 ? `${left},${y(0)} ${primaryPoints} ${x(source.length - 1)},${y(0)}` : "";
       const labelIndexes = [...new Set([0, Math.floor((source.length - 1) / 2), source.length - 1])];
       const valueLabel = (value) => { const number = Number(value || 0); const absolute = Math.abs(number); return absolute >= 1000000 ? `${(number / 1000000).toFixed(1)}м` : absolute >= 1000 ? `${Math.round(number / 1000)}к` : String(Math.round(number)); };
-      const pointEvents = 'tabindex="0" role="button" data-chart-tooltip';
-      return `<div class="marketplace-line-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Динамика показателей"><defs><linearGradient id="marketplaceChartArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4f83ff" stop-opacity=".28"/><stop offset="100%" stop-color="#4f83ff" stop-opacity="0"/></linearGradient></defs>${[0,.25,.5,.75,1].map((ratio) => { const gridY = top + chartHeight * ratio; const tickValue = maximum - valueRange * ratio; return `<line class="chart-grid" x1="${left}" y1="${gridY}" x2="${width-right}" y2="${gridY}"/><text class="chart-axis-label" x="${left-8}" y="${gridY+4}" text-anchor="end">${valueLabel(tickValue)}</text>`; }).join("")}${minimum < 0 && maximum > 0 ? `<line x1="${left}" y1="${y(0)}" x2="${width-right}" y2="${y(0)}" stroke="#7d8799" stroke-width="1.5"/>` : ""}${areaPoints ? `<polygon class="chart-area" points="${areaPoints}"/>` : ""}${source.length > 1 ? `<polyline class="chart-line-primary" points="${primaryPoints}"/>` : ""}${secondary.length ? `<polyline class="chart-line-secondary" points="${secondaryPoints}"/>` : ""}${primary.map((value,index) => { const pointLabel = `${source[index].date || "Дата не указана"} · ${marketplaceMoney(value)}`; return `<circle class="chart-point-primary" cx="${x(index)}" cy="${y(value)}" r="${source.length === 1 ? 6 : 3.6}"/><circle class="chart-point-hit" cx="${x(index)}" cy="${y(value)}" r="12" ${pointEvents} aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(source[index].date || "")}" data-chart-value="${escapeHtml(value)}"><title>${escapeHtml(pointLabel)}</title></circle>${source.length === 1 ? `<text class="chart-axis-label" x="${x(index)}" y="${Math.max(top + 16, y(value) - 14)}" text-anchor="middle">${escapeHtml(valueLabel(value))}</text>` : ""}`; }).join("")}${secondary.map((value,index) => { const pointLabel = `${source[index].date || "Дата не указана"} · ${marketplaceMoney(value)}`; return `<circle class="chart-point-secondary" cx="${x(index)}" cy="${y(value)}" r="3"/><circle class="chart-point-hit" cx="${x(index)}" cy="${y(value)}" r="10" ${pointEvents} aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(source[index].date || "")}" data-chart-value="${escapeHtml(value)}"><title>${escapeHtml(pointLabel)}</title></circle>`; }).join("")}${labelIndexes.map((index) => `<text class="chart-axis-label" x="${x(index)}" y="${height-9}" text-anchor="middle">${escapeHtml(String(source[index].date || "").slice(5))}</text>`).join("")}</svg><div class="marketplace-point-tooltip" hidden></div></div>`;
+      const pointEvents = (unit) => `tabindex="0" role="button" data-chart-tooltip data-chart-unit="${escapeHtml(unit)}"`;
+      return `<div class="marketplace-line-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Динамика показателей"><defs><linearGradient id="marketplaceChartArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4f83ff" stop-opacity=".28"/><stop offset="100%" stop-color="#4f83ff" stop-opacity="0"/></linearGradient></defs>${[0,.25,.5,.75,1].map((ratio) => { const gridY = top + chartHeight * ratio; const tickValue = maximum - valueRange * ratio; return `<line class="chart-grid" x1="${left}" y1="${gridY}" x2="${width-right}" y2="${gridY}"/><text class="chart-axis-label" x="${left-8}" y="${gridY+4}" text-anchor="end">${valueLabel(tickValue)}</text>`; }).join("")}${minimum < 0 && maximum > 0 ? `<line x1="${left}" y1="${y(0)}" x2="${width-right}" y2="${y(0)}" stroke="#7d8799" stroke-width="1.5"/>` : ""}${areaPoints ? `<polygon class="chart-area" points="${areaPoints}"/>` : ""}${source.length > 1 ? `<polyline class="chart-line-primary" points="${primaryPoints}"/>` : ""}${secondary.length ? `<polyline class="chart-line-secondary" points="${secondaryPoints}"/>` : ""}${primary.map((value,index) => { const pointLabel = `${source[index].date || "Дата не указана"} · ${marketplaceChartValue(value, primaryUnit)}`; return `<circle class="chart-point-primary" cx="${x(index)}" cy="${y(value)}" r="${source.length === 1 ? 6 : 3.6}"/><circle class="chart-point-hit" cx="${x(index)}" cy="${y(value)}" r="12" ${pointEvents(primaryUnit)} aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(source[index].date || "")}" data-chart-value="${escapeHtml(value)}"><title>${escapeHtml(pointLabel)}</title></circle>${source.length === 1 ? `<text class="chart-axis-label" x="${x(index)}" y="${Math.max(top + 16, y(value) - 14)}" text-anchor="middle">${escapeHtml(valueLabel(value))}</text>` : ""}`; }).join("")}${secondary.map((value,index) => { const pointLabel = `${source[index].date || "Дата не указана"} · ${marketplaceChartValue(value, secondaryUnit)}`; return `<circle class="chart-point-secondary" cx="${x(index)}" cy="${y(value)}" r="3"/><circle class="chart-point-hit" cx="${x(index)}" cy="${y(value)}" r="10" ${pointEvents(secondaryUnit)} aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(source[index].date || "")}" data-chart-value="${escapeHtml(value)}"><title>${escapeHtml(pointLabel)}</title></circle>`; }).join("")}${labelIndexes.map((index) => `<text class="chart-axis-label" x="${x(index)}" y="${height-9}" text-anchor="middle">${escapeHtml(String(source[index].date || "").slice(5))}</text>`).join("")}</svg><div class="marketplace-point-tooltip" hidden></div></div>`;
     }
 
     function marketplaceOrderLineChart(orders) {
@@ -12273,7 +12278,7 @@ MINIAPP_HTML = """<!doctype html>
         const date = String(row.shipment_date || row.updated_at || "").slice(0, 10);
         if (date) daily.set(date, (daily.get(date) || 0) + 1);
       });
-      return marketplaceLineChart([...daily.entries()].sort((a,b) => a[0].localeCompare(b[0])).map(([date,value]) => ({date,value})), "value", null);
+      return marketplaceLineChart([...daily.entries()].sort((a,b) => a[0].localeCompare(b[0])).map(([date,value]) => ({date,value})), "value", null, "units");
     }
 
     function showMarketplaceChartTooltip(point) {
@@ -12285,7 +12290,7 @@ MINIAPP_HTML = """<!doctype html>
       const rawDate = String(point.dataset.chartDate || "");
       const date = rawDate ? new Date(`${rawDate}T00:00:00`) : null;
       const dateLabel = date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString("ru-RU") : (rawDate || "Дата не указана");
-      tooltip.innerHTML = `<b>${escapeHtml(marketplaceMoney(Number(point.dataset.chartValue || 0)))}</b><span>${escapeHtml(dateLabel)}</span>`;
+      tooltip.innerHTML = `<b>${escapeHtml(marketplaceChartValue(Number(point.dataset.chartValue || 0), point.dataset.chartUnit || "money"))}</b><span>${escapeHtml(dateLabel)}</span>`;
       tooltip.style.left = `${pointRect.left - chartRect.left + pointRect.width / 2}px`;
       tooltip.style.top = `${pointRect.top - chartRect.top + pointRect.height / 2}px`;
       tooltip.hidden = false;
@@ -12421,7 +12426,7 @@ MINIAPP_HTML = """<!doctype html>
         const productChart = !selectedProductHistoryUsable
           ? `<div class="marketplace-chart-empty"><b>История товара недоступна</b><span>${escapeHtml(providerLabel)} пока не предоставляет подтверждённую историю заказов, продаж, возвратов и начислений по этой карточке.</span></div>`
           : periodHistory.length
-          ? `${marketplaceLineChart(periodHistory, "units", "orders")}<div class="marketplace-chart-legend"><span><i></i>Продано, шт.</span><span><i class="secondary"></i>Заказы</span></div>`
+          ? `${marketplaceLineChart(periodHistory, "units", "orders", "units", "units")}<div class="marketplace-chart-legend"><span><i></i>Продано, шт.</span><span><i class="secondary"></i>Заказы</span></div>`
           : `<div class="marketplace-chart-empty"><b>За выбранный период операций нет</b><span>Источник истории доступен и подтвердил пустой период.</span></div>`;
         return `
           <div class="marketplace-detail-head"><div>${marketplaceBackButton("К группе")}</div><div class="marketplace-product-heading">${marketplaceProductAvatar(product, false, true)}<span><h3>${escapeHtml(product.name || product.offer_id || product.sku || "Товар")}</h3><p>${escapeHtml(product.group_name || "Товар маркетплейса")}</p></span></div></div>
@@ -13774,7 +13779,7 @@ MINIAPP_HTML = """<!doctype html>
         const points = item.rows.filter((row) => row.date && dates.includes(row.date)).map((row) => `${x(row.date).toFixed(1)},${y(row.value).toFixed(1)}`).join(" ");
         const dash = ["partial", "stale"].includes(item.status) ? ` stroke-dasharray="7 5"` : "";
         const line = item.rows.length > 1 ? `<polyline fill="none" stroke="${item.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"${dash} points="${points}"/>` : "";
-        const dots = item.rows.filter((row) => row.date && dates.includes(row.date)).map((row) => { const pointValue = item.unit === "units" ? `${Number(row.value || 0).toLocaleString("ru-RU")} шт.` : marketplaceMoney(row.value); const pointLabel = `${item.label} · ${row.date} · ${pointValue}`; return `<circle cx="${x(row.date)}" cy="${y(row.value)}" r="4" fill="${item.color}"/><circle class="chart-point-hit" cx="${x(row.date)}" cy="${y(row.value)}" r="13" tabindex="0" role="button" aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(row.date)}" data-chart-value="${escapeHtml(row.value)}" data-chart-tooltip><title>${escapeHtml(pointLabel)}</title></circle>`; }).join("");
+        const dots = item.rows.filter((row) => row.date && dates.includes(row.date)).map((row) => { const pointValue = marketplaceChartValue(row.value, item.unit); const pointLabel = `${item.label} · ${row.date} · ${pointValue}`; return `<circle cx="${x(row.date)}" cy="${y(row.value)}" r="4" fill="${item.color}"/><circle class="chart-point-hit" cx="${x(row.date)}" cy="${y(row.value)}" r="13" tabindex="0" role="button" aria-label="${escapeHtml(pointLabel)}" data-chart-date="${escapeHtml(row.date)}" data-chart-value="${escapeHtml(row.value)}" data-chart-unit="${escapeHtml(item.unit)}" data-chart-tooltip><title>${escapeHtml(pointLabel)}</title></circle>`; }).join("");
         return line + dots;
       }).join("");
       return `<div class="marketplace-line-chart analytics-combined-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Коммерческая динамика Ozon и Wildberries">${[0,.25,.5,.75,1].map((ratio) => { const gridY = top + chartHeight * ratio; const tickValue = maximum - valueRange * ratio; return `<line class="chart-grid" x1="${left}" y1="${gridY}" x2="${width-right}" y2="${gridY}"/><text class="chart-axis-label" x="${left-8}" y="${gridY+4}" text-anchor="end">${compact(tickValue)}</text>`; }).join("")}${minimum < 0 && maximum > 0 ? `<line x1="${left}" y1="${y(0)}" x2="${width-right}" y2="${y(0)}" stroke="#7d8799" stroke-width="1.5"/>` : ""}${svgSeries}${labels.map((index) => `<text class="chart-axis-label" x="${x(dates[index])}" y="${height-9}" text-anchor="middle">${escapeHtml(dates[index].slice(5))}</text>`).join("")}</svg><div class="marketplace-point-tooltip" hidden></div></div><div class="analytics-chart-legend">${series.map((item) => `<span><i style="--legend-color:${item.color}"></i>${escapeHtml(item.label)}</span>`).join("")}</div>`;
@@ -14039,7 +14044,7 @@ MINIAPP_HTML = """<!doctype html>
         const key = provider.marketplace === "wildberries" ? "wildberries" : "ozon";
         const field = `${key}_${dimension}`;
         const rows = salesSeries.filter((row) => row[field] !== null && row[field] !== undefined).map((row) => ({date: row.date, value: Number(row[field])}));
-        return {key, label: provider.label || key, status: provider.status || "unknown", commercialAvailable: rows.length > 0, commercialLabel: dimension === "units" ? "продано, шт." : "сумма заказов, ₽", commercialRows: rows};
+        return {key, label: provider.label || key, status: provider.status || "unknown", commercialAvailable: rows.length > 0, commercialLabel: dimension === "units" ? "продано, шт." : "сумма заказов, ₽", commercialRows: rows, unit: dimension === "units" ? "units" : "money"};
       });
       const nav = pages.map(([id, icon, label]) => `<button type="button" class="${page === id ? "active" : ""}" data-ac-page="${id}"><i>${icon}</i><span>${label}</span></button>`).join("");
       const marketplaceSwitch = `<div class="ac-market-switch" aria-label="Источник аналитики"><button data-ac-provider="all" class="${marketplace === "all" ? "active all" : ""}">Все</button><button data-ac-provider="ozon" class="${marketplace === "ozon" ? "active ozon" : ""}">Ozon</button><button data-ac-provider="wildberries" class="${marketplace === "wildberries" ? "active wb" : ""}">WB</button><button data-ac-provider="production" class="${marketplace === "production" ? "active production" : ""}">Производство</button></div>`;

@@ -55,6 +55,13 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('Принято в RECEIVE', MINIAPP_HTML)
         self.assertIn('Полуфабрикаты в план и факт не входят.', MINIAPP_HTML)
 
+    def test_chart_tooltips_keep_units_separate_from_money(self):
+        self.assertIn('function marketplaceChartValue(value, unit = "money")', MINIAPP_HTML)
+        self.assertIn('point.dataset.chartUnit || "money"', MINIAPP_HTML)
+        self.assertIn('data-chart-unit="${escapeHtml(item.unit)}"', MINIAPP_HTML)
+        self.assertIn('unit: dimension === "units" ? "units" : "money"', MINIAPP_HTML)
+        self.assertIn('marketplaceLineChart(periodHistory, "units", "orders", "units", "units")', MINIAPP_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()
