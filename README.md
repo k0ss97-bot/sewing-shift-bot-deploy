@@ -64,6 +64,7 @@ Runner отвергает URL, если имя базы не содержит `t
 - `RELEASE_NOTES.md`, `DEPLOYMENT.md`, `ROLLBACK.md` — release gate, выкладка и откат.
 - `BACKUP_RESTORE.md` — backup/restore SQLite и PostgreSQL.
 - `SECURITY_REVIEW.md` — защитные механизмы, риски и release gate.
+- `THREAT_MODEL.md` — активы, границы доверия, угрозы, контроли и решения владельца.
 - `CATALOG_AUDIT.md` — правила аудита Ozon/WB ↔ производство.
 - `E2E_ACCEPTANCE_REPORT.md` и `evidence/` — матрица приёмки и протоколы A–G.
 

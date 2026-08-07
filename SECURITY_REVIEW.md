@@ -19,6 +19,7 @@
 | Dependencies | GitHub quality job runs `pip check` and pinned `pip-audit 2.10.1` on Python 3.11; Actions use current Node 24-based major versions | PASS CI |
 | SAST | Bandit 1.8.6 full local scan: 0 high, 76 medium, 22 low; CI run `31168318311` rejects every high-severity finding | PASS HIGH GATE; MEDIUM TRIAGE OPEN |
 | Secret rotation | environment-owned secrets, no value in Git/report; rotation requires restart/fingerprint reconciliation | PLAN PRESENT; LIVE PENDING |
+| Threat model | assets, trust boundaries, threats, controls and residual risks documented in `THREAT_MODEL.md` | PASS DOC; OWNER DECISIONS OPEN |
 | Personal data | deletion blocked when production history exists; formal retention/anonymization policy absent | GAP |
 
 ## Открытые риски
@@ -33,5 +34,5 @@
 
 - Medium Bandit findings вести отдельным пофайловым triage.
 - В авторизованной сессии проверить фактический cookie name/flags и CSRF rejection; CSP и Origin rejection уже PASS live.
-- Зафиксировать threat model для Telegram account takeover, stolen cookie, admin escalation, upload abuse и reverse-proxy spoofing.
+- Принять owner decisions из `THREAT_MODEL.md`.
 - Утвердить secret rotation и personal-data retention/anonymization policy.
