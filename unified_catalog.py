@@ -60,6 +60,17 @@ def _variant(row: dict[str, Any]) -> tuple[str, str, str]:
 
 
 def _canonical_key(row: dict[str, Any]) -> str:
+    if _normal(row.get("source_type")) == "ozon":
+        # Ozon may legitimately contain several cards with the same seller
+        # article, barcode or visible variant.  They are distinct provider
+        # products and must never overwrite one another in the internal
+        # registry.  The first source identity component is the stable Ozon
+        # product id assembled by ``_marketplace_sources``.
+        external_id = _text(row.get("source_external_id")).split("|", 1)[0]
+        provider_key = _article_key(external_id)
+        article_key = _article_key(row.get("article"))
+        if provider_key:
+            return f"ozon:{provider_key}:{article_key}"
     article = _article_key(row.get("article"))
     if article:
         return f"article:{article}"
@@ -92,19 +103,27 @@ def merge_catalog_sources(sources: Iterable[dict[str, Any]]) -> list[dict[str, A
         source_article = _article_key(source["article"])
         source_variant = _variant(source)
 
-        match = None
-        if source_article:
-            match = next((row for row in masters if row["article_key"] == source_article), None)
-        if match is None and source_barcodes:
-            match = next((row for row in masters if source_barcodes.intersection(row["barcode_set"])), None)
-        if match is None and all(source_variant):
-            match = next((row for row in masters if row["variant_key"] == source_variant), None)
         source_canonical_key = _canonical_key(source)
-        if match is None:
+        match = None
+        if source_type == "ozon":
+            # Never collapse one Ozon product into another merely because the
+            # seller reused an article/barcode or the visible variant matches.
             match = next(
                 (row for row in masters if row["canonical_key"] == source_canonical_key),
                 None,
             )
+        else:
+            if source_article:
+                match = next((row for row in masters if row["article_key"] == source_article), None)
+            if match is None and source_barcodes:
+                match = next((row for row in masters if source_barcodes.intersection(row["barcode_set"])), None)
+            if match is None and all(source_variant):
+                match = next((row for row in masters if row["variant_key"] == source_variant), None)
+            if match is None:
+                match = next(
+                    (row for row in masters if row["canonical_key"] == source_canonical_key),
+                    None,
+                )
 
         reference = {
             "source_type": source_type,

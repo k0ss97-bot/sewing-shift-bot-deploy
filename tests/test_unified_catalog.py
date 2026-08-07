@@ -134,9 +134,9 @@ class UnifiedCatalogTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertNotIn("quantity", rows[0])
-        self.assertEqual(rows[0]["canonical_key"], "article:new104")
+        self.assertEqual(rows[0]["canonical_key"], "ozon:new1:new104")
 
-    def test_incomplete_sources_with_same_canonical_key_do_not_overwrite_priority(self):
+    def test_incomplete_ozon_and_wb_sources_remain_separate_without_identity(self):
         rows = merge_catalog_sources([
             {
                 "source_type": "ozon", "source_external_id": "ozon-incomplete",
@@ -148,9 +148,34 @@ class UnifiedCatalogTests(unittest.TestCase):
             },
         ])
 
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["authoritative_source"], "ozon")
-        self.assertEqual(len(rows[0]["sources"]), 2)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({row["authoritative_source"] for row in rows}, {"ozon", "wildberries"})
+        self.assertEqual([len(row["sources"]) for row in rows], [1, 1])
+
+    def test_distinct_ozon_cards_never_merge_by_article_barcode_or_variant(self):
+        rows = merge_catalog_sources([
+            {
+                "source_type": "ozon", "source_external_id": "100|SET/98|9001|98|4601",
+                "article": "SET/98", "sku": "9001", "barcode": "4601",
+                "name": "Комплект", "size": "98", "color": "Темно-синий, капучино",
+            },
+            {
+                "source_type": "ozon", "source_external_id": "200|SET/98|9002|98|4601",
+                "article": "SET/98", "sku": "9002", "barcode": "4601",
+                "name": "Комплект", "size": "98", "color": "Темно-синий, капучино",
+            },
+            {
+                "source_type": "ozon", "source_external_id": "300|SET-NEW/98|9003|98|4603",
+                "article": "SET-NEW/98", "sku": "9003", "barcode": "4603",
+                "name": "Комплект", "size": "98", "color": "Темно-синий, капучино",
+            },
+        ])
+
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({row["sku"] for row in rows}, {"9001", "9002", "9003"})
+        self.assertEqual({row["canonical_key"] for row in rows}, {
+            "ozon:100:set98", "ozon:200:set98", "ozon:300:setnew98",
+        })
 
 
 if __name__ == "__main__":
