@@ -34,6 +34,7 @@ SYNC_CADENCE_SECONDS = {
 }
 
 OZON_COLOR_ATTRIBUTE_IDS = {10096}
+OZON_DISPLAY_COLOR_ATTRIBUTE_IDS = {10097}
 OZON_SIZE_ATTRIBUTE_IDS = {4295, 9533, 4508}
 
 
@@ -203,6 +204,33 @@ def _attribute_value(attributes: Any, identifiers: set[int]) -> str:
     return ""
 
 
+def _attribute_values(attributes: Any, identifiers: set[int]) -> list[str]:
+    """Return all distinct provider values in their original order."""
+
+    result: list[str] = []
+    for attribute in attributes if isinstance(attributes, list) else []:
+        if not isinstance(attribute, dict):
+            continue
+        try:
+            attribute_id = int(attribute.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if attribute_id not in identifiers:
+            continue
+        for value in attribute.get("values") or []:
+            candidate = _text(value.get("value")) if isinstance(value, dict) else ""
+            if candidate and candidate not in result:
+                result.append(candidate)
+    return result
+
+
+def _ozon_color_value(attributes: Any) -> str:
+    displayed = _attribute_value(attributes, OZON_DISPLAY_COLOR_ATTRIBUTE_IDS)
+    if displayed:
+        return displayed
+    return ", ".join(_attribute_values(attributes, OZON_COLOR_ATTRIBUTE_IDS))
+
+
 def _product_image(row: dict[str, Any]) -> str:
     for field in ("primary_image", "images", "color_image", "images360"):
         value = row.get(field)
@@ -338,7 +366,7 @@ def normalize_product(row: dict[str, Any]) -> dict[str, Any] | None:
         "name": _text(row.get("name") or row.get("title") or offer_id or sku),
         "size": _text(row.get("size")) or _attribute_value(attributes, OZON_SIZE_ATTRIBUTE_IDS)
         or _nested_text(row, ("Размер", "размер")),
-        "color": _text(row.get("color")) or _attribute_value(attributes, OZON_COLOR_ATTRIBUTE_IDS)
+        "color": _text(row.get("color")) or _ozon_color_value(attributes)
         or _nested_text(row, ("Цвет", "цвет")),
         "image_url": _product_image(row),
         "barcodes": barcodes,

@@ -214,17 +214,18 @@ class MarketplacePostgresReadModelTest(unittest.TestCase):
             "barcodes": ["460000000001", "460000000002"],
             "attributes": [
                 {"id": 4295, "values": [{"value": "122"}]},
-                {"id": 10096, "values": [{"value": "Темно-синий"}]},
+                {"id": 10096, "values": [{"value": "темно-синий"}, {"value": "капучино"}]},
+                {"id": 10097, "values": [{"value": "Темно-синий, капучино"}]},
             ],
         })
 
         self.assertIsNotNone(product)
         self.assertEqual(product["size"], "122")
-        self.assertEqual(product["color"], "Темно-синий")
+        self.assertEqual(product["color"], "Темно-синий, капучино")
         self.assertEqual(product["image_url"], "https://cdn1.ozone.ru/product.jpg")
         self.assertEqual(product["barcode"], "460000000001")
         self.assertEqual(product["barcodes"], ["460000000001", "460000000002"])
-        self.assertEqual(len(product["attributes"]["attributes"]), 2)
+        self.assertEqual(len(product["attributes"]["attributes"]), 3)
 
     def test_order_normalization_keeps_posting_and_lines(self):
         order = normalize_order({

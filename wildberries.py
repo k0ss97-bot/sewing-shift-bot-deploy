@@ -871,7 +871,15 @@ def _flatten_cards(cards: list[dict]) -> list[dict]:
         for characteristic in characteristics:
             if "цвет" in _text(characteristic.get("name")).lower():
                 value = characteristic.get("value")
-                color = _text(value[0] if isinstance(value, list) and value else value)
+                if isinstance(value, list):
+                    colors = []
+                    for item in value:
+                        candidate = _text(item)
+                        if candidate and candidate not in colors:
+                            colors.append(candidate)
+                    color = ", ".join(colors)
+                else:
+                    color = _text(value)
                 break
         sizes = card.get("sizes") if isinstance(card.get("sizes"), list) else []
         if not sizes:

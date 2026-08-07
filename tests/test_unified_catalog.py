@@ -60,7 +60,7 @@ class UnifiedCatalogTests(unittest.TestCase):
             products = lookup_products("4600000000210")
         self.assertEqual(products[0]["barcode"], "4600000000210")
 
-    def test_ozon_wins_conflicting_fields_and_wb_fills_missing_barcode(self):
+    def test_ozon_wins_conflicting_fields_and_wb_cannot_fill_canonical_barcode(self):
         rows = merge_catalog_sources([
             {
                 "source_type": "wildberries", "source_external_id": "wb-10",
@@ -81,9 +81,31 @@ class UnifiedCatalogTests(unittest.TestCase):
         self.assertEqual(rows[0]["authoritative_source"], "ozon")
         self.assertEqual(rows[0]["name"], "Костюм трикотажный детский")
         self.assertEqual(rows[0]["color"], "бежевый")
-        self.assertEqual(rows[0]["barcodes"], ["4600000000001"])
-        self.assertEqual(rows[0]["validation_status"], "canonicalized")
+        self.assertEqual(rows[0]["barcodes"], [])
+        self.assertEqual(rows[0]["validation_status"], "incomplete")
         self.assertEqual({source["source_type"] for source in rows[0]["sources"]}, {"ozon", "wildberries"})
+        wb_source = next(source for source in rows[0]["sources"] if source["source_type"] == "wildberries")
+        self.assertEqual(wb_source["barcode"], "4600000000001")
+
+    def test_ozon_multicolour_value_is_unchanged_by_internal_sources(self):
+        rows = merge_catalog_sources([
+            {
+                "source_type": "ozon", "source_external_id": "ozon-set-98",
+                "article": "ДДШВН-3/98", "barcode": "2044617088646",
+                "name": "Брюки джоггеры детские. Комплект 2 штуки",
+                "size": "98", "color": "Темно-синий, капучино",
+            },
+            {
+                "source_type": "production", "source_external_id": "production-set-98",
+                "name": "Брюки-джоггеры", "size": "98", "color": "Темно-синий",
+            },
+        ])
+
+        ozon = next(row for row in rows if row["article"] == "ДДШВН-3/98")
+        self.assertEqual(ozon["name"], "Брюки джоггеры детские. Комплект 2 штуки")
+        self.assertEqual(ozon["size"], "98")
+        self.assertEqual(ozon["color"], "Темно-синий, капучино")
+        self.assertEqual(ozon["barcodes"], ["2044617088646"])
 
     def test_shared_barcode_merges_different_articles(self):
         rows = merge_catalog_sources([

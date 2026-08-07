@@ -140,7 +140,13 @@ def merge_catalog_sources(sources: Iterable[dict[str, Any]]) -> list[dict[str, A
             masters.append(match)
             continue
 
-        match["barcode_set"].update(source_barcodes)
+        same_authority = source_type == match["authoritative_source"]
+        # Canonical identity is an exact snapshot of the highest-priority
+        # source.  Lower-priority marketplace/production/WMS records remain
+        # searchable through ``product_master_sources`` but may never fill or
+        # rewrite an Ozon field, including its barcode set.
+        if same_authority:
+            match["barcode_set"].update(source_barcodes)
         match["sources"].append(reference)
         for field in ("article", "sku", "name", "size", "color"):
             source_value = source[field]
@@ -151,15 +157,18 @@ def merge_catalog_sources(sources: Iterable[dict[str, Any]]) -> list[dict[str, A
                     "authoritative_value": match[field],
                     "source_value": source_value,
                 })
-        # Lower-priority systems may only fill missing authoritative fields.
-        for field in ("article", "sku", "name", "size", "color"):
-            if not match[field] and source[field]:
-                match[field] = source[field]
+        # Additional rows from the same authoritative source may complete a
+        # sparse page.  Lower-priority systems cannot modify canonical fields.
+        if same_authority:
+            for field in ("article", "sku", "name", "size", "color"):
+                if not match[field] and source[field]:
+                    match[field] = source[field]
         for field in ("production_product_name", "production_size", "production_color"):
             if not match[field] and _text(source.get(field)):
                 match[field] = _text(source.get(field))
         match["route_configured"] = bool(match["route_configured"] or source.get("route_configured"))
-        match["is_active"] = bool(match["is_active"] or source.get("is_active", True))
+        if same_authority:
+            match["is_active"] = bool(match["is_active"] or source.get("is_active", True))
 
     for master in masters:
         master["barcodes"] = sorted(master.pop("barcode_set"))

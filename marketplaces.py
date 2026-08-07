@@ -1467,6 +1467,7 @@ def _find_nested_text(value, keys: tuple[str, ...]) -> str:
 # IDs here rather than parsing an article like ``БДШВ-1/104``: the catalogue is
 # the source of truth and an article is not guaranteed to contain a size.
 OZON_COLOR_ATTRIBUTE_IDS = {10096}
+OZON_DISPLAY_COLOR_ATTRIBUTE_IDS = {10097}
 OZON_SIZE_ATTRIBUTE_IDS = (4295, 9533, 4508)
 
 
@@ -1483,6 +1484,35 @@ def _attribute_value(row: dict, attribute_ids: set[int] | tuple[int, ...]) -> st
             if isinstance(value, dict) and _text(value.get("value")):
                 return _text(value["value"])
     return ""
+
+
+def _attribute_values(row: dict, attribute_ids: set[int] | tuple[int, ...]) -> list[str]:
+    """Return every distinct provider value without changing its spelling."""
+
+    wanted = set(attribute_ids)
+    result: list[str] = []
+    for attribute in row.get("attributes") or []:
+        if not isinstance(attribute, dict) or _int(attribute.get("id"), -1) not in wanted:
+            continue
+        for value in attribute.get("values") or []:
+            candidate = _text(value.get("value")) if isinstance(value, dict) else ""
+            if candidate and candidate not in result:
+                result.append(candidate)
+    return result
+
+
+def _ozon_color_value(row: dict) -> str:
+    """Use Ozon's displayed colour name, falling back to all dictionary colours.
+
+    Attribute 10097 is the seller-visible colour label (for example
+    ``Темно-синий, капучино``).  Attribute 10096 may contain several dictionary
+    values; keeping only the first one corrupts multi-colour sets.
+    """
+
+    displayed = _attribute_value(row, OZON_DISPLAY_COLOR_ATTRIBUTE_IDS)
+    if displayed:
+        return displayed
+    return ", ".join(_attribute_values(row, OZON_COLOR_ATTRIBUTE_IDS))
 
 
 def _enrich_catalog_products(products: list[dict], details: list[dict], attributes: list[dict]) -> list[dict]:
@@ -1504,7 +1534,7 @@ def _enrich_catalog_products(products: list[dict], details: list[dict], attribut
         if not row.get("barcode"):
             row["barcode"] = _text(detail.get("barcode") or (detail_barcodes[0] if detail_barcodes else "") or attribute_row.get("barcode") or (attribute_barcodes[0] if attribute_barcodes else ""))
         if not row.get("color"):
-            row["color"] = _attribute_value(attribute_row, OZON_COLOR_ATTRIBUTE_IDS)
+            row["color"] = _ozon_color_value(attribute_row)
         if not row.get("size"):
             row["size"] = _attribute_value(attribute_row, OZON_SIZE_ATTRIBUTE_IDS)
         enriched.append(row)

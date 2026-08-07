@@ -33,6 +33,43 @@ class FakeOzonClient:
 
 
 class MarketplaceTests(unittest.TestCase):
+    def test_ozon_catalog_keeps_displayed_multicolour_value(self):
+        rows = marketplaces._enrich_catalog_products(
+            [{"id": "2097324075", "offer_id": "ДДШВН-3/98", "name": "Брюки джоггеры детские. Комплект 2 штуки"}],
+            [{"id": "2097324075", "barcodes": ["2044617088646"]}],
+            [{
+                "id": "2097324075",
+                "attributes": [
+                    {"id": 4295, "values": [{"value": "98"}]},
+                    {"id": 10096, "values": [
+                        {"value": "темно-синий"},
+                        {"value": "капучино"},
+                        {"value": "кремовый капучино"},
+                    ]},
+                    {"id": 10097, "values": [{"value": "Темно-синий, капучино"}]},
+                ],
+            }],
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["barcode"], "2044617088646")
+        self.assertEqual(rows[0]["size"], "98")
+        self.assertEqual(rows[0]["color"], "Темно-синий, капучино")
+
+    def test_ozon_catalog_fallback_keeps_all_dictionary_colours(self):
+        rows = marketplaces._enrich_catalog_products(
+            [{"id": "1", "offer_id": "SET/98", "name": "Комплект"}],
+            [],
+            [{
+                "id": "1",
+                "attributes": [{"id": 10096, "values": [
+                    {"value": "темно-синий"}, {"value": "капучино"},
+                ]}],
+            }],
+        )
+
+        self.assertEqual(rows[0]["color"], "темно-синий, капучино")
+
     def test_only_actionable_ozon_supplies_are_working_rows(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "bot.db")

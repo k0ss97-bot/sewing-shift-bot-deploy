@@ -10,6 +10,7 @@ from urllib.error import HTTPError
 from wildberries import (
     WildberriesAPIError,
     WildberriesClient,
+    _flatten_cards,
     _now,
     _persisted_retry_remaining,
     _save_capabilities,
@@ -118,6 +119,20 @@ class WildberriesClientTests(unittest.TestCase):
         self.assertEqual([call[1] for call in calls[1:]], [{"chrtIds": [111, 222]}, {"chrtIds": [111, 222]}])
         self.assertEqual([row["warehouseId"] for row in rows], [10, 20])
         self.assertEqual([row["warehouseName"] for row in rows], ["Склад 10", "Склад 20"])
+
+    def test_catalog_keeps_every_colour_of_a_set(self):
+        rows = _flatten_cards([{
+            "nmID": 453204294,
+            "vendorCode": "ДДШВН-3",
+            "title": "Штаны для мальчика спортивные Комплект 2 штуки",
+            "characteristics": [{"name": "Цвет", "value": ["темно-синий", "капучино"]}],
+            "sizes": [{"chrtID": 639545990, "techSize": "98", "skus": ["2044617088646"]}],
+        }])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["color"], "темно-синий, капучино")
+        self.assertEqual(rows[0]["size"], "98")
+        self.assertEqual(rows[0]["barcode"], "2044617088646")
 
     def test_persisted_rate_limit_is_scoped_to_one_capability(self):
         connection = sqlite3.connect(":memory:")
