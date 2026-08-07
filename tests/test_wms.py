@@ -840,7 +840,8 @@ class WmsDbTests(unittest.TestCase):
     def test_seed_zones_present(self):
         with self.conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM wms_zones")
-        self.assertGreaterEqual(cur.fetchone()[0], 11)
+            zone_count = cur.fetchone()[0]
+        self.assertGreaterEqual(zone_count, 11)
 
     def test_bulk_writeoff_zeros_goods_releases_reserve_and_is_idempotent(self):
         from wms import operations as ops
