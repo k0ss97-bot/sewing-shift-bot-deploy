@@ -1,24 +1,25 @@
 # E2E ACCEPTANCE REPORT
 
 **Дата:** 2026-08-07  
-**Кандидат:** `fc7328c` + последующие documentation commits  
-**Опубликовано:** нет  
+**Кандидат:** `e7c48ca6f6447f38d5bdb1fdeb759853d2d0819e`
+
+**Опубликовано:** `/opt/sewing-web/releases/codex-e7c48ca-20260807T100615Z`
 **Живая приёмка:** не завершена
 
 | Контур | Код | Тесты | Опубликовано | Живая приёмка | Итог |
 |---|---|---|---|---|---|
-| Сотрудники и auth | Есть | PASS | Нет | Нет | IN PROGRESS |
-| Смены и операции | Есть | PASS | Нет | Нет | IN PROGRESS |
-| Производственные задания | Есть | PASS | Нет | Нет | IN PROGRESS |
-| Раскрой | Есть | PASS | Нет | Нет | IN PROGRESS |
-| Упаковка → WMS | Есть | PASS | Нет | Нет | IN PROGRESS |
-| WMS | Есть | PASS | Нет | Нет/TSD | IN PROGRESS |
-| Ozon | Есть | PASS contract | Базовая версия | Нет | IN PROGRESS |
+| Сотрудники и auth | Есть | PASS | Да | invalid Origin 403; unauth mutation 401; signed-in flow pending | IN PROGRESS |
+| Смены и операции | Есть | PASS | Да | Нет | IN PROGRESS |
+| Производственные задания | Есть | PASS | Да | Нет | IN PROGRESS |
+| Раскрой | Есть | PASS | Да | Нет | IN PROGRESS |
+| Упаковка → WMS | Есть | PASS | Да | reconciliation success; business event pending | IN PROGRESS |
+| WMS | Есть | PASS | Да | Нет/TSD | IN PROGRESS |
+| Ozon | Есть | PASS contract | Да | marketplace sync success, health/supplies ready; cabinet reconciliation pending | IN PROGRESS |
 | Wildberries | Есть | PASS contract | Базовая версия | HTTP 403 без secret | BLOCKED EXTERNAL |
-| Единый каталог | Есть | PASS | Базовая версия | Нет | IN PROGRESS |
-| Аналитика | Есть | PASS local | Нет | Нет | IN PROGRESS |
-| Backup и monitoring | Есть | PASS | Нет | Isolated restore PASS; production backup timers active/enabled | IN PROGRESS |
-| Security | Есть | PASS auth tests | Базовая версия | Live headers pending | IN PROGRESS |
+| Единый каталог | Есть | PASS | Да | Нет | IN PROGRESS |
+| Аналитика | Есть | PASS | Да | Нет | IN PROGRESS |
+| Backup и monitoring | Есть | PASS | Да | forced backups success; timers/one-shots success | PASS |
+| Security | Есть | PASS auth/SAST | Да | CSP/HSTS/origin/auth boundary PASS; signed session pending | IN PROGRESS |
 
 ## Автоматическое доказательство
 
@@ -37,4 +38,4 @@ duplicate_aliases_ignored=6
 
 ## Решение о релизе
 
-**NO-GO на текущем этапе.** Причина — код ещё не опубликован, а A–G, TSD и post-deploy бизнес-smoke не имеют живого протокола. Изолированный restore SQLite/PostgreSQL принят, production backup timers active/enabled, но это не подменяет проверку свежести production-артефактов после публикации.
+**NO-GO для отметки «принято на 100%».** Релиз опубликован и технический post-deploy smoke PASS, но A–G и физический TSD не имеют авторизованного живого протокола. Это отдельный приёмочный гейт, который нельзя заменить health-check или автотестами.

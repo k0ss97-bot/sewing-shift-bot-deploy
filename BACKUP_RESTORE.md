@@ -30,4 +30,10 @@
 - `sewing-wms-backup.timer`: active/enabled; последний запуск 2026-08-07 02:30:17 MSK.
 - Содержимое production-backups не открывалось; возраст и пригодность последнего production-артефакта должен подтвердить монитор после публикации кандидата.
 
-**Текущий статус:** isolated restore обеих технологий PASS; production backup timers PASS по unit metadata; post-deploy проверка monitor и свежести артефактов ещё впереди.
+**Текущий статус:** isolated restore обеих технологий PASS; production backup timers, принудительные pre-release backup и post-deploy monitor PASS.
+
+## Pre-release backup 2026-08-07
+
+- Перед переключением на `e7c48ca` принудительно выполнены `sewing-web-backup.service` и `sewing-wms-backup.service`.
+- Оба one-shot завершились `Result=success`, `ExecMainStatus=0`; SQLite — 13:02:32 MSK, PostgreSQL — после старта 13:02:39 MSK.
+- Содержимое и имена приватных backup-артефактов не читались и не копировались.

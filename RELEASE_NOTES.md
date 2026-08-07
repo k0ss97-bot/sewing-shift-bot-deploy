@@ -3,7 +3,7 @@
 **Дата:** 2026-08-07  
 **Ветка:** `codex/wms-integration`  
 **База:** `f7cae4ecb29c81b0eed936b2d19afc266dec322f`  
-**Статус:** кандидат не опубликован и не развёрнут.
+**Статус:** опубликован 2026-08-07 в `/opt/sewing-web/releases/codex-e7c48ca-20260807T100615Z`; предыдущий release сохранён для rollback.
 
 ## Изменения
 
@@ -17,7 +17,7 @@
 
 ## Quality gate
 
-`249 discovered / 249 executed / 249 passed / 0 failed / 0 skipped / 0 excluded` на одноразовой PostgreSQL test DB. Compile и Web smoke проходят.
+`249 discovered / 249 executed / 249 passed / 0 failed / 0 skipped / 0 excluded` на одноразовой PostgreSQL test DB. Compile, Web smoke, dependency audit и Bandit high-severity gate прошли в GitHub Actions run `31168318311`.
 
 ## Не принято
 

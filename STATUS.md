@@ -4,11 +4,11 @@
 
 **Ветка:** `codex/wms-integration`
 
-**Текущий локальный коммит:** `git HEAD` (код-кандидат `fc7328c` + эксплуатационная документация)
+**Текущий локальный коммит:** `e7c48ca6f6447f38d5bdb1fdeb759853d2d0819e`
 
-**Опубликованный коммит:** `f7cae4e`
+**Опубликованный коммит:** `e7c48ca6f6447f38d5bdb1fdeb759853d2d0819e`
 
-**Активный release:** `/opt/sewing-web/releases/codex-f7cae4e-20260807T055152Z`
+**Активный release:** `/opt/sewing-web/releases/codex-e7c48ca-20260807T100615Z`
 
 ## Текущий этап
 
@@ -22,15 +22,15 @@
 | Web smoke | PASS | временная SQLite, loopback, 7 локальных и 0 внешних ресурсов |
 | A: частичное выполнение | AUTO PASS | 50 = 25 годных + 2 брака + 23 остатка; replay без дубля; live впереди |
 | B: дополнительный крой | AUTO PASS | кардиган, чёрный, 116, +5; план не изменён; replay без дубля; live впереди |
-| Учебный режим | CODE/AUTO PASS | persisted admin toggle, статус, actor/time history, snapshot на партии; не опубликован |
-| C: упаковка → outbox → WMS | CODE/AUTO PASS | идемпотентная приёмка, retry и reconciliation; live впереди |
+| Учебный режим | DEPLOYED/AUTO PASS | persisted admin toggle, статус, actor/time history, snapshot на партии; авторизованный UI впереди |
+| C: упаковка → outbox → WMS | DEPLOYED/AUTO PASS | идемпотентная приёмка, retry и reconciliation; live операция впереди |
 | D: ручное оприходование/размещение | AUTO PASS | контрактные и PostgreSQL-тесты; live UI/TSD впереди |
-| E: Ozon | PENDING | требуется сверка с кабинетом и live WMS supply |
+| E: Ozon | LIVE SYNC PASS | штатный marketplace sync завершился success, health/supplies ready; сверка с кабинетом впереди |
 | F: Wildberries | BLOCKED EXTERNAL | FBW ответил HTTP 403 `base token without secret is not allowed`; secret не подтверждён |
-| G: аналитика | LOCAL PASS | UI-исправления протестированы, ещё не опубликованы |
-| Backup/restore | ISOLATED PASS | SQLite restore integrity=ok; PostgreSQL 11 миграций, 15 зон, 0 invalid balances; оба production backup timer active/enabled |
-| Monitoring | CODE/AUTO PASS | диск 80/90%, RAM, swap, OOM, services, backup, snapshots, outbox, PostgreSQL, reconciliation; новый код не опубликован |
-| Security review | IN PROGRESS | базовые защиты и dependency audit PASS; локальный Bandit: 0 high, 76 medium, 22 low; CI high gate добавлен, live headers/threat model впереди |
+| G: аналитика | DEPLOYED/AUTO PASS | UI-исправления опубликованы; авторизованные периоды/mobile/performance впереди |
+| Backup/restore | PASS PRE-RELEASE | isolated restore PASS; принудительные SQLite и PostgreSQL backup завершились success перед переключением |
+| Monitoring | DEPLOYED/PASS | monitor и reconciliation timer active; оба one-shot post-deploy запуска success |
+| Security review | IN PROGRESS | dependency audit и SAST high gate PASS; CSP/HSTS/origin/auth boundary live PASS; session cookie/CSRF и threat model впереди |
 
 ## Выполнено в текущей стабилизации
 
@@ -45,8 +45,8 @@
 
 ## Текущие ограничения
 
-- Коммиты после `f7cae4e` не опубликованы и не развёрнуты.
-- Production metadata: `sewing-web.service`, оба backup timer и monitor timer active/enabled; новый `sewing-production-wms-reconcile.timer` отсутствует до публикации кандидата.
+- Авторизованная браузерная сессия для A–G отсутствует: встроенный browser показывает форму входа, Chrome connector не установлен.
+- Production metadata: `sewing-web.service`, оба backup timer, monitor timer и `sewing-production-wms-reconcile.timer` active/enabled.
 - Рабочие базы не читались и не изменялись в unit/integration-тестах.
 - На сервере есть failed transient test/sync units; они не удалялись до классификации.
 - В активном релизе нет отдельного `COMMIT` marker.
