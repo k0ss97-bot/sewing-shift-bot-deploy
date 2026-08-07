@@ -1,16 +1,14 @@
 # NEXT ACTION
 
-**Единственное ближайшее действие:** поднять отдельную PostgreSQL test database, запустить 13 изолированных WMS DB-тестов через `TEST_WMS_DATABASE_URL`, затем зафиксировать полный результат без пропусков.
+**Единственное ближайшее действие:** выполнить и задокументировать сквозную авторизованную приёмку A–D на опубликованном кандидате релиза, с SQL-сверкой до/после и без дублей.
 
 Критерий завершения:
 
 ```text
-discovered=243
-executed=243
-passed=243
-failed=0
-skipped=0
-excluded=0
+evidence/e2e-A-partial-task.md
+evidence/e2e-B-extra-cut.md
+evidence/e2e-C-production-to-wms.md
+evidence/e2e-D-manual-receipt.md
 ```
 
-Запрещено подставлять рабочий `WMS_DATABASE_URL`. Runner принимает только `TEST_WMS_DATABASE_URL`, в имени базы которого присутствует `test`.
+До этого этапа автоматические доказательства не выдаются за живую приёмку.

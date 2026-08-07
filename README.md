@@ -61,8 +61,12 @@ Runner отвергает URL, если имя базы не содержит `t
 - `WMS_DESIGN.md` — устройство адресного склада.
 - `DECISIONS.md` — принятые архитектурные решения.
 - `LESSONS.md` — обнаруженные ошибки и предотвращение повторов.
+- `RELEASE_NOTES.md`, `DEPLOYMENT.md`, `ROLLBACK.md` — release gate, выкладка и откат.
+- `BACKUP_RESTORE.md` — backup/restore SQLite и PostgreSQL.
+- `SECURITY_REVIEW.md` — защитные механизмы, риски и release gate.
+- `CATALOG_AUDIT.md` — правила аудита Ozon/WB ↔ производство.
+- `E2E_ACCEPTANCE_REPORT.md` и `evidence/` — матрица приёмки и протоколы A–G.
 
 ## Production
 
 Развёртывание выполняется immutable release-каталогами под `/opt/sewing-web/releases/` с атомарным переключением `/opt/sewing-web/current`. Успешный `/health` подтверждает readiness, но не заменяет авторизованный бизнес-smoke и проверку целевых движений.
-
