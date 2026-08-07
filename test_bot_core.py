@@ -22,9 +22,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.old_db_dir = os.environ.get("DB_DIR")
         self.old_admin_ids = os.environ.get("ADMIN_IDS")
         self.old_wms_auto_receipt = os.environ.get("WMS_AUTO_RECEIPT_ENABLED")
+        self.old_route_execution_mode = os.environ.get("ROUTE_EXECUTION_MODE")
         self.old_cwd = os.getcwd()
         os.environ["DB_DIR"] = self.temp_dir.name
         os.environ["WMS_AUTO_RECEIPT_ENABLED"] = "0"
+        os.environ["ROUTE_EXECUTION_MODE"] = "strict"
         os.chdir(self.temp_dir.name)
 
         for module_name in ["database", "catalog", "route_maps", "miniapp_server", "webapp_auth"]:
@@ -49,6 +51,11 @@ class IsolatedDatabaseTest(unittest.TestCase):
             os.environ.pop("WMS_AUTO_RECEIPT_ENABLED", None)
         else:
             os.environ["WMS_AUTO_RECEIPT_ENABLED"] = self.old_wms_auto_receipt
+
+        if self.old_route_execution_mode is None:
+            os.environ.pop("ROUTE_EXECUTION_MODE", None)
+        else:
+            os.environ["ROUTE_EXECUTION_MODE"] = self.old_route_execution_mode
 
         if str(PROJECT_DIR) in sys.path:
             sys.path.remove(str(PROJECT_DIR))
@@ -1085,6 +1092,116 @@ class IsolatedDatabaseTest(unittest.TestCase):
                 (dublerin_index, "98 (28,5 см)", "Черный", 10),
             ],
         )
+
+    def test_training_mode_publishes_all_tasks_and_only_packaging_moves_stock(self):
+        os.environ["ROUTE_EXECUTION_MODE"] = "training"
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+
+        self.database.create_employee(19101, "Учебная Швея", "Швея")
+        self.database.create_employee(19102, "Учебный Упаковщик", "Упаковщик")
+        seamstress = self.database.get_employee_by_telegram_id(19101)
+        packer = self.database.get_employee_by_telegram_id(19102)
+        self.database.update_employee_status(seamstress[0], "active")
+        self.database.update_employee_status(packer[0], "active")
+        self.database.create_shift(seamstress[0])
+        self.database.create_shift(packer[0])
+
+        task = self.database.create_production_task("Футболки", ["86"], ["Бежевый"], None)
+        cutting_batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"], "Футболки", 1, 1, 1, {("86", "Бежевый"): 5},
+        )
+        self.assertTrue(self.database.add_cutting_layout(
+            cutting_batch_id, 1, 1, 1, {"Бежевый": 2},
+        ))
+        self.assertTrue(self.database.update_cutting_batch_progress(cutting_batch_id, 1, 1, 1, 100))
+        self.assertTrue(self.database.mark_cutting_batch_formed(
+            cutting_batch_id, 1, 1, 1,
+            [{"product_size": "86", "product_color": "Бежевый", "defect_quantity": 0, "defect_comment": ""}],
+        ))
+
+        first_step = len(route_maps.CUTTING_ROUTE)
+        route_steps = route_maps.PRODUCT_ROUTE_MAPS["Футболки"]
+        active = self.database.get_active_route_batches()
+        self.assertEqual(
+            {batch["route_step_index"] for batch in active},
+            set(range(first_step, len(route_steps))),
+        )
+        self.assertTrue(all(batch["execution_mode"] == "training" for batch in active))
+        self.assertTrue(all(batch["source_cutting_batch_id"] == cutting_batch_id for batch in active))
+
+        sewing_batch = next(batch for batch in active if batch["route_step_index"] == first_step)
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(19101, sewing_batch["id"])["ok"])
+        completed = miniapp_server.complete_route_task_for_telegram(
+            19101,
+            sewing_batch["id"],
+            {"good_quantity": 4, "defect_quantity": 0},
+        )
+        self.assertTrue(completed["ok"], completed)
+        cut_stock = next(
+            row for row in self.database.get_warehouse_stock_rows()
+            if row["stage_name"] == "Раскроенные" and row["product_name"] == "Футболки"
+        )
+        self.assertEqual(cut_stock["quantity"], 10)
+        self.assertFalse(any(
+            row["stage_name"] == route_steps[first_step]["status_after"] and row["quantity"] > 0
+            for row in self.database.get_warehouse_stock_rows()
+        ))
+        remainder = next(
+            batch for batch in self.database.get_active_route_batches()
+            if batch["route_step_index"] == first_step
+        )
+        self.assertEqual(remainder["quantity"], 6)
+        self.assertEqual(remainder["execution_mode"], "training")
+
+        packaging_index = len(route_steps) - 1
+        packaging_batch = next(
+            batch for batch in self.database.get_active_route_batches()
+            if batch["route_step_index"] == packaging_index
+        )
+        self.assertTrue(miniapp_server.start_route_task_for_telegram(19102, packaging_batch["id"])["ok"])
+        packaged = miniapp_server.complete_route_task_for_telegram(
+            19102,
+            packaging_batch["id"],
+            {"good_quantity": 10, "defect_quantity": 0, "packaging_option": "individual"},
+        )
+        self.assertTrue(packaged["ok"], packaged)
+        cut_stock = self.database.get_warehouse_stock_by_id(cut_stock["id"])
+        self.assertEqual(cut_stock["quantity"], 0)
+        finished = [
+            row for row in self.database.get_warehouse_stock_rows()
+            if row["item_type"] == "finished" and row["quantity"] > 0
+        ]
+        self.assertEqual([(row["stage_name"], row["quantity"]) for row in finished], [("Упаковано", 10)])
+
+    def test_training_mode_publishes_preparation_route_without_duplicates(self):
+        os.environ["ROUTE_EXECUTION_MODE"] = "training"
+        route_maps = importlib.import_module("route_maps")
+
+        task = self.database.create_production_task("Жакет для девочек", ["98"], ["Черный"], None)
+        cutting_batch_id = self.database.create_cutting_contour_batch_for_task(
+            task["id"], "Жакет для девочек", 1, 1, 1, {("98", "Черный"): 5},
+        )
+        self.assertTrue(self.database.add_cutting_layout(
+            cutting_batch_id, 1, 1, 1, {"Черный": 2},
+        ))
+        self.assertTrue(self.database.update_cutting_batch_progress(cutting_batch_id, 1, 1, 1, 100))
+        self.assertTrue(self.database.mark_cutting_batch_formed(
+            cutting_batch_id, 1, 1, 1,
+            [{"product_size": "98", "product_color": "Черный", "defect_quantity": 0, "defect_comment": ""}],
+        ))
+
+        first_step = len(route_maps.CUTTING_ROUTE)
+        route_steps = route_maps.PRODUCT_ROUTE_MAPS["Жакет для девочек"]
+        active = self.database.get_active_route_batches()
+        counts_by_step = {}
+        for batch in active:
+            counts_by_step[batch["route_step_index"]] = counts_by_step.get(batch["route_step_index"], 0) + 1
+
+        self.assertEqual(set(counts_by_step), set(range(first_step, len(route_steps))))
+        self.assertTrue(all(count == 1 for count in counts_by_step.values()))
+        self.assertTrue(all(batch["execution_mode"] == "training" for batch in active))
+        self.assertTrue(all(batch["source_cutting_batch_id"] == cutting_batch_id for batch in active))
 
     def test_cardigan_layout_creates_two_dublerin_pieces_per_garment(self):
         expected = []

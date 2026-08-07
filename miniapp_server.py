@@ -1506,6 +1506,8 @@ def route_task_to_dict(batch: dict, current_step: dict, viewer_employee=None):
         "parent_batch_id": batch.get("parent_batch_id"),
         "trace_code": batch.get("trace_code") or f"RB-{batch['id']:06d}",
         "route_version": batch.get("route_version") or "",
+        "execution_mode": batch.get("execution_mode") or "strict",
+        "training_mode": batch.get("execution_mode") == "training",
         "work_state": work_state,
         "blocked_reason": batch.get("blocked_reason") or "",
         "paused_at": batch.get("paused_at") or "",
@@ -1765,6 +1767,7 @@ def complete_route_task_for_telegram(
         return {"ok": False, "message": "Эта партия уже недоступна."}
 
     current_step = get_route_step_for_batch(batch)
+    training_mode = batch.get("execution_mode") == "training"
 
     if not can_employee_work_route_step(employee, current_step):
         return {"ok": False, "message": "Выбранный сотрудник не может выполнять эту операцию." if admin_override else "Это задание сейчас доступно другой должности."}
@@ -1824,7 +1827,7 @@ def complete_route_task_for_telegram(
     if completed_quantity > batch["quantity"]:
         return {"ok": False, "message": "Выполненное количество не может превышать количество задания."}
 
-    next_quantity_divisor = max(
+    next_quantity_divisor = 1 if training_mode else max(
         1,
         int(
             current_step.get("next_quantity_divisor")
@@ -1874,7 +1877,7 @@ def complete_route_task_for_telegram(
         packaging_output_name = str(selected_packing.get("output_name") or batch["product_name"])
         packaging_component_products = selected_packing.get("component_products") or []
         packaging_component_prefix = str(selected_packing.get("component_prefix") or "")
-        if packaging_component_products or packaging_component_prefix:
+        if (packaging_component_products or packaging_component_prefix) and not training_mode:
             from database import get_finished_component_quantity
 
             component_quantity = get_finished_component_quantity(
@@ -1911,7 +1914,9 @@ def complete_route_task_for_telegram(
         ready_for_position,
         # Every next step is created by the route engine.  The administrator
         # creates only the cutting assignment; employees take free tasks.
-        auto_create_next=bool(next_step),
+        auto_create_next=bool(next_step) and not training_mode,
+        record_stock_output=not training_mode or next_step is None,
+        consume_training_source=training_mode and next_step is None,
         defect_reason=defect_reason,
         defect_disposition=defect_disposition,
         defect_comment=defect_comment,
@@ -1924,8 +1929,8 @@ def complete_route_task_for_telegram(
         packaging_option=packaging_option,
         packaging_output_name=packaging_output_name,
         packaging_ratio=packaging_ratio,
-        packaging_component_products=packaging_component_products,
-        packaging_component_prefix=packaging_component_prefix,
+        packaging_component_products=[] if training_mode else packaging_component_products,
+        packaging_component_prefix="" if training_mode else packaging_component_prefix,
     )
 
     if completion is None:
@@ -1954,6 +1959,8 @@ def complete_route_task_for_telegram(
         message = "Задание уже было синхронизировано. Данные обновлены."
     elif rework_batch:
         message = f"Этап завершён. Брак: {defect_quantity} шт. Создано задание на переделку #{rework_batch['id']}."
+    elif training_mode and next_step:
+        message = "Учебный этап завершён. Остальные задания этой партии уже доступны сотрудникам."
     elif auto_batch:
         if packing_options:
             message = f"Упаковка учтена. Задание на размещение создано для номенклатуры «{packaging_output_name}»."

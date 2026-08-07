@@ -42,6 +42,18 @@ DB_NAME = resolve_database_path()
 LOCAL_TZ = ZoneInfo("Asia/Yekaterinburg")
 
 
+def route_execution_mode():
+    """Snapshot the temporary production mode for newly formed batches.
+
+    ``training`` publishes every downstream task immediately.  The complete
+    strict route engine remains available and can be restored later by setting
+    ``ROUTE_EXECUTION_MODE=strict`` without rewriting existing batches.
+    """
+
+    value = os.getenv("ROUTE_EXECUTION_MODE", "training").strip().lower()
+    return "strict" if value == "strict" else "training"
+
+
 def get_db_connection(timeout=30):
     """Open a database connection with a matching SQLite busy timeout.
 
@@ -86,6 +98,7 @@ ROUTE_BATCH_COLUMNS = [
     "packaging_option",
     "packaging_output_name",
     "packaging_ratio",
+    "execution_mode",
 ]
 ROUTE_BATCH_SELECT = ", ".join(ROUTE_BATCH_COLUMNS)
 PRODUCTION_TASK_COLUMNS = [
@@ -2432,6 +2445,8 @@ def init_db():
         cursor.execute("ALTER TABLE route_batches ADD COLUMN packaging_output_name TEXT")
     if "packaging_ratio" not in route_batch_columns:
         cursor.execute("ALTER TABLE route_batches ADD COLUMN packaging_ratio INTEGER NOT NULL DEFAULT 1")
+    if "execution_mode" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'strict'")
 
     cursor.execute("PRAGMA table_info(production_tasks)")
     production_task_columns = [column[1] for column in cursor.fetchall()]
@@ -4365,7 +4380,7 @@ def assign_route_batch(batch_id: int, employee_id: int):
         if changed:
             cursor.execute(f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE id = ?", (batch_id,))
             batch = route_batch_from_row(cursor.fetchone())
-            if batch is not None:
+            if batch is not None and batch.get("execution_mode") != "training":
                 _reserve_route_batch_inputs_on_start(cursor, batch, employee_id, now)
             _record_production_event(
                 cursor,
@@ -4425,7 +4440,8 @@ def assign_route_batch_quantity(batch_id: int, employee_id: int, quantity: int |
                 raise ValueError("batch changed")
             cursor.execute(f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE id = ?", (batch_id,))
             assigned_batch = route_batch_from_row(cursor.fetchone())
-            _reserve_route_batch_inputs_on_start(cursor, assigned_batch, employee_id, now)
+            if assigned_batch.get("execution_mode") != "training":
+                _reserve_route_batch_inputs_on_start(cursor, assigned_batch, employee_id, now)
             _record_production_event(
                 cursor, "task_started", batch_id=batch_id, actor_employee_id=employee_id,
                 quantity=requested_quantity, request_key=f"route-batch:{batch_id}:first-start", created_at=now,
@@ -4456,9 +4472,10 @@ def assign_route_batch_quantity(batch_id: int, employee_id: int, quantity: int |
                 created_by_employee_id, created_at, updated_at, completed_at, source_stock_id,
                 assigned_employee_id, assigned_at, good_quantity, defect_quantity, priority, due_date,
                 parent_batch_id, source_cutting_batch_id, work_state, blocked_reason, paused_at,
-                last_activity_at, handover_count, packaging_option, packaging_output_name, packaging_ratio
+                last_activity_at, handover_count, packaging_option, packaging_output_name, packaging_ratio,
+                execution_mode
             ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, 0, 0, ?, ?, ?, ?,
-                      'in_work', NULL, NULL, ?, 0, ?, ?, ?)
+                      'in_work', NULL, NULL, ?, 0, ?, ?, ?, ?)
             """,
             (
                 batch["product_name"], batch["product_size"], batch["product_color"], requested_quantity,
@@ -4467,6 +4484,7 @@ def assign_route_batch_quantity(batch_id: int, employee_id: int, quantity: int |
                 batch.get("due_date") or None, batch_id, batch.get("source_cutting_batch_id"), now,
                 batch.get("packaging_option") or "", batch.get("packaging_output_name") or "",
                 max(1, int(batch.get("packaging_ratio") or 1)),
+                batch.get("execution_mode") or "strict",
             ),
         )
         child_batch_id = cursor.lastrowid
@@ -4541,7 +4559,7 @@ def assign_route_batch_quantity(batch_id: int, employee_id: int, quantity: int |
         cursor.execute("DELETE FROM route_batch_input_lots WHERE batch_id = ? AND quantity = 0", (batch_id,))
         cursor.execute(f"SELECT {ROUTE_BATCH_SELECT} FROM route_batches WHERE id = ?", (child_batch_id,))
         child_batch = route_batch_from_row(cursor.fetchone())
-        if not input_rows:
+        if not input_rows and child_batch.get("execution_mode") != "training":
             _reserve_route_batch_inputs_on_start(cursor, child_batch, employee_id, now)
         _record_production_event(
             cursor, "batch_split", batch_id=batch_id, actor_employee_id=employee_id, quantity=requested_quantity,
@@ -5597,9 +5615,9 @@ def _insert_automatic_route_batch(
             route_step_index, status, created_by_employee_id,
             created_at, updated_at, completed_at, source_stock_id,
             priority, due_date, parent_batch_id,
-            packaging_option, packaging_output_name, packaging_ratio
+            packaging_option, packaging_output_name, packaging_ratio, execution_mode
         )
-        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             batch["product_name"],
@@ -5617,6 +5635,7 @@ def _insert_automatic_route_batch(
             packaging_option or None,
             packaging_output_name or None,
             max(1, int(packaging_ratio or 1)),
+            batch.get("execution_mode") or "strict",
         ),
     )
     new_batch_id = cursor.lastrowid
@@ -5986,6 +6005,60 @@ def _consume_finished_packaging_components(cursor, batch: dict, quantity: int, e
         raise ValueError("packaging components unavailable")
 
 
+def _consume_training_cut_output(
+    cursor,
+    batch: dict,
+    quantity: int,
+    employee_id: int | None,
+    now: str,
+):
+    """Remove formed cut only when an independent training package is closed."""
+
+    stock_id = int(batch.get("source_stock_id") or 0)
+    quantity = int(quantity or 0)
+    if stock_id <= 0 or quantity <= 0:
+        raise ValueError("training cut source unavailable")
+    cursor.execute(f"SELECT {WAREHOUSE_STOCK_SELECT} FROM warehouse_stock WHERE id = ?", (stock_id,))
+    stock = warehouse_stock_from_row(cursor.fetchone())
+    if (
+        stock is None
+        or stock.get("item_type") != "semifinished"
+        or stock.get("stage_name") != "Раскроенные"
+        or int(stock.get("quantity") or 0) - int(stock.get("reserved_quantity") or 0) < quantity
+    ):
+        raise ValueError("training cut quantity unavailable")
+    cursor.execute(
+        """UPDATE warehouse_stock
+           SET quantity = quantity - ?, updated_at = ?
+           WHERE id = ? AND quantity - reserved_quantity >= ?""",
+        (quantity, now, stock_id, quantity),
+    )
+    if cursor.rowcount != 1:
+        raise ValueError("training cut changed")
+    _consume_warehouse_lots(cursor, stock_id, quantity, now)
+    cursor.execute(
+        """INSERT INTO warehouse_stock_movements (
+               stock_id, item_type, product_name, product_size, product_color, stage_name,
+               ready_for_position, quantity, unit, movement_type, source_type, source_id,
+               created_by_employee_id, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issue', 'training_packaging', ?, ?, ?)""",
+        (
+            stock_id,
+            stock["item_type"],
+            stock["product_name"],
+            stock["product_size"],
+            stock["product_color"],
+            stock["stage_name"],
+            stock["ready_for_position"],
+            -quantity,
+            stock["unit"],
+            batch["id"],
+            employee_id,
+            now,
+        ),
+    )
+
+
 def _split_route_batch_remainder_on_completion(
     cursor,
     batch: dict,
@@ -6027,9 +6100,10 @@ def _split_route_batch_remainder_on_completion(
             created_by_employee_id, created_at, updated_at, completed_at, source_stock_id,
             assigned_employee_id, assigned_at, good_quantity, defect_quantity, priority, due_date,
             parent_batch_id, source_cutting_batch_id, work_state, blocked_reason, paused_at,
-            last_activity_at, handover_count, packaging_option, packaging_output_name, packaging_ratio
+            last_activity_at, handover_count, packaging_option, packaging_output_name, packaging_ratio,
+            execution_mode
         ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, NULL, NULL, 0, 0, ?, ?, ?, ?,
-                  'free', NULL, NULL, ?, 0, ?, ?, ?)
+                  'free', NULL, NULL, ?, 0, ?, ?, ?, ?)
         """,
         (
             batch["product_name"],
@@ -6049,6 +6123,7 @@ def _split_route_batch_remainder_on_completion(
             batch.get("packaging_option") or "",
             batch.get("packaging_output_name") or "",
             max(1, int(batch.get("packaging_ratio") or 1)),
+            batch.get("execution_mode") or "strict",
         ),
     )
     remainder_batch_id = cursor.lastrowid
@@ -6189,6 +6264,8 @@ def complete_route_batch_step_atomic(
     stage_name: str,
     ready_for_position: str,
     auto_create_next: bool = False,
+    record_stock_output: bool = True,
+    consume_training_source: bool = False,
     defect_reason: str = "",
     defect_disposition: str = "",
     defect_comment: str = "",
@@ -6289,6 +6366,15 @@ def complete_route_batch_step_atomic(
         # physically issued only once this operation is completed.
         _consume_reserved_route_batch_inputs(cursor, batch, employee_id, now)
 
+        if consume_training_source:
+            _consume_training_cut_output(
+                cursor,
+                batch,
+                completed_quantity,
+                employee_id,
+                now,
+            )
+
         if packaging_component_products or packaging_component_prefix:
             _consume_finished_packaging_components(
                 cursor,
@@ -6344,7 +6430,7 @@ def complete_route_batch_step_atomic(
                 raise ValueError("finished packaging quantity is not divisible")
             output_quantity = good_quantity // saved_ratio
 
-        if output_quantity > 0:
+        if output_quantity > 0 and record_stock_output:
             cursor.execute(
                 """
                 INSERT INTO warehouse_stock (
@@ -6485,9 +6571,9 @@ def complete_route_batch_step_atomic(
                     product_name, product_size, product_color, quantity,
                     route_step_index, status, created_by_employee_id,
                     created_at, updated_at, completed_at, source_stock_id,
-                    priority, due_date, parent_batch_id
+                    priority, due_date, parent_batch_id, execution_mode
                 )
-                VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL, 'urgent', ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, 'urgent', ?, ?, ?)
                 """,
                 (
                     batch["product_name"],
@@ -6498,8 +6584,10 @@ def complete_route_batch_step_atomic(
                     employee_id,
                     now,
                     now,
+                    batch.get("source_stock_id"),
                     batch.get("due_date"),
                     batch_id,
+                    batch.get("execution_mode") or "strict",
                 ),
             )
             rework_batch_id = cursor.lastrowid
@@ -7370,6 +7458,7 @@ def _create_preparation_route_batches_for_formed_cut(
     employee_id: int | None,
     now_text: str,
     result_rows: list[tuple[str, str, int]],
+    execution_mode: str = "strict",
 ):
     from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 
@@ -7460,9 +7549,10 @@ def _create_preparation_route_batches_for_formed_cut(
                 updated_at,
                 completed_at,
                 source_stock_id,
-                source_cutting_batch_id
+                source_cutting_batch_id,
+                execution_mode
             )
-            VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL, ?, ?)
             """,
             (
                 product_name,
@@ -7474,6 +7564,7 @@ def _create_preparation_route_batches_for_formed_cut(
                 now_text,
                 now_text,
                 batch_id,
+                execution_mode,
             ),
         )
         route_batch_id = cursor.lastrowid
@@ -7489,6 +7580,78 @@ def _create_preparation_route_batches_for_formed_cut(
         )
         created_ids.append(route_batch_id)
 
+    return created_ids
+
+
+def _create_training_route_batches_from_cut(
+    cursor,
+    *,
+    cutting_batch_id: int,
+    product_name: str,
+    product_size: str,
+    product_color: str,
+    quantity: int,
+    stock_id: int,
+    employee_id: int | None,
+    now_text: str,
+    route_snapshot: str,
+    route_version: str,
+    priority: str = "normal",
+    due_date: str = "",
+    existing_preparation_indices: set[int] | None = None,
+):
+    """Publish every remaining route task as an independent training task."""
+
+    from route_maps import CUTTING_ROUTE
+
+    steps = route_steps_from_snapshot(route_snapshot, product_name)
+    skipped = set(existing_preparation_indices or set())
+    candidates = [
+        (step_index, step)
+        for step_index, step in enumerate(steps[len(CUTTING_ROUTE):], start=len(CUTTING_ROUTE))
+        if step_index not in skipped and step.get("operation") != "Размещение на склад"
+    ]
+    if not candidates:
+        return []
+
+    base = {
+        "product_name": product_name,
+        "product_size": product_size,
+        "product_color": product_color,
+        "quantity": quantity,
+        "priority": priority,
+        "due_date": due_date,
+        "route_snapshot": route_snapshot,
+        "route_version": route_version,
+        "execution_mode": "training",
+    }
+    created_ids = []
+    family_root_id = None
+    for step_index, _step in candidates:
+        created_id = _insert_automatic_route_batch(
+            cursor,
+            base,
+            step_index,
+            quantity,
+            employee_id,
+            now_text,
+            family_root_id,
+            [],
+            source="training_from_cut",
+        )
+        cursor.execute(
+            """UPDATE route_batches
+               SET source_cutting_batch_id = ?, source_stock_id = ?, execution_mode = 'training'
+               WHERE id = ?""",
+            (cutting_batch_id, stock_id, created_id),
+        )
+        if family_root_id is None:
+            family_root_id = created_id
+            cursor.execute(
+                "UPDATE route_batches SET parent_batch_id = ? WHERE id = ?",
+                (family_root_id, created_id),
+            )
+        created_ids.append(created_id)
     return created_ids
 
 
@@ -8114,6 +8277,7 @@ def mark_cutting_batch_formed(
         task_due_date = task_row[5] if task_row and task_row[5] else ""
 
         if task_id is not None:
+            execution_mode = route_execution_mode()
             result_rows = [
                 (product_size, product_color, good_quantity)
                 for product_size, product_color, _planned_quantity, good_quantity, _defect_quantity, _defect_comment in reviewed_rows
@@ -8124,7 +8288,16 @@ def mark_cutting_batch_formed(
                 employee_id,
                 now_text,
                 result_rows,
+                execution_mode,
             )
+            preparation_indices = set()
+            if preparation_batch_ids:
+                placeholders = ",".join("?" for _item in preparation_batch_ids)
+                cursor.execute(
+                    f"SELECT DISTINCT route_step_index FROM route_batches WHERE id IN ({placeholders})",
+                    tuple(preparation_batch_ids),
+                )
+                preparation_indices = {int(row[0]) for row in cursor.fetchall()}
             ready_for_position = get_first_production_position(batch_product_name)
             stage_name = "Раскроенные"
 
@@ -8248,22 +8421,40 @@ def mark_cutting_batch_formed(
                     request_key=f"cutting-batch:{batch_id}:output:{stock_id}",
                     created_at=now_stock_text,
                 )
-                _create_first_product_route_batches_from_cut(
-                    cursor,
-                    cutting_batch_id=batch_id,
-                    product_name=batch_product_name,
-                    product_size=product_size,
-                    product_color=product_color,
-                    quantity=quantity,
-                    stock_id=stock_id,
-                    lot_id=output_lot_id,
-                    employee_id=employee_id,
-                    now_text=now_stock_text,
-                    route_snapshot=route_snapshot,
-                    route_version=route_version,
-                    priority=task_priority,
-                    due_date=task_due_date,
-                )
+                if execution_mode == "training":
+                    _create_training_route_batches_from_cut(
+                        cursor,
+                        cutting_batch_id=batch_id,
+                        product_name=batch_product_name,
+                        product_size=product_size,
+                        product_color=product_color,
+                        quantity=quantity,
+                        stock_id=stock_id,
+                        employee_id=employee_id,
+                        now_text=now_stock_text,
+                        route_snapshot=route_snapshot,
+                        route_version=route_version,
+                        priority=task_priority,
+                        due_date=task_due_date,
+                        existing_preparation_indices=preparation_indices,
+                    )
+                else:
+                    _create_first_product_route_batches_from_cut(
+                        cursor,
+                        cutting_batch_id=batch_id,
+                        product_name=batch_product_name,
+                        product_size=product_size,
+                        product_color=product_color,
+                        quantity=quantity,
+                        stock_id=stock_id,
+                        lot_id=output_lot_id,
+                        employee_id=employee_id,
+                        now_text=now_stock_text,
+                        route_snapshot=route_snapshot,
+                        route_version=route_version,
+                        priority=task_priority,
+                        due_date=task_due_date,
+                    )
 
             cursor.execute(
                 """
@@ -8301,6 +8492,7 @@ def mark_cutting_batch_formed(
                         for row in reviewed_rows
                     ],
                     "preparation_batch_ids": preparation_batch_ids,
+                    "execution_mode": execution_mode,
                 },
                 request_key=f"cutting-batch:{batch_id}:formed",
                 created_at=now_text,

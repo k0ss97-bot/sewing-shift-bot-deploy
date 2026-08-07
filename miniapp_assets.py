@@ -8075,6 +8075,7 @@ MINIAPP_HTML = """<!doctype html>
       return `
         <div class="card task-completion-card">
           <div class="task-completion-head"><b>${escapeHtml(task.operation)}</b><span class="status-chip ${task.work_state === "in_work" ? "" : "warn"}">${escapeHtml(task.status_text || "В работе")}</span></div>
+          ${task.training_mode ? `<div class="task-note"><b>Учебный режим.</b> Все этапы партии опубликованы сразу. Закройте только фактически выполненную работу.</div>` : ""}
           ${renderRouteTaskInputs(task)}
           ${(paused || blocked) ? `<div class="task-note">${escapeHtml(task.blocked_reason || (paused ? "Работа приостановлена" : "Задание заблокировано"))}</div>` : ""}
           <div class="form-grid" style="margin-top:11px">
@@ -10539,6 +10540,7 @@ MINIAPP_HTML = """<!doctype html>
             <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
           </div>
           <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.quantity)} шт</strong></div>
+          ${task.training_mode ? `<div class="task-note"><b>Учебный режим:</b> этапы партии доступны одновременно.</div>` : ""}
           ${task.blocked_reason ? `<div class="task-note">${escapeHtml(task.blocked_reason)}</div>` : ""}
           ${(task.due_date || task.priority === "urgent" || task.parent_batch_id) ? `<div class="route-inputs"><div class="route-input-row"><span>${task.parent_batch_id ? (task.parallel_group ? `Параллельная ветка · ${escapeHtml(task.parallel_branch || "операция")}` : `Связано с заданием #${escapeHtml(task.parent_batch_id)}`) : `Приоритет: ${escapeHtml(priorityLabel(task.priority))}`}</span><span>${task.due_date ? `до ${escapeHtml(task.due_date)}` : ""}</span></div></div>` : ""}
           ${renderRouteTaskInputs(task)}
