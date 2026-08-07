@@ -79,6 +79,21 @@ class WebAppAuthTest(unittest.TestCase):
         self.assertTrue(self.auth.revoke_web_session(session["session_token"]))
         self.assertIsNone(self.auth.get_web_session(session["session_token"]))
 
+    def test_auth_schema_initialization_is_cached_per_database_file(self):
+        self.auth._WEB_AUTH_INITIALIZED_DB = ""
+        original_get_connection = self.auth.get_db_connection
+        connection_calls = []
+
+        def tracked_get_connection(*args, **kwargs):
+            connection_calls.append(True)
+            return original_get_connection(*args, **kwargs)
+
+        with patch.object(self.auth, "get_db_connection", side_effect=tracked_get_connection):
+            self.auth.init_web_auth()
+            self.auth.init_web_auth()
+
+        self.assertEqual(len(connection_calls), 1)
+
     def test_session_defaults_are_30_days_and_upper_bounds_are_enforced(self):
         expected = 30 * 24 * 60 * 60
         self.assertEqual(self.auth.DEFAULT_SESSION_TTL_SECONDS, expected)
@@ -300,6 +315,26 @@ class WebAppHttpTest(unittest.TestCase):
             result = response_body
         connection.close()
         return response.status, result, response_headers
+
+    def test_client_disconnect_does_not_emit_false_http_500(self):
+        handler_class = self.server.RequestHandlerClass
+        handler = object.__new__(handler_class)
+        handler.close_connection = False
+
+        with (
+            patch.object(
+                self.server_module.BaseHTTPRequestHandler,
+                "handle_one_request",
+                side_effect=BrokenPipeError,
+            ),
+            patch.object(handler_class, "_send_error_500") as send_error,
+            patch.object(self.server_module.logging, "exception") as log_exception,
+        ):
+            handler.handle_one_request()
+
+        self.assertTrue(handler.close_connection)
+        send_error.assert_not_called()
+        log_exception.assert_not_called()
 
     def telegram_init_data(self, telegram_id, auth_date=None):
         values = {

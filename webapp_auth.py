@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from http.cookies import SimpleCookie
 
@@ -27,6 +28,8 @@ MIN_SESSION_LIFETIME_SECONDS = 15 * 60
 MAX_SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_SESSION_TTL_SECONDS = MAX_SESSION_LIFETIME_SECONDS
 DEFAULT_SESSION_IDLE_SECONDS = MAX_SESSION_LIFETIME_SECONDS
+_WEB_AUTH_INIT_LOCK = threading.Lock()
+_WEB_AUTH_INITIALIZED_DB = ""
 
 
 class WebRegistrationError(ValueError):
@@ -152,83 +155,102 @@ def _password_hash(password: str, salt_hex: str, iterations: int = PASSWORD_ITER
 
 
 def init_web_auth() -> None:
+    """Initialize the auth schema once per process and database file.
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA foreign_keys = ON")
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS web_accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            telegram_id INTEGER NOT NULL,
-            username TEXT NOT NULL COLLATE NOCASE UNIQUE,
-            password_salt TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            password_iterations INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active',
-            failed_attempts INTEGER NOT NULL DEFAULT 0,
-            locked_until INTEGER,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            last_login_at TEXT
-        )
-        """
-    )
-    cursor.execute("PRAGMA table_info(web_accounts)")
-    account_columns = {column[1] for column in cursor.fetchall()}
-    for column_name, definition in {
-        "email": "TEXT",
-        "phone": "TEXT",
-        "full_name": "TEXT",
-    }.items():
-        if column_name not in account_columns:
-            cursor.execute(f"ALTER TABLE web_accounts ADD COLUMN {column_name} {definition}")
-    cursor.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_web_accounts_email
-        ON web_accounts (email COLLATE NOCASE)
-        WHERE email IS NOT NULL AND email != ''
-        """
-    )
-    cursor.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_web_accounts_phone
-        ON web_accounts (phone)
-        WHERE phone IS NOT NULL AND phone != ''
-        """
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_web_accounts_telegram_status ON web_accounts (telegram_id, status)"
-    )
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS web_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_id INTEGER NOT NULL,
-            token_hash TEXT NOT NULL UNIQUE,
-            csrf_token TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            expires_at INTEGER NOT NULL,
-            last_seen_at INTEGER NOT NULL,
-            revoked_at INTEGER,
-            ip_hash TEXT NOT NULL DEFAULT '',
-            user_agent_hash TEXT NOT NULL DEFAULT '',
-            FOREIGN KEY (account_id) REFERENCES web_accounts(id) ON DELETE CASCADE
-        )
-        """
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_web_sessions_expiry ON web_sessions (expires_at, revoked_at)"
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_web_sessions_account ON web_sessions (account_id, revoked_at)"
-    )
-    cursor.execute(
-        "DELETE FROM web_sessions WHERE expires_at < ? OR revoked_at IS NOT NULL",
-        (int(time.time()) - 24 * 60 * 60,),
-    )
-    conn.commit()
-    conn.close()
+    This function is called from every public auth helper.  Re-running DDL and
+    session cleanup for every HTTP request turns otherwise read-only session
+    checks into competing writers and can exhaust SQLite's busy timeout.
+    """
+    global _WEB_AUTH_INITIALIZED_DB
+
+    database_identity = os.path.realpath(DB_NAME)
+    if _WEB_AUTH_INITIALIZED_DB == database_identity:
+        return
+
+    with _WEB_AUTH_INIT_LOCK:
+        if _WEB_AUTH_INITIALIZED_DB == database_identity:
+            return
+
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS web_accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_id INTEGER NOT NULL,
+                    username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    password_salt TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    password_iterations INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    failed_attempts INTEGER NOT NULL DEFAULT 0,
+                    locked_until INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_login_at TEXT
+                )
+                """
+            )
+            cursor.execute("PRAGMA table_info(web_accounts)")
+            account_columns = {column[1] for column in cursor.fetchall()}
+            for column_name, definition in {
+                "email": "TEXT",
+                "phone": "TEXT",
+                "full_name": "TEXT",
+            }.items():
+                if column_name not in account_columns:
+                    cursor.execute(f"ALTER TABLE web_accounts ADD COLUMN {column_name} {definition}")
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_web_accounts_email
+                ON web_accounts (email COLLATE NOCASE)
+                WHERE email IS NOT NULL AND email != ''
+                """
+            )
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_web_accounts_phone
+                ON web_accounts (phone)
+                WHERE phone IS NOT NULL AND phone != ''
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_web_accounts_telegram_status ON web_accounts (telegram_id, status)"
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS web_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_id INTEGER NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    csrf_token TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    last_seen_at INTEGER NOT NULL,
+                    revoked_at INTEGER,
+                    ip_hash TEXT NOT NULL DEFAULT '',
+                    user_agent_hash TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY (account_id) REFERENCES web_accounts(id) ON DELETE CASCADE
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_web_sessions_expiry ON web_sessions (expires_at, revoked_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_web_sessions_account ON web_sessions (account_id, revoked_at)"
+            )
+            cursor.execute(
+                "DELETE FROM web_sessions WHERE expires_at < ? OR revoked_at IS NOT NULL",
+                (int(time.time()) - 24 * 60 * 60,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        _WEB_AUTH_INITIALIZED_DB = database_identity
 
 
 def upsert_web_account(username: str, telegram_id: int, password: str, active: bool = True) -> dict:

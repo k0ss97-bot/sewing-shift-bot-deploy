@@ -6065,6 +6065,9 @@ def make_handler(bot_token: str, debug: bool):
             """
             try:
                 super().handle_one_request()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as error:
+                self.close_connection = True
+                logging.info("Client disconnected before response completed: %s", type(error).__name__)
             except Exception:
                 logging.exception("Unhandled request error")
                 try:
