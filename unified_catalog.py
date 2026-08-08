@@ -12,7 +12,7 @@ import json
 from typing import Any, Iterable
 
 from wms.connection import get_pg_connection
-from wms.models import ProductKey
+from wms.models import ProductKey, normalize_product_article
 
 
 SOURCE_PRIORITY = {"ozon": 400, "wildberries": 300, "production": 200, "wms": 100}
@@ -277,7 +277,7 @@ def _internal_sources(conn) -> list[dict[str, Any]]:
                 })
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT DISTINCT item_type,product_name,product_size,product_color,
+            """SELECT DISTINCT item_type,product_article,product_name,product_size,product_color,
                               stage_name,ready_for_position
                  FROM warehouse_stock
                 WHERE item_type IN ('finished','semifinished')"""
@@ -286,10 +286,16 @@ def _internal_sources(conn) -> list[dict[str, Any]]:
             external_id = "|".join(str(value) for value in row)
             sources.append({
                 "source_type": "wms", "source_external_id": external_id,
-                "name": str(row[1]), "size": str(row[2]), "color": str(row[3]),
-                "production_product_name": str(row[1]), "production_size": str(row[2]),
-                "production_color": str(row[3]), "route_configured": False,
-                "product_key": ProductKey(*[str(value) for value in row]).to_dict(),
+                "article": str(row[1] or ""),
+                "name": str(row[2]), "size": str(row[3]), "color": str(row[4]),
+                "production_product_name": str(row[2]), "production_size": str(row[3]),
+                "production_color": str(row[4]), "route_configured": False,
+                "product_key": ProductKey(
+                    item_type=str(row[0]), product_article=str(row[1] or ""),
+                    product_name=str(row[2]), product_size=str(row[3]),
+                    product_color=str(row[4]), stage_name=str(row[5]),
+                    ready_for_position=str(row[6]),
+                ).to_dict(),
             })
     return sources
 
@@ -351,6 +357,7 @@ def sync_unified_product_catalog() -> dict[str, Any]:
                     product_key = ProductKey(
                         "finished", master["production_product_name"], master["production_size"],
                         master["production_color"], "Упаковано", "Склад",
+                        product_article=normalize_product_article(master["article"]),
                     )
                     for barcode in master["barcodes"]:
                         cur.execute(
@@ -453,6 +460,7 @@ def lookup_products(query: str, *, limit: int = 20) -> list[dict[str, Any]]:
                     _text(row["production_color"]),
                     "Упаковано",
                     "Склад",
+                    product_article=normalize_product_article(row["article"]),
                 ).to_dict(),
                 "source_identifiers": set(),
                 "source_barcodes": set(),

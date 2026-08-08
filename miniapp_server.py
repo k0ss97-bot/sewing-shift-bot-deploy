@@ -167,7 +167,7 @@ from wms import operations as wms_operations
 from wms import repository as wms_repository
 from wms.api import WMS_ADMIN_ROUTES, WMS_READ_ROUTES, WMS_ROUTES
 from wms.connection import get_pg_connection
-from wms.models import ProductKey
+from wms.models import ProductKey, normalize_product_article
 from wms.shipments import shipment_detail, shipment_excel_bytes, shipment_pdf_bytes
 from marketplaces import dashboard as marketplace_dashboard
 from marketplaces import dashboard_supplement as marketplace_dashboard_supplement
@@ -794,8 +794,41 @@ def sync_wms_receipt_outbox_entry(entry: dict | None):
     if not wms_auto_receipt_enabled():
         return {"status": "queued", "entry": entry}
 
+    product_article = normalize_product_article(entry.get("product_article"))
+    if not product_article:
+        pg_conn = get_pg_connection()
+        try:
+            with pg_conn.cursor() as cursor:
+                cursor.execute(
+                    """SELECT article
+                         FROM marketplace.product_master
+                        WHERE is_active=TRUE AND article<>''
+                          AND lower(production_product_name)=lower(%s)
+                          AND lower(production_size)=lower(%s)
+                          AND lower(production_color)=lower(%s)
+                     ORDER BY source_priority DESC,id""",
+                    (entry["product_name"], entry["product_size"], entry["product_color"]),
+                )
+                articles = {
+                    normalize_product_article(row[0])
+                    for row in cursor.fetchall()
+                    if normalize_product_article(row[0])
+                }
+            pg_conn.rollback()
+        finally:
+            pg_conn.close()
+        if len(articles) != 1:
+            reason = (
+                "Для готового изделия требуется однозначный артикул; "
+                f"найдено вариантов: {len(articles)}."
+            )
+            mark_wms_receipt_outbox_failed(entry["id"], reason)
+            return {"status": "queued", "entry": entry, "error": reason}
+        product_article = articles.pop()
+
     product_key = ProductKey(
         item_type=entry["item_type"],
+        product_article=product_article,
         product_name=entry["product_name"],
         product_size=entry["product_size"],
         product_color=entry["product_color"],
@@ -1639,6 +1672,7 @@ def create_route_batch_for_telegram(telegram_id: int, payload: dict):
     product_name = (payload.get("product_name") or "").strip()
     product_size = (payload.get("product_size") or "").strip()
     product_color = (payload.get("product_color") or "").strip()
+    product_article = normalize_product_article(payload.get("product_article"))
 
     try:
         quantity = int(payload.get("quantity") or 0)
@@ -1666,6 +1700,7 @@ def create_route_batch_for_telegram(telegram_id: int, payload: dict):
         product_color or "без цвета",
         quantity,
         employee[0],
+        product_article=product_article,
     )
 
     if batch is None:
@@ -3122,6 +3157,36 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
         product_label = " + ".join(product_names)
         created_tasks = []
         for index, selected_product in enumerate(product_names):
+            article_map: dict[tuple[str, str], str] = {}
+            pg_conn = None
+            try:
+                pg_conn = get_pg_connection()
+                with pg_conn.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT article,production_size,production_color
+                             FROM marketplace.product_master
+                            WHERE is_active=TRUE AND article<>''
+                              AND lower(production_product_name)=lower(%s)
+                         ORDER BY source_priority DESC,id""",
+                        (selected_product,),
+                    )
+                    candidates: dict[tuple[str, str], set[str]] = {}
+                    for article, size, color in cursor.fetchall():
+                        key = (str(size or "").strip(), str(color or "").strip().casefold().replace("ё", "е"))
+                        candidates.setdefault(key, set()).add(normalize_product_article(article))
+                pg_conn.rollback()
+                for size in sizes:
+                    for color in colors:
+                        articles = candidates.get((size, color.casefold().replace("ё", "е")), set())
+                        if len(articles) == 1:
+                            article_map[(size, color)] = next(iter(articles))
+            except Exception as exc:
+                if pg_conn is not None:
+                    pg_conn.rollback()
+                LOGGER.warning("Production article map is unavailable: %s", type(exc).__name__)
+            finally:
+                if pg_conn is not None:
+                    pg_conn.close()
             task = create_production_task(
                 selected_product,
                 sizes,
@@ -3137,6 +3202,7 @@ def create_order_task_for_telegram(telegram_id: int, payload: dict):
                 attachment=attachment,
                 priority=priority,
                 due_date=due_date,
+                article_map=article_map,
             )
             if task is None:
                 for created_task in created_tasks:

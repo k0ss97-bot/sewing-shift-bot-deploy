@@ -198,18 +198,11 @@ def putaway(
 
         # RECEIVE is the only valid source for address placement. Lock the row
         # so two scanners cannot place the same available quantity twice.
-        with conn.cursor() as cur:
-            cur.execute(
-                """SELECT id, quantity, reserved_quantity FROM warehouse_stock
-                   WHERE item_type=%s AND product_name=%s AND product_size=%s
-                     AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-                     AND item_state='SELLABLE' AND location_id=%s AND unit=%s
-                   FOR UPDATE""",
-                (*product_key.to_dict().values(), receive_loc.id, unit),
-            )
-            row = cur.fetchone()
-        received_quantity = int(row[1]) if row is not None else 0
-        reserved_quantity = int(row[2]) if row is not None else 0
+        source_stock = repo.find_stock(
+            conn, product_key, location_id=receive_loc.id, unit=unit, for_update=True,
+        )
+        received_quantity = source_stock.quantity if source_stock is not None else 0
+        reserved_quantity = source_stock.reserved_quantity if source_stock is not None else 0
         available_quantity = max(0, received_quantity - reserved_quantity)
         if available_quantity < quantity:
             conn.rollback()
@@ -403,17 +396,10 @@ def transfer(
             conn.rollback()
             return OperationResult(True, skipped_duplicate=True)
 
-        with conn.cursor() as cur:
-            cur.execute(
-                """SELECT id, quantity FROM warehouse_stock
-                   WHERE item_type=%s AND product_name=%s AND product_size=%s
-                     AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-                     AND item_state='SELLABLE' AND location_id=%s AND unit=%s
-                   FOR UPDATE""",
-                (*product_key.to_dict().values(), src.id, unit),
-            )
-            row = cur.fetchone()
-        if row is None or int(row[1]) < quantity:
+        source_stock = repo.find_stock(
+            conn, product_key, location_id=src.id, unit=unit, for_update=True,
+        )
+        if source_stock is None or source_stock.quantity < quantity:
             conn.rollback()
             return OperationResult(False, reason="Недостаточно товара в исходной ячейке.")
         repo.upsert_stock(conn, product_key, delta=-quantity, location_id=src.id, unit=unit)
@@ -874,7 +860,7 @@ def bulk_writeoff_goods(
             # maintenance operation.
             cur.execute("LOCK TABLE warehouse_stock IN SHARE ROW EXCLUSIVE MODE")
             cur.execute(
-                """SELECT id,item_type,product_name,product_size,product_color,
+                """SELECT id,item_type,product_article,product_name,product_size,product_color,
                           stage_name,ready_for_position,quantity,reserved_quantity,
                           item_state,location_id,unit
                      FROM warehouse_stock
@@ -889,17 +875,18 @@ def bulk_writeoff_goods(
             stock_id = int(row[0])
             product_key = ProductKey(
                 item_type=str(row[1]),
-                product_name=str(row[2]),
-                product_size=str(row[3]),
-                product_color=str(row[4]),
-                stage_name=str(row[5]),
-                ready_for_position=str(row[6]),
+                product_article=str(row[2] or ""),
+                product_name=str(row[3]),
+                product_size=str(row[4]),
+                product_color=str(row[5]),
+                stage_name=str(row[6]),
+                ready_for_position=str(row[7]),
             )
-            quantity = int(row[7] or 0)
-            reserved = int(row[8] or 0)
-            item_state = str(row[9])
-            location_id = int(row[10]) if row[10] is not None else None
-            unit = str(row[11])
+            quantity = int(row[8] or 0)
+            reserved = int(row[9] or 0)
+            item_state = str(row[10])
+            location_id = int(row[11]) if row[11] is not None else None
+            unit = str(row[12])
             movement_id = repo.insert_movement(
                 conn,
                 request_key=f"{request_key}:stock:{stock_id}",

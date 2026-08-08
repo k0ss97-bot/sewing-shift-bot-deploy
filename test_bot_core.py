@@ -2835,7 +2835,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.database.update_employee_status(employee[0], "active")
         self.database.create_shift(employee[0])
         batch = self.database.create_route_batch(
-            "Легинсы", "86", "Бежевый", 6, employee[0], route_step_index=step_index
+            "Легинсы", "86", "Бежевый", 6, employee[0], route_step_index=step_index,
+            product_article="TEST-LEGGINGS/86",
         )
         self.assertTrue(miniapp_server.start_route_task_for_telegram(telegram_id, batch["id"])["ok"])
 
@@ -2873,6 +2874,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             ("finished", "Легинсы", "86", "Бежевый", "Упаковано", "Склад"),
         )
         self.assertEqual(receive.call_args.kwargs["source_id"], batch["id"])
+        self.assertEqual(product_key.product_article, "TEST-LEGGINGS/86")
         self.assertEqual(
             receive.call_args.kwargs["request_key"],
             f"production:route-batch:{batch['id']}",
@@ -2930,7 +2932,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.database.update_employee_status(employee[0], "active")
         self.database.create_shift(employee[0])
         batch = self.database.create_route_batch(
-            "Легинсы", "92", "Черный", 4, employee[0], route_step_index=step_index
+            "Легинсы", "92", "Черный", 4, employee[0], route_step_index=step_index,
+            product_article="TEST-LEGGINGS/92",
         )
         self.assertTrue(miniapp_server.start_route_task_for_telegram(telegram_id, batch["id"])["ok"])
 

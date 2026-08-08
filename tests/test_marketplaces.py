@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import marketplaces
+from marketplace_pg import MarketplacePGRepository
 
 
 class FakeOzonClient:
@@ -33,6 +34,36 @@ class FakeOzonClient:
 
 
 class MarketplaceTests(unittest.TestCase):
+    def test_wms_metadata_uses_exact_article_before_descriptive_fields(self):
+        products = [
+            {
+                "external_product_id": "1", "offer_id": "КДШВН-2/110",
+                "name": "Костюм", "size": "110", "color": "Темно-синий",
+                "production_status": "linked", "production_product_name": "Костюм",
+                "production_size": "110", "production_color": "Темно-синий",
+                "barcode": "2044494206911", "barcodes_json": [],
+            },
+            {
+                "external_product_id": "2", "offer_id": "СДШВК-5/110",
+                "name": "Костюм", "size": "110", "color": "Темно-синий",
+                "production_status": "linked", "production_product_name": "Костюм",
+                "production_size": "110", "production_color": "Темно-синий",
+                "barcode": "2047475991639", "barcodes_json": [],
+            },
+        ]
+        repository = MarketplacePGRepository()
+        with patch.object(repository, "warehouse_catalog", return_value={"products": products}):
+            result = repository.marketplace_metadata_for_wms_product_keys(
+                "main",
+                [{
+                    "item_type": "finished", "product_article": "сдшвк-5/110",
+                    "product_name": "Костюм", "product_size": "110",
+                    "product_color": "Темно-синий",
+                }],
+            )
+        self.assertEqual(result[0]["external_product_id"], "2")
+        self.assertEqual(result[0]["barcode"], "2047475991639")
+
     def test_ozon_catalog_keeps_displayed_multicolour_value(self):
         rows = marketplaces._enrich_catalog_products(
             [{"id": "2097324075", "offer_id": "ДДШВН-3/98", "name": "Брюки джоггеры детские. Комплект 2 штуки"}],

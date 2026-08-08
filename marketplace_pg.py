@@ -14,6 +14,7 @@ import json
 from typing import Any, Iterable
 
 from wms.connection import get_pg_connection
+from wms.models import normalize_product_article
 
 
 DATASETS = ("catalog", "prices", "stocks", "orders", "returns", "finance", "rating", "supplies")
@@ -2231,21 +2232,33 @@ class MarketplacePGRepository:
             if _text(product_key.get("item_type")) != "finished":
                 resolved.append(None)
                 continue
+            product_article = normalize_product_article(product_key.get("product_article"))
             wms_name = _text(product_key.get("product_name")).casefold()
             wms_size = _text(product_key.get("product_size")).casefold()
             wms_color = _text(product_key.get("product_color")).casefold()
-            direct = next(
+            article_match = next(
                 (
                     product for product in products
-                    if (_text(product.get("offer_id")) and _text(product.get("offer_id")).casefold() in wms_name)
-                    or (_text(product.get("sku")) and _text(product.get("sku")).casefold() in wms_name)
+                    if product_article
+                    and normalize_product_article(product.get("offer_id") or product.get("article")) == product_article
                 ),
                 None,
             )
-            linked = direct or next(
+            direct = next(
                 (
                     product for product in products
-                    if product.get("production_status") == "linked"
+                    if not product_article and (
+                        (_text(product.get("offer_id")) and _text(product.get("offer_id")).casefold() in wms_name)
+                        or (_text(product.get("sku")) and _text(product.get("sku")).casefold() in wms_name)
+                    )
+                ),
+                None,
+            )
+            linked = article_match or direct or next(
+                (
+                    product for product in products
+                    if not product_article
+                    and product.get("production_status") == "linked"
                     and _text(product.get("production_product_name")).casefold() == wms_name
                     and _text(product.get("production_size")).casefold() == wms_size
                     and _text(product.get("production_color")).casefold() == wms_color
@@ -2297,6 +2310,7 @@ class MarketplacePGRepository:
                 continue
             return {
                 "item_type": "finished",
+                "product_article": normalize_product_article(product.get("offer_id") or product.get("article")),
                 "product_name": product["production_product_name"],
                 "product_size": product["production_size"],
                 "product_color": product["production_color"],

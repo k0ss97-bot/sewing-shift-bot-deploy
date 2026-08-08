@@ -33,6 +33,7 @@ class UnifiedCatalogTests(unittest.TestCase):
         self.assertEqual(len(products), 1)
         self.assertEqual(products[0]["barcode"], "4600000000128")
         self.assertEqual(products[0]["product_key"]["product_size"], "122")
+        self.assertEqual(products[0]["product_key"]["product_article"], "БДШВ-4/122")
         connection.rollback.assert_called_once_with()
 
     def test_lookup_accepts_alternate_barcode(self):

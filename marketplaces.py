@@ -755,7 +755,7 @@ def _reserve_shipment_positions(items: list[tuple[int, dict, int, str]]) -> list
     because it requests only the still-unreserved quantity.
     """
     from wms.connection import get_pg_connection
-    from wms.models import ProductKey
+    from wms.models import ProductKey, normalize_product_article
 
     conn = get_pg_connection()
     allocations: list[tuple[int, str, dict, int]] = []
@@ -764,45 +764,52 @@ def _reserve_shipment_positions(items: list[tuple[int, dict, int, str]]) -> list
             for item_id, key_data, needed, article in items:
                 if needed <= 0:
                     continue
-                # WMS stock itself keeps a production key, not the marketplace
-                # article. Resolve each physical row through the same metadata
-                # adapter that powers the warehouse-map product card, then use
-                # the seller article/SKU as the only business selector.
+                article_key = normalize_product_article(article)
                 cur.execute(
                     """SELECT ws.id,ws.quantity,ws.reserved_quantity,l.code,
-                              ws.item_type,ws.product_name,ws.product_size,ws.product_color,
+                              ws.item_type,ws.product_article,ws.product_name,ws.product_size,ws.product_color,
                               ws.stage_name,ws.ready_for_position
                          FROM warehouse_stock ws
                          JOIN wms_locations l ON l.id=ws.location_id
                         WHERE ws.item_state='SELLABLE' AND ws.unit='шт' AND l.status='active'
                           AND ws.quantity > ws.reserved_quantity
+                          AND (ws.product_article=%s OR ws.product_article='')
                      ORDER BY l.pick_priority,l.route_order,l.code,ws.id""",
+                    (article_key,),
                 )
                 candidates = cur.fetchall()
                 keys = [
                     {
-                        "item_type": row[4], "product_name": row[5],
-                        "product_size": row[6], "product_color": row[7],
-                        "stage_name": row[8], "ready_for_position": row[9],
+                        "item_type": row[4], "product_article": row[5], "product_name": row[6],
+                        "product_size": row[7], "product_color": row[8],
+                        "stage_name": row[9], "ready_for_position": row[10],
                     }
                     for row in candidates
                 ]
-                metadata = marketplace_metadata_for_wms_product_keys(keys) if keys else []
-                article_key = _text(article).casefold()
+                legacy_indices = [index for index, key in enumerate(keys) if not key["product_article"]]
+                legacy_metadata = marketplace_metadata_for_wms_product_keys(
+                    [keys[index] for index in legacy_indices]
+                ) if legacy_indices else []
+                metadata_by_index = dict(zip(legacy_indices, legacy_metadata))
                 matching_ids = [
-                    int(row[0]) for row, product in zip(candidates, metadata)
-                    if product and article_key in {
-                        _text(product.get("offer_id")).casefold(),
-                        _text(product.get("sku")).casefold(),
-                        _text(product.get("external_product_id")).casefold(),
-                    }
+                    int(row[0]) for index, row in enumerate(candidates)
+                    if normalize_product_article(row[5]) == article_key
+                    or (
+                        not row[5]
+                        and (product := metadata_by_index.get(index))
+                        and article_key in {
+                            normalize_product_article(product.get("offer_id")),
+                            normalize_product_article(product.get("sku")),
+                            normalize_product_article(product.get("external_product_id")),
+                        }
+                    )
                 ]
                 if not matching_ids:
                     continue
                 placeholders = ",".join("%s" for _ in matching_ids)
                 cur.execute(
                     f"""SELECT ws.id,ws.quantity,ws.reserved_quantity,l.code,
-                               ws.item_type,ws.product_name,ws.product_size,ws.product_color,
+                               ws.item_type,ws.product_article,ws.product_name,ws.product_size,ws.product_color,
                                ws.stage_name,ws.ready_for_position
                           FROM warehouse_stock ws
                           JOIN wms_locations l ON l.id=ws.location_id
@@ -830,9 +837,9 @@ def _reserve_shipment_positions(items: list[tuple[int, dict, int, str]]) -> list
                     # variant and state match. Preserve its exact WMS key for
                     # the later scan and atomic pick.
                     actual_key = ProductKey(
-                        item_type=str(row[4]), product_name=str(row[5]),
-                        product_size=str(row[6]), product_color=str(row[7]),
-                        stage_name=str(row[8]), ready_for_position=str(row[9]),
+                        item_type=str(row[4]), product_article=str(row[5]), product_name=str(row[6]),
+                        product_size=str(row[7]), product_color=str(row[8]),
+                        stage_name=str(row[9]), ready_for_position=str(row[10]),
                     )
                     allocations.append((item_id, str(row[3]), actual_key.to_dict(), take))
                     remaining -= take
@@ -1407,7 +1414,7 @@ def resolve_production_product_by_barcode(barcode: str) -> dict | None:
         account_id = _account(conn, "ozon", account_name, os.getenv("OZON_CLIENT_ID", "").strip())
         sync_production_links(conn, account_id)
         row = conn.execute(
-            """SELECT l.production_product_name,l.production_size,l.production_color,p.payload_json,p.barcode
+            """SELECT l.production_product_name,l.production_size,l.production_color,p.payload_json,p.barcode,p.offer_id
                  FROM marketplace_products p
                  JOIN marketplace_production_links l ON l.marketplace_product_id=p.id
                  WHERE p.account_id=? AND p.barcode=? AND l.status='linked'
@@ -1416,7 +1423,7 @@ def resolve_production_product_by_barcode(barcode: str) -> dict | None:
         ).fetchone()
         if not row:
             linked_rows = conn.execute(
-                """SELECT l.production_product_name,l.production_size,l.production_color,p.payload_json,p.barcode
+                """SELECT l.production_product_name,l.production_size,l.production_color,p.payload_json,p.barcode,p.offer_id
                      FROM marketplace_products p
                      JOIN marketplace_production_links l ON l.marketplace_product_id=p.id
                      WHERE p.account_id=? AND l.status='linked'""",
@@ -1435,6 +1442,7 @@ def resolve_production_product_by_barcode(barcode: str) -> dict | None:
             return None
         return {
             "item_type": "finished",
+            "product_article": row[5],
             "product_name": row[0],
             "product_size": row[1],
             "product_color": row[2],
@@ -2584,21 +2592,35 @@ def marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) -> list[
         if _text(product_key.get("item_type")) != "finished":
             resolved.append(None)
             continue
+        from wms.models import normalize_product_article
+
+        product_article = normalize_product_article(product_key.get("product_article"))
         wms_name = _text(product_key.get("product_name")).casefold()
         wms_size = _text(product_key.get("product_size")).casefold()
         wms_color = _text(product_key.get("product_color")).casefold()
-        direct = next(
+        article_match = next(
             (
                 product for product in products
-                if (_text(product.get("offer_id")) and _text(product.get("offer_id")).casefold() in wms_name)
-                or (_text(product.get("sku")) and _text(product.get("sku")).casefold() in wms_name)
+                if product_article
+                and normalize_product_article(product.get("offer_id")) == product_article
             ),
             None,
         )
-        linked = direct or next(
+        direct = next(
             (
                 product for product in products
-                if product.get("production_status") == "linked"
+                if not product_article and (
+                    (_text(product.get("offer_id")) and _text(product.get("offer_id")).casefold() in wms_name)
+                    or (_text(product.get("sku")) and _text(product.get("sku")).casefold() in wms_name)
+                )
+            ),
+            None,
+        )
+        linked = article_match or direct or next(
+            (
+                product for product in products
+                if not product_article
+                and product.get("production_status") == "linked"
                 and _text(product.get("production_product_name")).casefold() == wms_name
                 and _text(product.get("production_size")).casefold() == wms_size
                 and _text(product.get("production_color")).casefold() == wms_color
@@ -2661,23 +2683,37 @@ def _legacy_marketplace_metadata_for_wms_product_keys(product_keys: list[dict]) 
         if _text(product_key.get("item_type")) != "finished":
             resolved.append(None)
             continue
+        from wms.models import normalize_product_article
+
+        product_article = normalize_product_article(product_key.get("product_article"))
         wms_name, wms_size, wms_color = _catalog_identity(
             product_key.get("product_name"),
             product_key.get("product_size"),
             product_key.get("product_color"),
         )
-        direct = next(
+        article_match = next(
             (
                 product for product in products
-                if (_text(product.get("offer_id")) and _text(product.get("offer_id")).casefold() in wms_name)
-                or (_text(product.get("sku")) and _text(product.get("sku")).casefold() in wms_name)
+                if product_article
+                and normalize_product_article(product.get("offer_id")) == product_article
             ),
             None,
         )
-        linked = direct or next(
+        direct = next(
             (
                 product for product in products
-                if product.get("production_status") == "linked"
+                if not product_article and (
+                    (_text(product.get("offer_id")) and _text(product.get("offer_id")).casefold() in wms_name)
+                    or (_text(product.get("sku")) and _text(product.get("sku")).casefold() in wms_name)
+                )
+            ),
+            None,
+        )
+        linked = article_match or direct or next(
+            (
+                product for product in products
+                if not product_article
+                and product.get("production_status") == "linked"
                 and _catalog_identity(
                     product.get("production_product_name"),
                     product.get("production_size"),

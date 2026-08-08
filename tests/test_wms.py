@@ -33,6 +33,7 @@ from wms.models import (  # noqa: E402
     ProductKey,
     StockReceiptResult,
     WarehouseStock,
+    normalize_product_article,
 )
 from marketplaces import _marketplace_payload_barcodes  # noqa: E402
 
@@ -55,9 +56,19 @@ class ProductKeyTests(unittest.TestCase):
         d = pk.to_dict()
         self.assertEqual(ProductKey.from_dict(d), pk)
 
-    def test_six_fields(self):
+    def test_legacy_key_serializes_empty_article(self):
         pk = ProductKey("semifinished", "A", "S", "C", "ST", "P")
-        self.assertEqual(len(pk.to_dict()), 6)
+        self.assertEqual(len(pk.to_dict()), 7)
+        self.assertEqual(pk.to_dict()["product_article"], "")
+
+    def test_finished_article_is_normalized_and_roundtrips(self):
+        pk = ProductKey(
+            "finished", "Костюм", "110", "Темно-синий", "Упаковано", "Склад",
+            product_article=" ' кдшвн-2 /110 ",
+        )
+        self.assertEqual(pk.product_article, "КДШВН-2/110")
+        self.assertEqual(ProductKey.from_dict(pk.to_dict()), pk)
+        self.assertEqual(normalize_product_article("сдшвк-5/98"), "СДШВК-5/98")
 
     def test_material_roundtrip(self):
         pk = ProductKey("material", "Ткань", "—", "Бежевый", "Материал", "Склад")
@@ -849,6 +860,20 @@ class WmsDbTests(unittest.TestCase):
             cur.execute("SELECT count(*) FROM wms_zones")
             zone_count = cur.fetchone()[0]
         self.assertGreaterEqual(zone_count, 11)
+
+    def test_finished_articles_do_not_merge_when_descriptive_fields_match(self):
+        from wms import repository as repo
+
+        location = repo.get_location_by_code(self.conn, "RECEIVE-01")
+        first = self._pk(product_name="Одинаковый костюм", product_article="КДШВН-2/110")
+        second = self._pk(product_name="Одинаковый костюм", product_article="СДШВК-5/110")
+        first_id = repo.upsert_stock(self.conn, first, delta=28, location_id=location.id)
+        second_id = repo.upsert_stock(self.conn, second, delta=45, location_id=location.id)
+        self.conn.commit()
+
+        self.assertNotEqual(first_id, second_id)
+        self.assertEqual(repo.find_stock(self.conn, first, location_id=location.id).quantity, 28)
+        self.assertEqual(repo.find_stock(self.conn, second, location_id=location.id).quantity, 45)
 
     def test_bulk_writeoff_zeros_goods_releases_reserve_and_is_idempotent(self):
         from wms import operations as ops

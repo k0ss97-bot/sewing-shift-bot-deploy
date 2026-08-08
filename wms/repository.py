@@ -4,8 +4,8 @@ Thin data-access functions used by :mod:`wms.operations`. Each function takes
 an open connection (the caller owns the transaction) so multi-step operations
 can compose inside a single ``BEGIN``/``COMMIT``.
 
-Product identity reuses the legacy ``ProductKey`` 6-field tuple so WMS stock
-maps 1:1 to SQLite ``warehouse_stock`` rows.
+Finished-goods identity is article-first. Legacy rows without an article remain
+readable, while every new marketplace-linked row carries ``product_article``.
 """
 
 from __future__ import annotations
@@ -113,6 +113,7 @@ def finished_production_receipts(
             """
             SELECT
                 (movement.occurred_at AT TIME ZONE %s)::date AS receipt_date,
+                movement.product_key->>'product_article' AS product_article,
                 movement.product_key->>'product_name' AS product_name,
                 movement.product_key->>'product_size' AS product_size,
                 movement.product_key->>'product_color' AS product_color,
@@ -151,6 +152,7 @@ def finished_production_receipts(
             details.append(
                 {
                     "date": receipt_date,
+                    "article": str(row.get("product_article") or ""),
                     "product": str(row["product_name"] or ""),
                     "size": str(row["product_size"] or ""),
                     "color": str(row["product_color"] or ""),
@@ -188,20 +190,27 @@ def find_stock(
     the product exists in at most one location. Callers performing a physical
     warehouse operation must always pass the location explicitly.
     """
-    sql = """SELECT * FROM warehouse_stock
-             WHERE item_type=%s AND product_name=%s AND product_size=%s
-               AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-               AND item_state=%s AND unit=%s"""
-    params: list[Any] = [
-        product_key.item_type,
-        product_key.product_name,
-        product_key.product_size,
-        product_key.product_color,
-        product_key.stage_name,
-        product_key.ready_for_position,
-        item_state,
-        unit,
-    ]
+    if product_key.item_type == "finished" and product_key.product_article:
+        sql = """SELECT * FROM warehouse_stock
+                 WHERE item_type='finished' AND product_article=%s
+                   AND item_state=%s AND unit=%s"""
+        params: list[Any] = [product_key.product_article, item_state, unit]
+    else:
+        sql = """SELECT * FROM warehouse_stock
+                 WHERE item_type=%s AND product_article=''
+                   AND product_name=%s AND product_size=%s
+                   AND product_color=%s AND stage_name=%s AND ready_for_position=%s
+                   AND item_state=%s AND unit=%s"""
+        params = [
+            product_key.item_type,
+            product_key.product_name,
+            product_key.product_size,
+            product_key.product_color,
+            product_key.stage_name,
+            product_key.ready_for_position,
+            item_state,
+            unit,
+        ]
     if location_id is not _LOCATION_UNSET:
         sql += " AND location_id IS NOT DISTINCT FROM %s"
         params.append(location_id)
@@ -234,61 +243,99 @@ def upsert_stock(
     """
     with conn.cursor() as cur:
         if delta < 0:
-            cur.execute(
-                """UPDATE warehouse_stock
-                      SET quantity = quantity + %s,
-                          updated_at = now()
-                    WHERE item_type=%s AND product_name=%s AND product_size=%s
-                      AND product_color=%s AND stage_name=%s AND ready_for_position=%s
-                      AND unit=%s AND item_state=%s
-                      AND location_id IS NOT DISTINCT FROM %s
-                      AND quantity + %s >= 0
-                RETURNING id""",
-                (
-                    delta,
-                    product_key.item_type,
-                    product_key.product_name,
-                    product_key.product_size,
-                    product_key.product_color,
-                    product_key.stage_name,
-                    product_key.ready_for_position,
-                    unit,
-                    item_state,
-                    location_id,
-                    delta,
-                ),
-            )
+            if product_key.item_type == "finished" and product_key.product_article:
+                cur.execute(
+                    """UPDATE warehouse_stock
+                          SET quantity = quantity + %s,
+                              updated_at = now()
+                        WHERE item_type='finished' AND product_article=%s
+                          AND unit=%s AND item_state=%s
+                          AND location_id IS NOT DISTINCT FROM %s
+                          AND quantity + %s >= 0
+                    RETURNING id""",
+                    (delta, product_key.product_article, unit, item_state, location_id, delta),
+                )
+            else:
+                cur.execute(
+                    """UPDATE warehouse_stock
+                          SET quantity = quantity + %s,
+                              updated_at = now()
+                        WHERE item_type=%s AND product_article=''
+                          AND product_name=%s AND product_size=%s
+                          AND product_color=%s AND stage_name=%s AND ready_for_position=%s
+                          AND unit=%s AND item_state=%s
+                          AND location_id IS NOT DISTINCT FROM %s
+                          AND quantity + %s >= 0
+                    RETURNING id""",
+                    (
+                        delta,
+                        product_key.item_type,
+                        product_key.product_name,
+                        product_key.product_size,
+                        product_key.product_color,
+                        product_key.stage_name,
+                        product_key.ready_for_position,
+                        unit,
+                        item_state,
+                        location_id,
+                        delta,
+                    ),
+                )
             row = cur.fetchone()
             if row is None:
                 raise ValueError("Недостаточно товара для списания.")
             return int(row[0])
 
-        cur.execute(
-            """INSERT INTO warehouse_stock
-               (legacy_sqlite_id, item_type, product_name, product_size,
-                product_color, stage_name, ready_for_position, quantity,
-                item_state, location_id, unit, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
-               ON CONFLICT (item_type, product_name, product_size, product_color,
-                            stage_name, ready_for_position, unit, item_state, location_id)
-               DO UPDATE SET quantity = warehouse_stock.quantity + EXCLUDED.quantity,
-                             legacy_sqlite_id = COALESCE(EXCLUDED.legacy_sqlite_id, warehouse_stock.legacy_sqlite_id),
-                             updated_at = now()
-               RETURNING id""",
-            (
-                legacy_sqlite_id,
-                product_key.item_type,
-                product_key.product_name,
-                product_key.product_size,
-                product_key.product_color,
-                product_key.stage_name,
-                product_key.ready_for_position,
-                delta,
-                item_state,
-                location_id,
-                unit,
-            ),
+        values = (
+            legacy_sqlite_id,
+            product_key.item_type,
+            product_key.product_article,
+            product_key.product_name,
+            product_key.product_size,
+            product_key.product_color,
+            product_key.stage_name,
+            product_key.ready_for_position,
+            delta,
+            item_state,
+            location_id,
+            unit,
         )
+        if product_key.item_type == "finished" and product_key.product_article:
+            cur.execute(
+                """INSERT INTO warehouse_stock
+                   (legacy_sqlite_id, item_type, product_article, product_name, product_size,
+                    product_color, stage_name, ready_for_position, quantity,
+                    item_state, location_id, unit, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                   ON CONFLICT (product_article, unit, item_state, location_id)
+                     WHERE item_type='finished' AND product_article<>''
+                   DO UPDATE SET quantity = warehouse_stock.quantity + EXCLUDED.quantity,
+                                 product_name = EXCLUDED.product_name,
+                                 product_size = EXCLUDED.product_size,
+                                 product_color = EXCLUDED.product_color,
+                                 stage_name = EXCLUDED.stage_name,
+                                 ready_for_position = EXCLUDED.ready_for_position,
+                                 legacy_sqlite_id = COALESCE(EXCLUDED.legacy_sqlite_id, warehouse_stock.legacy_sqlite_id),
+                                 updated_at = now()
+                   RETURNING id""",
+                values,
+            )
+        else:
+            cur.execute(
+                """INSERT INTO warehouse_stock
+                   (legacy_sqlite_id, item_type, product_article, product_name, product_size,
+                    product_color, stage_name, ready_for_position, quantity,
+                    item_state, location_id, unit, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                   ON CONFLICT (item_type, product_name, product_size, product_color,
+                                stage_name, ready_for_position, unit, item_state, location_id)
+                     WHERE item_type<>'finished' OR product_article=''
+                   DO UPDATE SET quantity = warehouse_stock.quantity + EXCLUDED.quantity,
+                                 legacy_sqlite_id = COALESCE(EXCLUDED.legacy_sqlite_id, warehouse_stock.legacy_sqlite_id),
+                                 updated_at = now()
+                   RETURNING id""",
+                values,
+            )
         row = cur.fetchone()
     return int(row[0])
 
@@ -538,6 +585,7 @@ def _location_from_row(row) -> Location:
 def _stock_from_row(row) -> WarehouseStock:
     pk = ProductKey(
         item_type=row["item_type"],
+        product_article=row.get("product_article") or "",
         product_name=row["product_name"],
         product_size=row["product_size"],
         product_color=row["product_color"],

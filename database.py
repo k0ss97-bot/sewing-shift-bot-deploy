@@ -190,6 +190,7 @@ def get_db_connection(timeout=30):
     return conn
 ROUTE_BATCH_COLUMNS = [
     "id",
+    "product_article",
     "product_name",
     "product_size",
     "product_color",
@@ -260,6 +261,7 @@ WMS_RECEIPT_OUTBOX_COLUMNS = [
     "route_batch_id",
     "stock_id",
     "item_type",
+    "product_article",
     "product_name",
     "product_size",
     "product_color",
@@ -2480,6 +2482,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS production_task_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             task_id INTEGER NOT NULL,
+            product_article TEXT NOT NULL DEFAULT '',
             product_size TEXT NOT NULL,
             product_color TEXT NOT NULL,
             contour_quantity INTEGER NOT NULL DEFAULT 0,
@@ -2488,6 +2491,10 @@ def init_db():
             FOREIGN KEY (task_id) REFERENCES production_tasks (id)
         )
     """)
+    cursor.execute("PRAGMA table_info(production_task_items)")
+    production_task_item_columns = {row[1] for row in cursor.fetchall()}
+    if "product_article" not in production_task_item_columns:
+        cursor.execute("ALTER TABLE production_task_items ADD COLUMN product_article TEXT NOT NULL DEFAULT ''")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS production_task_fabric_rolls (
@@ -2547,6 +2554,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_article TEXT NOT NULL DEFAULT '',
             product_name TEXT NOT NULL,
             product_size TEXT NOT NULL,
             product_color TEXT NOT NULL,
@@ -2564,6 +2572,9 @@ def init_db():
 
     cursor.execute("PRAGMA table_info(route_batches)")
     route_batch_columns = [column[1] for column in cursor.fetchall()]
+
+    if "product_article" not in route_batch_columns:
+        cursor.execute("ALTER TABLE route_batches ADD COLUMN product_article TEXT NOT NULL DEFAULT ''")
 
     if "source_stock_id" not in route_batch_columns:
         cursor.execute("ALTER TABLE route_batches ADD COLUMN source_stock_id INTEGER")
@@ -2836,6 +2847,7 @@ def init_db():
             route_batch_id INTEGER NOT NULL UNIQUE,
             stock_id INTEGER NOT NULL,
             item_type TEXT NOT NULL,
+            product_article TEXT NOT NULL DEFAULT '',
             product_name TEXT NOT NULL,
             product_size TEXT NOT NULL,
             product_color TEXT NOT NULL,
@@ -2854,6 +2866,10 @@ def init_db():
             FOREIGN KEY (employee_id) REFERENCES employees (id)
         )
     """)
+    cursor.execute("PRAGMA table_info(wms_receipt_outbox)")
+    wms_outbox_columns = {row[1] for row in cursor.fetchall()}
+    if "product_article" not in wms_outbox_columns:
+        cursor.execute("ALTER TABLE wms_receipt_outbox ADD COLUMN product_article TEXT NOT NULL DEFAULT ''")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS production_wms_reconciliation_runs (
@@ -4645,17 +4661,17 @@ def assign_route_batch_quantity(batch_id: int, employee_id: int, quantity: int |
         cursor.execute(
             """
             INSERT INTO route_batches (
-                product_name, product_size, product_color, quantity, route_step_index, status,
+                product_article, product_name, product_size, product_color, quantity, route_step_index, status,
                 created_by_employee_id, created_at, updated_at, completed_at, source_stock_id,
                 assigned_employee_id, assigned_at, good_quantity, defect_quantity, priority, due_date,
                 parent_batch_id, source_cutting_batch_id, work_state, blocked_reason, paused_at,
                 last_activity_at, handover_count, packaging_option, packaging_output_name, packaging_ratio,
                 execution_mode
-            ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, 0, 0, ?, ?, ?, ?,
+            ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, 0, 0, ?, ?, ?, ?,
                       'in_work', NULL, NULL, ?, 0, ?, ?, ?, ?)
             """,
             (
-                batch["product_name"], batch["product_size"], batch["product_color"], requested_quantity,
+                batch.get("product_article") or "", batch["product_name"], batch["product_size"], batch["product_color"], requested_quantity,
                 batch["route_step_index"], batch.get("created_by_employee_id"), now, now,
                 batch.get("source_stock_id"), employee_id, now, batch.get("priority") or "normal",
                 batch.get("due_date") or None, batch_id, batch.get("source_cutting_batch_id"), now,
@@ -4769,6 +4785,7 @@ def create_route_batch(
     priority: str = "normal",
     due_date: str = "",
     parent_batch_id: int | None = None,
+    product_article: str = "",
 ):
     if quantity <= 0:
         return None
@@ -4788,6 +4805,7 @@ def create_route_batch(
     cursor.execute(
         """
         INSERT INTO route_batches (
+            product_article,
             product_name,
             product_size,
             product_color,
@@ -4803,9 +4821,10 @@ def create_route_batch(
             due_date,
             parent_batch_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            product_article,
             product_name,
             product_size,
             product_color,
@@ -5788,15 +5807,16 @@ def _insert_automatic_route_batch(
     cursor.execute(
         """
         INSERT INTO route_batches (
-            product_name, product_size, product_color, quantity,
+            product_article, product_name, product_size, product_color, quantity,
             route_step_index, status, created_by_employee_id,
             created_at, updated_at, completed_at, source_stock_id,
             priority, due_date, parent_batch_id,
             packaging_option, packaging_output_name, packaging_ratio, execution_mode
         )
-        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            batch.get("product_article") or "",
             batch["product_name"],
             batch["product_size"],
             batch["product_color"],
@@ -5851,6 +5871,7 @@ def _create_first_product_route_batches_from_cut(
     product_name: str,
     product_size: str,
     product_color: str,
+    product_article: str,
     quantity: int,
     stock_id: int,
     lot_id: int,
@@ -5888,6 +5909,7 @@ def _create_first_product_route_batches_from_cut(
             candidates.append(min(branch_rows, key=lambda row: (row[1].get("parallel_order", 1), row[0])))
 
     base = {
+        "product_article": product_article,
         "product_name": product_name,
         "product_size": product_size,
         "product_color": product_color,
@@ -6273,16 +6295,17 @@ def _split_route_batch_remainder_on_completion(
     cursor.execute(
         """
         INSERT INTO route_batches (
-            product_name, product_size, product_color, quantity, route_step_index, status,
+            product_article, product_name, product_size, product_color, quantity, route_step_index, status,
             created_by_employee_id, created_at, updated_at, completed_at, source_stock_id,
             assigned_employee_id, assigned_at, good_quantity, defect_quantity, priority, due_date,
             parent_batch_id, source_cutting_batch_id, work_state, blocked_reason, paused_at,
             last_activity_at, handover_count, packaging_option, packaging_output_name, packaging_ratio,
             execution_mode
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, NULL, NULL, 0, 0, ?, ?, ?, ?,
+        ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, NULL, NULL, 0, 0, ?, ?, ?, ?,
                   'free', NULL, NULL, ?, 0, ?, ?, ?, ?)
         """,
         (
+            batch.get("product_article") or "",
             batch["product_name"],
             batch["product_size"],
             batch["product_color"],
@@ -6684,11 +6707,11 @@ def complete_route_batch_step_atomic(
                     """
                     INSERT INTO wms_receipt_outbox (
                         request_key, route_batch_id, stock_id,
-                        item_type, product_name, product_size, product_color,
+                        item_type, product_article, product_name, product_size, product_color,
                         stage_name, ready_for_position, quantity, employee_id,
                         status, attempts, last_error, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, '', ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, '', ?)
                     ON CONFLICT(request_key) DO NOTHING
                     """,
                     (
@@ -6696,6 +6719,7 @@ def complete_route_batch_step_atomic(
                         batch_id,
                         stock_id,
                         item_type,
+                        batch.get("product_article") or "",
                         output_product_name,
                         batch["product_size"],
                         batch["product_color"],
@@ -6745,14 +6769,15 @@ def complete_route_batch_step_atomic(
             cursor.execute(
                 """
                 INSERT INTO route_batches (
-                    product_name, product_size, product_color, quantity,
+                    product_article, product_name, product_size, product_color, quantity,
                     route_step_index, status, created_by_employee_id,
                     created_at, updated_at, completed_at, source_stock_id,
                     priority, due_date, parent_batch_id, execution_mode
                 )
-                VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, 'urgent', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, 'urgent', ?, ?, ?)
                 """,
                 (
+                    batch.get("product_article") or "",
                     batch["product_name"],
                     batch["product_size"],
                     batch["product_color"],
@@ -7767,6 +7792,7 @@ def _create_training_route_batches_from_cut(
     product_name: str,
     product_size: str,
     product_color: str,
+    product_article: str,
     quantity: int,
     stock_id: int,
     employee_id: int | None,
@@ -7792,6 +7818,7 @@ def _create_training_route_batches_from_cut(
         return []
 
     base = {
+        "product_article": product_article,
         "product_name": product_name,
         "product_size": product_size,
         "product_color": product_color,
@@ -8497,6 +8524,14 @@ def mark_cutting_batch_formed(
                     continue
 
                 cursor.execute(
+                    """SELECT product_article FROM production_task_items
+                        WHERE task_id=? AND product_size=? AND product_color=?""",
+                    (task_id, product_size, product_color),
+                )
+                article_row = cursor.fetchone()
+                product_article = str(article_row[0] or "") if article_row else ""
+
+                cursor.execute(
                     """
                     INSERT INTO shift_operations (
                         shift_id, employee_id, operation_id,
@@ -8605,6 +8640,7 @@ def mark_cutting_batch_formed(
                         product_name=batch_product_name,
                         product_size=product_size,
                         product_color=product_color,
+                        product_article=product_article,
                         quantity=quantity,
                         stock_id=stock_id,
                         employee_id=employee_id,
@@ -8622,6 +8658,7 @@ def mark_cutting_batch_formed(
                         product_name=batch_product_name,
                         product_size=product_size,
                         product_color=product_color,
+                        product_article=product_article,
                         quantity=quantity,
                         stock_id=stock_id,
                         lot_id=output_lot_id,
@@ -10713,12 +10750,14 @@ def create_production_task(
     attachment: dict | None = None,
     priority: str = "normal",
     due_date: str = "",
+    article_map: dict[tuple[str, str], str] | None = None,
 ):
     product_name = product_name.strip()
     sizes = [str(size).strip() for size in sizes if str(size).strip()]
     colors = [str(color).strip() for color in colors if str(color).strip()]
     material_name = material_name.strip() or "Ткань"
     fabric_rolls = fabric_rolls or {}
+    article_map = article_map or {}
 
     if priority not in {"low", "normal", "high", "urgent"}:
         priority = "normal"
@@ -10779,11 +10818,11 @@ def create_production_task(
         )
         cursor.executemany(
             """
-            INSERT INTO production_task_items (task_id, product_size, product_color)
-            VALUES (?, ?, ?)
+            INSERT INTO production_task_items (task_id, product_article, product_size, product_color)
+            VALUES (?, ?, ?, ?)
             """,
             [
-                (task_id, product_size, product_color)
+                (task_id, str(article_map.get((product_size, product_color)) or ""), product_size, product_color)
                 for product_color in colors
                 for product_size in sizes
             ],

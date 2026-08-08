@@ -434,6 +434,8 @@ def _normalized_identity(value: Any) -> str:
 
 
 def _same_product_identity(first: ProductKey, second: ProductKey) -> bool:
+    if first.product_article or second.product_article:
+        return bool(first.product_article) and first.product_article == second.product_article
     return all(
         _normalized_identity(getattr(first, field))
         == _normalized_identity(getattr(second, field))
@@ -493,6 +495,7 @@ def _stock_row_for_resolved_product(
             continue
         linked_key = ProductKey(
             item_type="finished",
+            product_article=str(marketplace_product.get("offer_id") or ""),
             product_name=str(marketplace_product.get("production_product_name") or ""),
             product_size=str(marketplace_product.get("production_size") or ""),
             product_color=str(marketplace_product.get("production_color") or ""),

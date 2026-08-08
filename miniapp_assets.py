@@ -5892,7 +5892,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsAdminAdjustment: {mode: "inventory", locationId: "", stockId: "", quantity: "", reason: "", targetState: "SCRAPPED", returnView: "admin-stock-control"},
       pushDeviceActive: null,
       pushDeviceSyncing: false,
-      wmsDraft: {itemType: "finished", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, matchedStock: null, matchedLocationCode: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: "", manualQuery: "", manualResults: [], manualLoading: false, manualSelected: null},
+      wmsDraft: {itemType: "finished", productArticle: "", productName: "", productSize: "", productColor: "", productScanned: false, fromLocationScanned: false, toLocationScanned: false, matchedStock: null, matchedLocationCode: "", stageName: "Готово", readyForPosition: "Склад", quantity: "", unit: "шт", materialUnit: "рул", fromLocation: "", toLocation: "", reason: "", targetState: "SCRAPPED", barcode: "", locationZone: "STORAGE", locationName: "", manualQuery: "", manualResults: [], manualLoading: false, manualSelected: null},
       wmsMaterialReceipt: {name: "Ткань", color: "", unit: "рул", quantity: "", comment: ""},
       wmsStockReceipt: {requestKey: "", lines: [], pending: null, quantity: "1", comment: "", submitting: false, manualQuery: "", manualResults: [], manualLoading: false},
       marketplaceData: {loading: false, loaded: false, error: "", payload: null},
@@ -8830,6 +8830,7 @@ MINIAPP_HTML = """<!doctype html>
     function wmsProductKey(d) {
       return {
         item_type: d.itemType || "finished",
+        product_article: d.productArticle || "",
         product_name: d.productName,
         product_size: d.productSize,
         product_color: d.productColor,
@@ -8841,6 +8842,7 @@ MINIAPP_HTML = """<!doctype html>
     function setWmsDraftProductKey(productKey) {
       const pk = productKey || {};
       state.wmsDraft.itemType = pk.item_type || "finished";
+      state.wmsDraft.productArticle = pk.product_article || "";
       state.wmsDraft.productName = pk.product_name || "";
       state.wmsDraft.productSize = pk.product_size || "";
       state.wmsDraft.productColor = pk.product_color || "";
@@ -9140,6 +9142,7 @@ MINIAPP_HTML = """<!doctype html>
         if (ok) {
           state.wmsDraft.quantity = "";
           state.wmsDraft.toLocation = "";
+          state.wmsDraft.productArticle = "";
           state.wmsDraft.productName = "";
           state.wmsDraft.productSize = "";
           state.wmsDraft.productColor = "";
@@ -9242,6 +9245,7 @@ MINIAPP_HTML = """<!doctype html>
         showToast("Склад", ok ? `Выдано: ${qty} шт. из ${fromLoc}` : (data.reason || "Ошибка выдачи."));
         if (ok) {
           state.wmsDraft.quantity = "";
+          state.wmsDraft.productArticle = "";
           state.wmsDraft.productName = "";
           state.wmsDraft.productSize = "";
           state.wmsDraft.productColor = "";
@@ -9289,6 +9293,7 @@ MINIAPP_HTML = """<!doctype html>
         showToast("ТСД", ok ? `Пересчёт сохранён: ${countedQty} шт.` : (data.reason || "Ошибка пересчёта."));
         if (ok) {
           state.wmsDraft.quantity = "";
+          state.wmsDraft.productArticle = "";
           state.wmsDraft.productName = "";
           state.wmsDraft.productSize = "";
           state.wmsDraft.productColor = "";
@@ -10106,7 +10111,7 @@ MINIAPP_HTML = """<!doctype html>
           const data = await api("/api/wms/barcode/resolve", {barcode: v, location_code: state.wmsShipmentTaskLocation});
           const scannedKey = data.product_key || {};
           const expectedKey = JSON.parse(allocation.product_key_json || "{}");
-          const sameProduct = ["item_type", "product_name", "product_size", "product_color", "stage_name", "ready_for_position"].every((key) => String(scannedKey[key] || "") === String(expectedKey[key] || ""));
+          const sameProduct = wmsProductKeysEqual(scannedKey, expectedKey);
           if (!sameProduct) {
             showToast("Отгрузка", "Этот товар не соответствует выбранной позиции отгрузки.");
             return;
@@ -10196,6 +10201,7 @@ MINIAPP_HTML = """<!doctype html>
           const requiresStockInCell = ["pick", "inventory"].includes(state.wmsView);
           const stockRow = requiresStockInCell && locationCode ? (data.stock_row || wmsFindScannedStock(locationCode, pk)) : null;
           if (requiresStockInCell && locationCode && !stockRow) {
+            state.wmsDraft.productArticle = "";
             state.wmsDraft.productName = "";
             state.wmsDraft.productSize = "";
             state.wmsDraft.productColor = "";
@@ -10561,7 +10567,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="card order-card ${isSelected ? "selected" : ""}" ${selectAttr}="${index}">
           <div class="order-head route-order-head">
             <div class="op-icon">${uiIcon("work")}</div>
-            <div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span>${assignee}<span class="trace-code">${escapeHtml(task.trace_code || `RB-${task.id}`)}</span></div>
+            <div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_article ? `${task.product_article} · ${task.product_name}` : task.product_name)}</span>${assignee}<span class="trace-code">${escapeHtml(task.trace_code || `RB-${task.id}`)}</span></div>
             <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
           </div>
           <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.quantity)} шт</strong></div>
@@ -10716,7 +10722,7 @@ MINIAPP_HTML = """<!doctype html>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
         ` : current ? `
-          <div class="card order-detail"><div class="order-head route-order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_name)}</span>${current.assigned_employee_name ? `<span class="route-assignee">В работе: ${escapeHtml(current.assigned_employee_name)}</span>` : ""}<span class="trace-code">${escapeHtml(current.trace_code || `RB-${current.id}`)}</span></div><span class="status-chip ${current.work_state === "free" ? "gray" : "warn"}">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}${current.blocked_reason ? `<div class="task-note">${escapeHtml(current.blocked_reason)}</div>` : ""}<div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(current.id)}">Паспорт / QR</button></div></div>
+          <div class="card order-detail"><div class="order-head route-order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_article ? `${current.product_article} · ${current.product_name}` : current.product_name)}</span>${current.assigned_employee_name ? `<span class="route-assignee">В работе: ${escapeHtml(current.assigned_employee_name)}</span>` : ""}<span class="trace-code">${escapeHtml(current.trace_code || `RB-${current.id}`)}</span></div><span class="status-chip ${current.work_state === "free" ? "gray" : "warn"}">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}${current.blocked_reason ? `<div class="task-note">${escapeHtml(current.blocked_reason)}</div>` : ""}<div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(current.id)}">Паспорт / QR</button></div></div>
           ${!state.data.is_admin && current.is_assigned_to_me ? renderTaskCompletionForm(current) : ""}
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
         ${state.data && state.data.is_admin && current ? `<div class="button-row">${current.task_kind === "production" && current.assigned_employee_id ? `<button class="small-button secondary" data-order-action="release-cutting" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Освободить задание</button>` : ""}<button class="small-button danger" data-order-action="delete" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Удалить задание</button></div>` : ""}
@@ -11281,6 +11287,9 @@ MINIAPP_HTML = """<!doctype html>
         .replace(/\\s+/g, " ")
         .replace(/ё/g, "е")
         .toLocaleLowerCase("ru");
+      const firstArticle = normalize((first || {}).product_article).replace(/\\s+/g, "");
+      const secondArticle = normalize((second || {}).product_article).replace(/\\s+/g, "");
+      if (firstArticle || secondArticle) return Boolean(firstArticle) && firstArticle === secondArticle;
       const identityKeys = ["item_type", "product_name", "product_size", "product_color"];
       return identityKeys.every((key) => normalize((first || {})[key]) === normalize((second || {})[key]));
     }
@@ -11350,7 +11359,7 @@ MINIAPP_HTML = """<!doctype html>
       if (product.item_type === "material") {
         return [product.product_name, product.product_color].filter(Boolean).join(" · ") || "Материал";
       }
-      return [product.product_name, product.product_size, product.product_color].filter(Boolean).join(" · ") || "Товар";
+      return [product.product_article, product.product_name, product.product_size, product.product_color].filter(Boolean).join(" · ") || "Товар";
     }
 
     function renderWmsStockProductRow(row, available = null, allowWriteoff = false) {
@@ -15144,6 +15153,7 @@ MINIAPP_HTML = """<!doctype html>
         const nextView = wmsView.dataset.wmsView;
         if (nextView !== state.wmsView && ["putaway", "pick", "inventory"].includes(nextView)) {
           state.wmsDraft.quantity = "";
+          state.wmsDraft.productArticle = "";
           state.wmsDraft.productName = "";
           state.wmsDraft.productSize = "";
           state.wmsDraft.productColor = "";
@@ -15245,6 +15255,7 @@ MINIAPP_HTML = """<!doctype html>
         else if (action === "pick") wmsPick();
         else if (action === "inventory_back") {
           if (state.wmsDraft.productScanned) {
+            state.wmsDraft.productArticle = "";
             state.wmsDraft.productName = "";
             state.wmsDraft.productSize = "";
             state.wmsDraft.productColor = "";
