@@ -82,6 +82,8 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('productCards: {loading: false, loaded: false', MINIAPP_HTML)
         self.assertIn('api("/api/catalog/product-cards")', MINIAPP_HTML)
         self.assertIn('function resolveProductCard(row)', MINIAPP_HTML)
+        self.assertIn('function productCardNameKeys(value)', MINIAPP_HTML)
+        self.assertIn('replace(/\\s+детск(?:ий|ая|ое|ие)$/u, "")', MINIAPP_HTML)
         self.assertIn('function productCardRich(row, title = "", meta = "")', MINIAPP_HTML)
         self.assertIn('class="board-order-product"', MINIAPP_HTML)
         self.assertIn('class="task-completion-product"', MINIAPP_HTML)

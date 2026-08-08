@@ -12257,6 +12257,12 @@ MINIAPP_HTML = """<!doctype html>
       return productCardText(value).replace(/[^a-zа-я0-9]/gi, "");
     }
 
+    function productCardNameKeys(value) {
+      const normalized = productCardText(value);
+      const baseName = normalized.replace(/\\s+детск(?:ий|ая|ое|ие)$/u, "").trim();
+      return [...new Set([normalized, baseName].filter(Boolean))];
+    }
+
     function productCardIdentity(row) {
       const source = row || {};
       const productKey = source.product_key || {};
@@ -12277,7 +12283,7 @@ MINIAPP_HTML = """<!doctype html>
       cards.nameIndex = new Map();
       (cards.products || []).forEach((card) => {
         const article = productCardArticle(card.offer_id || card.article);
-        const names = [card.production_product_name, card.group_name, card.name].map(productCardText).filter(Boolean);
+        const names = [card.production_product_name, card.group_name, card.name].flatMap(productCardNameKeys);
         const size = productCardText(card.production_size || card.size);
         const color = productCardText(card.production_color || card.color);
         if (article && !cards.articleIndex.has(article)) cards.articleIndex.set(article, card);
@@ -12296,12 +12302,14 @@ MINIAPP_HTML = """<!doctype html>
       const identity = productCardIdentity(row);
       const article = productCardArticle(identity.article);
       if (article && cards.articleIndex instanceof Map && cards.articleIndex.has(article)) return cards.articleIndex.get(article);
-      const name = productCardText(identity.name);
       const size = productCardText(identity.size);
       const color = productCardText(identity.color);
-      if (name && size && color && cards.variantIndex instanceof Map && cards.variantIndex.has(`${name}|${size}|${color}`)) return cards.variantIndex.get(`${name}|${size}|${color}`);
-      if (name && size && cards.variantIndex instanceof Map && cards.variantIndex.has(`${name}|${size}|`)) return cards.variantIndex.get(`${name}|${size}|`);
-      return name && cards.nameIndex instanceof Map ? (cards.nameIndex.get(name) || null) : null;
+      for (const name of productCardNameKeys(identity.name)) {
+        if (size && color && cards.variantIndex instanceof Map && cards.variantIndex.has(`${name}|${size}|${color}`)) return cards.variantIndex.get(`${name}|${size}|${color}`);
+        if (size && cards.variantIndex instanceof Map && cards.variantIndex.has(`${name}|${size}|`)) return cards.variantIndex.get(`${name}|${size}|`);
+        if (cards.nameIndex instanceof Map && cards.nameIndex.has(name)) return cards.nameIndex.get(name);
+      }
+      return null;
     }
 
     function productCardAvatar(row, compact = false, large = false) {
