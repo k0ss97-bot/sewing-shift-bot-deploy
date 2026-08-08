@@ -159,6 +159,26 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
         self.assertEqual(result["products"][0]["image_url"], "")
         self.assertEqual(result["quality"]["missing"]["image_url"], 1)
 
+    def test_product_cards_fill_missing_variant_image_from_same_ozon_group(self):
+        result = miniapp_server._compact_product_cards({
+            "ok": True,
+            "products_rows": [
+                {
+                    "offer_id": "КДШВ-1/92", "name": "Кардиган", "group_key": "cardigan",
+                    "group_name": "Кардиганы детские", "image_url": "https://cdn.example/cardigan.jpg",
+                },
+                {
+                    "offer_id": "КДШВ-9/92", "name": "Кардиган", "group_key": "cardigan",
+                    "group_name": "Кардиганы детские", "image_url": "",
+                },
+            ],
+        })
+
+        missing_variant = next(row for row in result["products"] if row["offer_id"] == "КДШВ-9/92")
+        self.assertEqual(missing_variant["image_url"], "https://cdn.example/cardigan.jpg")
+        self.assertEqual(missing_variant["image_source"], "ozon:group")
+        self.assertEqual(result["quality"]["missing"]["image_url"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

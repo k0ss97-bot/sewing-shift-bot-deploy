@@ -694,6 +694,19 @@ def _compact_product_cards(snapshot: dict) -> dict:
                 existing["image_source"] = marketplace
 
     cards = list(cards_by_key.values())
+    group_images = {}
+    for card in cards:
+        group_identity = text(card.get("group_key")) or article_key(card.get("group_name"))
+        if group_identity and card.get("image_url"):
+            group_images.setdefault((card.get("marketplace"), group_identity), card["image_url"])
+    for card in cards:
+        if card.get("image_url"):
+            continue
+        group_identity = text(card.get("group_key")) or article_key(card.get("group_name"))
+        group_image = group_images.get((card.get("marketplace"), group_identity)) if group_identity else ""
+        if group_image:
+            card["image_url"] = group_image
+            card["image_source"] = f"{card.get('marketplace')}:group"
     cards.sort(key=lambda row: (
         text(row.get("name")).casefold(), text(row.get("color")).casefold(),
         text(row.get("size")), text(row.get("offer_id")),
