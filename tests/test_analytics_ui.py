@@ -78,6 +78,17 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertNotIn('escapeHtml(row.total_quantity || 0)} шт.', MINIAPP_HTML)
         self.assertNotIn('`${escapeHtml(row.available || 0)} шт.`', MINIAPP_HTML)
 
+    def test_product_images_are_reused_in_wms_and_production_operations(self):
+        self.assertIn('productCards: {loading: false, loaded: false', MINIAPP_HTML)
+        self.assertIn('api("/api/catalog/product-cards")', MINIAPP_HTML)
+        self.assertIn('function resolveProductCard(row)', MINIAPP_HTML)
+        self.assertIn('function productCardRich(row, title = "", meta = "")', MINIAPP_HTML)
+        self.assertIn('class="board-order-product"', MINIAPP_HTML)
+        self.assertIn('class="task-completion-product"', MINIAPP_HTML)
+        self.assertIn('productCardRich(allocation.item', MINIAPP_HTML)
+        self.assertIn('data-wms-catalog-group=', MINIAPP_HTML)
+        self.assertIn('productCardAvatar(representative)', MINIAPP_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()

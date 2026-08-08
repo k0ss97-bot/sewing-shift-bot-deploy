@@ -1159,6 +1159,15 @@ MINIAPP_HTML = """<!doctype html>
     .wms-product-rich-copy b { line-height: 1.25; }
     .wms-product-rich-copy span,
     .wms-product-rich-copy small { color: var(--muted); line-height: 1.35; }
+    .product-card-rich { text-align: left; }
+    .production-task-inline,
+    .board-order-product { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .production-task-inline > span,
+    .board-order-product > span { display: grid; gap: 3px; min-width: 0; }
+    .production-task-inline small,
+    .board-order-product small { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .task-completion-product { margin: 10px 0 12px; padding: 10px; border-radius: 14px; background: rgba(245,248,255,.72); }
+    .wms-catalog-product .product-card-rich { min-width: min(480px, 70%); }
 
     .wms-cell-section-start {
       margin-left: 8px;
@@ -4094,6 +4103,7 @@ MINIAPP_HTML = """<!doctype html>
     .orders-column-head span { display: grid; place-items: center; min-width: 24px; height: 24px; border-radius: 8px; background: #fff; color: var(--muted); font-size: 12px; }
     .board-order-card { display: grid; gap: 9px; margin-bottom: 10px; padding: 13px; border: 1px solid rgba(109,124,158,.15); border-radius: 12px; background: #fff; box-shadow: 0 6px 14px rgba(16,23,34,.05); cursor: pointer; }
     .board-order-card b { font-size: 13px; line-height: 1.3; }
+    .board-order-card .marketplace-product-avatar { flex: 0 0 auto; }
     .board-order-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
     @media (max-width: 820px) {
       .operations-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -5880,6 +5890,7 @@ MINIAPP_HTML = """<!doctype html>
       wmsCatalogSearch: "",
       wmsCatalogGroup: "",
       wmsCatalog: {loading: false, loaded: false, error: "", products: [], lastSyncAt: ""},
+      productCards: {loading: false, loaded: false, error: "", products: [], quality: null, articleIndex: new Map(), variantIndex: new Map(), nameIndex: new Map()},
       wmsShipmentDetail: null,
       wmsShipmentTaskDetail: null,
       wmsShipmentTaskTab: "required",
@@ -7981,17 +7992,19 @@ MINIAPP_HTML = """<!doctype html>
             title: task.stage_title || "Этап раскроя",
             detail: `${task.product_name || "Изделие"} · ${(task.sizes || []).join(", ") || task.sizes_text || "размер не указан"}`,
             status: task.status_text || task.status || "В работе",
+            source: task,
           })),
           ...context.routeTasks.map((task) => ({
             title: task.operation || "Производственное задание",
             detail: `${task.product_name || "Изделие"} · ${task.product_size || "-"} · ${task.product_color || "-"}`,
             status: task.status_text || "В работе",
+            source: task,
           })),
         ];
         count = taskRows.length;
         rows = taskRows.length ? taskRows.map((task) => `
           <button type="button" class="card report-row employee-detail-row" data-go="report" data-report-target="work">
-            <div><b>${escapeHtml(task.title)}</b><span>${escapeHtml(task.detail)}</span></div>
+            <div class="production-task-inline">${productCardAvatar(task.source, true)}<span><b>${escapeHtml(task.title)}</b><small>${escapeHtml(task.detail)}</small></span></div>
             <span class="status-chip warn">${escapeHtml(task.status)} ›</span>
           </button>
         `).join("") : itemEmpty("У вас пока нет заданий в работе.");
@@ -7999,7 +8012,7 @@ MINIAPP_HTML = """<!doctype html>
         count = context.contourTasks.length;
         rows = context.contourTasks.length ? context.contourTasks.map((task) => `
           <button type="button" class="card report-row employee-detail-row" data-go="orders">
-            <div><b>${escapeHtml(task.product_name || task.stage_title || "Нанесение контуров")}</b><span>${escapeHtml((task.sizes || []).join(", ") || task.sizes_text || "Размеры не указаны")} · ${escapeHtml((task.color_labels || task.colors || []).join(", ") || task.colors_text || "цвета не указаны")}</span></div>
+            <div class="production-task-inline">${productCardAvatar(task, true)}<span><b>${escapeHtml(task.product_name || task.stage_title || "Нанесение контуров")}</b><small>${escapeHtml((task.sizes || []).join(", ") || task.sizes_text || "Размеры не указаны")} · ${escapeHtml((task.color_labels || task.colors || []).join(", ") || task.colors_text || "цвета не указаны")}</small></span></div>
             <span class="status-chip ${task.is_assigned_to_me ? "warn" : "gray"}">${escapeHtml(task.status_text || (task.is_assigned_to_me ? "В работе" : "Свободно"))} ›</span>
           </button>
         `).join("") : itemEmpty("Заданий на нанесение контуров сейчас нет.");
@@ -8101,6 +8114,7 @@ MINIAPP_HTML = """<!doctype html>
       return `
         <div class="card task-completion-card">
           <div class="task-completion-head"><b>${escapeHtml(task.operation)}</b><span class="status-chip ${task.work_state === "in_work" ? "" : "warn"}">${escapeHtml(task.status_text || "В работе")}</span></div>
+          <div class="task-completion-product">${productCardRich(task, task.product_name || "Изделие")}</div>
           ${task.training_mode ? `<div class="task-note"><b>Учебный режим.</b> Все этапы партии опубликованы сразу. Закройте только фактически выполненную работу.</div>` : ""}
           ${renderRouteTaskInputs(task)}
           ${(paused || blocked) ? `<div class="task-note">${escapeHtml(task.blocked_reason || (paused ? "Работа приостановлена" : "Задание заблокировано"))}</div>` : ""}
@@ -8162,7 +8176,7 @@ MINIAPP_HTML = """<!doctype html>
             <div class="op-list">
               ${cuttingWorkTasks.map((task, index) => `
                 <div class="card order-card ${index === state.selectedCuttingReportTask ? "selected" : ""}" data-select-cutting-report-task="${index}">
-                  <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${escapeHtml(task.stage_title)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">${escapeHtml(task.status_text || task.status)}</span></div>
+                  <div class="order-head">${productCardAvatar(task, true)}<div><b>${escapeHtml(task.stage_title)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">${escapeHtml(task.status_text || task.status)}</span></div>
                   <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
                   <div class="order-foot"><span>${escapeHtml((task.sizes || []).join(", ") || task.colors_text || task.sizes_text || "-")}</span><span>${escapeHtml(task.next_action || "этап")}</span></div>
                 </div>
@@ -8197,7 +8211,7 @@ MINIAPP_HTML = """<!doctype html>
           <div class="op-list">
             ${doneTasks.length ? doneTasks.map((task, index) => `
               <div class="card order-card">
-                <div class="order-head route-order-head"><div class="op-icon">${uiIcon("quality")}</div><div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">Завершено</span></div>
+                <div class="order-head route-order-head">${productCardAvatar(task, true)}<div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_name)}</span></div><span class="status-chip">Завершено</span></div>
                 <div class="order-foot"><strong>${escapeHtml(task.product_size)} · ${escapeHtml(task.product_color)}</strong><strong>${escapeHtml(task.good_quantity || 0)} годн. · ${escapeHtml(task.defect_quantity || 0)} брак</strong></div>
                 ${(task.defects || []).length ? `<div class="route-inputs">${task.defects.map((defect) => `<div class="route-input-row"><span>${escapeHtml(defect.reason)} · ${escapeHtml(defect.disposition)}${defect.has_photo ? `<br><a href="${escapeHtml(defectPhotoUrl(defect.id))}" target="_blank" rel="noopener">Открыть фото</a>` : ""}</span><span>${defect.rework_batch_id ? `переделка #${escapeHtml(defect.rework_batch_id)}` : `${escapeHtml(defect.quantity)} шт`}</span></div>`).join("")}</div>` : ""}
                 <div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(task.id)}">Паспорт / QR</button></div>
@@ -10567,7 +10581,7 @@ MINIAPP_HTML = """<!doctype html>
       return `
         <div class="card order-card ${isSelected ? "selected" : ""}" ${selectAttr}="${index}">
           <div class="order-head route-order-head">
-            <div class="op-icon">${uiIcon("work")}</div>
+            ${productCardAvatar(task, true)}
             <div><b>${escapeHtml(task.operation)}</b><span>${escapeHtml(task.product_article ? `${task.product_article} · ${task.product_name}` : task.product_name)}</span>${assignee}<span class="trace-code">${escapeHtml(task.trace_code || `RB-${task.id}`)}</span></div>
             <span class="status-chip ${statusClass}">${escapeHtml(task.status_text || "Свободно")}</span>
           </div>
@@ -10660,7 +10674,7 @@ MINIAPP_HTML = """<!doctype html>
             const title = task.task_kind === "route" ? task.operation : (task.stage_title || `Задание #${task.id}`);
             const product = task.product_name || task.product || "Изделие";
             const quantity = task.quantity || task.total_quantity || 0;
-            return `<article class="board-order-card" data-board-order-key="${escapeHtml(taskIdentity(task))}"><b>${escapeHtml(title)}</b><span>${escapeHtml(product)}</span><div class="progress ${id === "blocked" ? "" : "sage"}"><i style="--w:${progressForTask(task)}%"></i></div><div class="board-order-meta"><span>${escapeHtml(quantity)} шт · ${escapeHtml(task.product_size || "-")}</span><span>${escapeHtml(priorityLabel(task.priority))}</span></div></article>`;
+            return `<article class="board-order-card" data-board-order-key="${escapeHtml(taskIdentity(task))}"><div class="board-order-product">${productCardAvatar(task, true)}<span><b>${escapeHtml(title)}</b><small>${escapeHtml(product)}</small></span></div><div class="progress ${id === "blocked" ? "" : "sage"}"><i style="--w:${progressForTask(task)}%"></i></div><div class="board-order-meta"><span>${escapeHtml(quantity)} шт · ${escapeHtml(task.product_size || "-")}</span><span>${escapeHtml(priorityLabel(task.priority))}</span></div></article>`;
           }).join("") : `<div class="empty">Нет заданий</div>`}</section>`;
         }).join("")}</div>
       `;
@@ -10704,7 +10718,7 @@ MINIAPP_HTML = """<!doctype html>
             const statusBucket = orderTaskStatusBucket(task);
             return `
             <div class="card order-card ${index === state.selectedOrder ? "selected" : ""}" data-select-order="${index}">
-              <div class="order-head"><div class="op-icon">${uiIcon("work")}</div><div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(filterValues.product || "Изделие не указано")}<br><strong>Этап: ${escapeHtml(task.stage_title || task.process_status_text || "Раскрой")}</strong>${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${statusBucket === "free" ? "gray" : (statusBucket === "done" ? "" : "warn")}">${escapeHtml(orderTaskStatusText(task))}</span></div>
+              <div class="order-head">${productCardAvatar(task, true)}<div><b>${task.task_kind === "cutting_stage" ? escapeHtml(task.stage_title) : `Задание #${escapeHtml(task.id)}`}</b><span>${escapeHtml(filterValues.product || "Изделие не указано")}<br><strong>Этап: ${escapeHtml(task.stage_title || task.process_status_text || "Раскрой")}</strong>${task.assigned_employee_name ? `<br>В работе: ${escapeHtml(task.assigned_employee_name)}` : ""}</span></div><span class="status-chip ${statusBucket === "free" ? "gray" : (statusBucket === "done" ? "" : "warn")}">${escapeHtml(orderTaskStatusText(task))}</span></div>
               <div class="progress"><i style="--w:${progressForTask(task)}%"></i></div>
               <div class="order-foot"><span>Размер: ${escapeHtml(filterValues.sizes.join(", ") || "-")} · Цвет: ${escapeHtml(filterValues.colors.join(", ") || "-")}</span><span>${task.task_kind === "cutting_stage" ? escapeHtml(task.next_action) : `${progressForTask(task)}%`}</span></div>
               ${state.data && state.data.is_admin ? `<div class="order-card-actions">${task.task_kind === "production" && task.assigned_employee_id && statusBucket !== "done" ? `<button type="button" class="small-button secondary" data-order-action="release-cutting" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Освободить</button>` : ""}${statusBucket !== "done" ? `<button type="button" class="order-delete-button" data-order-action="delete" data-task-kind="${escapeHtml(task.task_kind)}" data-task-id="${escapeHtml(task.id)}">Удалить</button>` : ""}</div>` : ""}
@@ -10719,11 +10733,11 @@ MINIAPP_HTML = """<!doctype html>
         </div>
         <div class="section-title"><b>Детали выбранного</b><span>${current ? progressForTask(current) : 0}%</span></div>
         ${current && current.task_kind === "cutting_stage" ? renderCuttingStageSummary(current) : current && current.task_kind === "production" ? `
-          <div class="card order-detail"><div class="order-head"><div class="op-icon">${sewingIcon()}</div><div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}<br><strong>Этап: ${escapeHtml(current.stage_title || current.process_status_text || "Раскрой")}</strong></span></div><span class="status-chip">${escapeHtml(orderTaskStatusText(current))}</span></div><div class="detail-grid"><div class="detail-box"><span>Этап</span><strong>${escapeHtml(current.stage_title || current.process_status_text || "Раскрой")}</strong></div><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Приоритет</span><strong>${escapeHtml(priorityLabel(current.priority))}</strong></div><div class="detail-box"><span>Срок</span><strong>${escapeHtml(current.due_date || "Не задан")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(orderTaskStatusText(current))}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
+          <div class="card order-detail"><div class="order-head">${productCardAvatar(current, true)}<div><b>Задание #${escapeHtml(current.id)}</b><span>${escapeHtml(current.product_name)}<br><strong>Этап: ${escapeHtml(current.stage_title || current.process_status_text || "Раскрой")}</strong></span></div><span class="status-chip">${escapeHtml(orderTaskStatusText(current))}</span></div><div class="detail-grid"><div class="detail-box"><span>Этап</span><strong>${escapeHtml(current.stage_title || current.process_status_text || "Раскрой")}</strong></div><div class="detail-box"><span>Размеры</span><strong>${escapeHtml((current.sizes || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Цвета</span><strong>${escapeHtml((current.color_labels || current.colors || []).join(", ") || "-")}</strong></div><div class="detail-box"><span>Приоритет</span><strong>${escapeHtml(priorityLabel(current.priority))}</strong></div><div class="detail-box"><span>Срок</span><strong>${escapeHtml(current.due_date || "Не задан")}</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(orderTaskStatusText(current))}</strong></div><div class="detail-box"><span>Создано</span><strong>${escapeHtml((current.created_at || "").slice(0, 10) || "-")}</strong></div></div></div>
           ${renderTaskFabricRolls(current)}
           ${renderTaskAttachment(current.attachment)}
         ` : current ? `
-          <div class="card order-detail"><div class="order-head route-order-head"><div class="op-icon">${sewingIcon()}</div><div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_article ? `${current.product_article} · ${current.product_name}` : current.product_name)}</span>${current.assigned_employee_name ? `<span class="route-assignee">В работе: ${escapeHtml(current.assigned_employee_name)}</span>` : ""}<span class="trace-code">${escapeHtml(current.trace_code || `RB-${current.id}`)}</span></div><span class="status-chip ${current.work_state === "free" ? "gray" : "warn"}">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}${current.blocked_reason ? `<div class="task-note">${escapeHtml(current.blocked_reason)}</div>` : ""}<div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(current.id)}">Паспорт / QR</button></div></div>
+          <div class="card order-detail"><div class="order-head route-order-head">${productCardAvatar(current, true)}<div><b>${escapeHtml(current.operation)}</b><span>${escapeHtml(current.product_article ? `${current.product_article} · ${current.product_name}` : current.product_name)}</span>${current.assigned_employee_name ? `<span class="route-assignee">В работе: ${escapeHtml(current.assigned_employee_name)}</span>` : ""}<span class="trace-code">${escapeHtml(current.trace_code || `RB-${current.id}`)}</span></div><span class="status-chip ${current.work_state === "free" ? "gray" : "warn"}">${escapeHtml(current.status_text || "Свободно")}</span></div><div class="detail-grid"><div class="detail-box"><span>Размер</span><strong>${escapeHtml(current.product_size || "-")}</strong></div><div class="detail-box"><span>Цвет</span><strong>${escapeHtml(current.product_color || "-")}</strong></div><div class="detail-box"><span>Количество</span><strong>${escapeHtml(current.quantity || 0)} шт</strong></div><div class="detail-box"><span>Статус</span><strong>${escapeHtml(current.status_text || "-")}</strong></div></div>${renderRouteTaskInputs(current)}${current.blocked_reason ? `<div class="task-note">${escapeHtml(current.blocked_reason)}</div>` : ""}<div class="button-row"><button type="button" class="small-button secondary" data-task-action="passport" data-task-id="${escapeHtml(current.id)}">Паспорт / QR</button></div></div>
           ${!state.data.is_admin && current.is_assigned_to_me ? renderTaskCompletionForm(current) : ""}
         ` : `<div class="card order-detail">${itemEmpty("Детали появятся после создания задания.")}</div>`}
         ${state.data && state.data.is_admin && current ? `<div class="button-row">${current.task_kind === "production" && current.assigned_employee_id ? `<button class="small-button secondary" data-order-action="release-cutting" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Освободить задание</button>` : ""}<button class="small-button danger" data-order-action="delete" data-task-kind="${escapeHtml(current.task_kind)}" data-task-id="${escapeHtml(current.id)}">Удалить задание</button></div>` : ""}
@@ -11364,7 +11378,7 @@ MINIAPP_HTML = """<!doctype html>
     }
 
     function renderWmsStockProductRow(row, available = null, allowWriteoff = false) {
-      const product = row.marketplace_product || null;
+      const product = row.marketplace_product || resolveProductCard(row.product_key) || null;
       const free = available == null ? Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)) : available;
       const identity = product
         ? `<div class="wms-product-rich">${marketplaceProductAvatar(product, false, true)}<div class="wms-product-rich-copy"><b>${escapeHtml(product.group_name || product.name || "Товар Ozon")}</b><span>Артикул: ${escapeHtml(product.offer_id || "—")} · SKU: ${escapeHtml(product.sku || "—")}</span><small>Размер ${escapeHtml(product.size || row.product_key?.product_size || "—")} · цвет ${escapeHtml(product.color || row.product_key?.product_color || "—")}</small></div></div>`
@@ -11700,18 +11714,19 @@ MINIAPP_HTML = """<!doctype html>
         : (catalog.error ? `<div class="card field-card"><div class="task-note"><b>Не удалось загрузить товары Ozon</b><br>${escapeHtml(catalog.error)}</div><div class="button-row"><button type="button" class="small-button" data-wms-catalog-action="refresh">Повторить</button></div></div>` : "");
       const productRows = products.length ? products.map((product) => `
         <div class="card report-row wms-catalog-product">
-          <div><b>${escapeHtml(product.name || "Без названия")}</b><span>Артикул: ${escapeHtml(product.offer_id || "—")}<br>Цвет: ${escapeHtml(product.color || "—")} · Размер: ${escapeHtml(product.size || "—")}</span></div>
+          ${productCardRich(product, product.name || "Без названия")}
           <div><span class="status-chip gray">Штрихкод: ${escapeHtml(product.barcode || "—")}</span><small>SKU: ${escapeHtml(product.sku || "—")}</small></div>
         </div>`).join("") : itemEmpty(catalog.loaded ? "По этому запросу товаров не найдено." : "Товары ещё не загружены.");
       const groupsBlock = groups.length ? `<div class="op-list marketplace-group-grid">${groups.map((group) => {
         const colors = new Set(group.products.map((product) => String(product.color || "Не указан")).filter(Boolean));
         const sizes = new Set(group.products.map((product) => String(product.size || "Не указан")).filter(Boolean));
-        return `<button type="button" class="card marketplace-clickable marketplace-group-card" data-wms-catalog-group="${escapeHtml(group.key)}"><div class="group-title"><b>${escapeHtml(group.name)}</b><span class="status-chip">›</span></div><div class="marketplace-group-meta"><span>${group.products.length} вариантов</span><span>${colors.size} цветов</span><span>${sizes.size} размеров</span></div><div class="marketplace-group-meta"><span>Открыть цвета и размеры ›</span></div></button>`;
+        const representative = group.products.find((product) => product.image_url) || group.products[0] || {};
+        return `<button type="button" class="card marketplace-clickable marketplace-group-card" data-wms-catalog-group="${escapeHtml(group.key)}"><div class="group-title"><span class="marketplace-product-heading">${productCardAvatar(representative)}<span><b>${escapeHtml(group.name)}</b></span></span><span class="status-chip">›</span></div><div class="marketplace-group-meta"><span>${group.products.length} вариантов</span><span>${colors.size} цветов</span><span>${sizes.size} размеров</span></div><div class="marketplace-group-meta"><span>Открыть цвета и размеры ›</span></div></button>`;
       }).join("")}</div>` : itemEmpty(catalog.loaded ? "По этому запросу групп не найдено." : "Товары ещё не загружены.");
       const colorsBlock = selectedGroup ? [...new Set(products.map((product) => String(product.color || "Не указан")))].sort((a, b) => a.localeCompare(b, "ru")).map((color) => {
         const colorProducts = products.filter((product) => String(product.color || "Не указан") === color).sort((a, b) => String(a.size || "").localeCompare(String(b.size || ""), "ru", {numeric: true}));
         return `<section class="wms-catalog-color-group"><div class="section-title"><b>${escapeHtml(color)}</b><span>${colorProducts.length} вариантов</span></div><div class="op-list">${colorProducts.map((product) => `
-          <div class="card report-row wms-catalog-product"><div><b>${escapeHtml(selectedGroup.name)}</b><span>Размер: ${escapeHtml(product.size || "—")}<br>Артикул: ${escapeHtml(product.offer_id || "—")}<br>${product.route_configured ? `Производство: ${escapeHtml(product.production_product_name)} · ${escapeHtml(product.production_size)} · ${escapeHtml(product.production_color)}` : `Единая карточка: ${escapeHtml(product.production_product_name)} · маршрут производства пока не настроен`}</span></div><div><span class="status-chip ${product.route_configured ? "" : "gray"}">${product.route_configured ? "маршрут связан" : "каталог связан"}</span><span class="status-chip gray">Штрихкод: ${escapeHtml(product.barcode || "—")}</span><small>SKU: ${escapeHtml(product.sku || "—")}</small></div></div>`).join("")}</div></section>`;
+          <div class="card report-row wms-catalog-product">${productCardRich(product, selectedGroup.name, product.route_configured ? `Производство: ${product.production_product_name || "—"}` : "Маршрут производства пока не настроен")}<div><span class="status-chip ${product.route_configured ? "" : "gray"}">${product.route_configured ? "маршрут связан" : "каталог связан"}</span><span class="status-chip gray">Штрихкод: ${escapeHtml(product.barcode || "—")}</span><small>SKU: ${escapeHtml(product.sku || "—")}</small></div></div>`).join("")}</div></section>`;
       }).join("") : "";
       mount.innerHTML = `
         <div class="screen-head"><div><h2>${selectedGroup ? escapeHtml(selectedGroup.name) : "Товары Ozon"}</h2><p>${selectedGroup ? "Варианты сгруппированы по цвету, затем по размеру." : "Выберите изделие, затем увидите его цвета и размеры."}</p></div><div class="date">${catalog.loaded ? `${products.length} из ${(catalog.products || []).length}` : "загрузка"}</div></div>
@@ -11834,8 +11849,14 @@ MINIAPP_HTML = """<!doctype html>
       const taskScannerIsProduct = Boolean(state.wmsShipmentTaskExpectedAllocationId);
       const taskScannerField = taskScannerIsProduct ? "shipment_product" : "shipment_cell";
       const taskScannerLabel = taskScannerIsProduct ? "Отсканируйте товар" : "Отсканируйте ячейку";
-      const taskPositionList = taskDetail ? `<div class="section-title"><b>Состав отгрузки</b><span>${escapeHtml(taskDetail.items.length)} поз.</span></div><div class="op-list">${taskAllocations.map((allocation) => { const remaining = Math.max(0, Number(allocation.reserved_quantity || 0) - Number(allocation.picked_quantity || 0)); const complete = remaining === 0; return `<button type="button" class="card report-row marketplace-clickable" data-wms-task-open-allocation="${escapeHtml(allocation.id)}"><div><b>${escapeHtml(allocation.item.article || allocation.item.product_key || "Артикул не указан")} · ${escapeHtml(allocation.item.name || "Товар")}</b><span>Размер ${escapeHtml(allocation.item.size || "—")} · Цвет ${escapeHtml(allocation.item.color || "—")}</span></div><span class="status-chip ${complete ? "" : "gray"}">${complete ? "✓ Собрано" : `${remaining} шт. ›`}</span></button>`; }).join("")}</div>` : "";
-      const taskPositionBlock = activeTaskAllocation ? (() => { const allocation = activeTaskAllocation; const remaining = Math.max(0, Number(allocation.reserved_quantity || 0) - Number(allocation.picked_quantity || 0)); const scanned = String(state.wmsShipmentTaskScannedAllocationId) === String(allocation.id); const cellOpened = selectedTaskLocation === String(allocation.location_code || "").toUpperCase(); return `<div class="button-row"><button type="button" class="small-button secondary" data-wms-task-action="back-position">‹ Состав отгрузки</button></div><div class="card field-card"><b>${escapeHtml(allocation.item.article || allocation.item.product_key || "Артикул не указан")} · ${escapeHtml(allocation.item.name || "Товар")}</b><div class="task-note">Размер ${escapeHtml(allocation.item.size || "—")} · Цвет ${escapeHtml(allocation.item.color || "—")} · ${escapeHtml(remaining)} шт.<br><b>Ячейка: ${escapeHtml(allocation.location_code)}</b> · в наличии ${escapeHtml(remaining)} шт.</div></div><div class="card field-card">${scanned ? "" : `<div class="field full"><label>${taskScannerLabel}</label><div class="wms-shipment-picker"><input id="wmsShipmentTaskCell" class="wms-hardware-scanner-input" data-wms-hardware-field="${taskScannerField}" inputmode="none" autocomplete="off" placeholder="${taskScannerIsProduct ? "Штрихкод товара" : "Штрихкод ячейки"}" value=""><button type="button" class="small-button secondary" data-wms-task-action="scan">Сканировать</button></div></div>`}${cellOpened ? `<div class="task-note"><b>Ячейка ${escapeHtml(allocation.location_code)}</b><br>${scanned ? "Товар подтверждён. Укажите количество." : "Ячейка открыта. Отсканируйте товар."}</div>` : ""}${scanned ? `<div class="field"><label>Количество</label><input type="number" min="1" max="${escapeHtml(remaining)}" value="${escapeHtml(remaining)}" data-wms-task-quantity="${escapeHtml(allocation.id)}"></div><button type="button" class="small-button" data-wms-task-pick="${escapeHtml(allocation.id)}">Выполнить</button>` : ""}</div>`; })() : taskPositionList;
+      const taskPositionList = taskDetail ? `<div class="section-title"><b>Состав отгрузки</b><span>${escapeHtml(taskDetail.items.length)} поз.</span></div><div class="op-list">${taskAllocations.map((allocation) => { const remaining = Math.max(0, Number(allocation.reserved_quantity || 0) - Number(allocation.picked_quantity || 0)); const complete = remaining === 0; return `<button type="button" class="card report-row marketplace-clickable" data-wms-task-open-allocation="${escapeHtml(allocation.id)}">${productCardRich(allocation.item, allocation.item.name || "Товар")}<span class="status-chip ${complete ? "" : "gray"}">${complete ? "✓ Собрано" : `${remaining} шт. ›`}</span></button>`; }).join("")}</div>` : "";
+      const taskPositionBlock = activeTaskAllocation ? (() => {
+        const allocation = activeTaskAllocation;
+        const remaining = Math.max(0, Number(allocation.reserved_quantity || 0) - Number(allocation.picked_quantity || 0));
+        const scanned = String(state.wmsShipmentTaskScannedAllocationId) === String(allocation.id);
+        const cellOpened = selectedTaskLocation === String(allocation.location_code || "").toUpperCase();
+        return `<div class="button-row"><button type="button" class="small-button secondary" data-wms-task-action="back-position">‹ Состав отгрузки</button></div><div class="card field-card">${productCardRich(allocation.item, allocation.item.name || "Товар")}<div class="task-note"><b>Ячейка: ${escapeHtml(allocation.location_code)}</b> · в наличии ${escapeHtml(remaining)} шт.</div></div><div class="card field-card">${scanned ? "" : `<div class="field full"><label>${taskScannerLabel}</label><div class="wms-shipment-picker"><input id="wmsShipmentTaskCell" class="wms-hardware-scanner-input" data-wms-hardware-field="${taskScannerField}" inputmode="none" autocomplete="off" placeholder="${taskScannerIsProduct ? "Штрихкод товара" : "Штрихкод ячейки"}" value=""><button type="button" class="small-button secondary" data-wms-task-action="scan">Сканировать</button></div></div>`}${cellOpened ? `<div class="task-note"><b>Ячейка ${escapeHtml(allocation.location_code)}</b><br>${scanned ? "Товар подтверждён. Укажите количество." : "Ячейка открыта. Отсканируйте товар."}</div>` : ""}${scanned ? `<div class="field"><label>Количество</label><input type="number" min="1" max="${escapeHtml(remaining)}" value="${escapeHtml(remaining)}" data-wms-task-quantity="${escapeHtml(allocation.id)}"></div><button type="button" class="small-button" data-wms-task-pick="${escapeHtml(allocation.id)}">Выполнить</button>` : ""}</div>`;
+      })() : taskPositionList;
       const taskDetailBlock = taskDetail ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-task-action="back">‹ Все задания</button>${taskDetail.can_start ? `<button type="button" class="small-button" data-wms-task-action="start">Подготовить позиции</button>` : ""}${taskDetail.can_confirm ? `<button type="button" class="small-button" data-wms-task-action="confirm">Подтвердить отгрузку</button>` : ""}</div>${taskDetail.can_start ? "" : taskPositionBlock}` : "";
       const creating = Boolean(state.wmsShipmentCreate && state.data && state.data.is_admin);
       const availableRows = (state.wmsData.stock || []).filter((row) => row.product_key?.item_type === "finished" && row.location_id && Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)) > 0);
@@ -11852,7 +11873,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="screen-head"><div><h2>${taskDetail ? `Комплектация ${escapeHtml(taskDetail.number)}` : (detail ? `Отгрузка ${escapeHtml(detail.number)}` : (creating ? "Новая отгрузка" : "Отгрузки со склада"))}</h2>${taskDetail ? "" : `<p>${detail ? "Лист отбора: что взять и из какой ячейки." : (creating ? "Добавьте товары из доступных адресных остатков и подтвердите документ." : "Задания сотрудников на комплектацию и выполненные отгрузки.")}</p>`}</div><div class="date">${taskDetail ? `${escapeHtml(taskDetail.picked_quantity || 0)} / ${escapeHtml(taskDetail.total_quantity || 0)} шт.` : (detail ? `${detail.total} шт.` : `${allTasks.length + rows.length} док.`)}</div></div>
         ${renderWmsDataNotice()}
         ${!detail && !creating && !taskDetail ? pendingTasksBlock : ""}
-        ${taskDetail ? taskDetailBlock : (detail ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="back">‹ Все отгрузки</button><button type="button" class="small-button secondary" data-wms-shipment-export="xlsx">Excel</button><button type="button" class="small-button" data-wms-shipment-export="pdf">PDF</button></div><div class="card field-card"><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(detail.lines.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(detail.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(detail.locations)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(detail.occurred_at) || "—")}</strong></div></div><div class="task-note">${escapeHtml(detail.reason || "")}</div></div><div class="section-title"><b>Лист отбора</b><span>${detail.lines.length} поз.</span></div><div class="op-list">${detail.lines.map((line, index) => `<div class="card report-row"><div><b>${index + 1}. ${escapeHtml(line.product_name)}</b><span>Размер ${escapeHtml(line.product_size)} · Цвет ${escapeHtml(line.product_color)}<br>Взять из: ${escapeHtml(line.from_location_code)}${line.from_location_name ? ` · ${escapeHtml(line.from_location_name)}` : ""}</span></div><span class="status-chip">${escapeHtml(line.quantity)} шт.</span></div>`).join("")}</div>` : creating ? `<div class="card field-card"><div class="form-grid"><div class="field"><label>Получатель или назначение</label><input id="wmsShipmentDestination" maxlength="120" placeholder="Например, магазин или контрагент" value="${escapeHtml(state.wmsShipmentDraft.destination || "")}"></div><div class="field"><label>Комментарий</label><input id="wmsShipmentComment" maxlength="300" placeholder="Необязательно" value="${escapeHtml(state.wmsShipmentDraft.comment || "")}"></div></div><div class="wms-shipment-picker"><div class="field"><label>Добавить товар из ячейки</label><select id="wmsShipmentProduct">${pickerRows.length ? `<option value="">Выберите товар</option>${pickerRows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(wmsProductLabel(row.product_key))} · ${escapeHtml(wmsLocationLabel(row.location_id))} · доступно ${escapeHtml(Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)))}</option>`).join("")}` : `<option value="">Все доступные позиции добавлены</option>`}</select></div><button type="button" class="small-button secondary" data-wms-shipment-action="add">Добавить позицию</button></div></div><div class="section-title"><b>Состав отгрузки</b><span>${draftLines.length} поз.</span></div><div class="op-list">${draftLines.length ? draftLines.map(({stock, quantity}) => { const available = Math.max(0, Number(stock.quantity || 0) - Number(stock.reserved_quantity || 0)); return `<div class="card wms-shipment-line">${stock.marketplace_product ? `<div class="wms-product-rich">${marketplaceProductAvatar(stock.marketplace_product, false, true)}<div class="wms-product-rich-copy"><b>${escapeHtml(stock.marketplace_product.group_name || stock.marketplace_product.name || wmsProductLabel(stock.product_key))}</b><span>${escapeHtml(wmsProductLabel(stock.product_key))}</span><small>Ячейка ${escapeHtml(wmsLocationLabel(stock.location_id))} · доступно ${escapeHtml(available)} ${escapeHtml(stock.unit || "шт")}</small></div></div>` : `<div><b>${escapeHtml(wmsProductLabel(stock.product_key))}</b><span>Ячейка ${escapeHtml(wmsLocationLabel(stock.location_id))} · доступно ${escapeHtml(available)} ${escapeHtml(stock.unit || "шт")}</span></div>`}<div class="field"><label>Количество</label><input type="number" min="1" max="${escapeHtml(available)}" step="1" inputmode="numeric" data-wms-shipment-qty="${escapeHtml(stock.id)}" value="${escapeHtml(quantity)}"></div><button type="button" class="small-button danger" data-wms-shipment-remove="${escapeHtml(stock.id)}">Убрать</button></div>`; }).join("") : itemEmpty("Добавьте товары из списка выше.")}</div><div class="wms-shipment-summary"><div><b>Итого к отгрузке</b><br><span>${draftLines.length} позиций</span></div><strong>${escapeHtml(draftTotal)} шт.</strong></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="cancel">Отмена</button><button type="button" class="small-button" data-wms-shipment-action="submit" ${draftLines.length ? "" : "disabled"}>Создать и списать со склада</button></div>` : `<div class="button-row">${state.data && state.data.is_admin ? `<button type="button" class="small-button" data-wms-shipment-action="new">+ Создать отгрузку</button>` : ""}</div><div class="op-list">${rows.length ? rows.map((shipment) => `<button type="button" class="card field-card marketplace-clickable" data-wms-shipment-number="${escapeHtml(shipment.number)}"><div class="section-title"><b>${escapeHtml(shipment.number)}</b><span class="status-chip">открыть ›</span></div><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(shipment.rows.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(shipment.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(shipment.locations.size)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(shipment.occurredAt) || "—")}</strong></div></div></button>`).join("") : itemEmpty("Отгрузок пока нет.")}</div>`)}
+        ${taskDetail ? taskDetailBlock : (detail ? `<div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="back">‹ Все отгрузки</button><button type="button" class="small-button secondary" data-wms-shipment-export="xlsx">Excel</button><button type="button" class="small-button" data-wms-shipment-export="pdf">PDF</button></div><div class="card field-card"><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(detail.lines.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(detail.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(detail.locations)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(detail.occurred_at) || "—")}</strong></div></div><div class="task-note">${escapeHtml(detail.reason || "")}</div></div><div class="section-title"><b>Лист отбора</b><span>${detail.lines.length} поз.</span></div><div class="op-list">${detail.lines.map((line, index) => `<div class="card report-row">${productCardRich(line, `${index + 1}. ${line.product_name || "Товар"}`, `Взять из: ${line.from_location_code || "—"}${line.from_location_name ? ` · ${line.from_location_name}` : ""}`)}<span class="status-chip">${escapeHtml(line.quantity)} шт.</span></div>`).join("")}</div>` : creating ? `<div class="card field-card"><div class="form-grid"><div class="field"><label>Получатель или назначение</label><input id="wmsShipmentDestination" maxlength="120" placeholder="Например, магазин или контрагент" value="${escapeHtml(state.wmsShipmentDraft.destination || "")}"></div><div class="field"><label>Комментарий</label><input id="wmsShipmentComment" maxlength="300" placeholder="Необязательно" value="${escapeHtml(state.wmsShipmentDraft.comment || "")}"></div></div><div class="wms-shipment-picker"><div class="field"><label>Добавить товар из ячейки</label><select id="wmsShipmentProduct">${pickerRows.length ? `<option value="">Выберите товар</option>${pickerRows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(wmsProductLabel(row.product_key))} · ${escapeHtml(wmsLocationLabel(row.location_id))} · доступно ${escapeHtml(Math.max(0, Number(row.quantity || 0) - Number(row.reserved_quantity || 0)))}</option>`).join("")}` : `<option value="">Все доступные позиции добавлены</option>`}</select></div><button type="button" class="small-button secondary" data-wms-shipment-action="add">Добавить позицию</button></div></div><div class="section-title"><b>Состав отгрузки</b><span>${draftLines.length} поз.</span></div><div class="op-list">${draftLines.length ? draftLines.map(({stock, quantity}) => { const available = Math.max(0, Number(stock.quantity || 0) - Number(stock.reserved_quantity || 0)); return `<div class="card wms-shipment-line">${productCardRich(stock.product_key, stock.marketplace_product?.group_name || stock.marketplace_product?.name || wmsProductLabel(stock.product_key), `Ячейка ${wmsLocationLabel(stock.location_id)} · доступно ${available} ${stock.unit || "шт"}`)}<div class="field"><label>Количество</label><input type="number" min="1" max="${escapeHtml(available)}" step="1" inputmode="numeric" data-wms-shipment-qty="${escapeHtml(stock.id)}" value="${escapeHtml(quantity)}"></div><button type="button" class="small-button danger" data-wms-shipment-remove="${escapeHtml(stock.id)}">Убрать</button></div>`; }).join("") : itemEmpty("Добавьте товары из списка выше.")}</div><div class="wms-shipment-summary"><div><b>Итого к отгрузке</b><br><span>${draftLines.length} позиций</span></div><strong>${escapeHtml(draftTotal)} шт.</strong></div><div class="button-row"><button type="button" class="small-button secondary" data-wms-shipment-action="cancel">Отмена</button><button type="button" class="small-button" data-wms-shipment-action="submit" ${draftLines.length ? "" : "disabled"}>Создать и списать со склада</button></div>` : `<div class="button-row">${state.data && state.data.is_admin ? `<button type="button" class="small-button" data-wms-shipment-action="new">+ Создать отгрузку</button>` : ""}</div><div class="op-list">${rows.length ? rows.map((shipment) => `<button type="button" class="card field-card marketplace-clickable" data-wms-shipment-number="${escapeHtml(shipment.number)}"><div class="section-title"><b>${escapeHtml(shipment.number)}</b><span class="status-chip">открыть ›</span></div><div class="detail-grid"><div class="detail-box"><span>Позиций</span><strong>${escapeHtml(shipment.rows.length)}</strong></div><div class="detail-box"><span>Всего</span><strong>${escapeHtml(shipment.total)} шт.</strong></div><div class="detail-box"><span>Ячеек</span><strong>${escapeHtml(shipment.locations.size)}</strong></div><div class="detail-box"><span>Дата</span><strong>${escapeHtml(wmsMovementTime(shipment.occurredAt) || "—")}</strong></div></div></button>`).join("") : itemEmpty("Отгрузок пока нет.")}</div>`)}
       `;
     }
 
@@ -12054,6 +12075,26 @@ MINIAPP_HTML = """<!doctype html>
       }
     }
 
+    async function refreshProductCards({silent = false} = {}) {
+      if (!state.data || state.productCards.loading) return;
+      state.productCards.loading = true;
+      state.productCards.error = "";
+      if (!silent) render();
+      try {
+        const data = await api("/api/catalog/product-cards");
+        if (!data.ok) throw new Error(data.message || "Не удалось загрузить товарные карточки.");
+        state.productCards.products = Array.isArray(data.products) ? data.products : [];
+        state.productCards.quality = data.quality || null;
+        indexProductCards();
+        state.productCards.loaded = true;
+      } catch (error) {
+        state.productCards.error = error.apiMessage || error.message || "Проверьте соединение и повторите попытку.";
+      } finally {
+        state.productCards.loading = false;
+        if (["production", "warehouse"].includes(state.workspace)) render();
+      }
+    }
+
     function marketplaceMoney(value) {
       if (value === null || value === undefined || value === "") return "—";
       return `${Number(value).toLocaleString("ru-RU", {maximumFractionDigits: 2})} ₽`;
@@ -12206,6 +12247,76 @@ MINIAPP_HTML = """<!doctype html>
 
     function marketplaceBackButton(label = "Назад") {
       return `<button type="button" class="small-button secondary" data-marketplace-action="back">‹ ${escapeHtml(label)}</button>`;
+    }
+
+    function productCardText(value) {
+      return String(value == null ? "" : value).trim().toLocaleLowerCase("ru").replaceAll("ё", "е").replace(/\\s+/g, " ");
+    }
+
+    function productCardArticle(value) {
+      return productCardText(value).replace(/[^a-zа-я0-9]/gi, "");
+    }
+
+    function productCardIdentity(row) {
+      const source = row || {};
+      const productKey = source.product_key || {};
+      const sizes = Array.isArray(source.sizes) ? source.sizes : [];
+      const colors = Array.isArray(source.colors) ? source.colors : [];
+      return {
+        article: source.product_article || source.article || source.offer_id || productKey.product_article || "",
+        name: source.production_product_name || source.product_name || source.name || productKey.product_name || "",
+        size: source.production_size || source.product_size || source.size || productKey.product_size || sizes[0] || "",
+        color: source.production_color || source.product_color || source.color || productKey.product_color || colors[0] || "",
+      };
+    }
+
+    function indexProductCards() {
+      const cards = state.productCards || {};
+      cards.articleIndex = new Map();
+      cards.variantIndex = new Map();
+      cards.nameIndex = new Map();
+      (cards.products || []).forEach((card) => {
+        const article = productCardArticle(card.offer_id || card.article);
+        const names = [card.production_product_name, card.group_name, card.name].map(productCardText).filter(Boolean);
+        const size = productCardText(card.production_size || card.size);
+        const color = productCardText(card.production_color || card.color);
+        if (article && !cards.articleIndex.has(article)) cards.articleIndex.set(article, card);
+        names.forEach((name) => {
+          if (size && color && !cards.variantIndex.has(`${name}|${size}|${color}`)) cards.variantIndex.set(`${name}|${size}|${color}`, card);
+          if (size && !cards.variantIndex.has(`${name}|${size}|`)) cards.variantIndex.set(`${name}|${size}|`, card);
+          if (!cards.nameIndex.has(name)) cards.nameIndex.set(name, card);
+        });
+      });
+    }
+
+    function resolveProductCard(row) {
+      if (row && row.image_url) return row;
+      const cards = state.productCards || {};
+      if (!cards.loaded) return null;
+      const identity = productCardIdentity(row);
+      const article = productCardArticle(identity.article);
+      if (article && cards.articleIndex instanceof Map && cards.articleIndex.has(article)) return cards.articleIndex.get(article);
+      const name = productCardText(identity.name);
+      const size = productCardText(identity.size);
+      const color = productCardText(identity.color);
+      if (name && size && color && cards.variantIndex instanceof Map && cards.variantIndex.has(`${name}|${size}|${color}`)) return cards.variantIndex.get(`${name}|${size}|${color}`);
+      if (name && size && cards.variantIndex instanceof Map && cards.variantIndex.has(`${name}|${size}|`)) return cards.variantIndex.get(`${name}|${size}|`);
+      return name && cards.nameIndex instanceof Map ? (cards.nameIndex.get(name) || null) : null;
+    }
+
+    function productCardAvatar(row, compact = false, large = false) {
+      const card = resolveProductCard(row);
+      return marketplaceProductAvatar(card || {...productCardIdentity(row), name: productCardIdentity(row).name || "Товар"}, compact, large);
+    }
+
+    function productCardRich(row, title = "", meta = "") {
+      const card = resolveProductCard(row);
+      const identity = productCardIdentity(row);
+      const resolvedTitle = title || card?.group_name || card?.name || identity.name || "Товар";
+      const article = identity.article || card?.offer_id || "—";
+      const size = identity.size || card?.production_size || card?.size || "—";
+      const color = identity.color || card?.production_color || card?.color || "—";
+      return `<div class="wms-product-rich product-card-rich">${productCardAvatar(row, false, true)}<div class="wms-product-rich-copy"><b>${escapeHtml(resolvedTitle)}</b><span>Артикул: ${escapeHtml(article)}</span><small>Размер ${escapeHtml(size)} · цвет ${escapeHtml(color)}${meta ? `<br>${escapeHtml(meta)}` : ""}</small></div></div>`;
     }
 
     function marketplaceProductAvatar(row, compact = false, large = false) {
@@ -14430,6 +14541,9 @@ MINIAPP_HTML = """<!doctype html>
       }
       if (isWarehouseWorkspace && state.wmsView === "products" && !state.wmsCatalog.loaded && !state.wmsCatalog.loading && !state.wmsCatalog.error) {
         window.setTimeout(() => refreshWmsCatalog({silent: true}), 0);
+      }
+      if (["production", "warehouse"].includes(state.workspace) && !state.productCards.loaded && !state.productCards.loading && !state.productCards.error) {
+        window.setTimeout(() => refreshProductCards({silent: true}), 0);
       }
       if ((isMarketplaceWorkspace || isAnalyticsWorkspace) && !state.marketplaceData.loaded && !state.marketplaceData.loading && !state.marketplaceData.error) {
         window.setTimeout(() => refreshMarketplaces({silent: true}), 0);

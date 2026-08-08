@@ -110,6 +110,55 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
         self.assertNotIn("items", result["supplies"][0])
         self.assertEqual(result["products_rows"], [{"id": "1", "name": "Товар"}])
 
+    def test_product_cards_keep_ozon_identity_and_fill_only_missing_image_from_wb(self):
+        snapshot = {
+            "ok": True,
+            "products_rows": [{
+                "external_product_id": "oz-1", "offer_id": "АРТ-1", "sku": "OZ-1",
+                "name": "Название Ozon", "size": "98", "color": "Бежевый",
+                "barcode": "460000000001", "image_url": "",
+                "production_product_name": "Костюм детский", "production_size": "98",
+                "production_color": "Бежевый", "route_configured": True,
+            }],
+            "wildberries": {"products_rows": [
+                {
+                    "nm_id": "wb-1", "vendor_code": "АРТ-1", "name": "Название WB",
+                    "size": "98", "color": "Бежевый", "barcode": "460000000009",
+                    "image_url": "https://cdn.example/wb-1.jpg",
+                },
+                {
+                    "nm_id": "wb-2", "vendor_code": "АРТ-2", "name": "Товар WB",
+                    "size": "104", "color": "Синий", "barcode": "460000000002",
+                    "image_url": "https://cdn.example/wb-2.jpg",
+                },
+            ]},
+        }
+
+        result = miniapp_server._compact_product_cards(snapshot)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["products"]), 2)
+        first = next(row for row in result["products"] if row["offer_id"] == "АРТ-1")
+        self.assertEqual(first["marketplace"], "ozon")
+        self.assertEqual(first["name"], "Название Ozon")
+        self.assertEqual(first["barcode"], "460000000001")
+        self.assertEqual(first["image_url"], "https://cdn.example/wb-1.jpg")
+        self.assertEqual(first["image_source"], "wildberries")
+        self.assertEqual(result["quality"]["sources"], {"ozon": 1, "wildberries": 2})
+        self.assertEqual(result["quality"]["priority"], "ozon")
+
+    def test_product_cards_reject_non_https_images(self):
+        result = miniapp_server._compact_product_cards({
+            "ok": True,
+            "products_rows": [{
+                "offer_id": "АРТ-1", "name": "Товар", "size": "98", "color": "Синий",
+                "barcode": "460000000001", "image_url": "javascript:alert(1)",
+            }],
+        })
+
+        self.assertEqual(result["products"][0]["image_url"], "")
+        self.assertEqual(result["quality"]["missing"]["image_url"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

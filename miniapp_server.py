@@ -622,6 +622,115 @@ def get_warehouse_catalog_for_access(telegram_id: int):
     return marketplace_warehouse_catalog()
 
 
+def _compact_product_cards(snapshot: dict) -> dict:
+    """Return the safe visual identity used by production and WMS cards.
+
+    Ozon remains authoritative when providers share an article.  A Wildberries
+    image may only fill an empty Ozon image; it never rewrites the Ozon product
+    identity.
+    """
+
+    def text(value):
+        return "" if value is None else " ".join(str(value).strip().split())
+
+    def article_key(value):
+        return "".join(character for character in text(value).casefold().replace("ё", "е") if character.isalnum())
+
+    providers = [
+        ("ozon", snapshot.get("products_rows") or []),
+        ("wildberries", (snapshot.get("wildberries") or {}).get("products_rows") or []),
+    ]
+    cards_by_key = {}
+    source_counts = {"ozon": 0, "wildberries": 0}
+    for marketplace, rows in providers:
+        for source in rows if isinstance(rows, list) else []:
+            if not isinstance(source, dict):
+                continue
+            source_counts[marketplace] += 1
+            article = text(source.get("offer_id") or source.get("vendor_code") or source.get("article"))
+            external_id = text(source.get("external_product_id") or source.get("nm_id") or source.get("id"))
+            sku = text(source.get("sku") or source.get("nm_id"))
+            name = text(source.get("name") or source.get("title"))
+            size = text(source.get("size") or source.get("tech_size"))
+            color = text(source.get("color"))
+            production_name = text(source.get("production_product_name"))
+            production_size = text(source.get("production_size"))
+            production_color = text(source.get("production_color"))
+            image_url = text(source.get("image_url"))
+            if image_url and not image_url.startswith("https://"):
+                image_url = ""
+            key = article_key(article)
+            if not key:
+                key = "|".join((
+                    text(production_name or name).casefold(),
+                    text(production_size or size).casefold(),
+                    text(production_color or color).casefold(),
+                    marketplace,
+                    external_id or sku,
+                ))
+            card = {
+                "marketplace": marketplace,
+                "external_product_id": external_id,
+                "offer_id": article,
+                "sku": sku,
+                "barcode": text(source.get("barcode")),
+                "name": name or production_name or article or sku,
+                "size": size,
+                "color": color,
+                "image_url": image_url,
+                "image_source": marketplace if image_url else "",
+                "group_key": text(source.get("group_key")),
+                "group_name": text(source.get("group_name")) or name,
+                "production_product_name": production_name,
+                "production_size": production_size,
+                "production_color": production_color,
+                "route_configured": bool(source.get("route_configured")),
+            }
+            existing = cards_by_key.get(key)
+            if existing is None:
+                cards_by_key[key] = card
+            elif not existing.get("image_url") and image_url:
+                existing["image_url"] = image_url
+                existing["image_source"] = marketplace
+
+    cards = list(cards_by_key.values())
+    cards.sort(key=lambda row: (
+        text(row.get("name")).casefold(), text(row.get("color")).casefold(),
+        text(row.get("size")), text(row.get("offer_id")),
+    ))
+    required_fields = ("offer_id", "name", "size", "color", "barcode", "image_url")
+    missing = {
+        field: sum(1 for card in cards if not text(card.get(field)))
+        for field in required_fields
+    }
+    complete = sum(1 for card in cards if all(text(card.get(field)) for field in required_fields))
+    return {
+        "ok": True,
+        "products": cards,
+        "quality": {
+            "total": len(cards),
+            "complete": complete,
+            "missing": missing,
+            "sources": source_counts,
+            "priority": "ozon",
+        },
+    }
+
+
+def get_product_cards_for_access(telegram_id: int):
+    employee = get_employee_for_access(telegram_id)
+    if not is_admin(telegram_id) and (not employee or employee[5] != "active"):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к товарным карточкам."}
+    snapshot = _cached_marketplace_dashboard_payload()
+    if not snapshot.get("ok"):
+        return {
+            "ok": False,
+            "code": "catalog_unavailable",
+            "message": "Каталог товарных карточек временно недоступен.",
+        }
+    return _compact_product_cards(snapshot)
+
+
 def get_wms_shipment_for_access(telegram_id: int, shipment_number: str):
     if not can_access_wms(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Нет доступа к складским операциям."}
@@ -6542,6 +6651,7 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/marketplaces/supplies",
                 "/api/marketplaces/supply/detail",
                 "/api/marketplaces/supply/create-shipment",
+                "/api/catalog/product-cards",
                 "/api/wms/catalog/products",
                 "/api/wms/shipment/detail",
                 "/api/wms/shipment/tasks",
@@ -6794,6 +6904,12 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             telegram_id = int(user["id"])
+
+            if path == "/api/catalog/product-cards":
+                result = get_product_cards_for_access(telegram_id)
+                status = 200 if result.get("ok") else (403 if result.get("code") == "forbidden" else 503)
+                self.send_json(result, status=status)
+                return
 
             if path == "/api/wms/catalog/products":
                 result = get_warehouse_catalog_for_access(telegram_id)
