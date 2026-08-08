@@ -5788,6 +5788,7 @@ MINIAPP_HTML = """<!doctype html>
       workspace: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "production",
       marketplaceView: "overview",
       marketplaceProvider: "all",
+      marketplaceSupplyView: "active",
       analyticsProvider: "all",
       marketplacePeriod: "30d",
       marketplaceChartMetric: "revenue",
@@ -12680,6 +12681,7 @@ MINIAPP_HTML = """<!doctype html>
       const orders = allOrders.filter((row) => marketplaceDateInPeriod(row.shipment_date || row.created_at, periodMeta)).filter((row) => state.marketplaceFilters.orderStatus === "all" || String(row.status || "") === state.marketplaceFilters.orderStatus).filter((row) => !applyProblemFilter || !["delivering", "awaiting_packaging"].includes(String(row.status || "")));
       const runs = providerPayload.sync_runs || [];
       const supplies = isWildberries ? (payload.supplies || []).filter((row) => row.marketplace === "wildberries") : (payload.supplies || []).filter((row) => isAll || row.marketplace === "ozon");
+      const supplyHistory = isWildberries ? (payload.supply_history || []).filter((row) => row.marketplace === "wildberries") : (payload.supply_history || []).filter((row) => isAll || row.marketplace === "ozon");
       const wbSuppliesCapability = wbCapabilityStatuses.supplies || {};
       const wbSuppliesStatus = wbSuppliesCapability.status || (wbCapabilities.supplies ? "legacy" : "no_data");
       const wbSuppliesCurrent = wbSuppliesStatus === "available";
@@ -12834,10 +12836,40 @@ MINIAPP_HTML = """<!doctype html>
       const ordersBlock = verifiedOrdersAvailable && verifiedOrders.length
         ? `${orderAnalyticsKpis}${orderViewTabs}${orderView === "products" ? productOrdersTable : (orderView === "list" ? orderList : warehouseOrdersTable)}`
         : itemEmpty(isWildberries && !verifiedOrdersAvailable ? "Выбранный период или источник заказов WB не подтверждён." : "За выбранный период заказов нет.");
-      const supplyStatusLabels = {PLANNED:"Актуальная",WAITING_RESERVATION:"Ожидает резерв",SHORTAGE:"Дефицит",READY_TO_PICK:"Готова к отбору",PICKING:"Отбор",PICKED:"Отобрана",PACKING:"Упаковка",READY_TO_HANDOVER:"Готова к передаче",SHIPPED_FROM_PRODUCTION:"Отгружено на производстве"};
-      const suppliesBlock = supplies.length
-        ? `${isWildberries && !wbSuppliesCurrent ? `<div class="analytics-overview-notice warn"><div><b>Показана сохранённая история поставок WB</b><span>${escapeHtml(wbSuppliesCapability.safe_message || "Текущий источник поставок не подтверждён; создание складских заданий отключено.")}</span></div></div>` : ""}<div class="op-list">${supplies.map((row) => `<div class="card report-row marketplace-supply-card"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id)}</b><span>${escapeHtml(row.destination_name || "Направление не указано")} · ${escapeHtml(row.item_count || 0)} поз. · ${escapeHtml(row.total_quantity || 0)} шт.${row.unmatched_count ? `<br><span class="critical-text">Не сопоставлено: ${escapeHtml(row.unmatched_count)}</span>` : ""}</span></div><div class="supply-actions"><span class="status-chip ${["SHORTAGE","SYNC_ERROR"].includes(row.canonical_status) ? "warn" : ""}">${escapeHtml(supplyStatusLabels[row.canonical_status] || row.canonical_status)}</span>${row.warehouse_shipment_id ? `<span class="status-chip">${escapeHtml(row.warehouse_shipment_number || `MP-${String(row.warehouse_shipment_id).padStart(6, "0")}`)}</span>` : (isWildberries && !wbSuppliesCurrent ? `<span class="status-chip warn">только история</span>` : (!row.is_actionable ? `<span class="status-chip warn">Недоступна для задания</span>` : (Number(row.item_count || 0) <= 0 ? `<span class="status-chip warn">Нет состава</span>` : (!row.unmatched_count ? `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>` : `<span class="status-chip warn">Нужно сопоставление</span>`))))}</div></div>`).join("")}</div>`
-        : itemEmpty(isWildberries && wbSuppliesCurrent ? "Источник поставок WB доступен; активных поставок нет." : "Актуальных поставок нет.");
+      const supplyStatusLabels = {PLANNED:"Актуальная",WAITING_RESERVATION:"Ожидает резерв",SHORTAGE:"Дефицит",READY_TO_PICK:"Готова к отбору",PICKING:"Отбор",PICKED:"Отобрана",PACKING:"Упаковка",READY_TO_HANDOVER:"Готова к передаче",HANDED_OVER:"Передана",ACCEPTING:"Принимается",ACCEPTED:"Завершена",CANCELLED:"Отменена",SYNC_ERROR:"Ошибка",EXTERNAL_DRAFT:"Неизвестный статус",SHIPPED_FROM_PRODUCTION:"Отгружено на производстве"};
+      const supplyHistoryLabels = {completed:"Завершённые",cancelled:"Отменённые",error:"Ошибочные"};
+      const renderSupplyRows = (rows, history = false) => {
+        if (!rows.length) {
+          return itemEmpty(history ? "Завершённых, отменённых или ошибочных поставок нет." : (isWildberries && wbSuppliesCurrent ? "Источник поставок WB доступен; активных поставок нет." : "Актуальных поставок нет."));
+        }
+        return `<div class="op-list">${rows.map((row) => {
+          const itemCount = Number(row.item_count ?? row.items_count ?? 0);
+          const status = String(row.canonical_status || row.status || "EXTERNAL_DRAFT");
+          let action = "";
+          if (history) {
+            action = `<span class="status-chip gray">${escapeHtml(supplyHistoryLabels[row.history_category] || "История")}</span>`;
+          } else if (row.warehouse_shipment_id) {
+            action = `<span class="status-chip">${escapeHtml(row.warehouse_shipment_number || `MP-${String(row.warehouse_shipment_id).padStart(6, "0")}`)}</span>`;
+          } else if (isWildberries && !wbSuppliesCurrent) {
+            action = `<span class="status-chip warn">только история</span>`;
+          } else if (!row.is_actionable) {
+            action = `<span class="status-chip warn">Недоступна для задания</span>`;
+          } else if (!row.id) {
+            action = `<span class="status-chip warn">Обновляется связь со складом</span>`;
+          } else if (itemCount <= 0) {
+            action = `<span class="status-chip warn">Нет состава</span>`;
+          } else if (row.unmatched_count) {
+            action = `<span class="status-chip warn">Нужно сопоставление</span>`;
+          } else {
+            action = `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>`;
+          }
+          return `<div class="card report-row marketplace-supply-card"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id)}</b><span>${escapeHtml(row.destination_name || "Направление не указано")} · ${escapeHtml(itemCount)} поз. · ${escapeHtml(row.total_quantity || 0)} шт.${row.unmatched_count ? `<br><span class="critical-text">Не сопоставлено: ${escapeHtml(row.unmatched_count)}</span>` : ""}</span></div><div class="supply-actions"><span class="status-chip ${["SHORTAGE","SYNC_ERROR","CANCELLED","EXTERNAL_DRAFT"].includes(status) ? "warn" : ""}">${escapeHtml(supplyStatusLabels[status] || status)}</span>${action}</div></div>`;
+        }).join("")}</div>`;
+      };
+      const selectedSupplyRows = state.marketplaceSupplyView === "history" ? supplyHistory : supplies;
+      const supplyTabs = !isWildberries ? `<div class="marketplace-order-view-tabs" role="tablist" aria-label="Состояние поставок"><button type="button" class="${state.marketplaceSupplyView === "active" ? "active" : ""}" data-marketplace-supplies-view="active">Актуальные · ${escapeHtml(supplies.length)}</button><button type="button" class="${state.marketplaceSupplyView === "history" ? "active" : ""}" data-marketplace-supplies-view="history">История · ${escapeHtml(supplyHistory.length)}</button></div>` : "";
+      const suppliesBlock = `${supplyTabs}${isWildberries && !wbSuppliesCurrent ? `<div class="analytics-overview-notice warn"><div><b>Показана сохранённая история поставок WB</b><span>${escapeHtml(wbSuppliesCapability.safe_message || "Текущий источник поставок не подтверждён; создание складских заданий отключено.")}</span></div></div>` : ""}${renderSupplyRows(selectedSupplyRows, state.marketplaceSupplyView === "history")}`;
+      const overviewSuppliesBlock = renderSupplyRows(supplies, false);
       const warehouseShipmentsBlock = warehouseShipments.length ? `<div class="op-list">${warehouseShipments.map((row) => `<div class="card report-row"><div><b>${escapeHtml(row.number)}</b><span>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.destination_name || "Направление не указано")}<br>${escapeHtml(row.total_quantity || 0)} шт. · резерв ${escapeHtml(row.reserved_quantity || 0)} · отобрано ${escapeHtml(row.picked_quantity || 0)}</span></div><span class="status-chip">${escapeHtml(row.status)}</span></div>`).join("")}</div>` : itemEmpty("Внутренних складских отгрузок пока нет.");
       const topProducts = isWildberries && !wbStocksUsable ? [] : [...products].sort((a, b) => Number(b.available || 0) - Number(a.available || 0)).slice(0, 5);
       const topProductsBlock = topProducts.length ? `<div class="marketplace-mini-list">${topProducts.map((row) => `<div class="marketplace-mini-row"><span>${escapeHtml(row.name || row.offer_id || "Товар")}</span><b>${escapeHtml(row.available == null ? 0 : row.available)} шт.</b></div>`).join("")}</div>` : itemEmpty("После синхронизации здесь появятся товары-лидеры.");
@@ -12888,7 +12920,7 @@ MINIAPP_HTML = """<!doctype html>
         <div class="marketplace-wide-grid"><div class="card field-card"><div class="section-title"><b>Последние заказы</b><button type="button" class="small-button secondary" data-marketplace-view="orders">Все заказы ›</button></div>${recentOrdersBlock}</div><div class="card field-card"><div class="section-title"><b>Уведомления</b><span>${(payload.sync_events || []).length}</span></div>${notificationsBlock}</div></div>
         <section class="card field-card marketplace-product-detail"><div class="section-title"><b>Детализация по товарам</b><button type="button" class="small-button secondary" data-marketplace-view="products">Все товары ›</button></div>${(!isWildberries || wbCatalogUsable) && products.length ? `<div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Товар</th><th>Маркетплейс</th><th>Артикул</th><th>В продаже</th><th>Остаток</th></tr></thead><tbody>${products.slice(0, 12).map((row) => `<tr><td><span class="marketplace-table-product">${marketplaceProductAvatar(row, true)}<span><strong>${escapeHtml(row.name || "Без названия")}</strong></span></span></td><td><span class="marketplace-source ${isWildberries ? "wildberries" : "ozon"}">${isWildberries ? "Wildberries" : "Ozon"}</span></td><td>${escapeHtml(row.offer_id || "—")}</td><td>${!isWildberries || wbStocksUsable ? (Number(row.available || 0) > 0 ? "Да" : "Нет") : "—"}</td><td>${!isWildberries || wbStocksUsable ? `${escapeHtml(row.available || 0)} шт.` : "—"}</td></tr>`).join("")}</tbody></table></div>` : itemEmpty(isWildberries && !wbCatalogUsable ? "Текущий каталог Wildberries не подтверждён." : "Товары появятся после синхронизации выбранной площадки.")}</section>
         <section class="card field-card marketplace-sales-detail"><div class="section-title"><b>Аналитика продаж</b><button type="button" class="small-button secondary" data-workspace="analytics">Открыть аналитику ›</button></div>${salesChart}</section>
-        <div class="marketplace-overview-grid"><div class="card field-card"><div class="section-title"><b>Поставки маркетплейсов</b><button type="button" class="small-button secondary" data-marketplace-view="supplies">Открыть ›</button></div>${suppliesBlock}</div><div class="card field-card"><div class="section-title"><b>Задания складу</b><button type="button" class="small-button secondary" data-marketplace-view="warehouse-shipments">Открыть ›</button></div>${warehouseShipmentsBlock}</div></div>`;
+        <div class="marketplace-overview-grid"><div class="card field-card"><div class="section-title"><b>Актуальные поставки маркетплейсов</b><button type="button" class="small-button secondary" data-marketplace-view="supplies">Открыть ›</button></div>${overviewSuppliesBlock}</div><div class="card field-card"><div class="section-title"><b>Задания складу</b><button type="button" class="small-button secondary" data-marketplace-view="warehouse-shipments">Открыть ›</button></div>${warehouseShipmentsBlock}</div></div>`;
       const financeTableRows = isWildberries ? verifiedPeriodFinance : financeDaily;
       const financeBlock = financeTableRows.length && (financeConfirmed || financePartiallyUsable || !isWildberries) ? `<div class="card field-card"><div class="section-title"><b>Начисления ${escapeHtml(providerName)} по дням</b><span>${financeTableRows.length} дней${isWildberries && !financeConfirmed ? " · частично" : ""}</span></div><div class="marketplace-table-scroll"><table class="marketplace-table"><thead><tr><th>Дата</th><th>Положительные начисления</th><th>Итог после удержаний</th><th>Операций</th></tr></thead><tbody>${[...financeTableRows].reverse().map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${marketplaceMoney(row.revenue || 0)}</td><td>${marketplaceMoney(row.net || 0)}</td><td>${escapeHtml(row.records || 0)}</td></tr>`).join("")}</tbody></table></div></div>` : itemEmpty(financeConfirmed ? "Финансовый источник доступен; операций в выбранном диапазоне нет." : "Финансовый источник или выбранный период не подтверждён.");
       const reviewsRating = isWildberries ? wbHistoricalRating : effectiveRating;
@@ -13027,7 +13059,7 @@ MINIAPP_HTML = """<!doctype html>
       mount.innerHTML = `<div class="marketplace-layout">${marketplaceMenu}<div class="marketplace-main">
         <div class="screen-head marketplace-v2-head"><div><h2>${isAll ? "Маркетплейсы" : providerName}</h2><p>${isAll ? "Общая статистика и управление продажами на маркетплейсах" : (isOzon ? "Продажи, заказы, остатки и показатели магазина Ozon" : "Продажи, заказы, остатки и показатели магазина Wildberries")}</p></div><div class="marketplace-brand-mark ${isWildberries ? "wb" : isOzon ? "ozon" : "all"}">${isWildberries ? "WB" : isOzon ? "OZON" : "Ozon + WB"}</div></div><div class="marketplace-provider-status"><b>${isAll ? "Общий обзор" : providerName}</b><span>${escapeHtml(providerStatus)}</span></div>
         ${errorNotice}${notConfigured}
-        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? (isWildberries && !verifiedOrdersAvailable ? "—" : orders.length) : state.marketplaceView === "supplies" ? (isWildberries && !wbSuppliesCurrent ? "—" : supplies.length) : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? (isWildberries && !wbStocksUsable ? "—" : products.length) : state.marketplaceView === "links" ? reconciliationRows.length : state.marketplaceView === "data-quality" ? (isWildberries ? wbQualityRows.length : qualityDatasets.length) : state.marketplaceView === "analytics" ? "" : (isWildberries && !wbCatalogUsable ? "—" : groups.length)}</span></div>${content}`}
+        ${state.marketplaceDetail ? detail : `<div class="section-title"><b>${title}</b><span>${state.marketplaceView === "orders" ? (isWildberries && !verifiedOrdersAvailable ? "—" : orders.length) : state.marketplaceView === "supplies" ? (isWildberries && !wbSuppliesCurrent ? "—" : selectedSupplyRows.length) : state.marketplaceView === "warehouse-shipments" ? warehouseShipments.length : state.marketplaceView === "sync" ? runs.length : state.marketplaceView === "stocks" ? (isWildberries && !wbStocksUsable ? "—" : products.length) : state.marketplaceView === "links" ? reconciliationRows.length : state.marketplaceView === "data-quality" ? (isWildberries ? wbQualityRows.length : qualityDatasets.length) : state.marketplaceView === "analytics" ? "" : (isWildberries && !wbCatalogUsable ? "—" : groups.length)}</span></div>${content}`}
       </div></div>`;
     }
 
@@ -15350,6 +15382,12 @@ MINIAPP_HTML = """<!doctype html>
       if (marketplaceSync) {
         state.marketplaceView = "sync";
         state.marketplaceDetail = {kind: "sync", id: marketplaceSync.dataset.marketplaceSyncId || ""};
+        render();
+        return;
+      }
+      const marketplaceSuppliesView = event.target.closest("[data-marketplace-supplies-view]");
+      if (marketplaceSuppliesView) {
+        state.marketplaceSupplyView = marketplaceSuppliesView.dataset.marketplaceSuppliesView === "history" ? "history" : "active";
         render();
         return;
       }

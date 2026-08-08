@@ -329,6 +329,26 @@ def supply_is_actionable(marketplace: str, external_status: object) -> bool:
     return _text(external_status).upper() in OZON_ACTIONABLE_SUPPLY_STATES
 
 
+def supply_history_category(
+    marketplace: str,
+    external_status: object,
+    canonical_status: object = "",
+) -> str:
+    """Classify a non-working supply for the separate history screen."""
+
+    if supply_is_actionable(marketplace, external_status):
+        return ""
+    canonical = _text(canonical_status).upper()
+    external = _text(external_status).upper()
+    if canonical == "CANCELLED" or external == "CANCELLED":
+        return "cancelled"
+    if canonical in {"SYNC_ERROR", "EXTERNAL_DRAFT"} or external in {
+        "OVERDUE", "REPORT_REJECTED", "REJECTED_AT_SUPPLY_WAREHOUSE",
+    }:
+        return "error"
+    return "completed"
+
+
 def canonical_supply_status(marketplace: str, external_status: object) -> str:
     """Map a marketplace status to the internal, read-only warehouse state."""
     status = _text(external_status).lower().replace("-", "_").replace(" ", "_")
@@ -484,7 +504,9 @@ def project_ozon_supplies_from_postgres(rows: list[dict]) -> dict:
 
 
 def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str = "", search: str = "", limit: int = 100,
-                 active_only: bool = False) -> list[dict]:
+                 active_only: bool = False, history_only: bool = False) -> list[dict]:
+    if active_only and history_only:
+        raise ValueError("Supply rows cannot be active-only and history-only together.")
     clauses, args = [], []
     if marketplace and marketplace != "all":
         clauses.append("s.marketplace=?"); args.append(marketplace)
@@ -497,6 +519,10 @@ def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str
     if active_only:
         placeholders = ",".join("?" for _ in OZON_ACTIONABLE_SUPPLY_STATES)
         clauses.append(f"(s.marketplace<>'ozon' OR upper(s.external_status) IN ({placeholders}))")
+        args.extend(sorted(OZON_ACTIONABLE_SUPPLY_STATES))
+    if history_only:
+        placeholders = ",".join("?" for _ in OZON_ACTIONABLE_SUPPLY_STATES)
+        clauses.append(f"(s.marketplace='ozon' AND upper(s.external_status) NOT IN ({placeholders}))")
         args.extend(sorted(OZON_ACTIONABLE_SUPPLY_STATES))
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     args.append(max(1, min(500, int(limit or 100))))
@@ -511,17 +537,30 @@ def _supply_rows(conn: sqlite3.Connection, *, marketplace: str = "", status: str
     result = [dict(row) for row in rows]
     for row in result:
         row["is_actionable"] = supply_is_actionable(row.get("marketplace", ""), row.get("external_status", ""))
+        row["history_category"] = supply_history_category(
+            row.get("marketplace", ""), row.get("external_status", ""), row.get("canonical_status", ""),
+        )
     return result
 
 
-def marketplace_supplies(*, marketplace: str = "", status: str = "", search: str = "", limit: int = 100) -> dict:
+def marketplace_supplies(*, marketplace: str = "", status: str = "", search: str = "", limit: int = 100,
+                         view: str = "active") -> dict:
+    view = _text(view).lower() or "active"
+    if view not in {"active", "history", "all"}:
+        view = "active"
     conn = get_db_connection(); ensure_schema(conn)
-    rows = _supply_rows(conn, marketplace=marketplace, status=status, search=search, limit=limit)
+    rows = _supply_rows(
+        conn, marketplace=marketplace, status=status, search=search, limit=limit,
+        active_only=view == "active", history_only=view == "history",
+    )
     counts = {key: 0 for key in MARKETPLACE_SUPPLY_STATUSES}
     for row in conn.execute("SELECT canonical_status,COUNT(*) AS count FROM marketplace_supplies GROUP BY canonical_status"):
         counts[row[0]] = row[1]
     conn.close()
-    return {"ok": True, "supplies": rows, "counts": counts, "statuses": list(MARKETPLACE_SUPPLY_STATUSES)}
+    return {
+        "ok": True, "view": view, "supplies": rows, "counts": counts,
+        "statuses": list(MARKETPLACE_SUPPLY_STATUSES),
+    }
 
 
 def marketplace_supply_detail(supply_id: int) -> dict | None:

@@ -33,9 +33,15 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
         refresh.assert_called_once_with()
 
     def test_supply_merge_keeps_postgres_ozon_and_independent_wb_rows(self):
-        primary = [{"marketplace": "ozon", "external_supply_id": "OZ-1", "source": "postgres"}]
+        primary = [{
+            "marketplace": "ozon", "external_supply_id": "OZ-1", "source": "postgres",
+            "state": "DATA_FILLING", "canonical_status": "PLANNED", "item_count": 1,
+        }]
         supplement = [
-            {"marketplace": "ozon", "external_supply_id": "OZ-1", "source": "projection"},
+            {
+                "id": 25, "marketplace": "ozon", "external_supply_id": "OZ-1",
+                "source": "projection", "is_actionable": True, "unmatched_count": 0,
+            },
             {"marketplace": "wildberries", "external_supply_id": "WB-1", "source": "sqlite"},
         ]
 
@@ -43,12 +49,50 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
 
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["source"], "postgres")
+        self.assertEqual(result[0]["id"], 25)
+        self.assertTrue(result[0]["is_actionable"])
         self.assertEqual(result[1]["marketplace"], "wildberries")
+
+    def test_client_payload_separates_working_supply_from_history(self):
+        snapshot = {
+            "ok": True,
+            "supplies": [
+                {
+                    "id": 25, "marketplace": "ozon", "external_supply_id": "2000062450250",
+                    "external_status": "DATA_FILLING", "canonical_status": "PLANNED",
+                    "is_actionable": True, "item_count": 3, "total_quantity": 140,
+                },
+                {
+                    "marketplace": "ozon", "external_supply_id": "old-completed",
+                    "state": "COMPLETED", "canonical_status": "ACCEPTED", "item_count": 1,
+                },
+                {
+                    "marketplace": "ozon", "external_supply_id": "old-error",
+                    "state": "REPORT_REJECTED", "canonical_status": "SYNC_ERROR", "item_count": 0,
+                },
+            ],
+        }
+
+        result = miniapp_server._marketplace_dashboard_client_payload(snapshot)
+
+        self.assertEqual(
+            [row["external_supply_id"] for row in result["supplies"]],
+            ["2000062450250"],
+        )
+        self.assertEqual(result["supplies"][0]["id"], 25)
+        self.assertTrue(result["supplies"][0]["is_actionable"])
+        self.assertEqual(
+            {row["external_supply_id"]: row["history_category"] for row in result["supply_history"]},
+            {"old-completed": "completed", "old-error": "error"},
+        )
 
     def test_general_dashboard_does_not_send_server_only_sales_cubes(self):
         snapshot = {
             "ok": True,
-            "supplies": [{"marketplace": "ozon", "external_supply_id": "1", "items": [{"sku": "large"}]}],
+            "supplies": [{
+                "marketplace": "ozon", "external_supply_id": "1", "state": "DATA_FILLING",
+                "canonical_status": "PLANNED", "items": [{"sku": "large"}],
+            }],
             "products_rows": [{"id": "1", "name": "Товар", "attributes_json": [{"large": True}]}],
             "analytics": {"sales_daily": [1], "sales_by_product_daily": [2], "sales_by_region_product_daily": [5]},
             "wildberries": {"analytics": {"sales_daily": [3], "sales_by_warehouse_daily": [4]}},

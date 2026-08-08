@@ -178,6 +178,7 @@ from marketplaces import (
     warehouse_shipment_tasks, warehouse_shipment_task_detail,
     start_warehouse_shipment_task, pick_warehouse_shipment_allocation,
     confirm_warehouse_shipment, marketplace_catalog_reconciliation,
+    supply_history_category, supply_is_actionable,
 )
 from marketplace_phase1a import (
     phase1a_dashboard,
@@ -365,8 +366,13 @@ def _merge_marketplace_supplies(primary, supplement):
     marketplace.
     """
     merged = []
-    seen = set()
-    for rows in (primary or [], supplement or []):
+    positions = {}
+    operational_fields = {
+        "id", "canonical_status", "is_actionable", "history_category",
+        "warehouse_shipment_id", "warehouse_shipment_number", "warehouse_shipment_status",
+        "unmatched_count",
+    }
+    for source_index, rows in enumerate((primary or [], supplement or [])):
         for source in rows if isinstance(rows, list) else []:
             if not isinstance(source, dict):
                 continue
@@ -378,11 +384,19 @@ def _merge_marketplace_supplies(primary, supplement):
                 or ""
             ).strip()
             key = (marketplace, external_id)
-            if external_id and key in seen:
+            if external_id and key in positions:
+                # PostgreSQL remains authoritative for the provider snapshot,
+                # while SQLite owns the local workflow id, mapping and WMS
+                # shipment link required by the action button.
+                if source_index == 1:
+                    target = merged[positions[key]]
+                    for field in operational_fields:
+                        if field in source and source.get(field) is not None:
+                            target[field] = source.get(field)
                 continue
             if external_id:
-                seen.add(key)
-            merged.append(source)
+                positions[key] = len(merged)
+            merged.append(dict(source))
     return merged
 
 
@@ -530,26 +544,42 @@ def _marketplace_dashboard_client_payload(snapshot):
         return snapshot
     result = dict(snapshot)
     compact_supplies = []
-    terminal_supply_statuses = {"ACCEPTED", "CANCELLED", "SHIPPED_FROM_PRODUCTION"}
+    compact_supply_history = []
     supply_rows = [row for row in result.get("supplies") or [] if isinstance(row, dict)]
     supply_rows.sort(
-        key=lambda row: (
-            str(row.get("canonical_status") or row.get("status") or "") in terminal_supply_statuses,
-            str(row.get("updated_at") or row.get("last_synced_at") or row.get("planned_at") or ""),
-        ),
-        reverse=False,
+        key=lambda row: str(row.get("updated_at") or row.get("last_synced_at") or row.get("planned_at") or ""),
+        reverse=True,
     )
-    for row in supply_rows[:100]:
-        compact_supplies.append({
+    for row in supply_rows:
+        marketplace = str(row.get("marketplace") or "ozon").strip().lower() or "ozon"
+        external_status = row.get("external_status") or row.get("state") or row.get("status") or ""
+        actionable = bool(row.get("is_actionable")) if "is_actionable" in row else supply_is_actionable(
+            marketplace, external_status,
+        )
+        history_category = str(row.get("history_category") or supply_history_category(
+            marketplace, external_status, row.get("canonical_status") or "",
+        ))
+        compact = {
             key: row.get(key)
             for key in (
                 "id", "marketplace", "external_supply_id", "number", "canonical_status",
-                "status", "destination_name", "total_quantity", "quantity", "planned_at",
-                "timeslot_from", "last_synced_at", "updated_at", "items_count", "unmatched_count",
+                "external_status", "state", "status", "destination_name", "total_quantity",
+                "quantity", "planned_at", "timeslot_from", "last_synced_at", "updated_at",
+                "item_count", "items_count", "unmatched_count", "warehouse_shipment_id",
+                "warehouse_shipment_number", "warehouse_shipment_status",
             )
             if key in row
-        })
+        }
+        compact["marketplace"] = marketplace
+        compact["is_actionable"] = actionable
+        compact["history_category"] = history_category
+        if actionable:
+            if len(compact_supplies) < 100:
+                compact_supplies.append(compact)
+        elif len(compact_supply_history) < 100:
+            compact_supply_history.append(compact)
     result["supplies"] = compact_supplies
+    result["supply_history"] = compact_supply_history
     for provider_key in (None, "wildberries"):
         provider = result if provider_key is None else result.get(provider_key)
         if not isinstance(provider, dict):
@@ -743,6 +773,7 @@ def get_marketplace_supplies_for_admin(telegram_id: int, payload: dict | None = 
         status=str(payload.get("status") or ""),
         search=str(payload.get("search") or ""),
         limit=payload.get("limit") or 100,
+        view=str(payload.get("view") or "active"),
     )
 
 

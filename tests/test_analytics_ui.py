@@ -62,6 +62,14 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('unit: dimension === "units" ? "units" : "money"', MINIAPP_HTML)
         self.assertIn('marketplaceLineChart(periodHistory, "units", "orders", "units", "units")', MINIAPP_HTML)
 
+    def test_marketplace_supplies_default_to_active_and_have_separate_history(self):
+        self.assertIn('marketplaceSupplyView: "active"', MINIAPP_HTML)
+        self.assertIn('data-marketplace-supplies-view="active"', MINIAPP_HTML)
+        self.assertIn('data-marketplace-supplies-view="history"', MINIAPP_HTML)
+        self.assertIn('const supplyHistory =', MINIAPP_HTML)
+        self.assertIn('Актуальные · ${escapeHtml(supplies.length)}', MINIAPP_HTML)
+        self.assertIn('История · ${escapeHtml(supplyHistory.length)}', MINIAPP_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -132,10 +132,15 @@ class MarketplaceTests(unittest.TestCase):
                         rows = marketplaces._supply_rows(conn, marketplace="ozon", active_only=True)
                         old_id = conn.execute("SELECT id FROM marketplace_supplies WHERE external_supply_id='OLD'").fetchone()[0]
 
+                    active_payload = marketplaces.marketplace_supplies(marketplace="ozon")
+                    history_payload = marketplaces.marketplace_supplies(marketplace="ozon", view="history")
                     rejected = marketplaces.create_internal_shipment_for_supply(old_id)
 
             self.assertEqual([row["external_supply_id"] for row in rows], ["ACTIVE"])
             self.assertTrue(rows[0]["is_actionable"])
+            self.assertEqual([row["external_supply_id"] for row in active_payload["supplies"]], ["ACTIVE"])
+            self.assertEqual([row["external_supply_id"] for row in history_payload["supplies"]], ["OLD"])
+            self.assertEqual(history_payload["supplies"][0]["history_category"], "completed")
             self.assertEqual(rejected["code"], "supply_not_actionable")
 
     def test_postgres_supply_projection_preserves_internal_shipment_link(self):
