@@ -70,6 +70,14 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('Актуальные · ${escapeHtml(supplies.length)}', MINIAPP_HTML)
         self.assertIn('История · ${escapeHtml(supplyHistory.length)}', MINIAPP_HTML)
 
+    def test_piece_quantities_are_formatted_as_integers(self):
+        self.assertIn('function marketplaceQuantity(value, fallback = "0")', MINIAPP_HTML)
+        self.assertIn('escapeHtml(marketplaceQuantity(row.total_quantity))', MINIAPP_HTML)
+        self.assertIn('escapeHtml(marketplaceQuantity(row.available))', MINIAPP_HTML)
+        self.assertIn('escapeHtml(marketplaceQuantity(row.stock))', MINIAPP_HTML)
+        self.assertNotIn('escapeHtml(row.total_quantity || 0)} шт.', MINIAPP_HTML)
+        self.assertNotIn('`${escapeHtml(row.available || 0)} шт.`', MINIAPP_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()
