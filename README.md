@@ -5,7 +5,7 @@
 ## Канонический контур
 
 - Репозиторий: `k0ss97-bot/sewing-shift-bot-deploy`.
-- Рабочая ветка: `codex/wms-integration`.
+- Текущая ветка разработки: `codex/article-first-wms`.
 - Production Web: `https://www.shagaemfabrika.ru/app`.
 - SQLite: сотрудники, смены и производство.
 - PostgreSQL: адресный WMS и marketplace read models.
@@ -24,7 +24,7 @@
 | `database.py` | SQLite-схема и производственная бизнес-логика |
 | `main.py` | Telegram-бот |
 | `miniapp_server.py` | Web API |
-| `miniapp_assets.py` | Web/PWA интерфейс |
+| `miniapp_assets.py`, `assets/app/` | компактный загрузчик и раздельные HTML/CSS/JS Web/PWA |
 | `route_maps.py` | производственные маршруты |
 | `wms/` | PostgreSQL WMS |
 | `marketplaces.py`, `marketplace_pg.py` | Ozon/WB read models |
@@ -62,6 +62,7 @@ Runner отвергает URL, если имя базы не содержит `t
 - `DECISIONS.md` — принятые архитектурные решения.
 - `LESSONS.md` — обнаруженные ошибки и предотвращение повторов.
 - `RELEASE_NOTES.md`, `DEPLOYMENT.md`, `ROLLBACK.md` — release gate, выкладка и откат.
+- `scripts/build_release_manifest.py` — commit, миграции, frontend-хеши и feature flags конкретного релиза.
 - `BACKUP_RESTORE.md` — backup/restore SQLite и PostgreSQL.
 - `SECURITY_REVIEW.md` — защитные механизмы, риски и release gate.
 - `THREAT_MODEL.md` — активы, границы доверия, угрозы, контроли и решения владельца.

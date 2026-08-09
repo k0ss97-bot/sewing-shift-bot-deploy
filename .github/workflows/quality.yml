@@ -10,6 +10,9 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 concurrency:
   group: quality-${{ github.workflow }}-${{ github.ref }}
@@ -19,16 +22,32 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wms -d wms_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       PYTHONDONTWRITEBYTECODE: "1"
       RUN_HTTP_TESTS: "1"
+      FAIL_ON_TEST_SKIP: "1"
+      TEST_WMS_DATABASE_URL: postgresql://wms:wms@127.0.0.1:5432/wms_test
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
           cache: pip
@@ -60,8 +79,32 @@ jobs:
           python -m pip install --disable-pip-version-check bandit==1.8.6
           bandit -q -lll -r . -x ./.git,./.venv,./venv,./build,./dist
 
+      - name: Apply WMS migrations to isolated PostgreSQL
+        env:
+          WMS_DATABASE_URL: postgresql://wms:wms@127.0.0.1:5432/wms_test
+        run: python -m wms.migrate
+
       - name: Run unittests
         run: python scripts/run_unittests_isolated.py
 
       - name: Audit web resources with a disposable database
         run: python scripts/smoke_web.py
+
+      - name: Build SBOM and validate release manifest
+        run: |
+          python scripts/build_sbom.py --output "$RUNNER_TEMP/release-sbom.cdx.json"
+          python scripts/build_release_manifest.py --output "$RUNNER_TEMP/release-manifest.json" --sbom "$RUNNER_TEMP/release-sbom.cdx.json"
+          python -c 'import json, os, pathlib; p=json.loads(pathlib.Path(os.environ["RUNNER_TEMP"], "release-manifest.json").read_text()); assert len(p["git"]["commit"]) == 40; assert p["migrations"]; assert p["frontend"]["app.js"]["bytes"] > 0; assert p["sbom"]["components"] > 0'
+
+      - name: Sign release provenance
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event.repository.visibility == 'public' || vars.ENABLE_GITHUB_ATTESTATIONS == '1')
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: '${{ runner.temp }}/release-manifest.json'
+
+      - name: Sign release SBOM attestation
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event.repository.visibility == 'public' || vars.ENABLE_GITHUB_ATTESTATIONS == '1')
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: '${{ runner.temp }}/release-manifest.json'
+          sbom-path: '${{ runner.temp }}/release-sbom.cdx.json'

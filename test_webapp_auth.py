@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from http.cookies import SimpleCookie
@@ -94,18 +95,20 @@ class WebAppAuthTest(unittest.TestCase):
 
         self.assertEqual(len(connection_calls), 1)
 
-    def test_session_defaults_are_30_days_and_upper_bounds_are_enforced(self):
-        expected = 30 * 24 * 60 * 60
-        self.assertEqual(self.auth.DEFAULT_SESSION_TTL_SECONDS, expected)
-        self.assertEqual(self.auth.DEFAULT_SESSION_IDLE_SECONDS, expected)
-        self.assertEqual(self.auth.MAX_SESSION_LIFETIME_SECONDS, expected)
-        self.assertEqual(self.auth._session_ttl_seconds(), expected)
-        self.assertEqual(self.auth._session_idle_seconds(), expected)
+    def test_session_defaults_are_short_and_upper_bounds_are_enforced(self):
+        default_ttl = 12 * 60 * 60
+        default_idle = 45 * 60
+        maximum = 30 * 24 * 60 * 60
+        self.assertEqual(self.auth.DEFAULT_SESSION_TTL_SECONDS, default_ttl)
+        self.assertEqual(self.auth.DEFAULT_SESSION_IDLE_SECONDS, default_idle)
+        self.assertEqual(self.auth.MAX_SESSION_LIFETIME_SECONDS, maximum)
+        self.assertEqual(self.auth._session_ttl_seconds(), default_ttl)
+        self.assertEqual(self.auth._session_idle_seconds(), default_idle)
 
         os.environ["WEBAPP_SESSION_TTL_SECONDS"] = str(90 * 24 * 60 * 60)
         os.environ["WEBAPP_SESSION_IDLE_SECONDS"] = str(90 * 24 * 60 * 60)
-        self.assertEqual(self.auth._session_ttl_seconds(), expected)
-        self.assertEqual(self.auth._session_idle_seconds(), expected)
+        self.assertEqual(self.auth._session_ttl_seconds(), maximum)
+        self.assertEqual(self.auth._session_idle_seconds(), maximum)
 
         os.environ.pop("WEBAPP_SESSION_TTL_SECONDS")
         os.environ.pop("WEBAPP_SESSION_IDLE_SECONDS")
@@ -116,8 +119,8 @@ class WebAppAuthTest(unittest.TestCase):
         before = int(time.time())
         session = self.auth.create_web_session(authenticated)
         after = int(time.time())
-        self.assertGreaterEqual(session["expires_at"], before + expected)
-        self.assertLessEqual(session["expires_at"], after + expected)
+        self.assertGreaterEqual(session["expires_at"], before + default_ttl)
+        self.assertLessEqual(session["expires_at"], after + default_ttl)
 
         cookie = self.auth.build_session_cookie(
             session["session_token"], secure=True, max_age=self.auth._session_ttl_seconds()
@@ -125,11 +128,78 @@ class WebAppAuthTest(unittest.TestCase):
         parsed_cookie = SimpleCookie()
         parsed_cookie.load(cookie)
         morsel = parsed_cookie[self.auth.SECURE_COOKIE_NAME]
-        self.assertEqual(morsel["max-age"], str(expected))
+        self.assertEqual(morsel["max-age"], str(default_ttl))
         self.assertEqual(morsel["path"], "/")
         self.assertTrue(morsel["httponly"])
         self.assertTrue(morsel["secure"])
         self.assertEqual(morsel["samesite"], "Strict")
+
+    def test_successful_login_upgrades_legacy_pbkdf2_iterations(self):
+        password = "legacy-password-strong"
+        account = self.auth.upsert_web_account("legacy.hash", 22003, password)
+        legacy_iterations = 310_000
+        legacy_salt = "11" * 16
+        legacy_hash = self.auth._password_hash(password, legacy_salt, legacy_iterations)
+        conn = self.database.get_db_connection()
+        conn.execute(
+            "UPDATE web_accounts SET password_salt = ?, password_hash = ?, password_iterations = ? WHERE id = ?",
+            (legacy_salt, legacy_hash, legacy_iterations, account["id"]),
+        )
+        conn.commit()
+        conn.close()
+
+        authenticated = self.auth.authenticate_web_credentials("legacy.hash", password)
+        self.assertIsNotNone(authenticated)
+        conn = self.database.get_db_connection()
+        upgraded = conn.execute(
+            "SELECT password_salt, password_hash, password_iterations FROM web_accounts WHERE id = ?",
+            (account["id"],),
+        ).fetchone()
+        conn.close()
+        self.assertEqual(upgraded[2], self.auth.PASSWORD_ITERATIONS)
+        self.assertNotEqual(upgraded[0], legacy_salt)
+        self.assertEqual(
+            upgraded[1],
+            self.auth._password_hash(password, upgraded[0], self.auth.PASSWORD_ITERATIONS),
+        )
+
+    def test_rate_limit_is_persistent_hashed_and_clearable(self):
+        client = "203.0.113.77"
+        self.assertFalse(self.auth.rate_limit_check(
+            "web_login", client, limit=2, window_seconds=300, consume=True
+        ))
+        self.assertFalse(self.auth.rate_limit_check(
+            "web_login", client, limit=2, window_seconds=300, consume=True
+        ))
+        self.assertTrue(self.auth.rate_limit_check(
+            "web_login", client, limit=2, window_seconds=300
+        ))
+        conn = self.database.get_db_connection()
+        stored = conn.execute(
+            "SELECT key_hash, attempts FROM web_rate_limits WHERE scope = 'web_login'"
+        ).fetchone()
+        conn.close()
+        self.assertNotIn(client, stored[0])
+        self.assertEqual(stored[1], 2)
+        self.auth.clear_rate_limit("web_login", client)
+        self.assertFalse(self.auth.rate_limit_check(
+            "web_login", client, limit=2, window_seconds=300
+        ))
+
+    def test_security_event_log_never_stores_raw_ip_or_unknown_detail_shape(self):
+        self.auth.record_security_event(
+            "MFA Login", "FAILED", telegram_id=123,
+            ip_address="203.0.113.88",
+            details={"Code": "invalid", "Bad Key !": "trimmed", "nested": {"raw": True}},
+        )
+        events = self.auth.recent_security_events(10)
+        self.assertEqual(events[0]["event_type"], "mfalogin")
+        self.assertEqual(events[0]["outcome"], "failed")
+        self.assertEqual(events[0]["telegram_id"], 123)
+        self.assertNotEqual(events[0]["ip_hash"], "203.0.113.88")
+        self.assertEqual(len(events[0]["ip_hash"]), 64)
+        self.assertEqual(events[0]["details"]["code"], "invalid")
+        self.assertNotIn("203.0.113.88", json.dumps(events[0]))
 
     def test_updating_password_revokes_existing_sessions(self):
         first = self.auth.upsert_web_account("admin.test", 99001, "first-demo-password")
@@ -166,6 +236,37 @@ class WebAppAuthTest(unittest.TestCase):
         self.assertIsNone(self.auth.get_web_session(session["session_token"]))
         self.assertIsNone(self.auth.authenticate_web_credentials("worker.password", "first-worker-password"))
         self.assertIsNotNone(self.auth.authenticate_web_credentials("worker.password", "second-worker-password"))
+
+    def test_admin_mfa_enrollment_blocks_unverified_sessions_and_supports_recovery(self):
+        self.database.create_employee(99004, "MFA Администратор", "Швея")
+        employee = self.database.get_employee_by_telegram_id(99004)
+        self.assertTrue(self.database.update_employee_role(employee[0], "admin")["ok"])
+        account = self.auth.upsert_web_account("mfa.admin", 99004, "mfa-admin-password")
+        authenticated = self.auth.authenticate_web_credentials("mfa.admin", "mfa-admin-password")
+
+        unverified = self.auth.create_web_session(authenticated)
+        self.assertIsNone(self.auth.get_web_session(unverified["session_token"]))
+
+        enrollment = self.auth.begin_admin_mfa(account)
+        self.assertTrue(enrollment["mfa_enrollment_required"])
+        self.assertTrue(enrollment["otpauth_uri"].startswith("otpauth://totp/"))
+        verified = self.auth.verify_admin_mfa_challenge(
+            enrollment["challenge_token"],
+            self.auth._totp_code(enrollment["secret"]),
+        )
+        self.assertTrue(verified["ok"])
+        self.assertEqual(len(verified["recovery_codes"]), self.auth.MFA_RECOVERY_CODE_COUNT)
+
+        session = self.auth.create_web_session(verified["account"], mfa_verified=True)
+        self.assertIsNotNone(self.auth.get_web_session(session["session_token"]))
+
+        recovery_challenge = self.auth.begin_admin_mfa(account)
+        self.assertFalse(recovery_challenge["mfa_enrollment_required"])
+        recovered = self.auth.verify_admin_mfa_challenge(
+            recovery_challenge["challenge_token"], verified["recovery_codes"][0]
+        )
+        self.assertTrue(recovered["ok"])
+        self.assertEqual(recovered["remaining_recovery_codes"], 9)
 
     def test_database_roles_are_atomic_and_preserve_last_admin(self):
         self.database.create_employee(99101, "Первый Администратор", "Швея")
@@ -257,7 +358,9 @@ class WebAppHttpTest(unittest.TestCase):
         os.environ["DB_DIR"] = self.temp_dir.name
         os.environ.pop("ADMIN_IDS", None)
         sys.path.insert(0, str(PROJECT_DIR))
-        for module_name in ["database", "webapp_auth", "miniapp_server"]:
+        for module_name in [
+            "database", "webapp_auth", "miniapp_server", "production_wms_reconciliation"
+        ]:
             sys.modules.pop(module_name, None)
         self.database = importlib.import_module("database")
         self.database.init_db()
@@ -293,7 +396,9 @@ class WebAppHttpTest(unittest.TestCase):
             os.environ["WEBAPP_SESSION_IDLE_SECONDS"] = self.old_session_idle
         else:
             os.environ.pop("WEBAPP_SESSION_IDLE_SECONDS", None)
-        for module_name in ["database", "webapp_auth", "miniapp_server"]:
+        for module_name in [
+            "database", "webapp_auth", "miniapp_server", "production_wms_reconciliation"
+        ]:
             sys.modules.pop(module_name, None)
         if str(PROJECT_DIR) in sys.path:
             sys.path.remove(str(PROJECT_DIR))
@@ -315,6 +420,55 @@ class WebAppHttpTest(unittest.TestCase):
             result = response_body
         connection.close()
         return response.status, result, response_headers
+
+    def login_admin(self, username, password):
+        status, challenge, _headers = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": username, "password": password},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 202)
+        self.assertTrue(challenge["mfa_required"])
+        code = self.auth._totp_code(challenge["secret"])
+        status, login, headers = self.request(
+            "POST",
+            "/api/web/mfa/verify",
+            {"challenge_token": challenge["challenge_token"], "code": code},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(login["ok"])
+        return status, login, headers
+
+    def test_http_request_closes_thread_cached_postgres_connections(self):
+        teardown_finished = threading.Event()
+        with patch.object(
+            self.server_module,
+            "close_thread_connections",
+            side_effect=teardown_finished.set,
+        ) as close_connections:
+            status, payload, _headers = self.request("GET", "/health")
+            self.assertEqual(status, 200)
+            self.assertTrue(payload["ok"])
+            self.assertTrue(teardown_finished.wait(timeout=2))
+
+        close_connections.assert_called_once_with()
+
+    def test_saturated_server_returns_retryable_http_503(self):
+        acquired = 0
+        try:
+            for _ in range(self.server_module.MAX_CONCURRENT_REQUESTS):
+                self.assertTrue(self.server.request_slots.acquire(blocking=False))
+                acquired += 1
+            status, payload, headers = self.request("GET", "/health")
+        finally:
+            for _ in range(acquired):
+                self.server.request_slots.release()
+
+        self.assertEqual(status, 503)
+        self.assertEqual(payload["code"], "server_busy")
+        self.assertEqual(headers.get("Retry-After"), "1")
 
     def test_client_disconnect_does_not_emit_false_http_500(self):
         handler_class = self.server.RequestHandlerClass
@@ -609,12 +763,7 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertTrue(self.database.update_employee_role(employee[0], "admin")["ok"])
         self.auth.upsert_web_account("web-admin", 23003, "web-admin-password")
 
-        status, login, headers = self.request(
-            "POST",
-            "/api/web/login",
-            {"username": "web-admin", "password": "web-admin-password"},
-            {"Origin": self.origin},
-        )
+        status, login, headers = self.login_admin("web-admin", "web-admin-password")
         self.assertEqual(status, 200)
         cookie = headers["Set-Cookie"].split(";", 1)[0]
         request_headers = {
@@ -678,12 +827,7 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertTrue(self.database.update_employee_role(admin[0], "admin")["ok"])
         self.auth.upsert_web_account("delete-admin", 23003, "delete-admin-password")
 
-        status, login, headers = self.request(
-            "POST",
-            "/api/web/login",
-            {"username": "delete-admin", "password": "delete-admin-password"},
-            {"Origin": self.origin},
-        )
+        status, login, headers = self.login_admin("delete-admin", "delete-admin-password")
         self.assertEqual(status, 200)
         admin_headers = {
             "Cookie": headers["Set-Cookie"].split(";", 1)[0],
@@ -715,12 +859,7 @@ class WebAppHttpTest(unittest.TestCase):
         admin = self.database.get_employee_by_telegram_id(23003)
         self.assertTrue(self.database.update_employee_role(admin[0], "admin")["ok"])
         self.auth.upsert_web_account("history-admin", 23003, "history-admin-password")
-        status, login, headers = self.request(
-            "POST",
-            "/api/web/login",
-            {"username": "history-admin", "password": "history-admin-password"},
-            {"Origin": self.origin},
-        )
+        status, login, headers = self.login_admin("history-admin", "history-admin-password")
         self.assertEqual(status, 200)
         admin_headers = {
             "Cookie": headers["Set-Cookie"].split(";", 1)[0],

@@ -34,6 +34,25 @@ class IsolatedTestRunnerTests(unittest.TestCase):
         with patch.dict(os.environ, environment, clear=True):
             self.assertEqual(runner._safe_test_wms_url(), runner.DEFAULT_TEST_WMS_URL)
 
+    def test_ci_skip_gate_rejects_any_skipped_test(self):
+        with patch.dict(os.environ, {"FAIL_ON_TEST_SKIP": "1"}, clear=False):
+            self.assertTrue(runner._skip_gate_failed(1))
+            self.assertFalse(runner._skip_gate_failed(0))
+
+    def test_local_test_run_allows_postgres_skip_when_gate_is_disabled(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(runner._skip_gate_failed(14))
+
+    def test_quality_workflow_provisions_postgres_and_enforces_skip_gate(self):
+        workflow = (runner.PROJECT_ROOT / ".github/workflows/quality.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("image: postgres:16", workflow)
+        self.assertIn("POSTGRES_DB: wms_test", workflow)
+        self.assertIn("TEST_WMS_DATABASE_URL:", workflow)
+        self.assertIn('FAIL_ON_TEST_SKIP: "1"', workflow)
+        self.assertIn("python -m wms.migrate", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

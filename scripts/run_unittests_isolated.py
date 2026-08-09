@@ -10,7 +10,9 @@ aliases by test id and prints a machine-readable discovery report.
 Production PostgreSQL configuration is never inherited.  DB-backed WMS tests
 run only when ``TEST_WMS_DATABASE_URL`` names an explicitly test database;
 otherwise they target the conventional loopback ``wms_test`` database and are
-cleanly skipped when it is unavailable.
+cleanly skipped when it is unavailable.  CI can set ``FAIL_ON_TEST_SKIP=1`` to
+turn every skip into a hard failure, so an unavailable PostgreSQL service can
+never produce a green quality check.
 """
 
 from __future__ import annotations
@@ -73,6 +75,12 @@ def _safe_test_wms_url() -> str:
     return value
 
 
+def _skip_gate_failed(skipped: int) -> bool:
+    """Return whether the configured CI skip gate rejects this test result."""
+    fail_on_skip = (os.environ.get("FAIL_ON_TEST_SKIP") or "").strip().lower()
+    return skipped > 0 and fail_on_skip in {"1", "true", "yes", "on"}
+
+
 def _isolated_child() -> int:
     loader = unittest.TestLoader()
     unique_tests: dict[str, unittest.TestCase] = {}
@@ -95,7 +103,15 @@ def _isolated_child() -> int:
             unique_tests[test_id] = test
 
     suite = unittest.TestSuite(unique_tests.values())
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    try:
+        verbosity = max(0, min(2, int(os.environ.get("TEST_VERBOSITY", "2"))))
+    except ValueError:
+        verbosity = 2
+    try:
+        durations = max(0, min(50, int(os.environ.get("TEST_DURATIONS", "0")))) or None
+    except ValueError:
+        durations = None
+    result = unittest.TextTestRunner(verbosity=verbosity, durations=durations).run(suite)
 
     skipped = len(result.skipped)
     failed = len(result.failures) + len(result.errors) + len(result.unexpectedSuccesses)
@@ -122,7 +138,9 @@ def _isolated_child() -> int:
     for module_name, count, error in import_errors:
         print(f"exclude_reason[{module_name};tests={count}]={error}")
 
-    return 0 if result.wasSuccessful() and not import_errors else 1
+    skip_gate_failed = _skip_gate_failed(skipped)
+    print(f"skip_gate={'failed' if skip_gate_failed else 'passed'}")
+    return 0 if result.wasSuccessful() and not import_errors and not skip_gate_failed else 1
 
 
 def main() -> int:

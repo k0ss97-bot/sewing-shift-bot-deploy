@@ -35,6 +35,7 @@ class WebAppServerSettingsTest(unittest.TestCase):
         self.assertGreaterEqual(len(settings.secret), 32)
         self.assertFalse(settings.production)
         self.assertFalse(settings.debug)
+        self.assertEqual(settings.graceful_shutdown_seconds, 25)
 
     def test_production_requires_long_persistent_secret(self):
         with self.assertRaises(RuntimeError):
@@ -63,6 +64,10 @@ class WebAppServerSettingsTest(unittest.TestCase):
                     "MINIAPP_DEBUG": "1",
                 }
             )
+        with self.assertRaises(RuntimeError):
+            load_runtime_settings({"WEBAPP_GRACEFUL_SHUTDOWN_SECONDS": "0"})
+        with self.assertRaises(RuntimeError):
+            load_runtime_settings({"WEBAPP_GRACEFUL_SHUTDOWN_SECONDS": "forever"})
 
     def test_shared_bot_requires_marker_and_uses_site_database_environment(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

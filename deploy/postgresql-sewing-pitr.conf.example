@@ -1,0 +1,9 @@
+# Example only. Install through the PostgreSQL configuration management used
+# by the server, verify the archive destination first, then restart PostgreSQL.
+# The archive helper must encrypt and durably send every WAL segment to the
+# independent account/region chosen for disaster recovery.
+
+wal_level = replica
+archive_mode = on
+archive_timeout = '15min'
+archive_command = '/usr/local/sbin/sewing-archive-wal "%p" "%f"'

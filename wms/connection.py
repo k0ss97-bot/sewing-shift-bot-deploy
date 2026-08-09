@@ -6,21 +6,25 @@ is mirrored here as the WMS master, while employees/shifts/fabric remain in
 SQLite and are referenced by integer id without a cross-database FK.
 
 Connection is configured via the ``WMS_DATABASE_URL`` env var (falling back to
-``DATABASE_URL``, then a localhost default). A global connection cache keeps a
-single open connection per URL, matching the project's minimal-dependency style.
+``DATABASE_URL``, then a localhost default). A bounded, thread-safe pool keeps
+request concurrency below PostgreSQL's connection limit. Request threads lease
+one connection and return it through ``close_thread_connections()``.
 """
 
 from __future__ import annotations
 
 import os
 import threading
+import time
 from typing import Any
 
 try:
     import psycopg2
+    from psycopg2 import pool as psycopg2_pool
     from psycopg2.extras import DictCursor
 except ImportError:  # pragma: no cover - psycopg2 is the one approved new dep
     psycopg2 = None
+    psycopg2_pool = None
     DictCursor = None
 
 
@@ -28,6 +32,69 @@ _DEFAULT_URL = "postgresql://wms:wms@localhost:5432/wms"
 _thread_connections = threading.local()
 _connection_registry: list[Any] = []
 _connection_registry_lock = threading.Lock()
+_pools: dict[str, "_BoundedPool"] = {}
+_pools_lock = threading.Lock()
+
+
+def _positive_int_environment(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return max(1, value)
+
+
+def _positive_float_environment(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return max(0.1, value)
+
+
+class _BoundedPool:
+    def __init__(self, url: str) -> None:
+        maximum = _positive_int_environment("WMS_DB_POOL_MAX", 12)
+        self.maximum = maximum
+        self.acquire_timeout = _positive_float_environment("WMS_DB_POOL_TIMEOUT_SECONDS", 5.0)
+        self.slots = threading.BoundedSemaphore(maximum)
+        self.pool = psycopg2_pool.ThreadedConnectionPool(
+            1,
+            maximum,
+            dsn=url,
+            cursor_factory=DictCursor,
+        )
+
+    def acquire(self):
+        started = time.monotonic()
+        if not self.slots.acquire(timeout=self.acquire_timeout):
+            raise RuntimeError(
+                f"WMS PostgreSQL pool exhausted after {time.monotonic() - started:.2f}s"
+            )
+        try:
+            connection = self.pool.getconn()
+            connection.autocommit = False
+            return connection
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def release(self, connection) -> None:
+        close = bool(connection is None or connection.closed)
+        if not close:
+            try:
+                # Every lease returns in an idle transaction state. This also
+                # protects the next request after an exception in a read path.
+                connection.rollback()
+            except Exception:
+                close = True
+        try:
+            self.pool.putconn(connection, close=close)
+        finally:
+            self.slots.release()
+
+    def close(self) -> None:
+        self.pool.closeall()
 
 
 def database_url() -> str:
@@ -40,7 +107,7 @@ def database_url() -> str:
 
 
 def get_pg_connection():
-    """Return a cached psycopg2 connection (autocommit OFF by default).
+    """Return this thread's leased psycopg2 connection (autocommit OFF).
 
     Callers manage their own transactions (BEGIN / COMMIT / ROLLBACK) to match
     the existing SQLite ``BEGIN IMMEDIATE`` pattern. Use ``set_autocommit`` for
@@ -55,27 +122,36 @@ def get_pg_connection():
     if cache is None:
         cache = {}
         _thread_connections.cache = cache
-    conn = cache.get(url)
+    lease = cache.get(url)
+    conn = lease[1] if lease else None
+    if lease is not None and conn.closed:
+        lease[0].release(conn)
+        cache.pop(url, None)
+        with _connection_registry_lock:
+            _connection_registry[:] = [item for item in _connection_registry if item is not conn]
+        conn = None
     if conn is None or conn.closed:
-        # DictCursor rows support both row[0] and row["column"].  The WMS
-        # repository uses both access styles, and ThreadingHTTPServer requires
-        # a separate connection per worker thread.
-        conn = psycopg2.connect(url, cursor_factory=DictCursor)
-        conn.autocommit = False
-        cache[url] = conn
+        with _pools_lock:
+            pool = _pools.get(url)
+            if pool is None:
+                pool = _BoundedPool(url)
+                _pools[url] = pool
+        conn = pool.acquire()
+        cache[url] = (pool, conn)
         with _connection_registry_lock:
             _connection_registry.append(conn)
     return conn
 
 
 def reset_connection() -> None:
-    """Close and forget the cached connection (used by tests)."""
+    """Close every pool and forget cached leases (used by tests/shutdown)."""
     with _connection_registry_lock:
-        connections = list(_connection_registry)
         _connection_registry.clear()
-    for conn in connections:
-        if conn is not None and not conn.closed:
-            conn.close()
+    with _pools_lock:
+        pools = list(_pools.values())
+        _pools.clear()
+    for pool in pools:
+        pool.close()
     _thread_connections.cache = {}
 
 
@@ -87,18 +163,18 @@ def close_thread_connections() -> None:
     registry keeps the underlying connections alive until process shutdown.
     """
     cache = getattr(_thread_connections, "cache", None) or {}
-    connections = list(cache.values())
+    leases = list(cache.values())
     _thread_connections.cache = {}
-    if not connections:
+    if not leases:
         return
+    connections = [connection for _, connection in leases]
     connection_ids = {id(conn) for conn in connections}
     with _connection_registry_lock:
         _connection_registry[:] = [
             conn for conn in _connection_registry if id(conn) not in connection_ids
         ]
-    for conn in connections:
-        if conn is not None and not conn.closed:
-            conn.close()
+    for pool, conn in leases:
+        pool.release(conn)
 
 
 def dict_cursor(conn):

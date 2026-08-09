@@ -33,7 +33,7 @@ warehouse_stock │                 wms_containers
 
 | Файл | Назначение |
 |---|---|
-| `connection.py` | Postgres-подключение (cached, `WMS_DATABASE_URL` env) |
+| `connection.py` | ограниченный thread-safe PostgreSQL pool (`WMS_DATABASE_URL`, `WMS_DB_POOL_MAX`) |
 | `migrate.py` | Применение SQL-миграций с version-трекингом (`schema_migrations`) |
 | `models.py` | Dataclass-модели: `ProductKey`, `Zone`, `Location`, `WarehouseStock`, `Movement` |
 | `repository.py` | CRUD к Postgres: zones/locations/stock/movements |

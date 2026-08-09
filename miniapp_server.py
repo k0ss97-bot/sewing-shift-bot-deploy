@@ -10,7 +10,11 @@ import threading
 import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qsl, quote, urlparse
+from urllib.parse import parse_qs, parse_qsl, quote, urlparse
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+from http_lifecycle import HTTP_ACCEPT_QUEUE_SIZE, RequestDrainState
 
 from database import (
     add_fabric_receipt,
@@ -144,29 +148,35 @@ from database import (
 )
 from catalog import CUTTING_ARBITRARY_OPERATION, PREPARATION_OPERATION_OPTIONS, format_color_label
 from miniapp_auth import parse_auth_token
-from miniapp_assets import MINIAPP_HTML
+from miniapp_assets import MINIAPP_SHELL_HTML
 from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 from webapp_auth import (
     WebRegistrationError,
     authenticate_web_credentials,
+    begin_admin_mfa,
     build_clear_cookies,
     build_session_cookie,
     change_web_password,
+    clear_rate_limit,
     create_web_session,
     get_web_account_profiles_by_telegram_ids,
     get_web_session,
     init_web_auth,
+    rate_limit_check,
+    recent_security_events,
+    record_security_event,
     register_web_account,
     revoke_web_session,
     revoke_web_sessions_for_telegram_id,
     session_token_from_cookie,
+    verify_admin_mfa_challenge,
 )
 from webapp_pwa import app_shell_revision, inject_pwa_markup, send_pwa_resource
 from wms import api as wms_api
 from wms import operations as wms_operations
 from wms import repository as wms_repository
 from wms.api import WMS_ADMIN_ROUTES, WMS_READ_ROUTES, WMS_ROUTES
-from wms.connection import get_pg_connection
+from wms.connection import close_thread_connections, get_pg_connection
 from wms.models import ProductKey, normalize_product_article
 from wms.shipments import shipment_detail, shipment_excel_bytes, shipment_pdf_bytes
 from marketplaces import dashboard as marketplace_dashboard
@@ -190,7 +200,11 @@ from marketplace_phase1a import (
 )
 from analytics_overview import analytics_overview as build_analytics_overview
 from analytics_overview import analytics_overview_http_status
+from analytics_cache import TTLReadModelCache
 from production_wms_reconciliation import get_latest_production_wms_reconciliation
+from product_images import ProductImageError, get_thumbnail, source_from_request, thumbnail_url
+from service_metrics import SERVICE_METRICS
+from planning_api import calculate_planning_model, get_planning_overview
 from web_push import WebPushDeliveryError, get_public_web_push_config, send_web_push
 
 
@@ -234,6 +248,13 @@ _MARKETPLACE_DASHBOARD_CACHE = {
     "loaded_at": 0.0,
     "refreshing": False,
 }
+ANALYTICS_READ_MODEL_CACHE_TTL_SECONDS = _bounded_float_env(
+    "ANALYTICS_READ_MODEL_CACHE_TTL_SECONDS", 15.0, 1.0, 120.0
+)
+_ANALYTICS_READ_MODEL_CACHE = TTLReadModelCache(
+    ttl_seconds=ANALYTICS_READ_MODEL_CACHE_TTL_SECONDS,
+    maximum_entries=64,
+)
 
 
 class RequestJSONError(ValueError):
@@ -262,7 +283,7 @@ DEFECT_REASONS = [
 ]
 DEFECT_DISPOSITIONS = ["Списать", "На переделку", "Уточнить"]
 MARKETPLACE_HEALTH_STATE = {"supplies": "idle", "reason": ""}
-PWA_HTML = inject_pwa_markup(MINIAPP_HTML)
+PWA_HTML = inject_pwa_markup(MINIAPP_SHELL_HTML)
 PWA_SHELL_REVISION = app_shell_revision(PWA_HTML)
 
 
@@ -286,7 +307,7 @@ CONTENT_SECURITY_POLICY = (
     + "; script-src-attr 'none'; "
     + "style-src 'self'; style-src-elem 'self' "
     + " ".join(_csp_inline_hashes(PWA_HTML, "style"))
-    + "; style-src-attr 'unsafe-inline'; worker-src 'self' blob:; upgrade-insecure-requests"
+    + "; style-src-attr 'none'; worker-src 'self' blob:; upgrade-insecure-requests"
 )
 
 
@@ -347,6 +368,7 @@ def health_snapshot() -> dict:
         "status": "ready" if ready else "not_ready",
         "components": components,
         "marketplace": dict(MARKETPLACE_HEALTH_STATE),
+        "observability": SERVICE_METRICS.snapshot(),
     }
 
 
@@ -491,12 +513,14 @@ def _expire_marketplace_dashboard_cache() -> None:
     """Keep the last snapshot readable while scheduling a fresh one."""
     with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
         _MARKETPLACE_DASHBOARD_CACHE["loaded_at"] = 0.0
+    _ANALYTICS_READ_MODEL_CACHE.clear()
 
 
 def _reset_marketplace_dashboard_cache_for_tests() -> None:
     with _MARKETPLACE_DASHBOARD_CACHE_LOCK:
         _MARKETPLACE_DASHBOARD_CACHE.update({"value": None, "loaded_at": 0.0, "refreshing": False})
         _MARKETPLACE_DASHBOARD_CACHE_READY.clear()
+    _ANALYTICS_READ_MODEL_CACHE.clear()
 
 
 def _cached_marketplace_dashboard_payload() -> dict:
@@ -659,6 +683,11 @@ def _compact_product_cards(snapshot: dict) -> dict:
             image_url = text(source.get("image_url"))
             if image_url and not image_url.startswith("https://"):
                 image_url = ""
+            if image_url:
+                try:
+                    image_url = thumbnail_url(image_url)
+                except ProductImageError:
+                    image_url = ""
             key = article_key(article)
             if not key:
                 key = "|".join((
@@ -869,21 +898,26 @@ def marketplace_phase1a_http_status(result: dict) -> int:
 def get_analytics_overview_for_admin(telegram_id: int, payload: dict | None = None):
     if not is_admin(telegram_id):
         return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
-    result = build_analytics_overview(
-        payload,
-        dashboard_reader=lambda: get_marketplace_dashboard_for_admin(
-            telegram_id, include_analytics_detail=True
-        ),
-        data_quality_reader=phase1a_data_quality,
-        production_reader=get_production_control_payload,
-    )
-    if result.get("ok"):
-        # The same reconciliation is already delivered by the dashboard and
-        # does not change with the selected period. Avoid sending ~1 MB again
-        # on every period request.
-        result = dict(result)
-        result.pop("catalog_reconciliation", None)
-    return result
+    request_payload = payload if isinstance(payload, dict) else {}
+    cache_key = json.dumps(request_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def build() -> dict:
+        result = build_analytics_overview(
+            request_payload,
+            dashboard_reader=lambda: get_marketplace_dashboard_for_admin(
+                telegram_id, include_analytics_detail=True
+            ),
+            data_quality_reader=phase1a_data_quality,
+            production_reader=get_production_control_payload,
+        )
+        if result.get("ok"):
+            # The same reconciliation is already delivered by the dashboard
+            # and does not change with the period. Avoid another ~1 MB.
+            result = dict(result)
+            result.pop("catalog_reconciliation", None)
+        return result
+
+    return _ANALYTICS_READ_MODEL_CACHE.get_or_build(cache_key, build)
 
 
 def get_marketplace_supplies_for_admin(telegram_id: int, payload: dict | None = None):
@@ -1897,6 +1931,40 @@ def normalize_defect_photo(payload: dict):
         return None, "Не удалось прочитать фотографию брака."
     if not raw_content or len(raw_content) > MAX_DEFECT_PHOTO_BYTES:
         return None, "Фотография брака должна быть не больше 2 МБ."
+    format_by_mime = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
+    try:
+        with Image.open(io.BytesIO(raw_content)) as source:
+            source.verify()
+        with Image.open(io.BytesIO(raw_content)) as source:
+            if source.format != format_by_mime[mime_type]:
+                return None, "Формат содержимого фотографии не совпадает с расширением."
+            width, height = source.size
+            if width <= 0 or height <= 0 or width * height > 20_000_000:
+                return None, "Разрешение фотографии слишком большое."
+            cleaned = ImageOps.exif_transpose(source)
+            cleaned.thumbnail((2400, 2400), Image.Resampling.LANCZOS)
+            if mime_type == "image/jpeg" and cleaned.mode not in {"RGB", "L"}:
+                background = Image.new("RGB", cleaned.size, "white")
+                if "A" in cleaned.getbands():
+                    background.paste(cleaned, mask=cleaned.getchannel("A"))
+                else:
+                    background.paste(cleaned)
+                cleaned = background
+            output = io.BytesIO()
+            save_options = {"format": format_by_mime[mime_type]}
+            if mime_type == "image/jpeg":
+                save_options.update({"quality": 88, "optimize": True})
+            elif mime_type == "image/png":
+                save_options.update({"optimize": True})
+            else:
+                save_options.update({"quality": 86, "method": 4})
+            cleaned.save(output, **save_options)
+            raw_content = output.getvalue()
+    except (UnidentifiedImageError, OSError, ValueError):
+        return None, "Файл не является корректной фотографией."
+    if not raw_content or len(raw_content) > MAX_DEFECT_PHOTO_BYTES:
+        return None, "Фотография после обработки должна быть не больше 2 МБ."
+    content_base64 = base64.b64encode(raw_content).decode("ascii")
     return {
         "file_name": file_name[:160],
         "mime_type": mime_type,
@@ -6286,6 +6354,21 @@ def get_app_state(telegram_id: int, message: str = ""):
     }
 
 
+def get_admin_planning_overview(telegram_id: int):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    return get_planning_overview()
+
+
+def calculate_admin_planning(telegram_id: int, payload: dict):
+    if not is_admin(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    try:
+        return calculate_planning_model(payload)
+    except (TypeError, ValueError) as error:
+        return {"ok": False, "code": "invalid_input", "message": str(error)}
+
+
 def can_access_task_attachment(telegram_id: int, task_id: int):
     if is_admin(telegram_id):
         return True
@@ -6309,10 +6392,6 @@ def can_access_task_attachment(telegram_id: int, task_id: int):
 def make_handler(bot_token: str, debug: bool):
     class MiniAppRequestHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
-        login_attempts = {}
-        login_attempts_lock = threading.Lock()
-        registration_attempts = {}
-        registration_attempts_lock = threading.Lock()
 
         def handle_one_request(self):
             """Wrap every HTTP request in a safety net.
@@ -6321,6 +6400,11 @@ def make_handler(bot_token: str, debug: bool):
             thread and, when combined with database contention, could take down
             the whole server.  Now they return a 500 JSON response instead.
             """
+            started = time.perf_counter()
+            self.command = None
+            self.path = "/"
+            self._response_status = 0
+            self._response_bytes = 0
             try:
                 super().handle_one_request()
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as error:
@@ -6332,6 +6416,32 @@ def make_handler(bot_token: str, debug: bool):
                     self._send_error_500()
                 except Exception:
                     pass
+            finally:
+                if self.command:
+                    try:
+                        request_bytes = int(self.headers.get("Content-Length", "0") or 0)
+                    except (TypeError, ValueError):
+                        request_bytes = 0
+                    SERVICE_METRICS.observe_request(
+                        method=self.command,
+                        path=self.path,
+                        status=getattr(self, "_response_status", 0),
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        request_bytes=request_bytes,
+                        response_bytes=getattr(self, "_response_bytes", 0),
+                    )
+
+        def send_response(self, code, message=None):
+            self._response_status = int(code)
+            return super().send_response(code, message)
+
+        def send_header(self, keyword, value):
+            if str(keyword).casefold() == "content-length":
+                try:
+                    self._response_bytes = max(0, int(value))
+                except (TypeError, ValueError):
+                    self._response_bytes = 0
+            return super().send_header(keyword, value)
 
         def _send_error_500(self):
             body = json.dumps(
@@ -6397,41 +6507,53 @@ def make_handler(bot_token: str, debug: bool):
             return None
 
         def login_is_rate_limited(self):
-            now_epoch = time.time()
-            client_ip = self.client_ip()
-            with self.login_attempts_lock:
-                attempts = [stamp for stamp in self.login_attempts.get(client_ip, []) if now_epoch - stamp < 300]
-                self.login_attempts[client_ip] = attempts
-                return len(attempts) >= 10
+            blocked = rate_limit_check(
+                "web_login", self.client_ip(), limit=10, window_seconds=5 * 60
+            )
+            if blocked:
+                record_security_event("login", "rate_limited", ip_address=self.client_ip())
+            return blocked
 
         def record_login_failure(self):
-            client_ip = self.client_ip()
-            with self.login_attempts_lock:
-                self.login_attempts.setdefault(client_ip, []).append(time.time())
+            rate_limit_check(
+                "web_login", self.client_ip(), limit=10, window_seconds=5 * 60, consume=True
+            )
+            record_security_event("login", "failed", ip_address=self.client_ip())
 
         def clear_login_failures(self):
-            with self.login_attempts_lock:
-                self.login_attempts.pop(self.client_ip(), None)
+            clear_rate_limit("web_login", self.client_ip())
+            record_security_event("login", "success", ip_address=self.client_ip())
 
         def registration_is_rate_limited(self):
-            now_epoch = time.time()
-            client_ip = self.client_ip()
-            with self.registration_attempts_lock:
-                attempts = [
-                    stamp
-                    for stamp in self.registration_attempts.get(client_ip, [])
-                    if now_epoch - stamp < 10 * 60
-                ]
-                if len(attempts) >= 30:
-                    self.registration_attempts[client_ip] = attempts
-                    return True
-                attempts.append(now_epoch)
-                self.registration_attempts[client_ip] = attempts
-                return False
+            blocked = rate_limit_check(
+                "web_registration", self.client_ip(), limit=30,
+                window_seconds=10 * 60, consume=True,
+            )
+            if blocked:
+                record_security_event("registration", "rate_limited", ip_address=self.client_ip())
+            return blocked
 
         def do_GET(self):
             parsed_url = urlparse(self.path)
             path = parsed_url.path
+
+            if path.startswith("/assets/product-thumbnails/"):
+                try:
+                    source = source_from_request(path, parse_qs(parsed_url.query))
+                    content = get_thumbnail(source)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/webp")
+                    self.send_header("Content-Length", str(len(content)))
+                    self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                    self.send_security_headers()
+                    self.end_headers()
+                    self.wfile.write(content)
+                except ProductImageError as error:
+                    self.send_json({"ok": False, "code": "image_unavailable", "message": str(error)}, status=404)
+                except Exception:
+                    LOGGER.exception("Product thumbnail fetch failed")
+                    self.send_json({"ok": False, "code": "image_unavailable", "message": "Миниатюра временно недоступна."}, status=502)
+                return
 
             if send_pwa_resource(
                 self,
@@ -6635,6 +6757,7 @@ def make_handler(bot_token: str, debug: bool):
 
             allowed_paths = {
                 "/api/web/login",
+                "/api/web/mfa/verify",
                 "/api/web/register",
                 "/api/web/logout",
                 "/api/web/password",
@@ -6661,6 +6784,9 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/marketplaces/products/page",
                 "/api/marketplaces/phase1a/sync",
                 "/api/analytics/overview",
+                "/api/observability/metrics",
+                "/api/observability/rum",
+                "/api/security/events",
                 "/api/marketplaces/supplies",
                 "/api/marketplaces/supply/detail",
                 "/api/marketplaces/supply/create-shipment",
@@ -6698,6 +6824,8 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/admin/shift/delete",
                 "/api/admin/operation",
                 "/api/admin/route-execution-mode",
+                "/api/admin/planning/overview",
+                "/api/admin/planning/calculate",
             }
             allowed_paths.update(WMS_ROUTES)
 
@@ -6738,7 +6866,7 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             uses_web_cookie = bool(self.web_session_token())
-            if (path in {"/api/web/login", "/api/web/register", "/api/web/logout"} or uses_web_cookie) and not self.origin_is_valid():
+            if (path in {"/api/web/login", "/api/web/mfa/verify", "/api/web/register", "/api/web/logout"} or uses_web_cookie) and not self.origin_is_valid():
                 self.send_json({"ok": False, "code": "invalid_origin", "message": "Запрос отклонён."}, status=403)
                 return
 
@@ -6784,6 +6912,22 @@ def make_handler(bot_token: str, debug: bool):
                         status=403,
                     )
                     return
+                if employee[4] == "admin":
+                    challenge = begin_admin_mfa(account)
+                    self.send_json(
+                        {
+                            "ok": True,
+                            "mfa_required": True,
+                            **challenge,
+                            "message": (
+                                "Настройте приложение-аутентификатор и введите код."
+                                if challenge.get("mfa_enrollment_required")
+                                else "Введите код из приложения-аутентификатора или recovery-код."
+                            ),
+                        },
+                        status=202,
+                    )
+                    return
                 self.clear_login_failures()
                 session = create_web_session(
                     account,
@@ -6802,6 +6946,57 @@ def make_handler(bot_token: str, debug: bool):
                         "telegram_id": session["telegram_id"],
                         "csrf_token": session["csrf_token"],
                         "expires_at": session["expires_at"],
+                    },
+                    extra_headers={"Set-Cookie": cookie},
+                )
+                return
+
+            if path == "/api/web/mfa/verify":
+                result = verify_admin_mfa_challenge(
+                    payload.get("challenge_token", ""),
+                    payload.get("code", ""),
+                )
+                if not result.get("ok"):
+                    self.record_login_failure()
+                    record_security_event(
+                        "mfa", "failed", ip_address=self.client_ip(),
+                        details={"code": result.get("code") or "invalid"},
+                    )
+                    self.send_json(result, status=401)
+                    return
+                account = result["account"]
+                employee = get_employee_for_access(account["telegram_id"])
+                if employee is None or employee[4] != "admin" or employee[5] != "active":
+                    self.send_json(
+                        {"ok": False, "code": "account_disabled", "message": "Доступ администратора отключён."},
+                        status=403,
+                    )
+                    return
+                self.clear_login_failures()
+                record_security_event(
+                    "mfa", "success", account_id=account["id"],
+                    telegram_id=account["telegram_id"], ip_address=self.client_ip(),
+                )
+                session = create_web_session(
+                    account,
+                    ip_address=self.client_ip(),
+                    user_agent=self.headers.get("User-Agent", ""),
+                    mfa_verified=True,
+                )
+                cookie = build_session_cookie(
+                    session["session_token"],
+                    secure=self.secure_cookie(),
+                    max_age=max(0, session["expires_at"] - int(time.time())),
+                )
+                self.send_json(
+                    {
+                        "ok": True,
+                        "username": session["username"],
+                        "telegram_id": session["telegram_id"],
+                        "csrf_token": session["csrf_token"],
+                        "expires_at": session["expires_at"],
+                        "recovery_codes": result.get("recovery_codes") or [],
+                        "remaining_recovery_codes": result.get("remaining_recovery_codes", 0),
                     },
                     extra_headers={"Set-Cookie": cookie},
                 )
@@ -6843,6 +7038,10 @@ def make_handler(bot_token: str, debug: bool):
                         status=500,
                     )
                     return
+                record_security_event(
+                    "registration", "success",
+                    telegram_id=registration.get("telegram_id"), ip_address=self.client_ip(),
+                )
                 self.send_json(
                     {
                         "ok": True,
@@ -6917,6 +7116,25 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             telegram_id = int(user["id"])
+
+            if path == "/api/observability/rum":
+                SERVICE_METRICS.observe_rum(payload)
+                self.send_json({"ok": True}, status=202)
+                return
+
+            if path == "/api/observability/metrics":
+                if not is_admin(telegram_id):
+                    self.send_json({"ok": False, "code": "forbidden", "message": "Нет прав администратора."}, status=403)
+                    return
+                self.send_json({"ok": True, "metrics": SERVICE_METRICS.snapshot()})
+                return
+
+            if path == "/api/security/events":
+                if not is_admin(telegram_id):
+                    self.send_json({"ok": False, "code": "forbidden", "message": "Нет прав администратора."}, status=403)
+                    return
+                self.send_json({"ok": True, "events": recent_security_events(payload.get("limit") or 100)})
+                return
 
             if path == "/api/catalog/product-cards":
                 result = get_product_cards_for_access(telegram_id)
@@ -7166,6 +7384,15 @@ def make_handler(bot_token: str, debug: bool):
                 result = operation_action_for_admin(telegram_id, payload)
             elif path == "/api/admin/route-execution-mode":
                 result = set_route_execution_mode_for_admin(telegram_id, payload)
+            elif path == "/api/admin/planning/overview":
+                result = get_admin_planning_overview(telegram_id)
+                self.send_json(result, status=200 if result.get("ok") else 403)
+                return
+            elif path == "/api/admin/planning/calculate":
+                result = calculate_admin_planning(telegram_id, payload)
+                status = 200 if result.get("ok") else (403 if result.get("code") == "forbidden" else 400)
+                self.send_json(result, status=status)
+                return
             else:
                 result = get_app_state(telegram_id)
 
@@ -7278,7 +7505,14 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
     block_on_close = False
-    request_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+    request_queue_size = HTTP_ACCEPT_QUEUE_SIZE
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Never share saturation state between two server instances in tests,
+        # blue/green startup, or a controlled restart.
+        self.request_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+        self.request_drain = RequestDrainState()
 
     def get_request(self):
         request, client_address = super().get_request()
@@ -7286,12 +7520,44 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
         return request, client_address
 
     def process_request(self, request, client_address):
-        if not self.request_slots.acquire(blocking=False):
-            self.shutdown_request(request)
+        slot_acquired = self.request_slots.acquire(blocking=False)
+        request_started = slot_acquired and self.request_drain.try_start()
+        if not request_started:
+            if slot_acquired:
+                self.request_slots.release()
+            draining = self.request_drain.draining
+            body = json.dumps(
+                {
+                    "ok": False,
+                    "code": "server_restarting" if draining else "server_busy",
+                    "message": (
+                        "Сервис перезапускается. Повторите запрос через несколько секунд."
+                        if draining
+                        else "Сервис занят. Повторите запрос через несколько секунд."
+                    ),
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            response = (
+                b"HTTP/1.1 503 Service Unavailable\r\n"
+                b"Content-Type: application/json; charset=utf-8\r\n"
+                b"Cache-Control: no-store\r\n"
+                b"Connection: close\r\n"
+                b"Retry-After: 1\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+                + body
+            )
+            try:
+                request.sendall(response)
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
             return
         try:
             super().process_request(request, client_address)
         except BaseException:
+            self.request_drain.finish()
             self.request_slots.release()
             raise
 
@@ -7299,7 +7565,30 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self.request_slots.release()
+            try:
+                # WMS connections are cached per request thread.  The thread is
+                # short-lived, while the connection registry is process-wide;
+                # without an explicit teardown every new HTTP request can leave
+                # an open PostgreSQL connection (and possibly a read transaction)
+                # behind until the whole service restarts.
+                close_thread_connections()
+            finally:
+                self.request_drain.finish()
+                self.request_slots.release()
+
+    def shutdown_gracefully(self, timeout_seconds: float = 25.0) -> bool:
+        """Stop accepting work, then wait a bounded time for active requests."""
+
+        self.request_drain.begin_draining()
+        self.shutdown()
+        idle = self.request_drain.wait_until_idle(timeout_seconds)
+        if not idle:
+            logging.warning(
+                "Miniapp graceful shutdown timed out with %s active requests",
+                self.request_drain.active,
+            )
+        self.server_close()
+        return idle
 
 
 def start_miniapp_server(bot_token: str, host: str, port: int, debug: bool = False):

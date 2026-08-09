@@ -1,68 +1,49 @@
-# STATUS — стабилизация «Шагаем вместе»
+# STATUS — текущая стабилизация «Шагаем вместе»
 
-**Обновлено:** 2026-08-07
+**Обновлено:** 2026-08-09
 
-**Ветка:** `codex/wms-integration`
+**Ветка разработки:** `codex/article-first-wms`
 
-**Текущий локальный коммит:** `git HEAD` (эксплуатационная документация поверх active code commit `e7c48ca`)
+Этот файл описывает состояние кода, а не автоматически подтверждает состояние production. Перед выкладкой и при инциденте формируется `release-manifest.json`:
 
-**Опубликованный коммит:** `e7c48ca6f6447f38d5bdb1fdeb759853d2d0819e`
+```bash
+python3 scripts/build_release_manifest.py --output /path/to/release-manifest.json
+```
 
-**Активный release:** `/opt/sewing-web/releases/codex-e7c48ca-20260807T100615Z`
+Manifest содержит полный commit, признак dirty tree, версии и SHA-256 всех WMS-миграций, хеши frontend-исходников, Python и безопасный allowlist feature flags. Секреты и значения токенов в него не попадают.
 
 ## Текущий этап
 
-Выполняется ТЗ «Стабилизация, сквозная приёмка и выпуск эксплуатационного релиза».
+Выполняются исправления из аудита 2026-08-09 последовательно, с тестом после каждого пункта.
 
-| Этап | Статус | Доказательство |
-|---|---|---|
-| Baseline репозитория и сервера | PASS | `AUDIT_BASELINE.md` |
-| Полный test discovery | PASS | 249 discovered/executed/passed, 0 failed/skipped/excluded на отдельной PostgreSQL test DB |
-| Compile | PASS | 69 Python-файлов |
-| Web smoke | PASS | временная SQLite, loopback, 7 локальных и 0 внешних ресурсов |
-| A: частичное выполнение | AUTO PASS | 50 = 25 годных + 2 брака + 23 остатка; replay без дубля; live впереди |
-| B: дополнительный крой | AUTO PASS | кардиган, чёрный, 116, +5; план не изменён; replay без дубля; live впереди |
-| Учебный режим | DEPLOYED/AUTO PASS | persisted admin toggle, статус, actor/time history, snapshot на партии; авторизованный UI впереди |
-| C: упаковка → outbox → WMS | DEPLOYED/AUTO PASS | идемпотентная приёмка, retry и reconciliation; live операция впереди |
-| D: ручное оприходование/размещение | AUTO PASS | контрактные и PostgreSQL-тесты; live UI/TSD впереди |
-| E: Ozon | LIVE SYNC PASS | штатный marketplace sync завершился success, health/supplies ready; сверка с кабинетом впереди |
-| F: Wildberries | BLOCKED EXTERNAL | FBW ответил HTTP 403 `base token without secret is not allowed`; secret не подтверждён |
-| G: аналитика | DEPLOYED/AUTO PASS | UI-исправления опубликованы; авторизованные периоды/mobile/performance впереди |
-| Backup/restore | PASS PRE-RELEASE | isolated restore PASS; принудительные SQLite и PostgreSQL backup завершились success перед переключением |
-| Monitoring | DEPLOYED/PASS | monitor и reconciliation timer active; оба one-shot post-deploy запуска success |
-| Security review | IN PROGRESS | dependency audit и SAST high gate PASS; CSP/HSTS/origin/auth boundary live PASS; session cookie/CSRF и threat model впереди |
+| Направление | Состояние кода |
+|---|---|
+| PostgreSQL request lifecycle | исправлено; соединения возвращаются в ограниченный pool |
+| PostgreSQL DB-тесты | PostgreSQL 16 обязателен в CI, skip gate включён |
+| Backup / DR | проверка WMS dump, checksum, off-site и PITR status добавлены; внешний mount и WAL uploader требуют настройки инфраструктуры |
+| Admin security | TOTP MFA и одноразовые recovery-коды обязательны |
+| Frontend performance | shell < 50 КБ, versioned CSS/JS, не более 50 заданий на странице |
+| HTTP saturation | перегрузка возвращает 503 + Retry-After вместо обрыва сокета |
+| Release identity | manifest создаётся и проверяется в CI |
 
-## Выполнено в текущей стабилизации
-
-- Зафиксирован baseline кода и сервера.
-- Test runner находит все тесты и не наследует production `WMS_DATABASE_URL`.
-- Добавлен журналируемый переключатель учебного/строгого режима.
-- Добавлена read-only reconciliation SQLite packaging/outbox → PostgreSQL WMS и timer раз в 10 минут.
-- Reconciliation проверяет пропуски, ProductKey, количества, source ID, дубли, зависшие события и некорректные остатки.
-- Исправлены SQL подтверждения critical notification и rollback неудачного read-only PostgreSQL-запроса.
-- Закреплены точные приёмочные инварианты A и B.
-- Монитор расширен порогами ресурсов и критическими проверками.
-
-## Текущие ограничения
-
-- Авторизованная браузерная сессия для A–G отсутствует: встроенный browser показывает форму входа, Chrome connector не установлен.
-- Production metadata: `sewing-web.service`, оба backup timer, monitor timer и `sewing-production-wms-reconcile.timer` active/enabled.
-- Рабочие базы не читались и не изменялись в unit/integration-тестах.
-- На сервере есть failed transient test/sync units; они не удалялись до классификации.
-- В активном релизе нет отдельного `COMMIT` marker.
-- Сервер использует Python 3.12.3; целевая CI-совместимость — Python 3.11.
-- Пользовательский `scripts/import_stock_snapshot.py` не включён в работу и коммиты.
-
-## Quality gate
+## Последний локальный quality gate
 
 ```text
-discovered=249
-executed=249
-passed=249
+discovered=283
+executed=269
+passed=269
 failed=0
-skipped=0
-excluded=0
-duplicate_aliases_ignored=6
+skipped=14
+skip_gate=passed
+web_smoke=PASS
+python_files_compiled=72
 ```
 
-Прогон выполнен на одноразовой серверной PostgreSQL test DB; база и распакованный код после теста удалены.
+14 PostgreSQL-тестов пропущены только локально из-за отсутствия одноразовой test DB. В GitHub Actions PostgreSQL service обязателен и любой skip завершает gate ошибкой.
+
+## Что production не подтверждено этим файлом
+
+- Текущий production commit и активный release-каталог проверяются manifest на сервере.
+- Off-site backup считается готовым только на отдельной смонтированной файловой системе.
+- PITR считается готовым только после настройки WAL archive и успешного restore drill.
+- Изменения этой рабочей ветки не считаются опубликованными без отдельной команды на canary/deploy.

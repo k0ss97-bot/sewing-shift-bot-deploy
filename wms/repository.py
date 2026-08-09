@@ -197,12 +197,13 @@ def find_stock(
         params: list[Any] = [product_key.product_article, item_state, unit]
     else:
         sql = """SELECT * FROM warehouse_stock
-                 WHERE item_type=%s AND product_article=''
+                 WHERE item_type=%s AND product_article=%s
                    AND product_name=%s AND product_size=%s
                    AND product_color=%s AND stage_name=%s AND ready_for_position=%s
                    AND item_state=%s AND unit=%s"""
         params = [
             product_key.item_type,
+            product_key.product_article,
             product_key.product_name,
             product_key.product_size,
             product_key.product_color,
@@ -260,7 +261,7 @@ def upsert_stock(
                     """UPDATE warehouse_stock
                           SET quantity = quantity + %s,
                               updated_at = now()
-                        WHERE item_type=%s AND product_article=''
+                        WHERE item_type=%s AND product_article=%s
                           AND product_name=%s AND product_size=%s
                           AND product_color=%s AND stage_name=%s AND ready_for_position=%s
                           AND unit=%s AND item_state=%s
@@ -270,6 +271,7 @@ def upsert_stock(
                     (
                         delta,
                         product_key.item_type,
+                        product_key.product_article,
                         product_key.product_name,
                         product_key.product_size,
                         product_key.product_color,
@@ -327,7 +329,7 @@ def upsert_stock(
                     product_color, stage_name, ready_for_position, quantity,
                     item_state, location_id, unit, updated_at)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
-                   ON CONFLICT (item_type, product_name, product_size, product_color,
+                   ON CONFLICT (item_type, product_article, product_name, product_size, product_color,
                                 stage_name, ready_for_position, unit, item_state, location_id)
                      WHERE item_type<>'finished' OR product_article=''
                    DO UPDATE SET quantity = warehouse_stock.quantity + EXCLUDED.quantity,

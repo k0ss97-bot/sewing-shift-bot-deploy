@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Sewing private-data retention
+
+[Timer]
+OnCalendar=Sun *-*-* 04:20:00
+Persistent=true
+RandomizedDelaySec=20m
+Unit=sewing-data-retention.service
+
+[Install]
+WantedBy=timers.target

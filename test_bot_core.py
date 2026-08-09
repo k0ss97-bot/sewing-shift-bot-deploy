@@ -12,6 +12,8 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
@@ -3267,6 +3269,8 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.database.create_shift(employee[0])
         batch = self.database.create_route_batch("Легинсы", "86", "Бежевый", 5, None, step_index)
         self.assertTrue(miniapp_server.start_route_task_for_telegram(1303, batch["id"])["ok"])
+        photo_buffer = io.BytesIO()
+        Image.new("RGB", (4, 4), (220, 30, 30)).save(photo_buffer, format="PNG")
         payload = {
             "request_id": "offline-request-1",
             "good_quantity": 4,
@@ -3277,7 +3281,7 @@ class IsolatedDatabaseTest(unittest.TestCase):
             "defect_photo": {
                 "file_name": "defect.png",
                 "mime_type": "image/png",
-                "content_base64": base64.b64encode(b"test-image").decode("ascii"),
+                "content_base64": base64.b64encode(photo_buffer.getvalue()).decode("ascii"),
             },
         }
 
@@ -3295,7 +3299,66 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(defect["has_photo"])
         photo = self.database.get_route_batch_defect_photo(defect["id"])
         self.assertEqual(photo["file_name"], "defect.png")
-        self.assertEqual(base64.b64decode(photo["content_base64"]), b"test-image")
+        with Image.open(io.BytesIO(base64.b64decode(photo["content_base64"]))) as saved_photo:
+            self.assertEqual(saved_photo.format, "PNG")
+            self.assertEqual(saved_photo.size, (4, 4))
+        conn = sqlite3.connect(self.database.DB_NAME)
+        stored = conn.execute(
+            "SELECT photo_base64, photo_storage_key, photo_sha256 FROM route_batch_defects WHERE id = ?",
+            (defect["id"],),
+        ).fetchone()
+        self.assertEqual(stored[0], "")
+        self.assertTrue(stored[1].startswith("defect-photos/"))
+        blob_path = Path(self.temp_dir.name) / "private-blobs" / stored[1]
+        self.assertTrue(blob_path.is_file())
+        self.assertEqual(blob_path.stat().st_mode & 0o777, 0o600)
+        conn.execute(
+            "UPDATE route_batch_defects SET created_at = ? WHERE id = ?",
+            ((self.database.local_now() - timedelta(days=400)).isoformat(), defect["id"]),
+        )
+        conn.commit()
+        conn.close()
+        preview = self.database.purge_expired_defect_photos(365, dry_run=True)
+        self.assertEqual(preview["expired"], 1)
+        self.assertEqual(preview["deleted"], 0)
+        applied = self.database.purge_expired_defect_photos(365, dry_run=False)
+        self.assertEqual(applied["deleted"], 1)
+        self.assertFalse(blob_path.exists())
+        self.assertIsNone(self.database.get_route_batch_defect_photo(defect["id"]))
+
+    def test_legacy_defect_photo_is_migrated_out_of_sqlite(self):
+        batch = self.database.create_route_batch("Легинсы", "92", "Чёрный", 1, None, 0)
+        photo_buffer = io.BytesIO()
+        Image.new("RGB", (2, 2), (10, 20, 30)).save(photo_buffer, format="PNG")
+        legacy_payload = base64.b64encode(photo_buffer.getvalue()).decode("ascii")
+        conn = sqlite3.connect(self.database.DB_NAME)
+        conn.execute(
+            """
+            INSERT INTO route_batch_defects (
+                batch_id, employee_id, operation_name, position, product_name,
+                product_size, product_color, quantity, reason, disposition,
+                comment, created_at, photo_name, photo_mime_type, photo_base64
+            ) VALUES (?, NULL, 'Проверка', 'Контролёр', 'Легинсы', '92', 'Чёрный', 1,
+                      'Тест', 'Списать', '', ?, 'legacy.png', 'image/png', ?)
+            """,
+            (batch["id"], self.database.local_now().isoformat(), legacy_payload),
+        )
+        defect_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+        conn.close()
+
+        result = self.database.migrate_legacy_defect_photos()
+        self.assertEqual(result["migrated"], 1)
+        photo = self.database.get_route_batch_defect_photo(defect_id)
+        self.assertEqual(base64.b64decode(photo["content_base64"]), photo_buffer.getvalue())
+        conn = sqlite3.connect(self.database.DB_NAME)
+        row = conn.execute(
+            "SELECT photo_base64, photo_storage_key FROM route_batch_defects WHERE id = ?",
+            (defect_id,),
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row[0], "")
+        self.assertTrue(row[1].startswith("defect-photos/"))
 
     def test_admin_adjusts_fabric_and_warehouse_balances_with_reason(self):
         os.environ["ADMIN_IDS"] = "9401"

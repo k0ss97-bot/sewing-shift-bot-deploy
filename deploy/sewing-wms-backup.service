@@ -8,6 +8,7 @@ User=root
 WorkingDirectory=/opt/sewing-web/current
 Environment=WMS_DATABASE_URL=postgresql:///sewing_wms?host=/var/run/postgresql
 Environment=WMS_BACKUP_DIR=/var/backups/sewing-wms
+Environment=WMS_BACKUP_STATUS_PATH=/var/lib/sewing-web/monitor/wms-backup-status.json
 ExecStart=/opt/sewing-web/venv/bin/python /opt/sewing-web/current/scripts/backup_wms.py
 UMask=0077
 
@@ -22,4 +23,4 @@ ProtectControlGroups=true
 LockPersonality=true
 RestrictSUIDSGID=true
 CapabilityBoundingSet=
-ReadWritePaths=/var/backups/sewing-wms
+ReadWritePaths=/var/backups/sewing-wms /var/lib/sewing-web/monitor

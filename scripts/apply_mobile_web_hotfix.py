@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ENV_PATH = Path("/etc/sewing-web/sewing-web.env")
-ASSETS_PATH = Path("/opt/sewing-web/current/miniapp_assets.py")
+ASSETS_PATH = Path("/opt/sewing-web/current/assets/app/shell.html")
 CADDY_PATH = Path("/etc/caddy/Caddyfile")
 BACKUP_ROOT = Path("/var/lib/sewing-web/backups")
 

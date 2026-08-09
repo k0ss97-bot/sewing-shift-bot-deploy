@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import miniapp_server
+from product_images import thumbnail_url
 
 
 class MarketplaceDashboardCacheTests(unittest.TestCase):
@@ -124,12 +125,12 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
                 {
                     "nm_id": "wb-1", "vendor_code": "АРТ-1", "name": "Название WB",
                     "size": "98", "color": "Бежевый", "barcode": "460000000009",
-                    "image_url": "https://cdn.example/wb-1.jpg",
+                    "image_url": "https://basket-01.wbbasket.ru/wb-1.jpg",
                 },
                 {
                     "nm_id": "wb-2", "vendor_code": "АРТ-2", "name": "Товар WB",
                     "size": "104", "color": "Синий", "barcode": "460000000002",
-                    "image_url": "https://cdn.example/wb-2.jpg",
+                    "image_url": "https://basket-01.wbbasket.ru/wb-2.jpg",
                 },
             ]},
         }
@@ -142,7 +143,7 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
         self.assertEqual(first["marketplace"], "ozon")
         self.assertEqual(first["name"], "Название Ozon")
         self.assertEqual(first["barcode"], "460000000001")
-        self.assertEqual(first["image_url"], "https://cdn.example/wb-1.jpg")
+        self.assertEqual(first["image_url"], thumbnail_url("https://basket-01.wbbasket.ru/wb-1.jpg"))
         self.assertEqual(first["image_source"], "wildberries")
         self.assertEqual(result["quality"]["sources"], {"ozon": 1, "wildberries": 2})
         self.assertEqual(result["quality"]["priority"], "ozon")
@@ -165,7 +166,7 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
             "products_rows": [
                 {
                     "offer_id": "КДШВ-1/92", "name": "Кардиган", "group_key": "cardigan",
-                    "group_name": "Кардиганы детские", "image_url": "https://cdn.example/cardigan.jpg",
+                    "group_name": "Кардиганы детские", "image_url": "https://cdn1.ozone.ru/cardigan.jpg",
                 },
                 {
                     "offer_id": "КДШВ-9/92", "name": "Кардиган", "group_key": "cardigan",
@@ -175,7 +176,7 @@ class MarketplaceDashboardCacheTests(unittest.TestCase):
         })
 
         missing_variant = next(row for row in result["products"] if row["offer_id"] == "КДШВ-9/92")
-        self.assertEqual(missing_variant["image_url"], "https://cdn.example/cardigan.jpg")
+        self.assertEqual(missing_variant["image_url"], thumbnail_url("https://cdn1.ozone.ru/cardigan.jpg"))
         self.assertEqual(missing_variant["image_source"], "ozon:group")
         self.assertEqual(result["quality"]["missing"]["image_url"], 0)
 

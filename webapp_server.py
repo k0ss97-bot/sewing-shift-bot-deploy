@@ -20,6 +20,7 @@ class RuntimeSettings:
     secret: str
     debug: bool
     production: bool
+    graceful_shutdown_seconds: float
 
 
 BOT_ENABLE_MARKER = "bot.enabled"
@@ -97,6 +98,12 @@ def load_runtime_settings(environ: dict[str, str] | None = None) -> RuntimeSetti
         raise RuntimeError("MINIAPP_PORT must be an integer.") from error
     if not 1 <= port <= 65535:
         raise RuntimeError("MINIAPP_PORT must be between 1 and 65535.")
+    try:
+        graceful_shutdown_seconds = float(values.get("WEBAPP_GRACEFUL_SHUTDOWN_SECONDS") or "25")
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("WEBAPP_GRACEFUL_SHUTDOWN_SECONDS must be a number.") from error
+    if not 1 <= graceful_shutdown_seconds <= 120:
+        raise RuntimeError("WEBAPP_GRACEFUL_SHUTDOWN_SECONDS must be between 1 and 120.")
 
     production = str(values.get("WEBAPP_ENV") or "").strip().lower() == "production"
     debug = str(values.get("MINIAPP_DEBUG") or "0").strip() == "1"
@@ -108,7 +115,14 @@ def load_runtime_settings(environ: dict[str, str] | None = None) -> RuntimeSetti
     if not secret:
         secret = secrets.token_urlsafe(32)
 
-    return RuntimeSettings(host=host, port=port, secret=secret, debug=debug, production=production)
+    return RuntimeSettings(
+        host=host,
+        port=port,
+        secret=secret,
+        debug=debug,
+        production=production,
+        graceful_shutdown_seconds=graceful_shutdown_seconds,
+    )
 
 
 def main() -> None:
@@ -259,8 +273,8 @@ def main() -> None:
                 )
     finally:
         stop_shared_bot_process(bot_process)
-        server.shutdown()
-        server.server_close()
+        idle = server.shutdown_gracefully(settings.graceful_shutdown_seconds)
+        logging.info("Standalone web application stopped; active requests drained=%s", idle)
 
 
 if __name__ == "__main__":

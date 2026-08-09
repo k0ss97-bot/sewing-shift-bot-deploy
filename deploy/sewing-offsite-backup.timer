@@ -1,0 +1,11 @@
+[Unit]
+Description=Replicate verified Sewing backups to off-site storage
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=sewing-offsite-backup.service
+
+[Install]
+WantedBy=timers.target

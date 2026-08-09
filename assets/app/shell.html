@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Шагаем вместе</title>
+  <link rel="stylesheet" href="{{MINIAPP_CSS_PATH}}">
+  <script src="/assets/jsqr.js"></script>
+</head>
+<body>
+  <section class="login-view" id="connectionView" hidden aria-labelledby="connectionTitle">
+    <div class="login-shell">
+      <div class="login-brand">
+        <div class="brand-lockup login-brand-lockup">
+          <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
+          <h1 class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></h1>
+        </div>
+        <p>Управление производством</p>
+      </div>
+      <div class="login-card connection-card">
+        <div class="connection-orbit" aria-hidden="true"></div>
+        <div role="status" aria-live="polite" aria-atomic="true">
+          <h2 id="connectionTitle">Подключаемся</h2>
+          <p class="connection-message" id="connectionMessage">Проверяем защищённую сессию.</p>
+        </div>
+        <p class="connection-retry-status" id="connectionRetryStatus"></p>
+        <button class="login-submit" id="webConnectionRetry" type="button">Попробовать снова</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="login-view" id="loginView" hidden>
+    <div class="login-shell">
+      <div class="login-brand">
+        <div class="brand-lockup login-brand-lockup">
+          <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
+          <h1 class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></h1>
+        </div>
+        <p>Управление производством</p>
+      </div>
+      <div class="auth-tabs" role="tablist" aria-label="Доступ к приложению">
+        <button class="auth-tab active" id="webLoginTab" type="button" role="tab" aria-selected="true" aria-controls="webLoginForm">Вход</button>
+        <button class="auth-tab" id="webRegisterTab" type="button" role="tab" aria-selected="false" aria-controls="webRegisterForm">Регистрация</button>
+      </div>
+      <form class="login-card" id="webLoginForm">
+        <label>Почта, телефон или логин<input id="webUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+        <label>Пароль<input id="webPassword" name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+        <div id="webMfaPanel" hidden>
+          <p class="login-help" id="webMfaHelp">Введите одноразовый код.</p>
+          <p class="login-help" id="webMfaSecretRow" hidden>Секрет для приложения-аутентификатора: <code id="webMfaSecret"></code></p>
+          <label>Код MFA или recovery-код<input id="webMfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="16"></label>
+          <pre class="login-help" id="webMfaRecoveryCodes" hidden></pre>
+        </div>
+        <p class="login-error" id="webLoginError" role="alert" aria-live="polite"></p>
+        <button class="login-submit" id="webLoginButton" type="submit">Войти</button>
+      </form>
+      <form class="login-card" id="webRegisterForm" hidden>
+        <label>Фамилия, имя и отчество<input id="webFullName" name="full_name" autocomplete="name" minlength="5" maxlength="120" required></label>
+        <label>Электронная почта<input id="webEmail" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" maxlength="254" required></label>
+        <label>Номер телефона<input id="webPhone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 999 123-45-67" maxlength="24" required></label>
+        <label>Пароль<input id="webRegisterPassword" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+        <label>Повторите пароль<input id="webPasswordConfirm" name="password_confirm" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+        <p class="login-help">После регистрации администратор назначит должность и откроет доступ.</p>
+        <p class="login-error" id="webRegisterError" role="alert" aria-live="polite"></p>
+        <button class="login-submit" id="webRegisterButton" type="submit">Зарегистрироваться</button>
+      </form>
+    </div>
+  </section>
+
+  <main class="app" id="appRoot" hidden>
+    <div class="appbar">
+      <div class="app-title">
+        <div class="brand-lockup app-brand-lockup">
+          <img class="brand-mark" src="/brand/mark.svg" alt="" aria-hidden="true">
+          <span class="brand-wordmark"><span class="brand-wordmark-primary">Шагаем</span><span class="brand-wordmark-secondary">вместе</span></span>
+        </div>
+      </div>
+      <nav class="workspace-nav" aria-label="Разделы системы">
+        <button class="active" type="button" data-workspace="production" aria-current="page">Управление производством</button>
+        <button type="button" data-workspace="warehouse">Управление складом</button>
+        <button type="button" data-workspace="marketplaces" hidden>Управление маркетплейсами</button>
+        <button type="button" data-workspace="analytics">Аналитика</button>
+      </nav>
+      <div class="appbar-profile"><span>Должность на проекте</span><small id="roleLabel">Загрузка</small></div>
+      <div class="appbar-actions">
+        <button class="icon-btn" id="backBtn" aria-label="Назад">‹</button>
+        <button class="icon-btn profile-btn" id="menuBtn" aria-label="Открыть профиль" title="Профиль"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.1 4.1 0 1 0 0-8.2A4.1 4.1 0 0 0 12 12Zm0 2.1c-4.4 0-8 2.3-8 5.2 0 .5.4.9.9.9h14.2c.5 0 .9-.4.9-.9 0-2.9-3.6-5.2-8-5.2Z" fill="currentColor"/></svg></button>
+      </div>
+    </div>
+
+    <nav class="mobile-workspace-nav" id="mobileWorkspaceNav" aria-label="Рабочая среда" hidden>
+      <button class="active" type="button" data-workspace="production" aria-current="page">Производство</button>
+      <button type="button" data-workspace="warehouse">Склад</button>
+      <button type="button" data-workspace="marketplaces" hidden>Маркетплейсы</button>
+      <button type="button" data-workspace="analytics" hidden>Аналитика</button>
+    </nav>
+
+    <div class="body">
+      <div class="tabs" id="topTabs" hidden></div>
+      <div id="mount"></div>
+      <div id="webActionSlot"></div>
+    </div>
+  </main>
+
+  <button class="main-button" id="mainButton" hidden>Загрузка</button>
+  <nav class="bottom-nav" id="bottomNav" aria-label="Навигация приложения" hidden></nav>
+  <div class="toast" id="toast"><b></b><span></span></div>
+  <section class="shift-reminder" id="shiftReminder" aria-modal="true" role="dialog" hidden>
+    <div class="shift-reminder-card">
+      <div class="shift-reminder-icon">✓</div>
+      <h2>Смена открыта</h2>
+      <p id="shiftReminderText"></p>
+      <button class="small-button" id="shiftReminderClose" type="button">Понятно</button>
+    </div>
+  </section>
+  <section class="qr-scanner" id="qrScanner" aria-label="Сканер QR-кода" hidden>
+    <div class="qr-scanner-shell">
+      <video id="qrScannerVideo" autoplay playsinline webkit-playsinline muted></video>
+      <div class="qr-scanner-frame"></div>
+      <div class="qr-scanner-head"><span id="qrScannerTitle">QR-код партии</span><button class="qr-scanner-close" id="qrScannerClose" type="button" aria-label="Закрыть">×</button></div>
+      <div class="qr-scanner-status" id="qrScannerStatus" role="status" aria-live="polite">Запускаем камеру…</div>
+      <div class="qr-scanner-actions"><button class="small-button" id="qrScannerManual" type="button">Ввести код</button></div>
+    </div>
+  </section>
+
+  <script src="{{MINIAPP_JS_PATH}}" defer></script>
+</body>
+</html>

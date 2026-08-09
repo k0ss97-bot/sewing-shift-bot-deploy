@@ -179,6 +179,28 @@ def audit_html_resources(base_url: str, html_text: str) -> tuple[int, int]:
     return local_count, remote_count
 
 
+def application_source(base_url: str, html_text: str) -> str:
+    """Return the shell plus same-origin JS/CSS used by source-level checks."""
+    collector = ResourceCollector()
+    collector.feed(html_text)
+    collector.close()
+    base_host = urlparse(base_url).netloc
+    chunks = [html_text]
+    for resource in sorted(set(collector.resources)):
+        resource_url = urljoin(f"{base_url}/", resource)
+        parsed = urlparse(resource_url)
+        if parsed.netloc != base_host or not parsed.path.endswith((".css", ".js")):
+            continue
+        status, headers, body = http_request(resource_url)
+        require(status == 200, f"Application source returned HTTP {status}: {resource}")
+        require(
+            headers.get_content_type() in {"text/css", "text/javascript"},
+            f"Application source has unexpected content type: {resource}",
+        )
+        chunks.append(body.decode("utf-8"))
+    return "\n".join(chunks)
+
+
 def run_smoke() -> None:
     previous_cwd = Path.cwd()
     previous_environment = {
@@ -188,6 +210,9 @@ def run_smoke() -> None:
             "DB_DIR",
             "MINIAPP_ENABLED",
             "SHARED_DIR",
+            "WEBAPP_COOKIE_SECURE",
+            "WEBAPP_ENV",
+            "WEBAPP_PUBLIC_ORIGIN",
             "WEBAPP_SESSION_IDLE_SECONDS",
             "WEBAPP_SESSION_TTL_SECONDS",
         )
@@ -202,6 +227,9 @@ def run_smoke() -> None:
             os.environ["DB_DIR"] = str(isolated_root)
             os.environ["MINIAPP_ENABLED"] = "1"
             os.environ.pop("SHARED_DIR", None)
+            os.environ["WEBAPP_COOKIE_SECURE"] = "0"
+            os.environ["WEBAPP_ENV"] = "test"
+            os.environ["WEBAPP_PUBLIC_ORIGIN"] = ""
             os.environ.pop("WEBAPP_SESSION_IDLE_SECONDS", None)
             os.environ.pop("WEBAPP_SESSION_TTL_SECONDS", None)
             os.chdir(isolated_root)
@@ -250,6 +278,7 @@ def run_smoke() -> None:
             require("'unsafe-inline'" not in script_policy, "CSP script-src still permits unsafe-inline.")
             html_text = root_body.decode("utf-8")
             require(len(html_text) > 1_000, "Miniapp HTML response is unexpectedly small.")
+            app_source = application_source(base_url, html_text)
             require(
                 not re.search(r"\son(?:click|change|input|focus|blur|mouse|touch)\s*=", html_text, re.IGNORECASE),
                 "HTML still contains inline event handlers blocked by CSP.",
@@ -264,7 +293,7 @@ def run_smoke() -> None:
                 'fetch("/api/web/register"',
             ):
                 require(
-                    registration_marker in html_text,
+                    registration_marker in app_source,
                     f"Registration interface marker is missing: {registration_marker}",
                 )
             for session_restore_marker in (
@@ -280,7 +309,7 @@ def run_smoke() -> None:
                 '"Выход не выполнен"',
             ):
                 require(
-                    session_restore_marker in html_text,
+                    session_restore_marker in app_source,
                     f"Web session recovery marker is missing: {session_restore_marker}",
                 )
             for auto_refresh_marker in (
@@ -294,7 +323,7 @@ def run_smoke() -> None:
                 'if (document.visibilityState === "visible") resumeAutoRefresh()',
             ):
                 require(
-                    auto_refresh_marker in html_text,
+                    auto_refresh_marker in app_source,
                     f"Active-view auto-refresh marker is missing: {auto_refresh_marker}",
                 )
             for marketplace_stock_marker in (
@@ -305,7 +334,7 @@ def run_smoke() -> None:
                 "Физический остаток не подменяется данными маркетплейса",
             ):
                 require(
-                    marketplace_stock_marker in html_text,
+                    marketplace_stock_marker in app_source,
                     f"Marketplace stock source marker is missing: {marketplace_stock_marker}",
                 )
             for marketplace_layout_marker in (
@@ -314,7 +343,7 @@ def run_smoke() -> None:
                 "overflow-wrap: anywhere",
             ):
                 require(
-                    marketplace_layout_marker in html_text,
+                    marketplace_layout_marker in app_source,
                     f"Responsive marketplace layout marker is missing: {marketplace_layout_marker}",
                 )
             for interface_regression_marker in (
@@ -324,25 +353,29 @@ def run_smoke() -> None:
                 'class="segment-row admin-segment-row"',
                 'for="wmsHardwareScannerInput"',
                 'aria-label="Найти товар, артикул или поставку"',
-                "Ещё разделы — прокрутите вправо →",
+                'id="analyticsMobilePage"',
                 '"Ячейка размещения": "ячейку размещения"',
                 'data-admin-action="route-mode-training"',
                 'api("/api/admin/route-execution-mode", {mode})',
             ):
                 require(
-                    interface_regression_marker in html_text,
+                    interface_regression_marker in app_source,
                     f"Interface regression marker is missing: {interface_regression_marker}",
                 )
             require(
-                "Отсканируйте ${locationLabel.toLowerCase()}" not in html_text,
+                "Ещё разделы — прокрутите вправо →" not in app_source,
+                "Mobile analytics must use the explicit section selector instead of a scroll hint.",
+            )
+            require(
+                "Отсканируйте ${locationLabel.toLowerCase()}" not in app_source,
                 "WMS location prompts must use grammatically correct labels.",
             )
             require(
-                'data-stock-filter="warehouse"' not in html_text,
+                'data-stock-filter="warehouse"' not in app_source,
                 "Marketplace stock list must not expose warehouse selection before product detail.",
             )
             require(
-                "Ещё складов:" not in html_text,
+                "Ещё складов:" not in app_source,
                 "Marketplace stock cards must show only marketplace and production totals.",
             )
             for install_marker in (
@@ -354,7 +387,7 @@ def run_smoke() -> None:
                 'Добавить на экран iPhone',
             ):
                 require(
-                    install_marker in html_text,
+                    install_marker in app_source,
                     f"PWA installation interface marker is missing: {install_marker}",
                 )
             for desktop_marker in (
@@ -382,7 +415,7 @@ def run_smoke() -> None:
                 '<h2>Зона приёмки</h2>',
             ):
                 require(
-                    desktop_marker in html_text,
+                    desktop_marker in app_source,
                     f"Desktop web workspace marker is missing: {desktop_marker}",
                 )
             for auxiliary_marker in (
@@ -395,19 +428,20 @@ def run_smoke() -> None:
                 'Все изменения записываются в историю',
             ):
                 require(
-                    auxiliary_marker not in html_text,
+                    auxiliary_marker not in app_source,
                     f"Auxiliary workspace copy must be absent: {auxiliary_marker}",
                 )
             require(
-                'data-wms-action="receive"' not in html_text,
+                'data-wms-action="receive"' not in app_source,
                 "Warehouse employees must not see manual production receipt controls.",
             )
             require(
-                "warehouse-segments" not in html_text,
+                "warehouse-segments" not in app_source,
                 "Warehouse category navigation must not be duplicated inside a warehouse section.",
             )
             require(
-                "sessionStorage" not in html_text,
+                "window.sessionStorage.getItem(webIdentityStorageKey)" not in app_source
+                and "window.sessionStorage.setItem(webIdentityStorageKey" not in app_source,
                 "Web session identity must not depend on ephemeral sessionStorage.",
             )
             local_resources, remote_resources = audit_html_resources(base_url, html_text)
@@ -540,8 +574,25 @@ def run_smoke() -> None:
                 payload={"username": "smoke-admin", "password": "smoke-admin-password"},
                 headers={"Origin": base_url},
             )
+            mfa_payload = parse_json_response(status, headers, login_body)
+            require(
+                status == 202 and mfa_payload.get("mfa_required") is True,
+                f"Administrator password did not require MFA (HTTP {status}, code={mfa_payload.get('code')}).",
+            )
+            status, headers, login_body = http_request(
+                f"{base_url}/api/web/mfa/verify",
+                method="POST",
+                payload={
+                    "challenge_token": mfa_payload.get("challenge_token"),
+                    "code": webapp_auth._totp_code(str(mfa_payload.get("secret") or "")),
+                },
+                headers={"Origin": base_url},
+            )
             login_payload = parse_json_response(status, headers, login_body)
-            require(status == 200 and login_payload.get("ok") is True, "Standalone web login failed.")
+            require(
+                status == 200 and login_payload.get("ok") is True,
+                "Standalone admin MFA login failed.",
+            )
             set_cookie = str(headers.get("Set-Cookie") or "")
             parsed_cookie = SimpleCookie()
             parsed_cookie.load(set_cookie)

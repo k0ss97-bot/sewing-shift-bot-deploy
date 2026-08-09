@@ -8,6 +8,8 @@ project's "isolated, never touch working DB" convention.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -36,6 +38,7 @@ from wms.models import (  # noqa: E402
     normalize_product_article,
 )
 from marketplaces import _marketplace_payload_barcodes  # noqa: E402
+from miniapp_assets import MINIAPP_HTML  # noqa: E402
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -144,6 +147,59 @@ class OperationResultTests(unittest.TestCase):
             StockReceiptResult(ok=True, skipped_duplicate=True).status,
             "duplicate",
         )
+
+
+class ConnectionLifecycleTests(unittest.TestCase):
+    def test_bounded_pool_rolls_back_and_returns_connection(self):
+        from wms import connection
+
+        raw_pool = MagicMock()
+        pool_module = MagicMock()
+        leased = MagicMock()
+        leased.closed = False
+        raw_pool.getconn.return_value = leased
+        pool_module.ThreadedConnectionPool.return_value = raw_pool
+        with patch.dict(os.environ, {"WMS_DB_POOL_MAX": "3"}), patch.object(
+            connection, "psycopg2_pool", pool_module
+        ):
+            pool = connection._BoundedPool("postgresql://test")
+            self.assertEqual(pool.maximum, 3)
+            self.assertIs(pool.acquire(), leased)
+            pool.release(leased)
+
+        pool_module.ThreadedConnectionPool.assert_called_once_with(
+            1,
+            3,
+            dsn="postgresql://test",
+            cursor_factory=connection.DictCursor,
+        )
+        leased.rollback.assert_called_once_with()
+        raw_pool.putconn.assert_called_once_with(leased, close=False)
+
+    def test_close_thread_connections_returns_only_current_thread_lease(self):
+        from wms import connection
+
+        pool = MagicMock()
+        current = MagicMock()
+        current.closed = False
+        unrelated = MagicMock()
+        unrelated.closed = False
+        original_cache = getattr(connection._thread_connections, "cache", None)
+        with connection._connection_registry_lock:
+            original_registry = list(connection._connection_registry)
+            connection._connection_registry[:] = [current, unrelated]
+        connection._thread_connections.cache = {"postgresql://test": (pool, current)}
+        try:
+            connection.close_thread_connections()
+            pool.release.assert_called_once_with(current)
+            unrelated.close.assert_not_called()
+            self.assertEqual(connection._thread_connections.cache, {})
+            with connection._connection_registry_lock:
+                self.assertEqual(connection._connection_registry, [unrelated])
+        finally:
+            connection._thread_connections.cache = original_cache or {}
+            with connection._connection_registry_lock:
+                connection._connection_registry[:] = original_registry
 
 
 class WmsContractTests(unittest.TestCase):
@@ -342,8 +398,7 @@ class WmsContractTests(unittest.TestCase):
         self.assertTrue(WMS_ADMIN_ROUTES <= WMS_ROUTES)
 
     def test_admin_manual_adjustment_is_available_in_cell_and_menu(self):
-        root = Path(__file__).resolve().parents[1]
-        assets = (root / "miniapp_assets.py").read_text(encoding="utf-8")
+        assets = MINIAPP_HTML
         self.assertIn('data-wms-cell-writeoff=', assets)
         self.assertIn('"admin-stock-control"', assets)
         self.assertIn('"/api/wms/admin/inventory"', assets)
@@ -353,8 +408,7 @@ class WmsContractTests(unittest.TestCase):
         self.assertIn('Комментарий к документу (необязательно)', assets)
 
     def test_admin_manual_receipt_and_putaway_lookup_are_wired(self):
-        root = Path(__file__).resolve().parents[1]
-        assets = (root / "miniapp_assets.py").read_text(encoding="utf-8")
+        assets = MINIAPP_HTML
         self.assertIn('api("/api/wms/admin/product-lookup", {query, context})', assets)
         self.assertIn('data-wms-manual-lookup="receipt"', assets)
         self.assertIn('data-wms-manual-lookup="putaway"', assets)
@@ -424,8 +478,7 @@ class WmsContractTests(unittest.TestCase):
         connection.rollback.assert_called_once_with()
 
     def test_stock_receipt_ui_is_wired_to_history_and_actions(self):
-        root = Path(__file__).resolve().parents[1]
-        assets = (root / "miniapp_assets.py").read_text(encoding="utf-8")
+        assets = MINIAPP_HTML
         self.assertIn('api("/api/wms/stock-receipts", {limit: 20})', assets)
         self.assertIn('data-wms-stock-receipt-action="add"', assets)
         self.assertIn('data-wms-stock-receipt-action="post"', assets)
@@ -434,8 +487,7 @@ class WmsContractTests(unittest.TestCase):
         self.assertNotIn("Приёмка не является обязательным шагом", assets)
 
     def test_shipment_task_ui_uses_a_position_by_position_scan_flow(self):
-        root = Path(__file__).resolve().parents[1]
-        assets = (root / "miniapp_assets.py").read_text(encoding="utf-8")
+        assets = MINIAPP_HTML
         self.assertIn('data-wms-task-open-allocation=', assets)
         self.assertIn('wmsShipmentTaskActiveAllocationId', assets)
         self.assertIn('data-wms-task-action="back-position"', assets)
@@ -578,6 +630,34 @@ class WmsContractTests(unittest.TestCase):
             self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
             self.assertEqual(run.call_count, 2)
             self.assertEqual(run.call_args_list[1].args[0][:2], ["pg_restore", "--list"])
+
+    def test_wms_backup_status_has_checksum_verification_and_schema_identity(self):
+        from scripts import backup_wms
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            artifact = root / "wms_20260809T090000Z.dump"
+            artifact.write_bytes(b"verified-test-dump")
+            status_path = root / "monitor" / "wms-backup-status.json"
+            status = backup_wms.success_status(
+                artifact,
+                {
+                    "migration_count": 12,
+                    "latest_migration": "012_catalog.sql",
+                    "migration_manifest_sha256": "c" * 64,
+                },
+                now=datetime(2026, 8, 9, 9, 0, tzinfo=timezone.utc),
+            )
+            backup_wms.write_status(status_path, status)
+
+            saved = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertTrue(saved["ok"])
+            self.assertTrue(saved["verified"])
+            self.assertEqual(saved["verified_by"], "pg_restore --list")
+            self.assertEqual(saved["artifact_size"], len(b"verified-test-dump"))
+            self.assertRegex(saved["artifact_sha256"], r"^[0-9a-f]{64}$")
+            self.assertEqual(saved["latest_migration"], "012_catalog.sql")
+            self.assertEqual(status_path.stat().st_mode & 0o777, 0o644)
 
 
 class PickOperationTests(unittest.TestCase):
@@ -824,7 +904,13 @@ class WmsDbTests(unittest.TestCase):
         conn = get_pg_connection()
         conn.autocommit = True
         with conn.cursor() as cur:
+            cur.execute("DROP SCHEMA IF EXISTS planning CASCADE")
+            cur.execute("DROP SCHEMA IF EXISTS quality CASCADE")
+            cur.execute("DROP SCHEMA IF EXISTS analytics CASCADE")
+            cur.execute("DROP SCHEMA IF EXISTS migration_control CASCADE")
             for t in (
+                "marketplace.mrp_run_lines", "marketplace.mrp_runs",
+                "marketplace.product_bom_lines", "marketplace.product_bom_versions",
                 "marketplace.product_master_sources", "marketplace.product_master",
                 "wms_bulk_writeoff_lines", "wms_bulk_writeoffs",
                 "wms_stock_receipt_lines", "wms_stock_receipts",
@@ -861,6 +947,40 @@ class WmsDbTests(unittest.TestCase):
             zone_count = cur.fetchone()[0]
         self.assertGreaterEqual(zone_count, 11)
 
+    def test_mrp_snapshot_is_idempotent_and_never_changes_stock(self):
+        from wms import mrp
+        from wms import repository as repo
+
+        location = repo.get_location_by_code(self.conn, "RECEIVE-01")
+        material = self._pk(
+            item_type="material", product_name="MRP-ткань", product_article="FAB-MRP",
+            product_size="", product_color="", stage_name="Материал",
+        )
+        stock_id = repo.upsert_stock(self.conn, material, delta=9, location_id=location.id, unit="м")
+        self.conn.commit()
+        plan = mrp.calculate_material_plan(
+            [{"product_master_id": 1, "quantity": 10}],
+            [{
+                "product_master_id": 1, "component_type": "material",
+                "component_article": "FAB-MRP", "component_name": "MRP-ткань",
+                "unit": "м", "quantity_per": "1.2", "scrap_percent": 0,
+            }],
+            [{
+                "component_type": "material", "component_article": "FAB-MRP",
+                "component_name": "MRP-ткань", "unit": "м", "available_quantity": 9,
+            }],
+        )
+        run_id = mrp.persist_plan(self.conn, plan, request_key="test:mrp:snapshot")
+        repeated_id = mrp.persist_plan(self.conn, plan, request_key="test:mrp:snapshot")
+        self.conn.commit()
+
+        self.assertEqual(run_id, repeated_id)
+        self.assertGreater(stock_id, 0)
+        self.assertEqual(repo.find_stock(self.conn, material, location_id=location.id, unit="м").quantity, 9)
+        with self.conn.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM marketplace.mrp_run_lines WHERE run_id=%s", (run_id,))
+            self.assertEqual(cursor.fetchone()[0], 1)
+
     def test_finished_articles_do_not_merge_when_descriptive_fields_match(self):
         from wms import repository as repo
 
@@ -874,6 +994,26 @@ class WmsDbTests(unittest.TestCase):
         self.assertNotEqual(first_id, second_id)
         self.assertEqual(repo.find_stock(self.conn, first, location_id=location.id).quantity, 28)
         self.assertEqual(repo.find_stock(self.conn, second, location_id=location.id).quantity, 45)
+
+    def test_material_articles_do_not_merge_when_descriptive_fields_match(self):
+        from wms import repository as repo
+
+        location = repo.get_location_by_code(self.conn, "RECEIVE-01")
+        first = self._pk(
+            item_type="material", product_name="Ткань", product_article="FABRIC-A",
+            product_size="", product_color="Синий", stage_name="Материал",
+        )
+        second = self._pk(
+            item_type="material", product_name="Ткань", product_article="FABRIC-B",
+            product_size="", product_color="Синий", stage_name="Материал",
+        )
+        first_id = repo.upsert_stock(self.conn, first, delta=12, location_id=location.id, unit="м")
+        second_id = repo.upsert_stock(self.conn, second, delta=7, location_id=location.id, unit="м")
+        self.conn.commit()
+
+        self.assertNotEqual(first_id, second_id)
+        self.assertEqual(repo.find_stock(self.conn, first, location_id=location.id, unit="м").quantity, 12)
+        self.assertEqual(repo.find_stock(self.conn, second, location_id=location.id, unit="м").quantity, 7)
 
     def test_bulk_writeoff_zeros_goods_releases_reserve_and_is_idempotent(self):
         from wms import operations as ops

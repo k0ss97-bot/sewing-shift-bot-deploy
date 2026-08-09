@@ -24,6 +24,8 @@ from types import MappingProxyType
 from typing import Mapping
 from urllib.parse import urlsplit
 
+from miniapp_assets import MINIAPP_CSS, MINIAPP_CSS_PATH, MINIAPP_JS, MINIAPP_JS_PATH
+
 
 APP_NAME = "Шагаем вместе"
 APP_SHORT_NAME = "Шагаем вместе"
@@ -329,6 +331,8 @@ def _asset_revision() -> str:
     digest.update(BRAND_MARK_SVG.encode("utf-8"))
     digest.update(SAFARI_MASK_ICON_SVG.encode("utf-8"))
     digest.update(_JSQR_SOURCE)
+    digest.update(MINIAPP_CSS.encode("utf-8"))
+    digest.update(MINIAPP_JS.encode("utf-8"))
     digest.update(_WMS_TEST_CELL_QR)
     digest.update(_WMS_TEST_PRODUCT_QR)
     for size, body in _ICON_PNGS.items():
@@ -506,6 +510,8 @@ def build_service_worker(app_shell_revision_token: str | None = None) -> str:
 
     precache_paths = [
         APP_START_URL,
+        MINIAPP_CSS_PATH,
+        MINIAPP_JS_PATH,
         JSQR_PATH,
         MANIFEST_PATH,
         ICON_SVG_PATH,
@@ -514,6 +520,8 @@ def build_service_worker(app_shell_revision_token: str | None = None) -> str:
         ICON_512_PATH,
     ]
     static_paths = [
+        MINIAPP_CSS_PATH,
+        MINIAPP_JS_PATH,
         JSQR_PATH,
         WMS_SCANNER_TEST_PATH,
         WMS_TEST_CELL_QR_PATH,
@@ -840,6 +848,7 @@ def _resource(
 _SHORT_CACHE = "public, max-age=300, must-revalidate"
 _ICON_CACHE = "public, max-age=604800, stale-while-revalidate=86400"
 _SERVICE_WORKER_CACHE = "no-cache, no-store, must-revalidate"
+_IMMUTABLE_ASSET_CACHE = "public, max-age=31536000, immutable"
 
 PWA_RESOURCES: Mapping[str, PWAResource] = MappingProxyType(
     {
@@ -924,6 +933,18 @@ PWA_RESOURCES: Mapping[str, PWAResource] = MappingProxyType(
             _JSQR_SOURCE,
             "text/javascript; charset=utf-8",
             _ICON_CACHE,
+        ),
+        MINIAPP_CSS_PATH: _resource(
+            MINIAPP_CSS_PATH,
+            MINIAPP_CSS,
+            "text/css; charset=utf-8",
+            _IMMUTABLE_ASSET_CACHE,
+        ),
+        MINIAPP_JS_PATH: _resource(
+            MINIAPP_JS_PATH,
+            MINIAPP_JS,
+            "text/javascript; charset=utf-8",
+            _IMMUTABLE_ASSET_CACHE,
         ),
         WMS_SCANNER_TEST_PATH: _resource(
             WMS_SCANNER_TEST_PATH,

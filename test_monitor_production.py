@@ -3,7 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -220,6 +220,115 @@ class ProductionMonitorTest(unittest.TestCase):
             if row["event_key"] == "postgres-unavailable"
         )
         self.assertNotIn("synthetic outage", notification["message"])
+
+    def test_pitr_requires_fresh_successful_wal_with_fifteen_minute_timeout(self):
+        now = datetime(2026, 8, 9, 9, 0, tzinfo=timezone.utc)
+        healthy = {
+            "archive_mode": "on",
+            "archive_command_configured": True,
+            "archive_timeout_seconds": 900,
+            "last_archived_time": now - timedelta(minutes=5),
+            "last_failed_time": now - timedelta(minutes=10),
+        }
+        self.assertTrue(self.monitor.check_postgres_pitr_health(now, healthy))
+
+        stale = {**healthy, "last_archived_time": now - timedelta(minutes=31)}
+        self.assertFalse(self.monitor.check_postgres_pitr_health(now, stale))
+        notification = next(
+            row for row in self.database.get_open_critical_notifications()
+            if row["event_key"] == "postgres-pitr-unhealthy"
+        )
+        self.assertEqual(notification["severity"], "critical")
+
+        disabled = {**healthy, "archive_mode": "off"}
+        self.assertFalse(self.monitor.check_postgres_pitr_health(now, disabled))
+
+    def test_verified_fresh_wms_backup_resolves_alert(self):
+        now = datetime(2026, 8, 9, 9, 0, tzinfo=timezone.utc)
+        self.database.create_or_refresh_operational_notification(
+            "wms-backup-overdue",
+            "Старая ошибка",
+            "Уже устранена",
+            severity="critical",
+        )
+        status = {
+            "ok": True,
+            "created_at": (now - timedelta(hours=1)).isoformat(),
+            "artifact_size": 4096,
+            "artifact_sha256": "a" * 64,
+            "verified": True,
+            "verified_by": "pg_restore --list",
+            "migration_count": 12,
+            "latest_migration": "012_catalog.sql",
+            "migration_manifest_sha256": "b" * 64,
+        }
+        self.assertTrue(self.monitor.check_wms_backup_health(now, status))
+        self.assertFalse(any(
+            row["event_key"] == "wms-backup-overdue"
+            for row in self.database.get_open_critical_notifications()
+        ))
+
+    def test_failed_or_unverified_wms_backup_is_critical(self):
+        now = datetime(2026, 8, 9, 9, 0, tzinfo=timezone.utc)
+        self.assertFalse(self.monitor.check_wms_backup_health(
+            now,
+            {"ok": False, "error_type": "CalledProcessError"},
+        ))
+        notification = next(
+            row for row in self.database.get_open_critical_notifications()
+            if row["event_key"] == "wms-backup-overdue"
+        )
+        self.assertEqual(notification["severity"], "critical")
+        self.assertIn("CalledProcessError", notification["message"])
+
+        self.assertFalse(self.monitor.check_wms_backup_health(
+            now,
+            {
+                "ok": True,
+                "created_at": now.isoformat(),
+                "artifact_size": 0,
+                "artifact_sha256": "invalid",
+            },
+        ))
+
+    def test_offsite_backup_requires_both_verified_artifacts_and_separate_mount(self):
+        now = datetime(2026, 8, 9, 9, 0, tzinfo=timezone.utc)
+        healthy = {
+            "ok": True,
+            "copied_at": now.isoformat(),
+            "target_is_mount": True,
+            "target_device_separate": True,
+            "encryption_at_rest": True,
+            "encryption_provider": "luks2",
+            "encryption_evidence_id": "change-42",
+            "sqlite": {"artifact_size": 100, "artifact_sha256": "a" * 64},
+            "wms": {"artifact_size": 200, "artifact_sha256": "b" * 64},
+        }
+        self.assertTrue(self.monitor.check_offsite_backup_health(now, healthy))
+        unhealthy = {**healthy, "target_device_separate": False}
+        self.assertFalse(self.monitor.check_offsite_backup_health(now, unhealthy))
+        notification = next(
+            row for row in self.database.get_open_critical_notifications()
+            if row["event_key"] == "offsite-backup-overdue"
+        )
+        self.assertEqual(notification["severity"], "critical")
+
+    def test_primary_storage_encryption_requires_provider_and_evidence(self):
+        self.assertTrue(self.monitor.check_data_at_rest_encryption_health({
+            "confirmed": True,
+            "provider": "luks2",
+            "evidence_id": "change-42",
+        }))
+        self.assertFalse(self.monitor.check_data_at_rest_encryption_health({
+            "confirmed": True,
+            "provider": "",
+            "evidence_id": "",
+        }))
+        notification = next(
+            row for row in self.database.get_open_critical_notifications()
+            if row["event_key"] == "data-at-rest-encryption"
+        )
+        self.assertEqual(notification["severity"], "critical")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,6 @@
+{
+  "encrypted": true,
+  "provider": "luks2",
+  "evidence_id": "change-or-ticket-reference",
+  "verified_at": "2026-08-09T00:00:00Z"
+}

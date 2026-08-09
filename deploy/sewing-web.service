@@ -14,7 +14,8 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/sewing-web/venv/bin/python /opt/sewing-web/current/webapp_server.py
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=40
 UMask=0077
 
 NoNewPrivileges=true

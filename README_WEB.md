@@ -52,8 +52,9 @@ python3 -m venv .venv
 | `MINIAPP_DEBUG` | упрощённый локальный вход; на сервере всегда `0` |
 | `WEBAPP_ENV` | для сервера значение `production` |
 | `WEBAPP_PUBLIC_ORIGIN` | точный внешний origin, например `https://app.example.ru` |
-| `WEBAPP_SESSION_TTL_SECONDS` | полный срок сессии, по умолчанию 30 дней |
-| `WEBAPP_SESSION_IDLE_SECONDS` | выход при бездействии, по умолчанию 30 дней |
+| `WEBAPP_SESSION_TTL_SECONDS` | полный срок сессии, по умолчанию 12 часов |
+| `WEBAPP_SESSION_IDLE_SECONDS` | выход при бездействии, по умолчанию 45 минут |
+| `WEBAPP_SERVER_SECRET` | постоянный production-секрет (минимум 32 символа); также защищает TOTP-секреты и не должен ротироваться без сброса MFA |
 | `WEBAPP_COOKIE_SECURE` | на HTTPS-сервере обязательно `1` |
 | `TRUST_PROXY_HEADERS` | `1` только за контролируемым reverse proxy |
 | `DB_DIR` | абсолютный путь к приватному постоянному каталогу SQLite |
@@ -165,3 +166,13 @@ Workflow `.github/workflows/quality.yml` запускается для pull requ
 ежедневного SQLite-backup, timer, Caddyfile для HTTPS и безопасные настройки
 SSH. На сервере приложение слушает только `127.0.0.1:3000`; наружу открыты Caddy
 на 80/443 и SSH по ключу.
+Администратор после пароля обязан подтвердить вход кодом TOTP. При первом
+входе интерфейс показывает секрет для приложения-аутентификатора и после
+подтверждения выдаёт 10 одноразовых recovery-кодов. Неподтверждённые и старые
+admin-сессии не принимаются. Аварийный сброс после проверки личности:
+
+```bash
+python -m webapp_auth reset-mfa --username LOGIN --confirm RESET-MFA
+```
+
+Сброс отзывает все сессии; следующий вход заново включает TOTP.

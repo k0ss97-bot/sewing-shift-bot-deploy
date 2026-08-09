@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -39,6 +40,8 @@ from wms.connection import get_pg_connection
 
 
 BACKUP_MAX_AGE_HOURS = 26
+PITR_ARCHIVE_MAX_AGE_MINUTES = 30
+PITR_ARCHIVE_TIMEOUT_SECONDS = 15 * 60
 RECONCILIATION_MAX_AGE_MINUTES = 30
 OUTBOX_MAX_AGE_MINUTES = 30
 DISK_WARNING_PERCENT = 80.0
@@ -131,6 +134,8 @@ def monitored_systemd_units() -> list[str]:
             "sewing-web.service",
             "sewing-web-backup.timer",
             "sewing-wms-backup.timer",
+            "sewing-offsite-backup.timer",
+            "sewing-data-retention.timer",
             "sewing-web-monitor.timer",
             "sewing-production-wms-reconcile.timer",
         )),
@@ -220,6 +225,81 @@ def check_postgres_health(connection=None) -> bool:
     return True
 
 
+def postgres_pitr_snapshot(connection=None) -> dict:
+    conn = connection
+    try:
+        conn = conn or get_pg_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """SELECT current_setting('archive_mode'),
+                          current_setting('archive_command'),
+                          EXTRACT(EPOCH FROM current_setting('archive_timeout')::interval),
+                          last_archived_time,
+                          last_failed_time
+                     FROM pg_stat_archiver"""
+            )
+            row = cursor.fetchone()
+        conn.rollback()
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
+    return {
+        "archive_mode": str(row[0] or ""),
+        "archive_command_configured": bool(str(row[1] or "").strip()),
+        "archive_timeout_seconds": float(row[2] or 0),
+        "last_archived_time": row[3],
+        "last_failed_time": row[4],
+    }
+
+
+def check_postgres_pitr_health(
+    now: datetime | None = None,
+    snapshot: dict | None = None,
+) -> bool:
+    now = now or datetime.now(timezone.utc)
+    try:
+        state = postgres_pitr_snapshot() if snapshot is None else snapshot
+        archived = state.get("last_archived_time")
+        if isinstance(archived, str):
+            archived = datetime.fromisoformat(archived.replace("Z", "+00:00"))
+        if archived and archived.tzinfo is None:
+            archived = archived.replace(tzinfo=timezone.utc)
+        failed = state.get("last_failed_time")
+        if isinstance(failed, str):
+            failed = datetime.fromisoformat(failed.replace("Z", "+00:00"))
+        if failed and failed.tzinfo is None:
+            failed = failed.replace(tzinfo=timezone.utc)
+        timeout = float(state.get("archive_timeout_seconds") or 0)
+        healthy = (
+            str(state.get("archive_mode") or "").lower() in {"on", "always"}
+            and state.get("archive_command_configured") is True
+            and 0 < timeout <= PITR_ARCHIVE_TIMEOUT_SECONDS
+            and archived is not None
+            and timedelta(0) <= now - archived.astimezone(timezone.utc)
+            <= timedelta(minutes=PITR_ARCHIVE_MAX_AGE_MINUTES)
+            and (failed is None or failed <= archived)
+        )
+    except Exception:
+        healthy = False
+    if healthy:
+        resolve_operational_notification("postgres-pitr-unhealthy")
+        return True
+    _notification(
+        "postgres-pitr-unhealthy",
+        "Критично: PITR PostgreSQL не подтверждён",
+        (
+            "Архивация WAL должна быть включена, archive_timeout не более 15 минут, "
+            "а успешный архив — не старше 30 минут и новее последней ошибки."
+        ),
+        severity="critical",
+    )
+    return False
+
+
 def check_outbox_health(now: datetime | None = None) -> bool:
     now = now or datetime.now(timezone.utc)
     stuck = []
@@ -299,6 +379,175 @@ def check_backup_health(now: datetime | None = None) -> bool:
         "backup-overdue",
         "Критично: резервная копия не обновлялась",
         detail,
+        severity="critical",
+    )
+    return False
+
+
+def wms_backup_status_path() -> Path:
+    return Path(os.getenv(
+        "WMS_BACKUP_STATUS_PATH",
+        "/var/lib/sewing-web/monitor/wms-backup-status.json",
+    ))
+
+
+def read_wms_backup_status(path: Path | None = None) -> dict:
+    status_path = path or wms_backup_status_path()
+    if status_path.is_symlink() or not status_path.is_file():
+        return {}
+    if status_path.stat().st_size > 64 * 1024:
+        return {}
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def check_wms_backup_health(
+    now: datetime | None = None,
+    status: dict | None = None,
+) -> bool:
+    """Validate the last privileged WMS backup result without reading its dump."""
+    now = now or datetime.now(timezone.utc)
+    payload = read_wms_backup_status() if status is None else status
+    detail = "Статус последней проверенной PostgreSQL-копии WMS отсутствует."
+    if payload.get("ok") is False:
+        detail = (
+            "Последний запуск PostgreSQL backup завершился ошибкой "
+            f"{str(payload.get('error_type') or 'unknown')}."
+        )
+    elif payload.get("ok") is True:
+        try:
+            created = datetime.fromisoformat(
+                str(payload.get("created_at") or "").replace("Z", "+00:00")
+            )
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age = now - created.astimezone(timezone.utc)
+            size_ok = int(payload.get("artifact_size") or 0) > 0
+            checksum_ok = bool(re.fullmatch(
+                r"[0-9a-f]{64}", str(payload.get("artifact_sha256") or "")
+            ))
+            verification_ok = (
+                payload.get("verified") is True
+                and payload.get("verified_by") == "pg_restore --list"
+            )
+            schema_ok = (
+                int(payload.get("migration_count") or 0) > 0
+                and bool(str(payload.get("latest_migration") or "").strip())
+                and bool(re.fullmatch(
+                    r"[0-9a-f]{64}",
+                    str(payload.get("migration_manifest_sha256") or ""),
+                ))
+            )
+            if (
+                timedelta(0) <= age <= timedelta(hours=BACKUP_MAX_AGE_HOURS)
+                and size_ok
+                and checksum_ok
+                and verification_ok
+                and schema_ok
+            ):
+                resolve_operational_notification("wms-backup-overdue")
+                return True
+            if age > timedelta(hours=BACKUP_MAX_AGE_HOURS):
+                detail = (
+                    f"Последняя PostgreSQL-копия WMS старше {BACKUP_MAX_AGE_HOURS} часов."
+                )
+            else:
+                detail = (
+                    "Метаданные PostgreSQL-копии WMS не подтверждают размер, checksum, "
+                    "pg_restore-проверку и версию схемы."
+                )
+        except (TypeError, ValueError, OverflowError):
+            detail = "Метаданные PostgreSQL-копии WMS повреждены или имеют неверный формат."
+    _notification(
+        "wms-backup-overdue",
+        "Критично: резервная копия WMS не подтверждена",
+        detail,
+        severity="critical",
+    )
+    return False
+
+
+def offsite_backup_status_path() -> Path:
+    return Path(os.getenv(
+        "BACKUP_OFFSITE_STATUS_PATH",
+        "/var/lib/sewing-web/monitor/offsite-backup-status.json",
+    ))
+
+
+def check_offsite_backup_health(
+    now: datetime | None = None,
+    status: dict | None = None,
+) -> bool:
+    now = now or datetime.now(timezone.utc)
+    payload = (
+        read_wms_backup_status(offsite_backup_status_path())
+        if status is None
+        else status
+    )
+    detail = "Нет подтверждения копирования SQLite и WMS на отдельный носитель."
+    if payload.get("ok") is False:
+        detail = f"Последнее off-site копирование завершилось ошибкой {payload.get('error_type') or 'unknown'}."
+    elif payload.get("ok") is True:
+        try:
+            copied = datetime.fromisoformat(
+                str(payload.get("copied_at") or "").replace("Z", "+00:00")
+            )
+            if copied.tzinfo is None:
+                copied = copied.replace(tzinfo=timezone.utc)
+            artifacts_ok = all(
+                int((payload.get(kind) or {}).get("artifact_size") or 0) > 0
+                and bool(re.fullmatch(
+                    r"[0-9a-f]{64}",
+                    str((payload.get(kind) or {}).get("artifact_sha256") or ""),
+                ))
+                for kind in ("sqlite", "wms")
+            )
+            if (
+                timedelta(0) <= now - copied.astimezone(timezone.utc)
+                <= timedelta(hours=BACKUP_MAX_AGE_HOURS)
+                and payload.get("target_is_mount") is True
+                and payload.get("target_device_separate") is True
+                and payload.get("encryption_at_rest") is True
+                and bool(str(payload.get("encryption_provider") or "").strip())
+                and bool(str(payload.get("encryption_evidence_id") or "").strip())
+                and artifacts_ok
+            ):
+                resolve_operational_notification("offsite-backup-overdue")
+                return True
+            detail = "Off-site копия устарела либо не подтверждены оба артефакта, отдельный filesystem и шифрование."
+        except (TypeError, ValueError, OverflowError):
+            detail = "Метаданные off-site копирования повреждены."
+    _notification(
+        "offsite-backup-overdue",
+        "Критично: внешняя резервная копия не подтверждена",
+        detail,
+        severity="critical",
+    )
+    return False
+
+
+def check_data_at_rest_encryption_health(attestation: dict | None = None) -> bool:
+    """Do not report primary storage as protected without explicit evidence."""
+
+    payload = attestation if attestation is not None else {
+        "confirmed": os.getenv("DATA_AT_REST_ENCRYPTION_CONFIRMED", "0") == "1",
+        "provider": os.getenv("DATA_AT_REST_ENCRYPTION_PROVIDER", ""),
+        "evidence_id": os.getenv("DATA_AT_REST_ENCRYPTION_EVIDENCE_ID", ""),
+    }
+    if (
+        payload.get("confirmed") is True
+        and bool(str(payload.get("provider") or "").strip())
+        and bool(str(payload.get("evidence_id") or "").strip())
+    ):
+        resolve_operational_notification("data-at-rest-encryption")
+        return True
+    _notification(
+        "data-at-rest-encryption",
+        "Критично: шифрование данных на диске не подтверждено",
+        "Укажите проверенные provider и evidence ID для томов БД, private-blobs и локальных backup.",
         severity="critical",
     )
     return False
@@ -435,7 +684,9 @@ def deliver_open_web_push_notifications() -> dict[str, int]:
 def main() -> int:
     init_db()
     operational = refresh_operational_notifications()
-    backup_ok = check_backup_health()
+    sqlite_backup_ok = check_backup_health()
+    wms_backup_ok = check_wms_backup_health()
+    offsite_backup_ok = check_offsite_backup_health()
     reconciliation_ok = check_production_wms_reconciliation()
     checks = {
         "disk_ok": check_disk_health(),
@@ -443,8 +694,10 @@ def main() -> int:
         "oom_ok": check_oom_health(),
         "services_ok": check_services_health(),
         "postgres_ok": check_postgres_health(),
+        "postgres_pitr_ok": check_postgres_pitr_health(),
         "outbox_ok": check_outbox_health(),
         "marketplace_snapshots_ok": check_marketplace_snapshot_health(),
+        "data_at_rest_encryption_ok": check_data_at_rest_encryption_health(),
     }
     telegram_delivery = deliver_open_notifications(telegram_token())
     web_push_delivery = deliver_open_web_push_notifications()
@@ -453,7 +706,10 @@ def main() -> int:
             {
                 "ok": True,
                 "operational_alerts": len(operational),
-                "backup_ok": backup_ok,
+                "backup_ok": sqlite_backup_ok and wms_backup_ok and offsite_backup_ok,
+                "sqlite_backup_ok": sqlite_backup_ok,
+                "wms_backup_ok": wms_backup_ok,
+                "offsite_backup_ok": offsite_backup_ok,
                 "production_wms_reconciliation_ok": reconciliation_ok,
                 **checks,
                 "telegram_configured": bool(telegram_token()),

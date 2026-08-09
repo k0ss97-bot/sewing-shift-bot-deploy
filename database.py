@@ -3,7 +3,9 @@ import json
 import os
 import sqlite3
 import uuid
+import base64
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
@@ -13,6 +15,7 @@ from shift_time import (
     calculate_shift_minutes,
     normalize_lunch_time,
 )
+from private_blobs import read_blob, store_base64_blob
 
 
 DB_FILE_NAME = "bot.db"
@@ -2799,6 +2802,14 @@ def init_db():
         cursor.execute("ALTER TABLE route_batch_defects ADD COLUMN photo_mime_type TEXT")
     if "photo_base64" not in defect_columns:
         cursor.execute("ALTER TABLE route_batch_defects ADD COLUMN photo_base64 TEXT")
+    if "photo_storage_key" not in defect_columns:
+        cursor.execute("ALTER TABLE route_batch_defects ADD COLUMN photo_storage_key TEXT")
+    if "photo_sha256" not in defect_columns:
+        cursor.execute("ALTER TABLE route_batch_defects ADD COLUMN photo_sha256 TEXT")
+    if "photo_size_bytes" not in defect_columns:
+        cursor.execute("ALTER TABLE route_batch_defects ADD COLUMN photo_size_bytes INTEGER")
+    if "photo_deleted_at" not in defect_columns:
+        cursor.execute("ALTER TABLE route_batch_defects ADD COLUMN photo_deleted_at TEXT")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS route_batch_handoffs (
@@ -6494,6 +6505,15 @@ def complete_route_batch_step_atomic(
     remainder_batch_id = None
     remaining_quantity = 0
     parallel_waiting = False
+    photo_blob = {}
+    if defect_quantity > 0 and defect_photo_base64.strip():
+        photo_blob = store_base64_blob(
+            defect_photo_base64.strip(),
+            mime_type=defect_photo_mime_type.strip(),
+            namespace="defect-photos",
+            root_dir=Path(DB_NAME).resolve().parent,
+            max_bytes=2 * 1024 * 1024,
+        )
 
     try:
         cursor.execute("BEGIN IMMEDIATE")
@@ -6813,9 +6833,10 @@ def complete_route_batch_step_atomic(
                     batch_id, employee_id, operation_name, position, product_name,
                     product_size, product_color, quantity, reason, disposition,
                     comment, rework_batch_id, created_at,
-                    photo_name, photo_mime_type, photo_base64
+                    photo_name, photo_mime_type, photo_base64,
+                    photo_storage_key, photo_sha256, photo_size_bytes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     batch_id,
@@ -6833,7 +6854,10 @@ def complete_route_batch_step_atomic(
                     now,
                     defect_photo_name.strip(),
                     defect_photo_mime_type.strip(),
-                    defect_photo_base64.strip(),
+                    "",
+                    photo_blob.get("storage_key", ""),
+                    photo_blob.get("sha256", ""),
+                    photo_blob.get("size_bytes"),
                 ),
             )
 
@@ -6994,7 +7018,7 @@ def get_route_batch_defects(batch_id: int):
         """
         SELECT
             id, quantity, reason, disposition, comment, rework_batch_id, created_at,
-            CASE WHEN COALESCE(photo_base64, '') != '' THEN 1 ELSE 0 END
+            CASE WHEN COALESCE(photo_storage_key, '') != '' OR COALESCE(photo_base64, '') != '' THEN 1 ELSE 0 END
         FROM route_batch_defects
         WHERE batch_id = ?
         ORDER BY id ASC
@@ -7023,9 +7047,12 @@ def get_route_batch_defect_photo(defect_id: int):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT batch_id, photo_name, photo_mime_type, photo_base64
+        SELECT batch_id, photo_name, photo_mime_type, photo_base64,
+               photo_storage_key, photo_sha256, photo_size_bytes
         FROM route_batch_defects
-        WHERE id = ? AND COALESCE(photo_base64, '') != ''
+        WHERE id = ?
+          AND photo_deleted_at IS NULL
+          AND (COALESCE(photo_storage_key, '') != '' OR COALESCE(photo_base64, '') != '')
         """,
         (defect_id,),
     )
@@ -7033,11 +7060,145 @@ def get_route_batch_defect_photo(defect_id: int):
     conn.close()
     if row is None:
         return None
+    content_base64 = row[3] or ""
+    if row[4]:
+        content = read_blob(
+            row[4],
+            root_dir=Path(DB_NAME).resolve().parent,
+            expected_sha256=row[5] or "",
+            max_bytes=max(2 * 1024 * 1024, int(row[6] or 0)),
+        )
+        content_base64 = base64.b64encode(content).decode("ascii")
     return {
         "batch_id": row[0],
         "file_name": row[1] or f"defect-{defect_id}.jpg",
         "mime_type": row[2] or "image/jpeg",
-        "content_base64": row[3],
+        "content_base64": content_base64,
+        "storage_key": row[4] or "",
+        "sha256": row[5] or "",
+    }
+
+
+def migrate_legacy_defect_photos(limit: int = 1000):
+    """Move legacy base64 photos out of SQLite without changing their API."""
+
+    safe_limit = max(1, min(int(limit or 1000), 10_000))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, photo_mime_type, photo_base64
+        FROM route_batch_defects
+        WHERE COALESCE(photo_base64, '') != ''
+          AND COALESCE(photo_storage_key, '') = ''
+          AND photo_deleted_at IS NULL
+        ORDER BY id ASC
+        LIMIT ?
+        """,
+        (safe_limit,),
+    )
+    rows = cursor.fetchall()
+    migrated = 0
+    bytes_moved = 0
+    try:
+        for defect_id, mime_type, content_base64 in rows:
+            blob = store_base64_blob(
+                content_base64,
+                mime_type=mime_type or "image/jpeg",
+                namespace="defect-photos",
+                root_dir=Path(DB_NAME).resolve().parent,
+                max_bytes=2 * 1024 * 1024,
+            )
+            cursor.execute(
+                """
+                UPDATE route_batch_defects
+                SET photo_storage_key = ?, photo_sha256 = ?, photo_size_bytes = ?, photo_base64 = ''
+                WHERE id = ? AND COALESCE(photo_storage_key, '') = ''
+                """,
+                (blob["storage_key"], blob["sha256"], blob["size_bytes"], defect_id),
+            )
+            if cursor.rowcount:
+                migrated += 1
+                bytes_moved += int(blob["size_bytes"])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"scanned": len(rows), "migrated": migrated, "bytes_moved": bytes_moved}
+
+
+def purge_expired_defect_photos(retention_days: int, *, now: datetime | None = None, dry_run: bool = True):
+    """Apply the photo lifecycle while preserving defect and audit records."""
+
+    safe_days = max(30, min(int(retention_days or 365), 3650))
+    observed_at = now or local_now()
+    cutoff = (observed_at - timedelta(days=safe_days)).isoformat()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, COALESCE(photo_storage_key, ''), COALESCE(photo_size_bytes, 0),
+               CASE WHEN COALESCE(photo_base64, '') != '' THEN length(photo_base64) ELSE 0 END
+        FROM route_batch_defects
+        WHERE created_at < ?
+          AND photo_deleted_at IS NULL
+          AND (COALESCE(photo_storage_key, '') != '' OR COALESCE(photo_base64, '') != '')
+        ORDER BY id ASC
+        """,
+        (cutoff,),
+    )
+    rows = cursor.fetchall()
+    estimated_bytes = sum(int(row[2] or 0) or ((int(row[3] or 0) * 3) // 4) for row in rows)
+    if dry_run or not rows:
+        conn.close()
+        return {
+            "dry_run": bool(dry_run),
+            "retention_days": safe_days,
+            "cutoff": cutoff,
+            "expired": len(rows),
+            "estimated_bytes": estimated_bytes,
+            "deleted": 0,
+        }
+
+    deleted_at = observed_at.isoformat()
+    keys = {row[1] for row in rows if row[1]}
+    try:
+        cursor.executemany(
+            """
+            UPDATE route_batch_defects
+            SET photo_base64 = '', photo_storage_key = '', photo_deleted_at = ?
+            WHERE id = ? AND photo_deleted_at IS NULL
+            """,
+            [(deleted_at, row[0]) for row in rows],
+        )
+        conn.commit()
+        unreferenced = []
+        for key in keys:
+            cursor.execute(
+                "SELECT 1 FROM route_batch_defects WHERE photo_storage_key = ? AND photo_deleted_at IS NULL LIMIT 1",
+                (key,),
+            )
+            if cursor.fetchone() is None:
+                unreferenced.append(key)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    from private_blobs import delete_blob
+
+    for key in unreferenced:
+        delete_blob(key, root_dir=Path(DB_NAME).resolve().parent)
+    return {
+        "dry_run": False,
+        "retention_days": safe_days,
+        "cutoff": cutoff,
+        "expired": len(rows),
+        "estimated_bytes": estimated_bytes,
+        "deleted": len(rows),
     }
 
 
