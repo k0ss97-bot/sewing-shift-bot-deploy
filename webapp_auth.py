@@ -1108,11 +1108,9 @@ def get_web_session(
         SELECT
             s.id AS session_id, s.csrf_token, s.expires_at, s.last_seen_at,
             a.id AS account_id, a.telegram_id, a.username, a.email, a.phone,
-            a.full_name, a.status, a.mfa_enabled_at, s.mfa_verified,
-            e.role AS employee_role
+            a.full_name, a.status
         FROM web_sessions s
         JOIN web_accounts a ON a.id = s.account_id
-        LEFT JOIN employees e ON e.telegram_id = a.telegram_id
         WHERE s.token_hash = ? AND s.revoked_at IS NULL
         """,
         (_hash_secret(session_token),),
@@ -1122,10 +1120,6 @@ def get_web_session(
         or row["status"] != "active"
         or int(row["expires_at"]) <= now_epoch
         or now_epoch - int(row["last_seen_at"]) > _session_idle_seconds()
-        or (
-            row["employee_role"] == "admin"
-            and (not row["mfa_enabled_at"] or int(row["mfa_verified"] or 0) != 1)
-        )
     ):
         conn.close()
         return None

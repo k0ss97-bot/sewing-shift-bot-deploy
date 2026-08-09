@@ -45,12 +45,6 @@
       <form class="login-card" id="webLoginForm">
         <label>Почта, телефон или логин<input id="webUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
         <label>Пароль<input id="webPassword" name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
-        <div id="webMfaPanel" hidden>
-          <p class="login-help" id="webMfaHelp">Введите одноразовый код.</p>
-          <p class="login-help" id="webMfaSecretRow" hidden>Секрет для приложения-аутентификатора: <code id="webMfaSecret"></code></p>
-          <label>Код MFA или recovery-код<input id="webMfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="16"></label>
-          <pre class="login-help" id="webMfaRecoveryCodes" hidden></pre>
-        </div>
         <p class="login-error" id="webLoginError" role="alert" aria-live="polite"></p>
         <button class="login-submit" id="webLoginButton" type="submit">Войти</button>
       </form>

@@ -574,24 +574,10 @@ def run_smoke() -> None:
                 payload={"username": "smoke-admin", "password": "smoke-admin-password"},
                 headers={"Origin": base_url},
             )
-            mfa_payload = parse_json_response(status, headers, login_body)
-            require(
-                status == 202 and mfa_payload.get("mfa_required") is True,
-                f"Administrator password did not require MFA (HTTP {status}, code={mfa_payload.get('code')}).",
-            )
-            status, headers, login_body = http_request(
-                f"{base_url}/api/web/mfa/verify",
-                method="POST",
-                payload={
-                    "challenge_token": mfa_payload.get("challenge_token"),
-                    "code": webapp_auth._totp_code(str(mfa_payload.get("secret") or "")),
-                },
-                headers={"Origin": base_url},
-            )
             login_payload = parse_json_response(status, headers, login_body)
             require(
                 status == 200 and login_payload.get("ok") is True,
-                "Standalone admin MFA login failed.",
+                "Standalone admin login failed.",
             )
             set_cookie = str(headers.get("Set-Cookie") or "")
             parsed_cookie = SimpleCookie()

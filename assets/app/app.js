@@ -201,8 +201,6 @@
     const isStandaloneWeb = !debugTelegramId;
     let webCsrfToken = "";
     let webSessionProfile = {};
-    let webMfaChallengeToken = "";
-    let webMfaLoginCompletedIdentity = "";
     const webIdentityStorageKey = "webapp_identity";
     const appStateCacheVersion = 1;
     const appStateCacheMaxAgeMs = 12 * 60 * 60 * 1000;
@@ -11566,72 +11564,26 @@ ${location.code}`)) return;
       event.preventDefault();
       const username = document.getElementById("webUsername");
       const password = document.getElementById("webPassword");
-      const mfaPanel = document.getElementById("webMfaPanel");
-      const mfaCode = document.getElementById("webMfaCode");
-      const mfaHelp = document.getElementById("webMfaHelp");
-      const mfaSecretRow = document.getElementById("webMfaSecretRow");
-      const mfaSecret = document.getElementById("webMfaSecret");
-      const recoveryCodes = document.getElementById("webMfaRecoveryCodes");
       const button = document.getElementById("webLoginButton");
       const errorNode = document.getElementById("webLoginError");
-      if (webMfaLoginCompletedIdentity) {
-        storeWebIdentity(webMfaLoginCompletedIdentity);
-        window.location.reload();
-        return;
-      }
       button.disabled = true;
       errorNode.textContent = "";
       errorNode.classList.remove("success");
       try {
-        const isMfaStep = Boolean(webMfaChallengeToken);
-        const response = await fetch(isMfaStep ? "/api/web/mfa/verify" : "/api/web/login", {
+        const response = await fetch("/api/web/login", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           credentials: "same-origin",
-          body: JSON.stringify(isMfaStep
-            ? {challenge_token: webMfaChallengeToken, code: mfaCode.value}
-            : {username: username.value, password: password.value}),
+          body: JSON.stringify({username: username.value, password: password.value}),
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) throw new Error(data.message || "Не удалось войти.");
-        if (data.mfa_required) {
-          webMfaChallengeToken = String(data.challenge_token || "");
-          mfaPanel.hidden = false;
-          username.closest("label").hidden = true;
-          password.closest("label").hidden = true;
-          mfaHelp.textContent = data.message || "Введите одноразовый код.";
-          if (data.mfa_enrollment_required && data.secret) {
-            mfaSecretRow.hidden = false;
-            mfaSecret.textContent = String(data.secret);
-          }
-          button.textContent = "Подтвердить MFA";
-          button.disabled = false;
-          password.value = "";
-          mfaCode.focus();
-          return;
-        }
-        if (Array.isArray(data.recovery_codes) && data.recovery_codes.length) {
-          webMfaLoginCompletedIdentity = String(data.telegram_id || data.username || "web");
-          mfaCode.closest("label").hidden = true;
-          mfaSecretRow.hidden = true;
-          mfaHelp.textContent = "Сохраните recovery-коды в защищённом месте. Повторно они не показываются.";
-          recoveryCodes.textContent = data.recovery_codes.join("\n");
-          recoveryCodes.hidden = false;
-          button.textContent = "Я сохранил коды — продолжить";
-          button.disabled = false;
-          return;
-        }
         storeWebIdentity(String(data.telegram_id || data.username || "web"));
         window.location.reload();
       } catch (error) {
         errorNode.textContent = error.message || "Не удалось войти.";
-        if (webMfaChallengeToken) {
-          mfaCode.value = "";
-          mfaCode.focus();
-        } else {
-          password.value = "";
-          password.focus();
-        }
+        password.value = "";
+        password.focus();
         button.disabled = false;
       }
     }

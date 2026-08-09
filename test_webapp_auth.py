@@ -237,36 +237,16 @@ class WebAppAuthTest(unittest.TestCase):
         self.assertIsNone(self.auth.authenticate_web_credentials("worker.password", "first-worker-password"))
         self.assertIsNotNone(self.auth.authenticate_web_credentials("worker.password", "second-worker-password"))
 
-    def test_admin_mfa_enrollment_blocks_unverified_sessions_and_supports_recovery(self):
-        self.database.create_employee(99004, "MFA Администратор", "Швея")
+    def test_admin_session_does_not_require_mfa(self):
+        self.database.create_employee(99004, "Администратор без MFA", "Швея")
         employee = self.database.get_employee_by_telegram_id(99004)
         self.assertTrue(self.database.update_employee_role(employee[0], "admin")["ok"])
-        account = self.auth.upsert_web_account("mfa.admin", 99004, "mfa-admin-password")
-        authenticated = self.auth.authenticate_web_credentials("mfa.admin", "mfa-admin-password")
-
-        unverified = self.auth.create_web_session(authenticated)
-        self.assertIsNone(self.auth.get_web_session(unverified["session_token"]))
-
-        enrollment = self.auth.begin_admin_mfa(account)
-        self.assertTrue(enrollment["mfa_enrollment_required"])
-        self.assertTrue(enrollment["otpauth_uri"].startswith("otpauth://totp/"))
-        verified = self.auth.verify_admin_mfa_challenge(
-            enrollment["challenge_token"],
-            self.auth._totp_code(enrollment["secret"]),
+        self.auth.upsert_web_account("admin.without.mfa", 99004, "admin-without-mfa-password")
+        authenticated = self.auth.authenticate_web_credentials(
+            "admin.without.mfa", "admin-without-mfa-password"
         )
-        self.assertTrue(verified["ok"])
-        self.assertEqual(len(verified["recovery_codes"]), self.auth.MFA_RECOVERY_CODE_COUNT)
-
-        session = self.auth.create_web_session(verified["account"], mfa_verified=True)
+        session = self.auth.create_web_session(authenticated)
         self.assertIsNotNone(self.auth.get_web_session(session["session_token"]))
-
-        recovery_challenge = self.auth.begin_admin_mfa(account)
-        self.assertFalse(recovery_challenge["mfa_enrollment_required"])
-        recovered = self.auth.verify_admin_mfa_challenge(
-            recovery_challenge["challenge_token"], verified["recovery_codes"][0]
-        )
-        self.assertTrue(recovered["ok"])
-        self.assertEqual(recovered["remaining_recovery_codes"], 9)
 
     def test_database_roles_are_atomic_and_preserve_last_admin(self):
         self.database.create_employee(99101, "Первый Администратор", "Швея")
@@ -422,19 +402,10 @@ class WebAppHttpTest(unittest.TestCase):
         return response.status, result, response_headers
 
     def login_admin(self, username, password):
-        status, challenge, _headers = self.request(
+        status, login, headers = self.request(
             "POST",
             "/api/web/login",
             {"username": username, "password": password},
-            {"Origin": self.origin},
-        )
-        self.assertEqual(status, 202)
-        self.assertTrue(challenge["mfa_required"])
-        code = self.auth._totp_code(challenge["secret"])
-        status, login, headers = self.request(
-            "POST",
-            "/api/web/mfa/verify",
-            {"challenge_token": challenge["challenge_token"], "code": code},
             {"Origin": self.origin},
         )
         self.assertEqual(status, 200)

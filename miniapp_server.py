@@ -153,7 +153,6 @@ from route_maps import CUTTING_ROUTE, PRODUCT_ROUTE_MAPS
 from webapp_auth import (
     WebRegistrationError,
     authenticate_web_credentials,
-    begin_admin_mfa,
     build_clear_cookies,
     build_session_cookie,
     change_web_password,
@@ -169,7 +168,6 @@ from webapp_auth import (
     revoke_web_session,
     revoke_web_sessions_for_telegram_id,
     session_token_from_cookie,
-    verify_admin_mfa_challenge,
 )
 from webapp_pwa import app_shell_revision, inject_pwa_markup, send_pwa_resource
 from wms import api as wms_api
@@ -6757,7 +6755,6 @@ def make_handler(bot_token: str, debug: bool):
 
             allowed_paths = {
                 "/api/web/login",
-                "/api/web/mfa/verify",
                 "/api/web/register",
                 "/api/web/logout",
                 "/api/web/password",
@@ -6866,7 +6863,7 @@ def make_handler(bot_token: str, debug: bool):
                 return
 
             uses_web_cookie = bool(self.web_session_token())
-            if (path in {"/api/web/login", "/api/web/mfa/verify", "/api/web/register", "/api/web/logout"} or uses_web_cookie) and not self.origin_is_valid():
+            if (path in {"/api/web/login", "/api/web/register", "/api/web/logout"} or uses_web_cookie) and not self.origin_is_valid():
                 self.send_json({"ok": False, "code": "invalid_origin", "message": "Запрос отклонён."}, status=403)
                 return
 
@@ -6912,22 +6909,6 @@ def make_handler(bot_token: str, debug: bool):
                         status=403,
                     )
                     return
-                if employee[4] == "admin":
-                    challenge = begin_admin_mfa(account)
-                    self.send_json(
-                        {
-                            "ok": True,
-                            "mfa_required": True,
-                            **challenge,
-                            "message": (
-                                "Настройте приложение-аутентификатор и введите код."
-                                if challenge.get("mfa_enrollment_required")
-                                else "Введите код из приложения-аутентификатора или recovery-код."
-                            ),
-                        },
-                        status=202,
-                    )
-                    return
                 self.clear_login_failures()
                 session = create_web_session(
                     account,
@@ -6946,57 +6927,6 @@ def make_handler(bot_token: str, debug: bool):
                         "telegram_id": session["telegram_id"],
                         "csrf_token": session["csrf_token"],
                         "expires_at": session["expires_at"],
-                    },
-                    extra_headers={"Set-Cookie": cookie},
-                )
-                return
-
-            if path == "/api/web/mfa/verify":
-                result = verify_admin_mfa_challenge(
-                    payload.get("challenge_token", ""),
-                    payload.get("code", ""),
-                )
-                if not result.get("ok"):
-                    self.record_login_failure()
-                    record_security_event(
-                        "mfa", "failed", ip_address=self.client_ip(),
-                        details={"code": result.get("code") or "invalid"},
-                    )
-                    self.send_json(result, status=401)
-                    return
-                account = result["account"]
-                employee = get_employee_for_access(account["telegram_id"])
-                if employee is None or employee[4] != "admin" or employee[5] != "active":
-                    self.send_json(
-                        {"ok": False, "code": "account_disabled", "message": "Доступ администратора отключён."},
-                        status=403,
-                    )
-                    return
-                self.clear_login_failures()
-                record_security_event(
-                    "mfa", "success", account_id=account["id"],
-                    telegram_id=account["telegram_id"], ip_address=self.client_ip(),
-                )
-                session = create_web_session(
-                    account,
-                    ip_address=self.client_ip(),
-                    user_agent=self.headers.get("User-Agent", ""),
-                    mfa_verified=True,
-                )
-                cookie = build_session_cookie(
-                    session["session_token"],
-                    secure=self.secure_cookie(),
-                    max_age=max(0, session["expires_at"] - int(time.time())),
-                )
-                self.send_json(
-                    {
-                        "ok": True,
-                        "username": session["username"],
-                        "telegram_id": session["telegram_id"],
-                        "csrf_token": session["csrf_token"],
-                        "expires_at": session["expires_at"],
-                        "recovery_codes": result.get("recovery_codes") or [],
-                        "remaining_recovery_codes": result.get("remaining_recovery_codes", 0),
                     },
                     extra_headers={"Set-Cookie": cookie},
                 )
