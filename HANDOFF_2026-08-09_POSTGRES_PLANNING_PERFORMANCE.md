@@ -2,7 +2,8 @@
 
 ## Production status
 
-- Active release: `/opt/sewing-web/releases/codex-audit-5c7a68d-69f7a1e8-20260809T110452Z`.
+- Active release: `/opt/sewing-web/releases/codex-beaa606-84b33884-20260809T111912Z`.
+- Production code commit: `beaa60689c2bbe1d4ddf8175be74ee57ebac46af`.
 - Site: `https://www.shagaemfabrika.ru/app`.
 - PostgreSQL: 16.14; `schema_migrations` contains 18 migrations, latest is `018_operational_migration_control.sql`.
 - Post-deploy `/health`: ready; SQLite and marketplace PostgreSQL are ready.
@@ -34,7 +35,7 @@
 - Python compile, JavaScript syntax, `git diff --check`: PASS.
 - Offline web smoke on the final production candidate: PASS.
 - Production load smoke, 60 GET requests / concurrency 6: 0 failures,
-  23.69 requests/s, p50 233.61 ms, p95 471.46 ms, max 783.09 ms.
+  23.52 requests/s, p50 220.62 ms, p95 463.60 ms, max 748.62 ms.
 - Pre-deploy baseline: 9.15 requests/s and p95 1682.61 ms.
 - SQLite production backup restore: PASS, 73 application tables.
 - PostgreSQL critical restore: PARTIAL_PASS, 12 restored migrations, 15 zones,
