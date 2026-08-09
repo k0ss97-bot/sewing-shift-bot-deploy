@@ -81,13 +81,12 @@ cd sewing-shift-bot-deploy
 git switch codex/article-first-wms
 git pull --ff-only origin codex/article-first-wms
 git rev-parse HEAD
+git merge-base --is-ancestor f13e037 HEAD
 ```
 
-Ожидаемый HEAD:
-
-```text
-f13e037ecc0648a31d1bb970d301f73de401941a
-```
+Последняя команда должна завершиться без ошибки: это подтверждает, что ветка содержит
+production commit `f13e037`. Более новый HEAD допустим, если после production-кода в ветку
+добавлялись только документы или новые согласованные изменения.
 
 Не переносить между компьютерами `.env`, `bot.db`, `backups/`, `exports/` или `logs/`.
 Они содержат runtime-данные и не должны попадать в Git.
@@ -109,4 +108,3 @@ python3 scripts/smoke_web.py
 5. Не изменять production, базы, backup или реальные задания без отдельного прямого поручения.
 6. Следующий инфраструктурный приоритет — организовать полный PostgreSQL recovery-test
    на расширенном диске или отдельном сервере.
-
