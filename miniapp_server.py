@@ -6834,6 +6834,8 @@ def make_handler(bot_token: str, debug: bool):
                 "/api/shift/status",
                 "/api/shift/open",
                 "/api/shift/close",
+                "/api/shift/pause",
+                "/api/shift/resume",
                 "/api/report/history",
                 "/api/feedback/send",
                 "/api/production/fabric-receipt",

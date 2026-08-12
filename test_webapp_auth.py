@@ -603,6 +603,32 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertTrue(repeated_logout["ok"])
         self.assertIn("Max-Age=0", repeated_clear_headers["Set-Cookie"])
 
+    def test_employee_shift_pause_and_resume_http_routes(self):
+        status, login, headers = self.request(
+            "POST",
+            "/api/web/login",
+            {"username": "web-worker", "password": "web-worker-password"},
+            {"Origin": self.origin},
+        )
+        self.assertEqual(status, 200)
+        auth_headers = {
+            "Cookie": headers["Set-Cookie"].split(";", 1)[0],
+            "X-CSRF-Token": login["csrf_token"],
+            "Origin": self.origin,
+        }
+
+        status, opened, _ = self.request("POST", "/api/shift/open", {}, auth_headers)
+        self.assertEqual(status, 200)
+        self.assertTrue(opened["has_open_shift"])
+        status, paused, _ = self.request("POST", "/api/shift/pause", {}, auth_headers)
+        self.assertEqual(status, 200)
+        self.assertTrue(paused["shift"]["is_paused"])
+        self.assertFalse(paused["can_work"])
+        status, resumed, _ = self.request("POST", "/api/shift/resume", {}, auth_headers)
+        self.assertEqual(status, 200)
+        self.assertFalse(resumed["shift"]["is_paused"])
+        self.assertTrue(resumed["can_work"])
+
     def test_wms_route_requires_storekeeper_role(self):
         status, login, headers = self.request(
             "POST",
