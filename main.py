@@ -77,6 +77,8 @@ from database import (
     get_month_shift_details,
     get_open_shift_for_today,
     get_open_shifts,
+    get_shift_pause_state,
+    get_working_shift_for_today,
     get_operation_by_number,
     get_period_employee_summary,
     get_period_operation_rows,
@@ -100,6 +102,8 @@ from database import (
     is_preparation_operation_folder,
     is_packing_product_folder,
     mark_cutting_batch_formed,
+    pause_shift,
+    resume_shift,
     restore_operation,
     rollback_cutting_batch,
     update_cutting_batch_progress,
@@ -1822,12 +1826,13 @@ async def open_shifts(message: Message):
     text = "Открытые смены:\n\n"
 
     for shift in shifts:
-        shift_id, full_name, shift_date, start_time = shift
+        shift_id, full_name, shift_date, start_time, is_paused = shift
         text += (
             f"ID смены: {shift_id}\n"
             f"Сотрудник: {full_name}\n"
             f"Дата: {shift_date}\n"
             f"Начало: {start_time}\n"
+            f"Состояние: {'пауза' if is_paused else 'в работе'}\n"
             f"Закрыть: /admin_close {shift_id} 17:00\n\n"
         )
 
@@ -3634,10 +3639,10 @@ async def start_report(message: Message, state: FSMContext):
         await message.answer("Сначала нужно зарегистрироваться и дождаться подтверждения.")
         return
 
-    shift = get_open_shift_for_today(employee[0])
+    shift = get_working_shift_for_today(employee[0])
 
     if shift is None:
-        await message.answer("У вас нет открытой смены. Нажмите /start, чтобы открыть смену.")
+        await message.answer("Откройте или продолжите смену перед добавлением отчёта.")
         return
 
     employee_position = employee[3]
@@ -5377,6 +5382,59 @@ async def close_button(message: Message):
     await confirm_close_shift(message)
 
 
+@dp.message(Command("pause"))
+@dp.message(Command("resume"))
+@dp.message(lambda message: message.text == "Пауза / продолжить")
+async def toggle_shift_pause(message: Message):
+    employee = get_employee_by_telegram_id(message.from_user.id)
+    if employee is None or employee[5] != "active":
+        await message.answer("Сначала нужно зарегистрироваться и дождаться подтверждения.")
+        return
+
+    shift = get_open_shift_for_today(employee[0])
+    if shift is None:
+        await message.answer("У вас нет открытой смены.", reply_markup=employee_keyboard())
+        return
+
+    pause_state = get_shift_pause_state(shift[0])
+    if pause_state["is_paused"]:
+        result = resume_shift(shift[0])
+        if not result.get("ok"):
+            await message.answer("Не удалось продолжить смену.", reply_markup=employee_keyboard())
+            return
+        duration = int(result.get("duration_minutes") or 0)
+        add_edit_log(
+            message.from_user.id,
+            "employee",
+            "Продолжил смену после паузы",
+            "shift",
+            shift[0],
+            f"Пауза: {format_minutes(duration)}",
+        )
+        await message.answer(
+            f"Смена продолжена. Пауза длилась {format_minutes(duration)}.",
+            reply_markup=employee_keyboard(),
+        )
+        return
+
+    result = pause_shift(shift[0])
+    if not result.get("ok"):
+        await message.answer("Не удалось поставить смену на паузу.", reply_markup=employee_keyboard())
+        return
+    add_edit_log(
+        message.from_user.id,
+        "employee",
+        "Поставил смену на паузу",
+        "shift",
+        shift[0],
+        "Задания остались закреплены за сотрудником",
+    )
+    await message.answer(
+        "Смена поставлена на паузу. Рабочее время остановлено, задания сохранены за вами.",
+        reply_markup=employee_keyboard(),
+    )
+
+
 @dp.message(lambda message: message.text == "Изменить отчёт")
 async def edit_button(message: Message, state: FSMContext):
     await edit_report(message, state)
@@ -5730,10 +5788,10 @@ async def start_production_contours(message: Message, state: FSMContext):
         await message.answer("Сначала нужно зарегистрироваться и дождаться подтверждения.")
         return
 
-    shift = get_open_shift_for_today(employee[0])
+    shift = get_working_shift_for_today(employee[0])
 
     if shift is None:
-        await message.answer("У вас нет открытой смены. Нажмите /start, чтобы открыть смену.")
+        await message.answer("Откройте или продолжите смену перед выполнением задания.")
         return
 
     data = await state.get_data()
@@ -7088,12 +7146,13 @@ async def start(message: Message, state: FSMContext):
             )
             return
 
+        pause_state = get_shift_pause_state(shift[0])
         await message.answer(
             f"Здравствуйте, {full_name}.\n\n"
-            "Ваша смена уже открыта.\n"
+            f"Ваша смена {'на паузе' if pause_state['is_paused'] else 'уже открыта'}.\n"
             f"Дата: {shift[2]}\n"
             f"Время начала: {shift[3]}\n\n"
-            "Выберите действие в меню ниже.\n"
+            f"{'Нажмите «Пауза / продолжить», чтобы вернуться к работе.\n' if pause_state['is_paused'] else 'Выберите действие в меню ниже.\n'}"
             "Все действия с отчётом находятся в кнопке «Отчёт».",
             reply_markup=employee_keyboard(),
         )

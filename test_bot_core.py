@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -136,6 +136,80 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(opened["has_open_shift"])
         self.assertIn("обязательно закройте", opened["shift_close_reminder"])
         self.assertNotIn("shift_close_reminder", repeated)
+
+    def test_shift_can_pause_resume_and_keeps_assigned_task(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        route_maps = importlib.import_module("route_maps")
+        position = route_maps.PRODUCT_ROUTE_MAPS["Легинсы"][0]["position"]
+        self.database.create_employee(4123, "Тест Пауза Смены", position)
+        employee = self.database.get_employee_by_telegram_id(4123)
+        self.database.update_employee_status(employee[0], "active")
+        shift = self.database.create_shift(employee[0])
+        batch = self.database.create_route_batch("Легинсы", "92", "Черный", 5, employee[0])
+        assigned = self.database.assign_route_batch(batch["id"], employee[0])
+        self.assertEqual(assigned["assigned_employee_id"], employee[0])
+
+        paused = miniapp_server.pause_shift_for_telegram(4123)
+        self.assertTrue(paused["ok"], paused)
+        self.assertTrue(paused["shift"]["is_paused"])
+        self.assertFalse(paused["can_work"])
+        repeated = miniapp_server.pause_shift_for_telegram(4123)
+        self.assertIn("уже находится на паузе", repeated["message"])
+
+        blocked = miniapp_server.complete_route_task_for_telegram(
+            4123,
+            batch["id"],
+            {"good_quantity": 5, "defect_quantity": 0},
+        )
+        self.assertFalse(blocked["ok"], blocked)
+        self.assertIn("продолжите смену", blocked["message"])
+        during_pause = self.database.get_route_batch_by_id(batch["id"])
+        self.assertEqual(during_pause["assigned_employee_id"], employee[0])
+        self.assertEqual(during_pause["work_state"], "in_work")
+
+        resumed = miniapp_server.resume_shift_for_telegram(4123)
+        self.assertTrue(resumed["ok"], resumed)
+        self.assertFalse(resumed["shift"]["is_paused"])
+        self.assertTrue(resumed["can_work"])
+        self.assertEqual(self.database.get_open_shift_for_today(employee[0])[0], shift["id"])
+
+    def test_shift_close_deducts_multiple_pauses_without_double_counting_lunch(self):
+        self.database.create_employee(4124, "Тест Учёт Пауз", "Швея")
+        employee = self.database.get_employee_by_telegram_id(4124)
+        self.database.update_employee_status(employee[0], "active")
+
+        with patch.object(self.database, "local_now", return_value=datetime(2026, 8, 12, 8, 0)):
+            shift = self.database.create_shift(employee[0])
+        with patch.object(self.database, "local_now", return_value=datetime(2026, 8, 12, 10, 0)):
+            self.assertTrue(self.database.pause_shift(shift["id"])["ok"])
+        with patch.object(self.database, "local_now", return_value=datetime(2026, 8, 12, 12, 0)):
+            first_resume = self.database.resume_shift(shift["id"])
+        self.assertEqual(first_resume["duration_minutes"], 120)
+        with patch.object(self.database, "local_now", return_value=datetime(2026, 8, 12, 13, 30)):
+            self.assertTrue(self.database.pause_shift(shift["id"])["ok"])
+        with patch.object(self.database, "local_now", return_value=datetime(2026, 8, 12, 14, 30)):
+            second_resume = self.database.resume_shift(shift["id"])
+        self.assertEqual(second_resume["duration_minutes"], 60)
+
+        with patch.object(self.database, "local_now", return_value=datetime(2026, 8, 12, 17, 0)):
+            result = self.database.close_shift(shift["id"])
+
+        self.assertEqual(result["gross_minutes"], 540)
+        self.assertEqual(result["pause_minutes"], 180)
+        self.assertEqual(result["break_minutes"], 210)
+        self.assertEqual(result["total_minutes"], 330)
+        conn = sqlite3.connect(self.database.DB_NAME)
+        pause_rows = conn.execute(
+            "SELECT duration_minutes FROM shift_pauses WHERE shift_id = ? ORDER BY id",
+            (shift["id"],),
+        ).fetchall()
+        stored = conn.execute(
+            "SELECT pause_minutes, break_minutes, total_minutes FROM shifts WHERE id = ?",
+            (shift["id"],),
+        ).fetchone()
+        conn.close()
+        self.assertEqual(pause_rows, [(120,), (60,)])
+        self.assertEqual(stored, (180, 210, 330))
 
     def test_admin_web_push_subscription_test_and_disable(self):
         miniapp_server = importlib.import_module("miniapp_server")

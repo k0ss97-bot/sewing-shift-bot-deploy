@@ -115,6 +115,8 @@ from database import (
     get_production_task_fabric_rolls,
     get_production_task_fabric_defects,
     get_shift_for_today,
+    get_shift_pause_state,
+    get_working_shift_for_today,
     get_shift_report,
     get_warehouse_stock_by_id,
     get_warehouse_stock_rows,
@@ -128,9 +130,11 @@ from database import (
     mark_cutting_batch_formed,
     mark_wms_receipt_outbox_failed,
     mark_wms_receipt_outbox_sent,
+    pause_shift,
     record_web_push_delivery,
     reject_production_task_fabric_rolls,
     release_production_task,
+    resume_shift,
     route_steps_from_snapshot,
     restore_operation,
     set_route_batch_work_state,
@@ -1256,6 +1260,15 @@ def get_shift_state(telegram_id: int, message: str = ""):
     today_shift = open_shift or get_shift_for_today(employee[0])
     shift_data = shift_to_dict(today_shift)
 
+    pause_state = get_shift_pause_state(today_shift[0]) if today_shift and today_shift[5] == "open" else {
+        "is_paused": False,
+        "paused_at": None,
+        "pause_minutes": 0,
+        "pause_count": 0,
+    }
+    if shift_data:
+        shift_data.update(pause_state)
+
     if today_shift and today_shift[5] == "closed":
         shift_data["total_minutes_text"] = ""
 
@@ -1266,6 +1279,7 @@ def get_shift_state(telegram_id: int, message: str = ""):
         "employee": employee_data,
         "shift": shift_data,
         "has_open_shift": open_shift is not None,
+        "can_work": open_shift is not None and not pause_state["is_paused"],
     }
 
 
@@ -1278,7 +1292,9 @@ def open_shift_for_telegram(telegram_id: int):
     open_shift = get_open_shift_for_today(employee[0])
 
     if open_shift is not None:
-        return get_shift_state(telegram_id, "Смена уже открыта.")
+        pause_state = get_shift_pause_state(open_shift[0])
+        message = "Смена открыта и сейчас на паузе." if pause_state["is_paused"] else "Смена уже открыта."
+        return get_shift_state(telegram_id, message)
 
     today_shift = get_shift_for_today(employee[0])
 
@@ -1337,6 +1353,61 @@ def close_shift_for_telegram(telegram_id: int):
         response["shift"]["total_minutes_text"] = format_minutes(result["total_minutes"])
 
     return response
+
+
+def pause_shift_for_telegram(telegram_id: int):
+    employee = get_employee_for_access(telegram_id)
+    if employee is None or employee[5] != "active":
+        return get_shift_state(telegram_id)
+
+    open_shift = get_open_shift_for_today(employee[0])
+    if open_shift is None:
+        return get_shift_state(telegram_id, "У вас нет открытой смены.")
+
+    result = pause_shift(open_shift[0])
+    if not result.get("ok"):
+        return get_shift_state(telegram_id, "Не удалось поставить смену на паузу.")
+    if result.get("code") == "already_paused":
+        return get_shift_state(telegram_id, "Смена уже находится на паузе.")
+
+    add_edit_log(
+        telegram_id,
+        "employee",
+        "Поставил смену на паузу",
+        "shift",
+        open_shift[0],
+        f"Начало паузы: {str(result.get('paused_at') or '')[:16]}",
+    )
+    return get_shift_state(telegram_id, "Смена поставлена на паузу. Задания сохранены за вами.")
+
+
+def resume_shift_for_telegram(telegram_id: int):
+    employee = get_employee_for_access(telegram_id)
+    if employee is None or employee[5] != "active":
+        return get_shift_state(telegram_id)
+
+    open_shift = get_open_shift_for_today(employee[0])
+    if open_shift is None:
+        return get_shift_state(telegram_id, "У вас нет открытой смены.")
+
+    result = resume_shift(open_shift[0])
+    if not result.get("ok"):
+        return get_shift_state(telegram_id, "Не удалось продолжить смену.")
+    if result.get("code") == "not_paused":
+        return get_shift_state(telegram_id, "Смена уже продолжается.")
+
+    add_edit_log(
+        telegram_id,
+        "employee",
+        "Продолжил смену после паузы",
+        "shift",
+        open_shift[0],
+        f"Пауза: {format_minutes(result.get('duration_minutes') or 0)}",
+    )
+    return get_shift_state(
+        telegram_id,
+        f"Смена продолжена. Пауза длилась {format_minutes(result.get('duration_minutes') or 0)}.",
+    )
 
 
 def operation_row_to_dict(row):
@@ -1805,8 +1876,8 @@ def start_route_task_for_telegram(telegram_id: int, batch_id: int, quantity: int
     if is_admin(telegram_id):
         return {"ok": False, "message": "Администратор не выполняет производственные задания."}
 
-    if get_open_shift_for_today(employee[0]) is None:
-        return {"ok": False, "message": "Откройте смену перед выбором задания."}
+    if get_working_shift_for_today(employee[0]) is None:
+        return {"ok": False, "message": "Откройте или продолжите смену перед выбором задания."}
 
     batch = get_route_batch_by_id(batch_id)
 
@@ -2012,11 +2083,11 @@ def complete_route_task_for_telegram(
             },
         }
 
-    open_shift = get_open_shift_for_today(employee[0])
+    open_shift = get_working_shift_for_today(employee[0])
     if open_shift is None and admin_override:
         open_shift = get_latest_shift_for_employee(employee[0])
     if open_shift is None:
-        return {"ok": False, "message": "Откройте смену перед выполнением задания."}
+        return {"ok": False, "message": "Откройте или продолжите смену перед выполнением задания."}
 
     batch = get_route_batch_by_id(batch_id)
 
@@ -2030,7 +2101,7 @@ def complete_route_task_for_telegram(
         return {"ok": False, "message": "Выбранный сотрудник не может выполнять эту операцию." if admin_override else "Это задание сейчас доступно другой должности."}
 
     if admin_override:
-        if get_open_shift_for_today(employee[0]) is None:
+        if get_working_shift_for_today(employee[0]) is None:
             if get_latest_shift_for_employee(employee[0]) is None:
                 return {"ok": False, "message": "У выбранного исполнителя нет смены для записи операции."}
         if batch.get("assigned_employee_id") != employee[0]:
@@ -2294,8 +2365,8 @@ def route_task_work_action_for_telegram(telegram_id: int, batch_id: int, payload
         return {"ok": False, "message": "Неизвестное действие с заданием."}
     if action in {"block", "release"} and not reason:
         return {"ok": False, "message": "Укажите причину."}
-    if action == "resume" and not is_admin(telegram_id) and get_open_shift_for_today(employee[0]) is None:
-        return {"ok": False, "message": "Откройте смену перед продолжением задания."}
+    if action == "resume" and not is_admin(telegram_id) and get_working_shift_for_today(employee[0]) is None:
+        return {"ok": False, "message": "Откройте или продолжите смену перед продолжением задания."}
 
     batch = get_route_batch_by_id(batch_id)
     if batch is None or batch["status"] != "active":
@@ -2890,8 +2961,8 @@ def start_cutting_task_for_telegram(telegram_id: int, task_id: int):
     if employee[3] != "Раскройщик":
         return {"ok": False, "message": "Задания на раскрой доступны раскройщику."}
 
-    if get_open_shift_for_today(employee[0]) is None:
-        return {"ok": False, "message": "Откройте смену перед выбором задания."}
+    if get_working_shift_for_today(employee[0]) is None:
+        return {"ok": False, "message": "Откройте или продолжите смену перед выбором задания."}
 
     task = get_production_task_by_id(task_id)
 
@@ -3169,8 +3240,8 @@ def reject_fabric_rolls_for_telegram(telegram_id: int, payload: dict):
         return {"ok": False, "message": "Нет активного профиля."}
     if employee[3] != "Раскройщик":
         return {"ok": False, "message": "Списывать рулоны в брак может только раскройщик."}
-    if get_open_shift_for_today(employee[0]) is None:
-        return {"ok": False, "message": "Откройте смену перед списанием рулонов в брак."}
+    if get_working_shift_for_today(employee[0]) is None:
+        return {"ok": False, "message": "Откройте или продолжите смену перед списанием рулонов в брак."}
 
     product_color = (payload.get("product_color") or "").strip()
     comment = (payload.get("comment") or "").strip()
@@ -3693,10 +3764,10 @@ def submit_production_contours_for_telegram(telegram_id: int, payload: dict):
     if employee[3] != "Раскройщик" and not is_admin(telegram_id):
         return {"ok": False, "message": "Задания на раскрой доступны раскройщику."}
 
-    shift = get_open_shift_for_today(employee[0])
+    shift = get_working_shift_for_today(employee[0])
 
     if shift is None:
-        return {"ok": False, "message": "Откройте смену перед выполнением задания."}
+        return {"ok": False, "message": "Откройте или продолжите смену перед выполнением задания."}
 
     try:
         task_id = int(payload.get("task_id") or 0)
@@ -3800,10 +3871,10 @@ def submit_cutting_stage_for_telegram(telegram_id: int, payload: dict):
     if employee[3] != "Раскройщик" and not is_admin(telegram_id):
         return {"ok": False, "message": "Этапы раскроя доступны раскройщику."}
 
-    shift = get_open_shift_for_today(employee[0])
+    shift = get_working_shift_for_today(employee[0])
 
     if shift is None:
-        return {"ok": False, "message": "Откройте смену перед выполнением задания."}
+        return {"ok": False, "message": "Откройте или продолжите смену перед выполнением задания."}
 
     stage = (payload.get("stage") or "").strip()
 
@@ -4236,13 +4307,14 @@ def pending_employee_to_dict(employee, web_profiles=None, wms_access=None):
 
 
 def open_shift_to_dict(shift):
-    shift_id, full_name, shift_date, start_time = shift
+    shift_id, full_name, shift_date, start_time, is_paused = shift
 
     return {
         "id": shift_id,
         "employee": full_name,
         "date": shift_date,
         "start_time": start_time,
+        "is_paused": bool(is_paused),
     }
 
 
@@ -7169,6 +7241,12 @@ def make_handler(bot_token: str, debug: bool):
                     result["shift_close_reminder"] = action_result["shift_close_reminder"]
             elif path == "/api/shift/close":
                 action_result = close_shift_for_telegram(telegram_id)
+                result = get_app_state(telegram_id, action_result.get("message", ""))
+            elif path == "/api/shift/pause":
+                action_result = pause_shift_for_telegram(telegram_id)
+                result = get_app_state(telegram_id, action_result.get("message", ""))
+            elif path == "/api/shift/resume":
+                action_result = resume_shift_for_telegram(telegram_id)
                 result = get_app_state(telegram_id, action_result.get("message", ""))
             elif path == "/api/feedback/send":
                 result = submit_feedback_for_telegram(

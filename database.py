@@ -1863,7 +1863,23 @@ def _backfill_shift_time_metrics(cursor):
         lunch_start = normalize_lunch_time(lunch_start, DEFAULT_LUNCH_START)
         lunch_end = normalize_lunch_time(lunch_end, DEFAULT_LUNCH_END)
         if status == "closed" and end_time:
-            metrics = calculate_shift_minutes(shift_date, start_time, end_time, lunch_start, lunch_end)
+            cursor.execute(
+                """
+                SELECT started_at, ended_at
+                FROM shift_pauses
+                WHERE shift_id = ? AND ended_at IS NOT NULL
+                ORDER BY started_at ASC, id ASC
+                """,
+                (shift_id,),
+            )
+            metrics = calculate_shift_minutes(
+                shift_date,
+                start_time,
+                end_time,
+                lunch_start,
+                lunch_end,
+                pause_intervals=cursor.fetchall(),
+            )
             source_gross = gross_minutes if gross_minutes is not None else total_minutes
             if source_gross is not None:
                 metrics["gross_minutes"] = int(source_gross)
@@ -1871,12 +1887,12 @@ def _backfill_shift_time_metrics(cursor):
             cursor.execute(
                 """
                 UPDATE shifts
-                SET gross_minutes = ?, break_minutes = ?, total_minutes = ?,
+                SET gross_minutes = ?, break_minutes = ?, pause_minutes = ?, total_minutes = ?,
                     lunch_start = ?, lunch_end = ?, unclosed_reason = NULL
                 WHERE id = ?
                 """,
                 (
-                    metrics["gross_minutes"], metrics["break_minutes"], metrics["net_minutes"],
+                    metrics["gross_minutes"], metrics["break_minutes"], metrics["pause_minutes"], metrics["net_minutes"],
                     lunch_start, lunch_end, shift_id,
                 ),
             )
@@ -1939,7 +1955,23 @@ def update_employee_lunch_window(employee_id: int, lunch_start: str, lunch_end: 
                 (lunch_start, lunch_end, shift_id),
             )
             continue
-        metrics = calculate_shift_minutes(shift_date, start_time, end_time, lunch_start, lunch_end)
+        cursor.execute(
+            """
+            SELECT started_at, ended_at
+            FROM shift_pauses
+            WHERE shift_id = ? AND ended_at IS NOT NULL
+            ORDER BY started_at ASC, id ASC
+            """,
+            (shift_id,),
+        )
+        metrics = calculate_shift_minutes(
+            shift_date,
+            start_time,
+            end_time,
+            lunch_start,
+            lunch_end,
+            pause_intervals=cursor.fetchall(),
+        )
         source_gross = gross_minutes if gross_minutes is not None else total_minutes
         if source_gross is not None:
             metrics["gross_minutes"] = int(source_gross)
@@ -1947,12 +1979,12 @@ def update_employee_lunch_window(employee_id: int, lunch_start: str, lunch_end: 
         cursor.execute(
             """
             UPDATE shifts
-            SET gross_minutes = ?, break_minutes = ?, total_minutes = ?,
+            SET gross_minutes = ?, break_minutes = ?, pause_minutes = ?, total_minutes = ?,
                 lunch_start = ?, lunch_end = ?
             WHERE id = ?
             """,
             (
-                metrics["gross_minutes"], metrics["break_minutes"], metrics["net_minutes"],
+                metrics["gross_minutes"], metrics["break_minutes"], metrics["pause_minutes"], metrics["net_minutes"],
                 lunch_start, lunch_end, shift_id,
             ),
         )
@@ -2096,6 +2128,20 @@ def init_db():
         cursor.execute("ALTER TABLE shifts ADD COLUMN lunch_end TEXT NOT NULL DEFAULT '14:00'")
     if "unclosed_reason" not in shift_columns:
         cursor.execute("ALTER TABLE shifts ADD COLUMN unclosed_reason TEXT")
+    if "pause_minutes" not in shift_columns:
+        cursor.execute("ALTER TABLE shifts ADD COLUMN pause_minutes INTEGER NOT NULL DEFAULT 0")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS shift_pauses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shift_id INTEGER NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            duration_minutes INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (shift_id) REFERENCES shifts (id) ON DELETE CASCADE
+        )
+    """)
 
     _backfill_shift_time_metrics(cursor)
 
@@ -2902,6 +2948,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shifts_date_status ON shifts (shift_date, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_employees_role_status ON employees (role, status)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_one_open ON shifts (employee_id) WHERE status = 'open'")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_pauses_shift ON shift_pauses (shift_id, started_at)")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_pauses_one_active ON shift_pauses (shift_id) WHERE ended_at IS NULL")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_shift ON shift_operations (shift_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_operations_employee ON shift_operations (employee_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_operations_navigation ON operations (position, operation_group, folder, is_active)")
@@ -3761,6 +3809,166 @@ def get_open_shift_for_today(employee_id: int):
 
     conn.close()
     return shift
+
+
+def get_shift_pause_state(shift_id: int, now: datetime | None = None):
+    """Return the active pause and accumulated manual pause time."""
+    current_time = now or local_now()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, started_at, ended_at, duration_minutes
+        FROM shift_pauses
+        WHERE shift_id = ?
+        ORDER BY started_at ASC, id ASC
+        """,
+        (shift_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    active = None
+    total_minutes = 0
+    for pause_id, started_at, ended_at, duration_minutes in rows:
+        if ended_at is None:
+            active = (pause_id, started_at)
+            try:
+                started = datetime.fromisoformat(started_at)
+                total_minutes += max(0, int((current_time - started).total_seconds() // 60))
+            except (TypeError, ValueError):
+                pass
+        else:
+            total_minutes += max(0, int(duration_minutes or 0))
+
+    return {
+        "is_paused": active is not None,
+        "active_pause_id": active[0] if active else None,
+        "paused_at": active[1] if active else None,
+        "pause_minutes": total_minutes,
+        "pause_count": len(rows),
+    }
+
+
+def get_working_shift_for_today(employee_id: int):
+    """Return the open shift only while the employee is not on a manual pause."""
+    shift = get_open_shift_for_today(employee_id)
+    if shift is None:
+        return None
+    if get_shift_pause_state(shift[0])["is_paused"]:
+        return None
+    return shift
+
+
+def _finalize_active_shift_pause(cursor, shift_id: int, ended_at: datetime):
+    cursor.execute(
+        """
+        SELECT id, started_at
+        FROM shift_pauses
+        WHERE shift_id = ? AND ended_at IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (shift_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+
+    pause_id, started_at = row
+    try:
+        started = datetime.fromisoformat(started_at)
+        effective_end = max(started, ended_at)
+        duration_minutes = max(0, int((effective_end - started).total_seconds() // 60))
+    except (TypeError, ValueError):
+        effective_end = ended_at
+        duration_minutes = 0
+    cursor.execute(
+        """
+        UPDATE shift_pauses
+        SET ended_at = ?, duration_minutes = ?
+        WHERE id = ? AND ended_at IS NULL
+        """,
+        (effective_end.isoformat(), duration_minutes, pause_id),
+    )
+    cursor.execute(
+        """
+        UPDATE shifts
+        SET pause_minutes = (
+            SELECT COALESCE(SUM(duration_minutes), 0)
+            FROM shift_pauses
+            WHERE shift_id = ? AND ended_at IS NOT NULL
+        )
+        WHERE id = ?
+        """,
+        (shift_id, shift_id),
+    )
+    return {
+        "id": pause_id,
+        "started_at": started_at,
+        "ended_at": effective_end.isoformat(),
+        "duration_minutes": duration_minutes,
+    }
+
+
+def pause_shift(shift_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = local_now()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute("SELECT status FROM shifts WHERE id = ?", (shift_id,))
+        shift = cursor.fetchone()
+        if shift is None or shift[0] != "open":
+            conn.rollback()
+            return {"ok": False, "code": "shift_not_open"}
+        cursor.execute(
+            "SELECT id, started_at FROM shift_pauses WHERE shift_id = ? AND ended_at IS NULL",
+            (shift_id,),
+        )
+        active = cursor.fetchone()
+        if active is not None:
+            conn.rollback()
+            return {"ok": True, "code": "already_paused", "pause_id": active[0], "paused_at": active[1]}
+        cursor.execute(
+            """
+            INSERT INTO shift_pauses (shift_id, started_at, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (shift_id, now.isoformat(), now.isoformat()),
+        )
+        pause_id = cursor.lastrowid
+        conn.commit()
+        return {"ok": True, "code": "paused", "pause_id": pause_id, "paused_at": now.isoformat()}
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def resume_shift(shift_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = local_now()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute("SELECT status FROM shifts WHERE id = ?", (shift_id,))
+        shift = cursor.fetchone()
+        if shift is None or shift[0] != "open":
+            conn.rollback()
+            return {"ok": False, "code": "shift_not_open"}
+        pause = _finalize_active_shift_pause(cursor, shift_id, now)
+        if pause is None:
+            conn.rollback()
+            return {"ok": True, "code": "not_paused"}
+        conn.commit()
+        return {"ok": True, "code": "resumed", **pause}
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def get_latest_shift_for_employee(employee_id: int):
@@ -11781,7 +11989,25 @@ def close_shift(shift_id: int):
         return None
 
     shift_date, start_time, lunch_start, lunch_end = row
-    metrics = calculate_shift_minutes(shift_date, start_time, end_time, lunch_start, lunch_end)
+    _finalize_active_shift_pause(cursor, shift_id, now)
+    cursor.execute(
+        """
+        SELECT started_at, ended_at
+        FROM shift_pauses
+        WHERE shift_id = ? AND ended_at IS NOT NULL
+        ORDER BY started_at ASC, id ASC
+        """,
+        (shift_id,),
+    )
+    pause_intervals = cursor.fetchall()
+    metrics = calculate_shift_minutes(
+        shift_date,
+        start_time,
+        end_time,
+        lunch_start,
+        lunch_end,
+        pause_intervals=pause_intervals,
+    )
     total_minutes = metrics["net_minutes"]
 
     cursor.execute(
@@ -11791,6 +12017,7 @@ def close_shift(shift_id: int):
             total_minutes = ?,
             gross_minutes = ?,
             break_minutes = ?,
+            pause_minutes = ?,
             lunch_start = ?,
             lunch_end = ?,
             unclosed_reason = NULL,
@@ -11801,7 +12028,7 @@ def close_shift(shift_id: int):
           AND status = 'open'
         """,
         (
-            end_time, total_minutes, metrics["gross_minutes"], metrics["break_minutes"],
+            end_time, total_minutes, metrics["gross_minutes"], metrics["break_minutes"], metrics["pause_minutes"],
             metrics["lunch_start"], metrics["lunch_end"], edit_until, closed_at, shift_id,
         )
     )
@@ -11819,6 +12046,7 @@ def close_shift(shift_id: int):
         "total_minutes": total_minutes,
         "gross_minutes": metrics["gross_minutes"],
         "break_minutes": metrics["break_minutes"],
+        "pause_minutes": metrics["pause_minutes"],
         "edit_until": edit_until,
     }
 
@@ -11833,7 +12061,13 @@ def get_open_shifts():
             shifts.id,
             employees.full_name,
             shifts.shift_date,
-            shifts.start_time
+            shifts.start_time,
+            EXISTS(
+                SELECT 1
+                FROM shift_pauses
+                WHERE shift_pauses.shift_id = shifts.id
+                  AND shift_pauses.ended_at IS NULL
+            ) AS is_paused
         FROM shifts
         JOIN employees ON employees.id = shifts.employee_id
         WHERE shifts.status = 'open'
@@ -11961,6 +12195,7 @@ def delete_shift_by_id(shift_id: int):
     try:
         cursor.execute("UPDATE feedback_entries SET shift_id = NULL WHERE shift_id = ?", (shift_id,))
         cursor.execute("DELETE FROM shift_operations WHERE shift_id = ?", (shift_id,))
+        cursor.execute("DELETE FROM shift_pauses WHERE shift_id = ?", (shift_id,))
         cursor.execute("DELETE FROM shifts WHERE id = ?", (shift_id,))
         conn.commit()
     except sqlite3.Error:
@@ -11978,9 +12213,10 @@ def admin_close_shift(shift_id: int, end_time: str):
 
     cursor.execute(
         """
-        SELECT shift_date, start_time
+        SELECT shifts.shift_date, shifts.start_time, employees.lunch_start, employees.lunch_end
         FROM shifts
-        WHERE id = ? AND status = 'open'
+        JOIN employees ON employees.id = shifts.employee_id
+        WHERE shifts.id = ? AND shifts.status = 'open'
         """,
         (shift_id,)
     )
@@ -11991,7 +12227,7 @@ def admin_close_shift(shift_id: int, end_time: str):
         conn.close()
         return None
 
-    shift_date, start_time = row
+    shift_date, start_time, lunch_start, lunch_end = row
 
     start_dt = datetime.strptime(f"{shift_date} {start_time}", "%Y-%m-%d %H:%M")
     end_dt = datetime.strptime(f"{shift_date} {end_time}", "%Y-%m-%d %H:%M")
@@ -12007,20 +12243,55 @@ def admin_close_shift(shift_id: int, end_time: str):
     now = local_now()
     closed_at = now.isoformat()
     edit_until = (now + timedelta(hours=1)).isoformat()
-    total_minutes = int((end_dt - start_dt).total_seconds() // 60)
+    _finalize_active_shift_pause(cursor, shift_id, end_dt)
+    cursor.execute(
+        """
+        SELECT started_at, ended_at
+        FROM shift_pauses
+        WHERE shift_id = ? AND ended_at IS NOT NULL
+        ORDER BY started_at ASC, id ASC
+        """,
+        (shift_id,),
+    )
+    metrics = calculate_shift_minutes(
+        shift_date,
+        start_time,
+        end_time,
+        lunch_start,
+        lunch_end,
+        pause_intervals=cursor.fetchall(),
+    )
+    total_minutes = metrics["net_minutes"]
 
     cursor.execute(
         """
         UPDATE shifts
         SET end_time = ?,
             total_minutes = ?,
+            gross_minutes = ?,
+            break_minutes = ?,
+            pause_minutes = ?,
+            lunch_start = ?,
+            lunch_end = ?,
+            unclosed_reason = NULL,
             status = 'closed',
             edit_until = ?,
             closed_at = ?
         WHERE id = ?
           AND status = 'open'
         """,
-        (end_time, total_minutes, edit_until, closed_at, shift_id)
+        (
+            end_time,
+            total_minutes,
+            metrics["gross_minutes"],
+            metrics["break_minutes"],
+            metrics["pause_minutes"],
+            metrics["lunch_start"],
+            metrics["lunch_end"],
+            edit_until,
+            closed_at,
+            shift_id,
+        )
     )
 
     if cursor.rowcount != 1:
@@ -12034,6 +12305,9 @@ def admin_close_shift(shift_id: int, end_time: str):
     return {
         "end_time": end_time,
         "total_minutes": total_minutes,
+        "gross_minutes": metrics["gross_minutes"],
+        "break_minutes": metrics["break_minutes"],
+        "pause_minutes": metrics["pause_minutes"],
         "edit_until": edit_until,
     }
 

@@ -1230,6 +1230,7 @@
     function shiftText() {
       const shift = state.data && state.data.shift;
       if (!shift) return "Смена не открыта";
+      if (shift.status === "open" && shift.is_paused) return "Смена на паузе";
       return shift.status === "open" ? "Смена открыта" : "Смена закрыта";
     }
 
@@ -2601,6 +2602,7 @@ ${explanation}
       const fabricRows = getEmployeeFabricRows();
       const activeTasks = routeTasks.length + cuttingTasks.length;
       const hasOpen = state.data && state.data.has_open_shift;
+      const isPaused = Boolean(shift && shift.status === "open" && shift.is_paused);
 
       if (state.employeeHomeView && state.employeeHomeView !== "overview") {
         renderEmployeeHomeDetail(state.employeeHomeView, {operations, routeTasks, cuttingTasks, contourTasks, fabricRows});
@@ -2612,7 +2614,8 @@ ${explanation}
 
       mount.innerHTML = `
         <div class="screen-head"><div><h2>Сегодня</h2><p>${escapeHtml(employee ? employee.full_name : "Пользователь не определён")}</p></div><div class="date">${escapeHtml(shift ? shift.date : "сегодня")}</div></div>
-        <div class="card shift-card"><div><b>${escapeHtml(shiftText())}</b><span>${escapeHtml(employee ? employee.position : "-")} · профиль ${escapeHtml(employee ? employee.status : "-")}<br>${escapeHtml(shift ? `${shift.start_time || "-"}-${shift.end_time || ""}` : "Начните смену, чтобы вести отчёт")}</span></div><span class="status-chip ${hasOpen ? "" : "gray"}">● ${hasOpen ? "в процессе" : "ожидает"}</span></div>
+        <div class="card shift-card"><div><b>${escapeHtml(shiftText())}</b><span>${escapeHtml(employee ? employee.position : "-")} · профиль ${escapeHtml(employee ? employee.status : "-")}<br>${escapeHtml(shift ? `${shift.start_time || "-"}-${shift.end_time || ""}` : "Начните смену, чтобы вести отчёт")}</span></div><span class="status-chip ${hasOpen && !isPaused ? "" : "gray"}">● ${isPaused ? "пауза" : (hasOpen ? "в процессе" : "ожидает")}</span></div>
+        ${hasOpen ? `<div class="card field-card"><div><b>${isPaused ? "Рабочее время остановлено" : "Нужно отлучиться?"}</b><span class="muted">${isPaused ? "Задания сохранены за вами. Нажмите кнопку, когда вернётесь к работе." : "Пауза не входит в отработанное время и не освобождает ваши задания."}</span></div><div class="button-row"><button type="button" class="small-button ${isPaused ? "" : "secondary"}" data-shift-action="${isPaused ? "resume" : "pause"}">${isPaused ? "Продолжить смену" : "Поставить на паузу"}</button></div></div>` : ""}
         <div class="kpi-grid">
           <button type="button" class="card kpi home-kpi" data-employee-home-detail="report"><div class="kpi-top"><span>Отчёт</span><div class="kpi-ico">${sewingIcon()}</div></div><strong>${operations.length}<small> строк</small></strong><span>Открыть операции ›</span><div class="progress"><progress max="100" value="${Math.min(100, operations.length * 12)}"></progress></div></button>
           <button type="button" class="card kpi good home-kpi" data-employee-home-detail="tasks"><div class="kpi-top"><span>Задания</span><div class="kpi-ico">${uiIcon("clipboard")}</div></div><strong>${activeTasks}<small> акт.</small></strong><span>Открыть задания ›</span><div class="progress sage"><progress max="100" value="${Math.min(100, activeTasks * 18)}"></progress></div></button>
@@ -8294,7 +8297,7 @@ ${location.code}`)) return;
         <div class="section-title"><b>Открытые смены</b><span>${openShifts.length}</span></div>
         <div class="op-list">
           ${openShifts.length ? openShifts.map((shift) => `
-            <div class="card field-card"><label>ID ${escapeHtml(shift.id)}</label><div class="report-row"><div><b>${escapeHtml(shift.employee)}</b><span>${escapeHtml(shift.date)} · начало ${escapeHtml(shift.start_time)}</span></div><span class="status-chip">open</span></div><div class="button-row"><button class="small-button secondary" data-admin-action="refresh">Обновить</button><button class="small-button" data-admin-action="close-shift" data-shift-id="${escapeHtml(shift.id)}">Закрыть</button></div></div>
+            <div class="card field-card"><label>ID ${escapeHtml(shift.id)}</label><div class="report-row"><div><b>${escapeHtml(shift.employee)}</b><span>${escapeHtml(shift.date)} · начало ${escapeHtml(shift.start_time)}</span></div><span class="status-chip ${shift.is_paused ? "gray" : ""}">${shift.is_paused ? "пауза" : "в работе"}</span></div><div class="button-row"><button class="small-button secondary" data-admin-action="refresh">Обновить</button><button class="small-button" data-admin-action="close-shift" data-shift-id="${escapeHtml(shift.id)}">Закрыть</button></div></div>
           `).join("") : itemEmpty("Открытых смен сейчас нет.")}
         </div>
         <div class="section-title"><b>Последние смены</b><button data-admin-action="refresh">обновить</button></div>
@@ -9575,6 +9578,12 @@ ${location.code}`)) return;
     }
 
     document.addEventListener("click", (event) => {
+      const employeeShiftAction = event.target.closest("[data-shift-action]");
+      if (employeeShiftAction) {
+        shiftAction(employeeShiftAction.dataset.shiftAction);
+        return;
+      }
+
       const pushAction = event.target.closest("[data-push-action]");
       if (pushAction) {
         if (pushAction.dataset.pushAction === "enable") enableAdminWebPush();
