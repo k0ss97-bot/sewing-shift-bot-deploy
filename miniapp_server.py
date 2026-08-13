@@ -4899,17 +4899,37 @@ def build_period_timesheet(start_date: str, end_date: str):
                 "total_minutes": 0,
             },
         )
-        shift_id, shift_date, start_time, end_time, total_minutes, shift_status = row[4:]
+        (
+            shift_id, shift_date, start_time, end_time, total_minutes, shift_status,
+            break_minutes, pause_minutes, is_paused,
+        ) = row[4:]
         if shift_id is None:
             continue
         minutes = int(total_minutes or 0)
         day = employee["days"].setdefault(
             shift_date,
-            {"minutes": 0, "shift_count": 0, "open": False},
+            {
+                "minutes": 0,
+                "break_minutes": 0,
+                "pause_minutes": 0,
+                "shift_count": 0,
+                "open": False,
+                "shifts": [],
+            },
         )
         day["minutes"] += minutes
+        day["break_minutes"] += int(break_minutes or 0)
+        day["pause_minutes"] += int(pause_minutes or 0)
         day["shift_count"] += 1
         day["open"] = day["open"] or shift_status == "open"
+        day["shifts"].append(
+            {
+                "start_time": start_time or "",
+                "end_time": end_time or "",
+                "status": shift_status,
+                "is_paused": bool(is_paused),
+            }
+        )
         employee["shift_count"] += 1
         employee["total_minutes"] += minutes
         shifts.append(
@@ -4922,8 +4942,11 @@ def build_period_timesheet(start_date: str, end_date: str):
                 "start_time": start_time or "",
                 "end_time": end_time or "",
                 "total_minutes": minutes,
+                "break_minutes": int(break_minutes or 0),
+                "pause_minutes": int(pause_minutes or 0),
                 "total_time": minutes_to_excel_time(minutes),
                 "status": shift_status,
+                "is_paused": bool(is_paused),
             }
         )
 
@@ -4943,7 +4966,9 @@ def build_period_timesheet(start_date: str, end_date: str):
 
 def create_timesheet_excel_bytes(start_date: str, end_date: str):
     from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.table import Table, TableStyleInfo
 
     timesheet = build_period_timesheet(start_date, end_date)
     status_labels = {
@@ -4952,77 +4977,300 @@ def create_timesheet_excel_bytes(start_date: str, end_date: str):
         "pending": "Ожидает",
         "rejected": "Отклонён",
     }
+    weekday_labels = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
     dates = [datetime.strptime(value, "%Y-%m-%d").date() for value in timesheet["dates"]]
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Табель"
-    sheet.append(
-        ["№", "Сотрудник", "Должность", "Статус"]
-        + [value.strftime("%d.%m") for value in dates]
-        + ["Отработано дней", "Смен", "Итого часов"]
-    )
 
+    navy = "172554"
+    blue = "2563EB"
+    pale_blue = "EFF6FF"
+    weekend_blue = "E8EEF8"
+    header_text = "FFFFFF"
+    body_text = "172033"
+    muted_text = "64748B"
+    line_color = "D8E1EE"
+    total_fill = "E2E8F0"
+    open_fill = "FEF3C7"
+    inactive_fill = "F1F5F9"
+    thin_line = Side(style="thin", color=line_color)
+
+    first_date_column = 5
+    summary_start_column = first_date_column + len(dates) * 3
+    last_column = summary_start_column + 2
+    last_letter = get_column_letter(last_column)
+
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_column)
+    sheet.cell(1, 1, "ТАБЕЛЬ УЧЁТА РАБОЧЕГО ВРЕМЕНИ")
+    sheet.cell(1, 1).font = Font(name="Aptos Display", size=18, bold=True, color=header_text)
+    sheet.cell(1, 1).fill = PatternFill("solid", fgColor=navy)
+    sheet.cell(1, 1).alignment = Alignment(horizontal="left", vertical="center")
+    sheet.row_dimensions[1].height = 34
+
+    sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=4)
+    sheet.cell(2, 1, f"Период: {dates[0].strftime('%d.%m.%Y')} — {dates[-1].strftime('%d.%m.%Y')}")
+    sheet.merge_cells(start_row=2, start_column=5, end_row=2, end_column=last_column)
+    sheet.cell(2, 5, f"Сформировано: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+    for cell in (sheet.cell(2, 1), sheet.cell(2, 5)):
+        cell.font = Font(name="Aptos", size=10, bold=True, color=body_text)
+        cell.fill = PatternFill("solid", fgColor=pale_blue)
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+    sheet.cell(2, 5).alignment = Alignment(horizontal="right", vertical="center")
+    sheet.row_dimensions[2].height = 23
+
+    sheet.merge_cells(start_row=3, start_column=1, end_row=3, end_column=last_column)
+    sheet.cell(3, 1, "Часы — чистое рабочее время за вычетом обеденного перерыва и пауз. Незавершённая смена отмечена как «Открыта».")
+    sheet.cell(3, 1).font = Font(name="Aptos", size=9, italic=True, color=muted_text)
+    sheet.cell(3, 1).alignment = Alignment(horizontal="left", vertical="center")
+    sheet.row_dimensions[3].height = 20
+    sheet.row_dimensions[4].height = 8
+
+    base_headers = ["№", "Сотрудник", "Должность", "Статус"]
+    for column, label in enumerate(base_headers, start=1):
+        sheet.merge_cells(start_row=5, start_column=column, end_row=6, end_column=column)
+        sheet.cell(5, column, label)
+
+    for date_index, value in enumerate(dates):
+        start_column = first_date_column + date_index * 3
+        end_column = start_column + 2
+        sheet.merge_cells(start_row=5, start_column=start_column, end_row=5, end_column=end_column)
+        sheet.cell(5, start_column, f"{value.strftime('%d.%m')} · {weekday_labels[value.weekday()]}")
+        for offset, label in enumerate(("Приход", "Уход", "Часы")):
+            sheet.cell(6, start_column + offset, label)
+
+    for offset, label in enumerate(("Дней", "Смен", "Итого часов")):
+        column = summary_start_column + offset
+        sheet.merge_cells(start_row=5, start_column=column, end_row=6, end_column=column)
+        sheet.cell(5, column, label)
+
+    for row_number in (5, 6):
+        for cell in sheet[row_number][:last_column]:
+            cell.fill = PatternFill("solid", fgColor=blue)
+            cell.font = Font(name="Aptos", size=9, bold=True, color=header_text)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = Border(left=thin_line, right=thin_line, top=thin_line, bottom=thin_line)
+    sheet.row_dimensions[5].height = 25
+    sheet.row_dimensions[6].height = 23
+
+    data_start_row = 7
     for index, employee in enumerate(timesheet["employees"], start=1):
-        day_values = []
-        for value in dates:
+        row_number = data_start_row + index - 1
+        sheet.cell(row_number, 1, index)
+        sheet.cell(row_number, 2, employee["full_name"])
+        sheet.cell(row_number, 3, employee["position"])
+        sheet.cell(row_number, 4, status_labels.get(employee["status"], employee["status"]))
+
+        for date_index, value in enumerate(dates):
+            start_column = first_date_column + date_index * 3
             day = employee["days"].get(value.isoformat())
-            if not day:
-                day_values.append("")
-            elif day["minutes"]:
-                day_values.append(round(day["minutes"] / 60, 2))
+            if day:
+                arrivals = [item["start_time"] for item in day["shifts"] if item["start_time"]]
+                departures = [
+                    item["end_time"] if item["end_time"] else "Открыта"
+                    for item in day["shifts"]
+                ]
+                sheet.cell(row_number, start_column, "\n".join(arrivals) or "—")
+                sheet.cell(row_number, start_column + 1, "\n".join(departures) or "—")
+                if day["minutes"]:
+                    sheet.cell(row_number, start_column + 2, day["minutes"] / 1440)
+                    sheet.cell(row_number, start_column + 2).number_format = "[h]:mm"
             else:
-                day_values.append("Открыта")
-        sheet.append(
-            [
-                index,
-                employee["full_name"],
-                employee["position"],
-                status_labels.get(employee["status"], employee["status"]),
-                *day_values,
-                employee["worked_days"],
-                employee["shift_count"],
-                round(employee["total_minutes"] / 60, 2),
-            ]
+                sheet.cell(row_number, start_column, "—")
+                sheet.cell(row_number, start_column + 1, "—")
+
+        sheet.cell(row_number, summary_start_column, employee["worked_days"])
+        sheet.cell(row_number, summary_start_column + 1, employee["shift_count"])
+        sheet.cell(row_number, summary_start_column + 2, employee["total_minutes"] / 1440)
+        sheet.cell(row_number, summary_start_column + 2).number_format = "[h]:mm"
+
+        row_fill = "FFFFFF" if index % 2 else "F8FAFC"
+        for column in range(1, last_column + 1):
+            cell = sheet.cell(row_number, column)
+            cell.fill = PatternFill("solid", fgColor=row_fill)
+            cell.font = Font(name="Aptos", size=9, color=body_text)
+            cell.border = Border(bottom=thin_line)
+            cell.alignment = Alignment(
+                horizontal="left" if column in (2, 3) else "center",
+                vertical="center",
+                wrap_text=True,
+            )
+        if employee["status"] != "active":
+            sheet.cell(row_number, 4).fill = PatternFill("solid", fgColor=inactive_fill)
+            sheet.cell(row_number, 4).font = Font(name="Aptos", size=9, color=muted_text)
+        for date_index, value in enumerate(dates):
+            start_column = first_date_column + date_index * 3
+            if value.weekday() >= 5:
+                for column in range(start_column, start_column + 3):
+                    sheet.cell(row_number, column).fill = PatternFill("solid", fgColor=weekend_blue)
+            day = employee["days"].get(value.isoformat())
+            if day and day["open"]:
+                sheet.cell(row_number, start_column + 1).fill = PatternFill("solid", fgColor=open_fill)
+        max_shift_lines = max(
+            (len(day["shifts"]) for day in employee["days"].values()),
+            default=1,
         )
+        sheet.row_dimensions[row_number].height = min(75, max(27, 15 * max_shift_lines + 8))
 
-    total_row = sheet.max_row + 1
-    sheet.cell(total_row, 2, "Итого")
-    sheet.cell(total_row, 2).font = Font(bold=True)
-    for column in range(5, sheet.max_column + 1):
-        letter = sheet.cell(1, column).column_letter
-        sheet.cell(total_row, column, f"=SUM({letter}2:{letter}{total_row - 1})")
-        sheet.cell(total_row, column).font = Font(bold=True)
+    total_row = data_start_row + len(timesheet["employees"])
+    sheet.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=4)
+    sheet.cell(total_row, 1, f"ИТОГО · сотрудников: {len(timesheet['employees'])}")
+    for date_index in range(len(dates)):
+        hours_column = first_date_column + date_index * 3 + 2
+        letter = get_column_letter(hours_column)
+        if timesheet["employees"]:
+            sheet.cell(total_row, hours_column, f"=SUM({letter}{data_start_row}:{letter}{total_row - 1})")
+        else:
+            sheet.cell(total_row, hours_column, 0)
+        sheet.cell(total_row, hours_column).number_format = "[h]:mm"
+    for column in range(summary_start_column, last_column + 1):
+        letter = get_column_letter(column)
+        if timesheet["employees"]:
+            sheet.cell(total_row, column, f"=SUM({letter}{data_start_row}:{letter}{total_row - 1})")
+        else:
+            sheet.cell(total_row, column, 0)
+    sheet.cell(total_row, last_column).number_format = "[h]:mm"
+    for column in range(1, last_column + 1):
+        cell = sheet.cell(total_row, column)
+        cell.fill = PatternFill("solid", fgColor=total_fill)
+        cell.font = Font(name="Aptos", size=9, bold=True, color=body_text)
+        cell.border = Border(top=Side(style="medium", color=navy), bottom=thin_line)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    sheet.cell(total_row, 1).alignment = Alignment(horizontal="left", vertical="center")
+    sheet.row_dimensions[total_row].height = 26
 
-    header_fill = PatternFill("solid", fgColor="F1E1D6")
-    weekend_fill = PatternFill("solid", fgColor="F4F5F7")
-    for cell in sheet[1]:
-        cell.fill = header_fill
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center", vertical="center", text_rotation=90 if cell.column >= 5 and cell.column < 5 + len(dates) else 0)
-    for offset, value in enumerate(dates, start=5):
-        if value.weekday() >= 5:
-            for row_number in range(1, sheet.max_row + 1):
-                sheet.cell(row_number, offset).fill = weekend_fill
-    sheet.freeze_panes = "E2"
-    sheet.auto_filter.ref = f"A1:{sheet.cell(1, sheet.max_column).column_letter}{max(1, total_row - 1)}"
-    sheet.column_dimensions["A"].width = 6
-    sheet.column_dimensions["B"].width = 30
-    sheet.column_dimensions["C"].width = 22
+    sheet.column_dimensions["A"].width = 5
+    sheet.column_dimensions["B"].width = 31
+    sheet.column_dimensions["C"].width = 19
     sheet.column_dimensions["D"].width = 13
-    for column in range(5, 5 + len(dates)):
-        sheet.column_dimensions[sheet.cell(1, column).column_letter].width = 7
-    for column in range(5 + len(dates), sheet.max_column + 1):
-        sheet.column_dimensions[sheet.cell(1, column).column_letter].width = 16
+    for date_index in range(len(dates)):
+        start_column = first_date_column + date_index * 3
+        sheet.column_dimensions[get_column_letter(start_column)].width = 9
+        sheet.column_dimensions[get_column_letter(start_column + 1)].width = 9
+        sheet.column_dimensions[get_column_letter(start_column + 2)].width = 9
+    sheet.column_dimensions[get_column_letter(summary_start_column)].width = 9
+    sheet.column_dimensions[get_column_letter(summary_start_column + 1)].width = 8
+    sheet.column_dimensions[get_column_letter(summary_start_column + 2)].width = 14
+    sheet.freeze_panes = "E7"
+    sheet.sheet_view.showGridLines = False
+    sheet.sheet_view.zoomScale = 85
+    sheet.sheet_properties.tabColor = blue
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.paperSize = sheet.PAPERSIZE_A3
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+    sheet.print_title_rows = "1:6"
+    sheet.print_title_cols = "A:D"
+    sheet.print_area = f"A1:{last_letter}{total_row}"
+    sheet.page_margins.left = 0.25
+    sheet.page_margins.right = 0.25
+    sheet.page_margins.top = 0.45
+    sheet.page_margins.bottom = 0.45
+    sheet.page_margins.header = 0.2
+    sheet.page_margins.footer = 0.2
+    sheet.sheet_properties.outlinePr.summaryRight = True
 
     details = workbook.create_sheet("Смены")
-    details.append(["ID смены", "Дата", "Сотрудник", "Должность", "Пришёл", "Ушёл", "Часы", "Статус"])
-    for shift in timesheet["shifts"]:
-        details.append([
-            shift["shift_id"], shift["date"], shift["employee"], shift["position"],
-            shift["start_time"], shift["end_time"], round(shift["total_minutes"] / 60, 2),
-            "Закрыта" if shift["status"] == "closed" else "Открыта",
-        ])
-    style_excel_sheet(details)
+    detail_headers = [
+        "№", "Дата", "День", "Сотрудник", "Должность", "Приход", "Уход",
+        "Перерыв", "Пауза", "Отработано", "Состояние", "ID смены",
+    ]
+    details.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(detail_headers))
+    details.cell(1, 1, "ДЕТАЛИЗАЦИЯ СМЕН")
+    details.cell(1, 1).font = Font(name="Aptos Display", size=17, bold=True, color=header_text)
+    details.cell(1, 1).fill = PatternFill("solid", fgColor=navy)
+    details.cell(1, 1).alignment = Alignment(horizontal="left", vertical="center")
+    details.row_dimensions[1].height = 33
+    details.merge_cells(start_row=2, start_column=1, end_row=2, end_column=6)
+    details.cell(2, 1, f"Период: {dates[0].strftime('%d.%m.%Y')} — {dates[-1].strftime('%d.%m.%Y')}")
+    details.merge_cells(start_row=2, start_column=7, end_row=2, end_column=len(detail_headers))
+    details.cell(2, 7, "Отработано = длительность смены − перерыв − паузы")
+    for cell in (details.cell(2, 1), details.cell(2, 7)):
+        cell.fill = PatternFill("solid", fgColor=pale_blue)
+        cell.font = Font(name="Aptos", size=9, bold=True, color=body_text)
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+    details.row_dimensions[3].height = 8
+    detail_header_row = 5
+    for column, label in enumerate(detail_headers, start=1):
+        details.cell(detail_header_row, column, label)
+    for cell in details[detail_header_row]:
+        cell.fill = PatternFill("solid", fgColor=blue)
+        cell.font = Font(name="Aptos", size=9, bold=True, color=header_text)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = Border(left=thin_line, right=thin_line, top=thin_line, bottom=thin_line)
+    details.row_dimensions[detail_header_row].height = 25
+
+    for index, shift in enumerate(timesheet["shifts"], start=1):
+        detail_date = datetime.strptime(shift["date"], "%Y-%m-%d").date()
+        if shift["status"] == "closed":
+            state_label = "Закрыта"
+        elif shift["is_paused"]:
+            state_label = "На паузе"
+        else:
+            state_label = "Открыта"
+        row_number = detail_header_row + index
+        values = [
+            index, detail_date, weekday_labels[detail_date.weekday()], shift["employee"],
+            shift["position"], shift["start_time"] or "—", shift["end_time"] or "Открыта",
+            shift["break_minutes"] / 1440, shift["pause_minutes"] / 1440,
+            (
+                shift["total_minutes"] / 1440
+                if shift["total_minutes"] or shift["status"] == "closed"
+                else "—"
+            ),
+            state_label, shift["shift_id"],
+        ]
+        for column, value in enumerate(values, start=1):
+            details.cell(row_number, column, value)
+        details.cell(row_number, 2).number_format = "dd.mm.yyyy"
+        for column in (8, 9, 10):
+            details.cell(row_number, column).number_format = "[h]:mm"
+        for column in range(1, len(detail_headers) + 1):
+            cell = details.cell(row_number, column)
+            cell.font = Font(name="Aptos", size=9, color=body_text)
+            cell.alignment = Alignment(
+                horizontal="left" if column in (4, 5) else "center",
+                vertical="center",
+            )
+            cell.border = Border(bottom=thin_line)
+        if shift["status"] != "closed":
+            details.cell(row_number, 7).fill = PatternFill("solid", fgColor=open_fill)
+            details.cell(row_number, 11).fill = PatternFill("solid", fgColor=open_fill)
+
+    detail_last_row = detail_header_row + len(timesheet["shifts"])
+    if timesheet["shifts"]:
+        table = Table(displayName="ShiftDetailsTable", ref=f"A{detail_header_row}:L{detail_last_row}")
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium2",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False,
+        )
+        details.add_table(table)
+    else:
+        details.auto_filter.ref = f"A{detail_header_row}:L{detail_header_row}"
+    detail_widths = [6, 12, 8, 31, 20, 10, 10, 11, 11, 13, 13, 11]
+    for column, width in enumerate(detail_widths, start=1):
+        details.column_dimensions[get_column_letter(column)].width = width
+    details.freeze_panes = "A6"
+    details.sheet_view.showGridLines = False
+    details.sheet_view.zoomScale = 90
+    details.sheet_properties.tabColor = navy
+    details.sheet_properties.pageSetUpPr.fitToPage = True
+    details.page_setup.orientation = "landscape"
+    details.page_setup.paperSize = details.PAPERSIZE_A4
+    details.page_setup.fitToWidth = 1
+    details.page_setup.fitToHeight = 0
+    details.print_title_rows = "1:5"
+    details.print_area = f"A1:L{max(detail_header_row, detail_last_row)}"
+    details.page_margins.left = 0.3
+    details.page_margins.right = 0.3
+    details.page_margins.top = 0.45
+    details.page_margins.bottom = 0.45
+
+    workbook.active = 0
     return workbook_to_bytes(workbook)
 
 

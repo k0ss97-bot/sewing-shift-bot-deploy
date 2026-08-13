@@ -12728,7 +12728,15 @@ def get_period_timesheet_rows(start_date: str, end_date: str):
             shifts.start_time,
             shifts.end_time,
             shifts.total_minutes,
-            shifts.status
+            shifts.status,
+            COALESCE(shifts.break_minutes, 0),
+            COALESCE(shifts.pause_minutes, 0),
+            EXISTS(
+                SELECT 1
+                FROM shift_pauses
+                WHERE shift_pauses.shift_id = shifts.id
+                  AND shift_pauses.ended_at IS NULL
+            ) AS is_paused
         FROM employees
         LEFT JOIN shifts ON shifts.employee_id = employees.id
             AND shifts.shift_date BETWEEN ? AND ?

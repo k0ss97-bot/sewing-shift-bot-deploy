@@ -173,6 +173,69 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertTrue(resumed["can_work"])
         self.assertEqual(self.database.get_open_shift_for_today(employee[0])[0], shift["id"])
 
+    def test_timesheet_export_shows_arrival_departure_and_net_hours(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(4128, "Тест Табель", "Швея")
+        employee = self.database.get_employee_by_telegram_id(4128)
+        self.database.update_employee_status(employee[0], "active")
+
+        conn = self.database.get_db_connection()
+        conn.execute(
+            """
+            INSERT INTO shifts (
+                employee_id, shift_date, start_time, end_time, total_minutes,
+                gross_minutes, break_minutes, pause_minutes, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'closed', ?)
+            """,
+            (employee[0], "2026-08-05", "08:15", "17:30", 465, 555, 60, 30, "2026-08-05T08:15:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO shifts (employee_id, shift_date, start_time, status, created_at)
+            VALUES (?, ?, ?, 'open', ?)
+            """,
+            (employee[0], "2026-08-06", "09:05", "2026-08-06T09:05:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        from openpyxl import load_workbook
+
+        content = miniapp_server.create_timesheet_excel_bytes("2026-08-05", "2026-08-06")
+        workbook = load_workbook(io.BytesIO(content), data_only=False)
+        self.assertEqual(workbook.sheetnames, ["Табель", "Смены"])
+
+        sheet = workbook["Табель"]
+        self.assertEqual(sheet["A1"].value, "ТАБЕЛЬ УЧЁТА РАБОЧЕГО ВРЕМЕНИ")
+        self.assertEqual(sheet["E5"].value, "05.08 · ср")
+        self.assertEqual([sheet.cell(6, column).value for column in range(5, 8)], ["Приход", "Уход", "Часы"])
+        employee_row = next(
+            row for row in range(7, sheet.max_row + 1)
+            if sheet.cell(row, 2).value == "Тест Табель"
+        )
+        self.assertEqual(sheet.cell(employee_row, 5).value, "08:15")
+        self.assertEqual(sheet.cell(employee_row, 6).value, "17:30")
+        self.assertEqual(sheet.cell(employee_row, 7).value, timedelta(minutes=465))
+        self.assertEqual(sheet.cell(employee_row, 7).number_format, "[h]:mm")
+        self.assertEqual(sheet.cell(employee_row, 8).value, "09:05")
+        self.assertEqual(sheet.cell(employee_row, 9).value, "Открыта")
+        self.assertEqual(sheet.freeze_panes, "E7")
+
+        details = workbook["Смены"]
+        self.assertEqual(
+            [details.cell(5, column).value for column in range(1, 13)],
+            [
+                "№", "Дата", "День", "Сотрудник", "Должность", "Приход", "Уход",
+                "Перерыв", "Пауза", "Отработано", "Состояние", "ID смены",
+            ],
+        )
+        self.assertEqual(details.cell(6, 6).value, "08:15")
+        self.assertEqual(details.cell(6, 7).value, "17:30")
+        self.assertEqual(details.cell(6, 10).value, timedelta(minutes=465))
+        self.assertEqual(details.cell(7, 7).value, "Открыта")
+        self.assertEqual(details.cell(7, 10).value, "—")
+        self.assertEqual(details.cell(7, 11).value, "Открыта")
+
     def test_shift_close_deducts_multiple_pauses_without_double_counting_lunch(self):
         self.database.create_employee(4124, "Тест Учёт Пауз", "Швея")
         employee = self.database.get_employee_by_telegram_id(4124)
