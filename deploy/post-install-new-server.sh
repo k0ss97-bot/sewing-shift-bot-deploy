@@ -87,7 +87,7 @@ systemctl restart postgresql
 
 echo "[6/8] SSH key-only access"
 install -d -m 0755 -o root -g root /etc/ssh/sshd_config.d
-cat > /etc/ssh/sshd_config.d/60-shagaem-hardening.conf <<'EOF'
+cat > /etc/ssh/sshd_config.d/10-shagaem-hardening.conf <<'EOF'
 PubkeyAuthentication yes
 PasswordAuthentication no
 KbdInteractiveAuthentication no
@@ -95,6 +95,7 @@ PermitRootLogin prohibit-password
 X11Forwarding no
 AllowAgentForwarding no
 EOF
+rm -f /etc/ssh/sshd_config.d/60-shagaem-hardening.conf
 sshd -t
 systemctl reload ssh
 
