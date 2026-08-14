@@ -295,6 +295,9 @@
       "analyticsMapMetric",
       "analyticsMapZoom",
       "displayDensity",
+      "helpCategory",
+      "helpQuery",
+      "helpArticle",
       "employeeHomeView",
       "userStartDate",
       "userEndDate",
@@ -338,6 +341,11 @@
       analyticsMapMetric: "units",
       analyticsMapZoom: 1,
       displayDensity: "auto",
+      helpCategory: "all",
+      helpQuery: "",
+      helpArticle: "",
+      helpReturnWorkspace: "production",
+      helpReturnScreen: "shift",
       screen: window.location.pathname.startsWith("/app/marketplaces") ? "marketplaces" : "shift",
       productionScreen: "shift",
       selectedOperation: 0,
@@ -483,6 +491,9 @@
     if (!Array.isArray(state.wmsStockReceipt.lines)) state.wmsStockReceipt.lines = [];
     state.wmsStockReceipt.submitting = false;
     if (!state.wmsAdminAdjustment || typeof state.wmsAdminAdjustment !== "object") state.wmsAdminAdjustment = {mode: "inventory", locationId: "", stockId: "", quantity: "", reason: "", targetState: "SCRAPPED", returnView: "admin-stock-control"};
+    if (!["all", "start", "production", "warehouse", "marketplaces", "analytics", "admin"].includes(state.helpCategory)) state.helpCategory = "all";
+    state.helpQuery = String(state.helpQuery || "").slice(0, 120);
+    state.helpArticle = String(state.helpArticle || "").slice(0, 80);
 
     const mount = document.getElementById("mount");
     const appRoot = document.getElementById("appRoot");
@@ -542,7 +553,7 @@
       { id: "analytics", label: "Аналитика", icon: "▥" },
       { id: "orders", label: "Задания", icon: "▣" },
     ];
-    const productionScreens = new Set(["shift", "report", "analytics", "orders", "admin", "passport", "profile"]);
+    const productionScreens = new Set(["shift", "report", "analytics", "orders", "admin", "passport", "profile", "help"]);
     const warehouseMoreViews = new Set(["more", "stock-receipt", "lookup", "products", "transfer", "stock", "movements", "inventory", "scrap", "admin-stock-control", "reports", "map"]);
 
     if (tg) {
@@ -713,6 +724,97 @@
 
     function itemEmpty(text) {
       return `<p class="empty">${escapeHtml(text)}</p>`;
+    }
+
+    const HELP_CATEGORIES = [
+      ["all", "Все разделы"],
+      ["start", "Начало работы"],
+      ["production", "Производство"],
+      ["warehouse", "Склад"],
+      ["marketplaces", "Маркетплейсы"],
+      ["analytics", "Аналитика"],
+      ["admin", "Администратору"],
+    ];
+
+    const HELP_ARTICLES = [
+      {id:"login",category:"start",title:"Вход и первый запуск",audience:"Всем сотрудникам",summary:"Как войти, открыть приложение на телефоне и восстановить соединение.",shot:"login",steps:["Откройте адрес приложения в браузере.","Введите почту, телефон или логин и пароль.","Если видите «Нет связи с сервером», нажмите «Попробовать снова» — повторно регистрироваться не нужно.","На телефоне добавьте страницу на главный экран через меню браузера."],tips:["Никому не сообщайте пароль.","После регистрации дождитесь, пока администратор назначит должность и активирует доступ."]},
+      {id:"navigation",category:"start",title:"Навигация по приложению",audience:"Всем сотрудникам",summary:"Где находятся разделы, профиль, кнопка возврата и помощь.",shot:"navigation",steps:["На компьютере основные системы находятся в верхней панели, а функции выбранного раздела — слева.","На телефоне рабочие разделы переключаются сверху, действия — в нижней панели.","Кнопка «?» открывает эту справку из любого раздела.","Кнопка с силуэтом открывает профиль и смену пароля."],tips:["Если нужного раздела нет, значит он не относится к вашей должности или доступ ещё не выдан."]},
+      {id:"shift",category:"start",title:"Открытие и закрытие смены",audience:"Всем сотрудникам",summary:"Как начать рабочий день и правильно завершить смену.",shot:"shift",steps:["На экране «Главная» проверьте дату и статус смены.","Нажмите «Открыть смену» перед началом работы.","Выполняйте задания только внутри открытой смены.","В конце рабочего дня нажмите «Закрыть смену» и подтвердите действие."],tips:["Не закрывайте смену перед временным уходом — для этого используйте паузу.","Незакрытая смена отображается администратору как открытая."]},
+      {id:"pause",category:"start",title:"Пауза и продолжение смены",audience:"Всем сотрудникам",summary:"Как уйти на несколько часов и продолжить ту же смену.",shot:"shift",steps:["В открытой смене нажмите «Поставить на паузу».","Убедитесь, что статус изменился на «Смена на паузе».","После возвращения нажмите «Продолжить смену».","Время паузы не входит в отработанные часы."],tips:["Обед и пересекающиеся ручные паузы не вычитаются дважды."]},
+      {id:"profile",category:"start",title:"Профиль и смена пароля",audience:"Всем сотрудникам",summary:"Проверка своей должности, контактов и настройка плотности интерфейса.",shot:"profile",steps:["Нажмите иконку профиля в правом верхнем углу.","Проверьте ФИО, должность, почту и телефон.","При необходимости выберите комфортную или компактную плотность.","Для смены пароля укажите текущий пароль и дважды новый."],tips:["Если ФИО или должность указаны неверно, обратитесь к администратору."]},
+      {id:"take-task",category:"production",title:"Как взять свободное задание",audience:"Производственным сотрудникам",summary:"Поиск задания своей должности и начало работы.",shot:"tasks",steps:["Откройте раздел «Задания».","Выберите подходящую категорию и найдите карточку со статусом «Свободно».","Проверьте изделие, артикул, цвет, размер, операцию и количество.","Нажмите «Взять в работу» — задание закрепится за вами."],tips:["Не берите задание, если данные на карточке не совпадают с фактическим изделием.","Чужое задание нельзя закрывать без прав администратора."]},
+      {id:"partial-task",category:"production",title:"Частичное выполнение задания",audience:"Швеям и другим исполнителям",summary:"Как выполнить, например, 25 изделий из 50 и вернуть остаток в свободные.",shot:"partial",steps:["Откройте своё задание в работе.","В поле «Годно» укажите только фактически выполненное количество.","При наличии брака укажите его отдельно и заполните причину.","Нажмите «Выполнить». Выполненная часть запишется на вас, а остаток вернётся в свободное задание."],tips:["Нельзя указывать количество больше доступного.","Перед подтверждением ещё раз проверьте размер и цвет."]},
+      {id:"defect-return",category:"production",title:"Брак и возврат задания",audience:"Производственным сотрудникам",summary:"Как зафиксировать брак или освободить незавершённое задание.",shot:"partial",steps:["Для брака укажите количество, причину, дальнейшее действие и комментарий.","Приложите фото, если поле доступно и дефект нужно подтвердить.","Если работу должен продолжить другой сотрудник, выберите возврат задания.","После возврата убедитесь, что карточка снова имеет статус «Свободно»."],tips:["Не записывайте брак в количество годных изделий.","Комментарий должен позволять понять проблему без устного пояснения."]},
+      {id:"ready-cut",category:"production",title:"Формирование готового кроя",audience:"Раскройщикам",summary:"Подтверждение фактически полученного кроя по цветам и размерам.",shot:"cutting",steps:["Откройте этап «Формирование готового кроя».","По каждой строке проверьте изделие, цвет, размер и плановое количество.","Укажите фактическое годное количество и брак.","Проверьте итог и подтвердите формирование — задания следующих этапов создадутся по годному количеству."],tips:["Не объединяйте разные размеры или цвета в одну строку.","При расхождении с настилом оставьте понятный комментарий."]},
+      {id:"extra-cut",category:"production",title:"Дополнительный крой",audience:"Раскройщикам",summary:"Как добавить изделия, полученные после донастила сверх исходного задания.",shot:"cutting",steps:["В формировании готового кроя нажмите «Произвольная операция» или добавление дополнительного кроя.","Выберите точные размер и цвет.","Укажите количество дополнительно полученных годных изделий.","Сохраните строку и проверьте общий итог перед подтверждением."],tips:["Добавляйте только реально сформированный крой.","Каждая комбинация размера и цвета оформляется отдельно."]},
+      {id:"passport",category:"production",title:"Паспорт партии и QR-код",audience:"Производственным сотрудникам",summary:"Как проверить происхождение партии и её текущий этап.",shot:"tasks",steps:["Откройте карточку задания или отсканируйте QR-код партии.","Перейдите в «Паспорт партии».","Сверьте изделие, артикул, цвет, размер, количество и историю этапов.","Вернитесь назад и продолжите только после совпадения данных."],tips:["При несовпадении карточки и фактического изделия не выполняйте операцию — сообщите администратору."]},
+      {id:"receiving",category:"warehouse",title:"Приёмка и оприходование",audience:"Складу и администратору",summary:"Приём товара сканером или ручной поиск по артикулу и штрихкоду.",shot:"warehouse",steps:["Откройте «Управление складом» и выберите «Приёмка» или «Оприходование».","Отсканируйте штрихкод либо введите артикул или штрихкод вручную.","Подтвердите найденную карточку товара и укажите количество.","Проверьте состав документа и выполните оприходование."],tips:["Не подтверждайте товар, если цвет или размер не совпадает.","Комментарий и причина необязательны, если дополнительное пояснение не требуется."]},
+      {id:"putaway",category:"warehouse",title:"Размещение по ячейкам",audience:"Складу и администратору",summary:"Перемещение принятого товара из RECEIVE-01 в адресную ячейку.",shot:"warehouse",steps:["Откройте «Размещение».","Отсканируйте товар или найдите его по артикулу/штрихкоду.","Подтвердите карточку и доступное количество.","Отсканируйте целевую ячейку, укажите количество и завершите размещение."],tips:["Размещать можно только доступный остаток из зоны приёмки.","Сначала сканируйте товар, затем ячейку."]},
+      {id:"warehouse-operations",category:"warehouse",title:"Перемещение, остатки и проверка товара",audience:"Складу",summary:"Повседневные операции адресного хранения.",shot:"warehouse",steps:["В «Перемещении» укажите исходную и целевую ячейки, товар и количество.","В «Остатках» используйте фильтры по изделию, цвету и размеру.","В «Проверке товара» сканируйте штрихкод, чтобы увидеть карточку и размещение.","На «Карте склада» найдите ячейку и проверьте её содержимое."],tips:["После операции сверяйте показанный новый остаток.","Не перемещайте больше доступного количества."]},
+      {id:"inventory",category:"warehouse",title:"Инвентаризация и списание",audience:"Складу и администратору",summary:"Как зафиксировать фактическое количество и списать повреждённый товар.",shot:"inventory",steps:["Выберите ячейку и нужную товарную позицию.","Для инвентаризации укажите фактическое количество.","Для списания укажите количество и состояние товара.","Проверьте изменение остатка и запись в истории движений."],tips:["Причина и комментарий необязательны, но полезны при расхождении или повреждении.","Не используйте списание для обычного перемещения."]},
+      {id:"shipments",category:"warehouse",title:"Отгрузка на маркетплейс",audience:"Складу",summary:"Отбор товара из ячеек, упаковка и подтверждение отгрузки.",shot:"warehouse",steps:["Откройте «Отгрузки» и выберите активное задание.","Следуйте подсказке: отсканируйте указанную ячейку, затем товар.","Подтвердите отобранное количество по каждой строке.","После полной комплектации завершите отгрузку."],tips:["Не заменяйте размер или цвет похожим товаром.","Если в ячейке не хватает товара, зафиксируйте проблему и сообщите администратору."]},
+      {id:"marketplace-overview",category:"marketplaces",title:"Обзор и синхронизация маркетплейсов",audience:"Только администратору",summary:"Контроль связи с Ozon и Wildberries без изменения карточек на площадках.",shot:"marketplaces",steps:["Откройте «Управление маркетплейсами».","Выберите «Все», Ozon или Wildberries.","Проверьте время последнего обновления и состояние источника.","Нажмите «Синхронизировать», если нужен свежий срез, и дождитесь результата."],tips:["Раздел работает в режиме чтения и не редактирует карточки на площадке.","Не запускайте синхронизацию повторно, пока предыдущая ещё выполняется."]},
+      {id:"marketplace-data",category:"marketplaces",title:"Товары, остатки, отгрузки и поставки",audience:"Только администратору",summary:"Как найти карточку и проверить наличие и движение по площадке.",shot:"marketplaces",steps:["Выберите нужный подраздел: «Товары», «Остатки», «Отгрузки» или «Поставки».","Используйте поиск по названию, артикулу, nmID или штрихкоду.","Переключите площадку и период, если это доступно на экране.","Откройте строку для подробностей и сверки связи с производством."],tips:["Статус «Нет связи» означает отсутствие сопоставления с внутренней номенклатурой, а не отсутствие товара на площадке."]},
+      {id:"analytics",category:"analytics",title:"Аналитический центр",audience:"Только администратору",summary:"Продажи, остатки и производство по площадкам, периодам и товарам.",shot:"analytics",steps:["Откройте «Аналитика» и выберите раздел слева или в мобильном списке.","Установите период и площадку: все, Ozon или Wildberries.","Для карты выберите номенклатуру, масштаб и показатель «штуки» или «рубли».","Наведите или нажмите на точку графика, чтобы увидеть точное значение."],tips:["Сумма заказов и начисления после удержаний — разные показатели.","Последний день периода может быть неполным до завершения синхронизации."]},
+      {id:"data-quality",category:"analytics",title:"Качество и актуальность данных",audience:"Только администратору",summary:"Что означают «частично», «недоступно» и задержка обновления.",shot:"analytics",steps:["Откройте «Качество данных».","Проверьте состояние каждого источника и время последнего успешного обновления.","Если данные частичные, откройте диагностику и найдите конкретный набор данных.","Сначала обновите источник, затем повторно откройте нужный период."],tips:["Не воспринимайте нулевое значение как реальный ноль, если рядом указано «Показатель недоступен»."]},
+      {id:"admin-employees",category:"admin",title:"Сотрудники, роли и доступ",audience:"Только администратору",summary:"Активация пользователей, должности, права склада и назначение администратора.",shot:"admin",steps:["Откройте «Админ» → «Сотрудники».","Найдите пользователя по ФИО, должности или статусу.","Назначьте должность и активируйте учётную запись.","При необходимости выдайте доступ к складу или назначьте роль администратора."],tips:["Не отключайте последнего администратора.","Права проверяются сервером; скрытая кнопка не заменяет назначение доступа."]},
+      {id:"admin-shifts",category:"admin",title:"Смены и профессиональный табель",audience:"Только администратору",summary:"Контроль открытых смен и выгрузка прихода, ухода и чистого времени.",shot:"admin",steps:["Откройте «Админ» → «Смены», чтобы проверить открытые смены.","При необходимости закройте смену сотрудника с корректным временем.","В разделе отчётов выберите период и сотрудников.","Выгрузите Excel: приход, уход, паузы и чистые отработанные часы будут разделены."],tips:["Обед и паузы исключаются из чистого времени.","Перед исправлением смены уточните фактическое время у сотрудника."]},
+      {id:"admin-control",category:"admin",title:"Операции, обратная связь и планирование",audience:"Только администратору",summary:"Настройка операций и контроль обращений без вмешательства в историю.",shot:"admin",steps:["В «Операциях» добавляйте, изменяйте, скрывайте или возвращайте доступные операции.","В «Обратной связи» разбирайте сообщения сотрудников по категориям.","В «Планировании» используйте MRP, мощности, OEE, себестоимость и прогноз как расчётные инструменты.","Проверяйте результат перед любым отдельным управленческим действием."],tips:["Расчёт планирования сам по себе не списывает остатки и не закрывает задания.","Маршруты производства не удаляйте при временном учебном режиме."]},
+    ];
+
+    function helpCategoryLabel(category) {
+      const row = HELP_CATEGORIES.find(([id]) => id === category);
+      return row ? row[1] : "Помощь";
+    }
+
+    function helpScreenshot(type) {
+      const screens = {
+        login: {title:"Вход",nav:["Логин","Пароль","Войти"],primary:"Войти",secondary:"Регистрация"},
+        navigation: {title:"Рабочий экран",nav:["Производство","Склад","Аналитика"],primary:"?  Помощь",secondary:"Профиль"},
+        shift: {title:"Моя смена",nav:["Статус: открыта","08:00 · начало","00:45 · паузы"],primary:"Поставить на паузу",secondary:"Закрыть смену"},
+        profile: {title:"Профиль",nav:["ФИО сотрудника","Должность","Плотность интерфейса"],primary:"Сменить пароль",secondary:"Выйти"},
+        tasks: {title:"Задания",nav:["Свободные","В работе","Выполненные"],primary:"Взять в работу",secondary:"Паспорт партии"},
+        partial: {title:"Выполнение задания",nav:["Доступно: 50 шт.","Годно: 25","Брак: 0"],primary:"Выполнить 25 шт.",secondary:"Вернуть задание"},
+        cutting: {title:"Готовый крой",nav:["Чёрный · 116","Годно: 50","Дополнительно: 5"],primary:"Подтвердить формирование",secondary:"Произвольная операция"},
+        warehouse: {title:"Складская операция",nav:["1. Товар","2. Ячейка","3. Количество"],primary:"Подтвердить операцию",secondary:"Найти по артикулу"},
+        inventory: {title:"Инвентаризация",nav:["Ячейка A-01-02","Товар подтверждён","Фактически: 24"],primary:"Сохранить остаток",secondary:"История движений"},
+        marketplaces: {title:"Маркетплейсы",nav:["Ozon","Wildberries","Обновлено 10:30"],primary:"Синхронизировать",secondary:"Открыть карточку"},
+        analytics: {title:"Аналитика",nav:["Период: 30 дней","Площадка: Все","Показатель: Штуки"],primary:"Обновить",secondary:"Карта регионов"},
+        admin: {title:"Администрирование",nav:["Сотрудники","Смены","Отчёты"],primary:"Сохранить изменения",secondary:"Выгрузить Excel"},
+      };
+      const screen = screens[type] || screens.navigation;
+      return `<figure class="help-shot" aria-label="Размеченный пример экрана ${escapeHtml(screen.title)}"><div class="help-shot-browser"><span></span><span></span><span></span><b>Шагаем вместе</b></div><div class="help-shot-layout"><div class="help-shot-nav">${screen.nav.map((item, index) => `<div class="${index === 0 ? "active" : ""}">${escapeHtml(item)}</div>`).join("")}</div><div class="help-shot-main"><div class="help-shot-title">${escapeHtml(screen.title)}</div><div class="help-shot-card"><span>Изделие · цвет · размер</span><b>Данные операции</b><small>Проверьте сведения перед подтверждением</small></div><div class="help-shot-actions"><button type="button" tabindex="-1">${escapeHtml(screen.primary)}</button><button type="button" tabindex="-1">${escapeHtml(screen.secondary)}</button></div></div><i class="help-pin help-pin-a">1</i><i class="help-pin help-pin-b">2</i><i class="help-pin help-pin-c">3</i></div><figcaption><span><b>1</b> Выбор раздела</span><span><b>2</b> Проверка данных</span><span><b>3</b> Подтверждение</span></figcaption></figure>`;
+    }
+
+    function filteredHelpArticles() {
+      const query = state.helpQuery.trim().toLocaleLowerCase("ru-RU");
+      return HELP_ARTICLES.filter((article) => {
+        if (state.helpCategory !== "all" && article.category !== state.helpCategory) return false;
+        if (!query) return true;
+        return [article.title, article.summary, article.audience, ...(article.steps || []), ...(article.tips || [])]
+          .join(" ")
+          .toLocaleLowerCase("ru-RU")
+          .includes(query);
+      });
+    }
+
+    function renderHelpArticle(article) {
+      const steps = article.steps.map((step, index) => `<li><b>${index + 1}</b><span>${escapeHtml(step)}</span></li>`).join("");
+      const tips = article.tips.map((tip) => `<li>${escapeHtml(tip)}</li>`).join("");
+      return `<div class="help-article"><button type="button" class="help-back" data-help-action="back-to-list">‹ Все инструкции</button><div class="help-article-head"><div><span class="help-eyebrow">${escapeHtml(helpCategoryLabel(article.category))}</span><h2>${escapeHtml(article.title)}</h2><p>${escapeHtml(article.summary)}</p></div><span class="help-audience">${escapeHtml(article.audience)}</span></div>${helpScreenshot(article.shot)}<div class="help-article-grid"><section class="card field-card help-steps"><h3>Пошагово</h3><ol>${steps}</ol></section><aside class="card field-card help-tips"><h3>Важно</h3><ul>${tips}</ul><div class="help-contact"><b>Не нашли ответ?</b><span>Сообщите администратору название экрана, текст ошибки и приложите снимок экрана.</span></div></aside></div></div>`;
+    }
+
+    function renderHelp() {
+      mainButton.hidden = true;
+      const selected = HELP_ARTICLES.find((article) => article.id === state.helpArticle);
+      if (selected) {
+        mount.innerHTML = renderHelpArticle(selected);
+        return;
+      }
+      const articles = filteredHelpArticles();
+      const categories = HELP_CATEGORIES.map(([id, label]) => `<button type="button" class="help-category ${state.helpCategory === id ? "active" : ""}" aria-pressed="${state.helpCategory === id ? "true" : "false"}" data-help-category="${id}">${escapeHtml(label)}</button>`).join("");
+      const cards = articles.map((article) => `<button type="button" class="help-card" data-help-article="${article.id}"><span class="help-card-icon" aria-hidden="true">${article.category === "warehouse" ? "▦" : article.category === "marketplaces" ? "◎" : article.category === "analytics" ? "↗" : article.category === "admin" ? "⚙" : article.category === "production" ? "✂" : "?"}</span><span class="help-card-copy"><small>${escapeHtml(helpCategoryLabel(article.category))}</small><b>${escapeHtml(article.title)}</b><span>${escapeHtml(article.summary)}</span><em>${escapeHtml(article.audience)}</em></span><span class="help-card-arrow" aria-hidden="true">›</span></button>`).join("");
+      mount.innerHTML = `<div class="help-center"><div class="help-hero"><div><span class="help-eyebrow">ЦЕНТР ПОДДЕРЖКИ</span><h2>Справочник приложения</h2><p>Найдите функцию или выберите раздел. В каждой инструкции есть размеченный экран и последовательность действий.</p></div><div class="help-hero-mark" aria-hidden="true">?</div></div><label class="help-search"><span aria-hidden="true">⌕</span><input id="helpSearch" value="${escapeHtml(state.helpQuery)}" autocomplete="off" placeholder="Например: пауза смены, частичное выполнение, размещение" aria-label="Поиск по инструкциям"><button type="button" data-help-action="clear-search" aria-label="Очистить поиск">×</button></label><div class="help-categories" aria-label="Разделы помощи">${categories}</div><div class="help-results-head"><b>${state.helpQuery ? "Результаты поиска" : state.helpCategory === "all" ? "Все инструкции" : escapeHtml(helpCategoryLabel(state.helpCategory))}</b><span>${articles.length} ${articles.length === 1 ? "инструкция" : "инструкций"}</span></div><div class="help-grid">${cards || `<div class="help-empty"><b>Ничего не найдено</b><span>Попробуйте другое слово или откройте все разделы.</span><button type="button" class="small-button" data-help-action="reset">Сбросить фильтры</button></div>`}</div></div>`;
     }
 
     function attachmentFileUrl(taskId, action) {
@@ -1256,7 +1358,7 @@
     }
 
     function renderBottomNav() {
-      if (state.workspace === "analytics") {
+      if (state.screen === "help" || state.workspace === "analytics") {
         bottomNav.hidden = true;
         bottomNav.innerHTML = "";
         return;
@@ -9283,15 +9385,15 @@ ${location.code}`)) return;
       if (!['production', 'warehouse', 'marketplaces', 'analytics'].includes(state.workspace)) {
         state.workspace = state.screen === "warehouse" ? "warehouse" : "production";
       }
-      if (state.workspace === "warehouse" && !["warehouse", "profile"].includes(state.screen)) {
+      if (state.workspace === "warehouse" && !["warehouse", "profile", "help"].includes(state.screen)) {
         state.screen = "warehouse";
       }
-      if (state.workspace === "marketplaces") state.screen = "marketplaces";
-      if (state.workspace === "analytics") state.screen = "analytics";
+      if (state.workspace === "marketplaces" && state.screen !== "help") state.screen = "marketplaces";
+      if (state.workspace === "analytics" && state.screen !== "help") state.screen = "analytics";
 
       const allowedProductionScreens = state.data.is_admin
-        ? ["shift", "analytics", "orders", "admin", "passport", "profile"]
-        : ["shift", "report", "analytics", "orders", "admin", "passport", "profile"];
+        ? ["shift", "analytics", "orders", "admin", "passport", "profile", "help"]
+        : ["shift", "report", "analytics", "orders", "admin", "passport", "profile", "help"];
       if (state.workspace === "production" && !allowedProductionScreens.includes(state.screen)) {
         state.screen = "shift";
       }
@@ -9331,6 +9433,7 @@ ${location.code}`)) return;
       if (state.screen === "admin") renderAdmin();
       if (state.screen === "passport") renderPassport();
       if (state.screen === "profile") renderProfile();
+      if (state.screen === "help") renderHelp();
       renderBottomNav();
       renderTopTabs();
       persistUiState();
@@ -9401,9 +9504,9 @@ ${location.code}`)) return;
         switchWorkspace("marketplaces");
         return;
       }
-      if (state.workspace === "warehouse" && screen !== "profile") state.workspace = "production";
+      if (state.workspace === "warehouse" && !["profile", "help"].includes(screen)) state.workspace = "production";
       state.screen = screen;
-      if (state.workspace === "production" && !["profile", "passport"].includes(screen) && productionScreens.has(screen)) {
+      if (state.workspace === "production" && !["profile", "passport", "help"].includes(screen) && productionScreens.has(screen)) {
         state.productionScreen = screen;
       }
       render();
@@ -9578,6 +9681,38 @@ ${location.code}`)) return;
     }
 
     document.addEventListener("click", (event) => {
+      const helpArticle = event.target.closest("[data-help-article]");
+      if (helpArticle) {
+        state.helpArticle = helpArticle.dataset.helpArticle || "";
+        persistUiState();
+        render();
+        window.scrollTo({top: 0, behavior: "smooth"});
+        return;
+      }
+
+      const helpCategory = event.target.closest("[data-help-category]");
+      if (helpCategory) {
+        state.helpCategory = helpCategory.dataset.helpCategory || "all";
+        state.helpArticle = "";
+        persistUiState();
+        render();
+        return;
+      }
+
+      const helpAction = event.target.closest("[data-help-action]");
+      if (helpAction) {
+        if (helpAction.dataset.helpAction === "back-to-list") state.helpArticle = "";
+        if (helpAction.dataset.helpAction === "clear-search") state.helpQuery = "";
+        if (helpAction.dataset.helpAction === "reset") {
+          state.helpQuery = "";
+          state.helpCategory = "all";
+          state.helpArticle = "";
+        }
+        persistUiState();
+        render();
+        return;
+      }
+
       const employeeShiftAction = event.target.closest("[data-shift-action]");
       if (employeeShiftAction) {
         shiftAction(employeeShiftAction.dataset.shiftAction);
@@ -10853,6 +10988,20 @@ ${location.code}`)) return;
     });
 
     document.addEventListener("input", (event) => {
+      if (event.target.id === "helpSearch") {
+        state.helpQuery = event.target.value.slice(0, 120);
+        persistUiState();
+        window.clearTimeout(window.helpSearchTimer);
+        window.helpSearchTimer = window.setTimeout(() => {
+          render();
+          const input = document.getElementById("helpSearch");
+          if (input) {
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+          }
+        }, 120);
+        return;
+      }
       if (event.target.matches("[data-marketplace-link-filter]")) {
         filterMarketplaceLinks(event.target);
         return;
@@ -11224,6 +11373,18 @@ ${location.code}`)) return;
     }, {passive: true});
 
     document.getElementById("backBtn").addEventListener("click", () => {
+      if (state.screen === "help") {
+        if (state.helpArticle) {
+          state.helpArticle = "";
+          render();
+          return;
+        }
+        state.workspace = state.helpReturnWorkspace || "production";
+        state.screen = state.helpReturnScreen || "shift";
+        render();
+        return;
+      }
+
       if (state.screen === "profile") {
         state.screen = state.profileReturnScreen || "shift";
         render();
@@ -11290,6 +11451,18 @@ ${location.code}`)) return;
         : ["shift", "report", "analytics", "orders", "admin"];
       const index = flow.indexOf(state.screen);
       setScreen(flow[Math.max(0, index - 1)]);
+    });
+
+    document.getElementById("helpBtn").addEventListener("click", () => {
+      if (state.screen === "help") {
+        const input = document.getElementById("helpSearch");
+        if (input) input.focus();
+        return;
+      }
+      state.helpReturnWorkspace = state.workspace;
+      state.helpReturnScreen = state.screen;
+      state.helpArticle = "";
+      setScreen("help");
     });
 
     document.getElementById("menuBtn").addEventListener("click", () => {
