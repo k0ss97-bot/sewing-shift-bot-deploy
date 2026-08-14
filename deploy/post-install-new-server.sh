@@ -14,8 +14,8 @@ export DEBIAN_FRONTEND=noninteractive
 SSH_PORT=22
 
 echo "[1/8] Base packages"
-apt-get update
-apt-get install -y \
+apt-get -o DPkg::Lock::Timeout=300 update
+apt-get -o DPkg::Lock::Timeout=300 install -y \
     ca-certificates \
     caddy \
     curl \

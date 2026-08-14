@@ -20,6 +20,7 @@ class ServerPostInstallTests(unittest.TestCase):
         self.assertNotIn("pg_restore", self.text)
 
     def test_script_installs_required_runtime_and_uses_separate_accounts(self):
+        self.assertIn("DPkg::Lock::Timeout=300", self.text)
         for package in ("caddy", "postgresql-16", "python3-venv", "rsync", "sqlite3", "ufw"):
             self.assertIn(package, self.text)
         for account in ("deploy", "team-messenger", "sewing-monitor"):

@@ -137,7 +137,8 @@ restored gate и готового rollback.
 3. Создать финальные SQLite, WMS и messenger backups после остановки записи.
 4. Передать финальные backup и uploads, повторно сверить SHA-256.
 5. Повторить restore на новом сервере в чистые целевые хранилища.
-6. Запустить PostgreSQL, затем основной сайт и портал.
+6. Проверить Caddy-конфигурацию, выполнить `systemctl enable --now caddy`, затем
+   запустить PostgreSQL, основной сайт и портал.
 7. Проверить loopback health, авторизацию, SSO, открытие смены/задания, WMS read,
    messenger login/chat/upload и административный доступ.
 8. Включить sync/reconcile/monitor timers. Backup timers включить только после
