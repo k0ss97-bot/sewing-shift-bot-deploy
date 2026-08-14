@@ -161,6 +161,7 @@ from webapp_auth import (
     build_session_cookie,
     change_web_password,
     clear_rate_limit,
+    create_team_sso_url,
     create_web_session,
     get_web_account_profiles_by_telegram_ids,
     get_web_session,
@@ -6928,6 +6929,45 @@ def make_handler(bot_token: str, debug: bool):
                         "expires_at": session["expires_at"],
                     }
                 )
+                return
+
+            if path == "/api/web/team-sso":
+                session_token = self.web_session_token()
+                session = get_web_session(session_token) if session_token else None
+                if session is None:
+                    self.send_response(302)
+                    self.send_header("Location", "/app?team_sso=1")
+                    self.send_header("Content-Length", "0")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Referrer-Policy", "no-referrer")
+                    self.end_headers()
+                    return
+                employee = get_employee_for_access(session["telegram_id"])
+                if employee is None or employee[5] != "active":
+                    revoke_web_sessions_for_telegram_id(session["telegram_id"])
+                    self.send_response(302)
+                    self.send_header("Location", "/app?team_sso=1")
+                    self.send_header("Set-Cookie", build_clear_cookies()[0 if self.secure_cookie() else 1])
+                    self.send_header("Content-Length", "0")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Referrer-Policy", "no-referrer")
+                    self.end_headers()
+                    return
+                try:
+                    location = create_team_sso_url(session["telegram_id"])
+                except (RuntimeError, ValueError):
+                    LOGGER.exception("Team SSO is not configured")
+                    self.send_json(
+                        {"ok": False, "code": "sso_unavailable", "message": "Единый вход временно недоступен."},
+                        status=503,
+                    )
+                    return
+                self.send_response(302)
+                self.send_header("Location", location)
+                self.send_header("Content-Length", "0")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.end_headers()
                 return
 
             if path == "/api/production/task-attachment":

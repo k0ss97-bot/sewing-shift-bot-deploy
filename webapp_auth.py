@@ -16,7 +16,7 @@ import struct
 import threading
 import time
 from http.cookies import SimpleCookie
-from urllib.parse import quote
+from urllib.parse import quote, urlencode, urlparse
 
 from database import DB_NAME, get_db_connection, local_now
 
@@ -37,12 +37,47 @@ DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60
 DEFAULT_SESSION_IDLE_SECONDS = 45 * 60
 _WEB_AUTH_INIT_LOCK = threading.Lock()
 _WEB_AUTH_INITIALIZED_DB = ""
+TEAM_SSO_AUDIENCE = "shagaem-team-messenger"
+TEAM_SSO_TOKEN_SECONDS = 90
 
 
 class WebRegistrationError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def create_team_sso_url(telegram_id: int, *, now_epoch: int | None = None) -> str:
+    """Create a short-lived signed login URL for the isolated team portal."""
+    secret = os.getenv("TEAM_SSO_SECRET", "").encode("utf-8")
+    callback_url = os.getenv(
+        "TEAM_SSO_CALLBACK_URL",
+        "https://team-shagaemfabrika.ru/api/sso/callback",
+    ).strip()
+    parsed_callback = urlparse(callback_url)
+    if len(secret) < 32:
+        raise RuntimeError("TEAM_SSO_SECRET must contain at least 32 bytes")
+    if parsed_callback.scheme != "https" or not parsed_callback.netloc or parsed_callback.query or parsed_callback.fragment:
+        raise RuntimeError("TEAM_SSO_CALLBACK_URL must be an HTTPS URL without query or fragment")
+    now_epoch = int(time.time()) if now_epoch is None else int(now_epoch)
+    payload = {
+        "aud": TEAM_SSO_AUDIENCE,
+        "exp": now_epoch + TEAM_SSO_TOKEN_SECONDS,
+        "iat": now_epoch,
+        "nonce": secrets.token_urlsafe(18),
+        "sub": int(telegram_id),
+        "v": 1,
+    }
+    encoded_payload = _base64url_encode(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    signature = _base64url_encode(hmac.new(secret, encoded_payload.encode("ascii"), hashlib.sha256).digest())
+    separator = "&" if parsed_callback.query else "?"
+    return f"{callback_url}{separator}{urlencode({'token': f'{encoded_payload}.{signature}'})}"
 
 
 def _now_text() -> str:

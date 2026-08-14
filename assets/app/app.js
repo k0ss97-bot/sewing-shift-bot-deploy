@@ -11534,6 +11534,10 @@ ${location.code}`)) return;
         const result = await restoreWebSession();
         if (result.status === "reloading") return;
         if (result.status === "authenticated") {
+          if (new URLSearchParams(window.location.search).get("team_sso") === "1") {
+            window.location.replace("/api/web/team-sso");
+            return;
+          }
           showWebApp();
           const restoredFromCache = restoreCachedAppState();
           if (restoredFromCache) {
