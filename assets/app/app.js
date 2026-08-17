@@ -424,6 +424,9 @@
       wmsMapStatusFilter: "all",
       wmsSelectedLocationId: "",
       wmsData: {loading: false, loaded: false, error: "", locations: [], stock: [], movements: [], shipmentTasks: [], stockReceipts: []},
+      wmsMovementLocationId: "",
+      wmsMovementProductKey: "",
+      wmsMovementJournal: {loading: false, loaded: false, error: "", movements: [], productOptions: []},
       wmsCatalogSearch: "",
       wmsCatalogGroup: "",
       wmsCatalog: {loading: false, loaded: false, error: "", products: [], lastSyncAt: ""},
@@ -777,7 +780,7 @@
         partial: {title:"Выполнение задания",nav:["Доступно: 50 шт.","Годно: 25","Брак: 0"],primary:"Выполнить 25 шт.",secondary:"Вернуть задание"},
         cutting: {title:"Готовый крой",nav:["Чёрный · 116","Годно: 50","Дополнительно: 5"],primary:"Подтвердить формирование",secondary:"Произвольная операция"},
         warehouse: {title:"Складская операция",nav:["1. Товар","2. Ячейка","3. Количество"],primary:"Подтвердить операцию",secondary:"Найти по артикулу"},
-        inventory: {title:"Инвентаризация",nav:["Ячейка A-01-02","Товар подтверждён","Фактически: 24"],primary:"Сохранить остаток",secondary:"История движений"},
+        inventory: {title:"Инвентаризация",nav:["Ячейка A-01-02","Товар подтверждён","Фактически: 24"],primary:"Сохранить остаток",secondary:"Журнал перемещений"},
         marketplaces: {title:"Маркетплейсы",nav:["Ozon","Wildberries","Обновлено 10:30"],primary:"Синхронизировать",secondary:"Открыть карточку"},
         analytics: {title:"Аналитика",nav:["Период: 30 дней","Площадка: Все","Показатель: Штуки"],primary:"Обновить",secondary:"Карта регионов"},
         admin: {title:"Администрирование",nav:["Сотрудники","Смены","Отчёты"],primary:"Сохранить изменения",secondary:"Выгрузить Excel"},
@@ -6178,7 +6181,7 @@ ${location.code}`)) return;
           <button type="button" class="card kpi warehouse-category" data-wms-view="stock"><span class="kpi-top"><span>Товары на складе</span><span class="kpi-ico">□</span></span><strong>${escapeHtml(total)}<small> ед.</small></strong><span>Резерв: ${escapeHtml(reserved)} ед.</span></button>
           <button type="button" class="card kpi warehouse-category" data-wms-view="map"><span class="kpi-top"><span>Занято ячеек</span><span class="kpi-ico">▦</span></span><strong>${occupiedLocations}<small> / ${activeLocations}</small></strong><span>${activeLocations ? Math.round((occupiedLocations / activeLocations) * 100) : 0}% действующих ячеек</span></button>
           <button type="button" class="card kpi warehouse-category" data-wms-view="receive"><span class="kpi-top"><span>Ожидает приёмки</span><span class="kpi-ico">↓</span></span><strong>${receiving.length}<small> поз.</small></strong><span>Требуют проверки и размещения</span></button>
-          <button type="button" class="card kpi warehouse-category" data-wms-view="movements"><span class="kpi-top"><span>Движения</span><span class="kpi-ico">⇄</span></span><strong>${movements.length}<small> зап.</small></strong><span>Последние операции</span></button>
+          <button type="button" class="card kpi warehouse-category" data-wms-view="movements"><span class="kpi-top"><span>Журнал</span><span class="kpi-ico">⇄</span></span><strong>${movements.length}<small> зап.</small></strong><span>Перемещения по ячейке или товару</span></button>
         </div>
         ${alerts.length ? `<div class="section-title"><b>Требуют внимания</b><span>${alerts.length}</span></div><div class="op-list">${alerts.map((alert) => `<button type="button" class="card report-row warehouse-v2-alert ${alert.level === "critical" ? "critical" : ""}" data-wms-view="${alert.view}"><div><b>${escapeHtml(alert.title)}</b><span>${escapeHtml(alert.text)}</span></div><span class="status-chip ${alert.level === "warning" ? "warn" : ""}">${alert.level === "critical" ? "критично" : alert.level === "warning" ? "внимание" : "инфо"}</span></button>`).join("")}</div>` : ""}
         <div class="section-title"><b>Быстрые действия</b><span>сканер</span></div>
@@ -6193,7 +6196,7 @@ ${location.code}`)) return;
           <button type="button" class="card summary-card clickable" data-wms-view="inventory"><span>Инвентаризация</span><strong>≡</strong><small>Пересчитать ячейку</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="reports"><span>Отчёты</span><strong>↧</strong><small>Остатки и движения</small></button>
         </div>
-        <div class="section-title"><b>Последние движения</b><button type="button" data-wms-view="movements">показать все</button></div>
+        <div class="section-title"><b>Последние движения</b><button type="button" data-wms-view="movements">открыть журнал</button></div>
         <div class="op-list">${movements.length ? movements.slice(0, 4).map((movement) => `
           <div class="card report-row"><div><b>${escapeHtml(wmsMovementLabel(movement.movement_type))}</b><span>${escapeHtml(wmsProductLabel(movement.product_key))}<br>${escapeHtml(wmsLocationLabel(movement.from_location_id))} → ${escapeHtml(wmsLocationLabel(movement.to_location_id))}</span></div><div><span class="status-chip">${escapeHtml(movement.quantity)} шт.</span><small>${escapeHtml(wmsMovementTime(movement.occurred_at))}</small></div></div>
         `).join("") : itemEmpty("Складских движений пока нет.")}</div>
@@ -6212,7 +6215,7 @@ ${location.code}`)) return;
           <button type="button" class="card summary-card clickable" data-wms-view="products"><span>Товары Ozon</span><strong>▤</strong><small>Артикулы и штрихкоды</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="transfer"><span>Перемещение</span><strong>⇄</strong><small>Между ячейками</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="stock"><span>Остатки</span><strong>▤</strong><small>По адресным ячейкам</small></button>
-          <button type="button" class="card summary-card clickable" data-wms-view="movements"><span>История</span><strong>⇄</strong><small>Все движения</small></button>
+          <button type="button" class="card summary-card clickable" data-wms-view="movements"><span>Журнал перемещений</span><strong>⇄</strong><small>Фильтр по ячейке и товару</small></button>
           <button type="button" class="card summary-card clickable" data-wms-view="inventory"><span>Инвентаризация</span><strong>≡</strong><small>Фактический пересчёт</small></button>
           ${state.data && state.data.is_admin ? `<button type="button" class="card summary-card clickable" data-wms-view="admin-stock-control"><span>Инвентаризация / списание</span><strong>✎</strong><small>Без сканирования штрихкода</small></button>` : `<button type="button" class="card summary-card clickable" data-wms-view="scrap"><span>Списание</span><strong>×</strong><small>Брак и карантин</small></button>`}
         </div>
@@ -6279,7 +6282,6 @@ ${location.code}`)) return;
       if (!location) return `<div class="card field-card">${itemEmpty("Нажмите на ячейку, чтобы увидеть её содержимое и операции.")}</div>`;
       const parts = wmsPhysicalLocationParts(location);
       const summary = wmsLocationSummary(location, stockRows);
-      const movements = (state.wmsData.movements || []).filter((movement) => Number(movement.from_location_id) === Number(location.id) || Number(movement.to_location_id) === Number(location.id)).slice(0, 6);
       const statusLabel = summary.status === "blocked" ? "Заблокирована" : (summary.status === "empty" ? "Свободна" : "Занята");
       return `<div class="card field-card wms-location-detail">
         <div class="section-title"><b>${escapeHtml(wmsLocationDisplayName(location))}</b><span>${escapeHtml(statusLabel)}</span></div>
@@ -6294,8 +6296,6 @@ ${location.code}`)) return;
         ${state.wmsAdminAdjustment.returnView === "cell" && Number(state.wmsAdminAdjustment.locationId) === Number(location.id) ? renderWmsAdminAdjustmentForm(true) : ""}
         <div class="section-title"><b>Содержимое</b><span>${summary.rows.length} поз.</span></div>
         <div class="wms-location-products">${summary.rows.length ? summary.rows.map((row) => renderWmsStockProductRow(row, null, true)).join("") : itemEmpty("Ячейка свободна.")}</div>
-        <div class="section-title"><b>История ячейки</b><span>${movements.length}</span></div>
-        <div class="wms-location-products">${movements.length ? movements.map((movement) => `<div class="report-row"><div><b>${escapeHtml(wmsMovementLabel(movement.movement_type))}</b><span>${escapeHtml(wmsProductLabel(movement.product_key))}<br>${escapeHtml(wmsMovementTime(movement.occurred_at))}</span></div><span class="status-chip gray">${escapeHtml(movement.quantity)} шт.</span></div>`).join("") : itemEmpty("Движений по ячейке пока нет.")}</div>
       </div>`;
     }
 
@@ -6367,7 +6367,7 @@ ${location.code}`)) return;
         ${renderWmsDataNotice()}
         <div class="op-list">
           <div class="card report-row"><div><b>Остатки по ячейкам</b><span>Товар, ячейка, количество, резерв и доступно</span></div><button type="button" class="small-button" data-wms-report="stock">Скачать CSV</button></div>
-          <div class="card report-row"><div><b>История движений</b><span>Дата, операция, товар, количество, исходная и целевая ячейки</span></div><button type="button" class="small-button" data-wms-report="movements">Скачать CSV</button></div>
+          <div class="card report-row"><div><b>Журнал перемещений</b><span>Дата, операция, товар, количество, исходная и целевая ячейки</span></div><button type="button" class="small-button" data-wms-report="movements">Скачать CSV</button></div>
         </div>
       `;
     }
@@ -6482,16 +6482,31 @@ ${location.code}`)) return;
     }
 
     function renderWmsMovements() {
-      const movements = state.wmsData.movements || [];
-      mainButton.textContent = "Обновить историю";
-      mainButton.disabled = state.wmsData.loading;
+      const journal = state.wmsMovementJournal || {loading: false, loaded: false, error: "", movements: [], productOptions: []};
+      const movements = journal.movements || [];
+      const locationOptions = (state.wmsData.locations || []).map((location) => `<option value="${escapeHtml(location.id)}" ${String(location.id) === String(state.wmsMovementLocationId || "") ? "selected" : ""}>${escapeHtml(wmsLocationDisplayName(location))} · ${escapeHtml(location.code)}</option>`).join("");
+      const productOptions = (journal.productOptions || []).map((product) => {
+        const value = JSON.stringify(product);
+        return `<option value="${escapeHtml(value)}" ${value === state.wmsMovementProductKey ? "selected" : ""}>${escapeHtml(wmsProductLabel(product))}</option>`;
+      }).join("");
+      mainButton.textContent = journal.loading ? "Обновляем…" : "Обновить журнал";
+      mainButton.disabled = journal.loading;
       mount.innerHTML = `
-        <div class="screen-head"><div><h2>История движений</h2><p>Последние складские операции сверху.</p></div><div class="date">${movements.length} зап.</div></div>
-        ${renderWmsDataNotice()}
+        <div class="screen-head"><div><h2>Журнал перемещений</h2><p>Все операции по выбранной ячейке или товару. Последние записи показаны сверху.</p></div><div class="date">${journal.loaded ? `${movements.length} зап.` : "загрузка"}</div></div>
+        <div class="card field-card">
+          <div class="form-grid">
+            <div class="field"><label>Ячейка</label><select id="wmsMovementLocationFilter"><option value="">Все ячейки</option>${locationOptions}</select></div>
+            <div class="field"><label>Товар</label><select id="wmsMovementProductFilter"><option value="">Все товары</option>${productOptions}</select></div>
+          </div>
+          <div class="button-row"><button type="button" class="small-button" data-wms-movement-action="apply">Показать</button><button type="button" class="small-button secondary" data-wms-movement-action="reset">Сбросить фильтры</button></div>
+        </div>
+        ${journal.error ? `<div class="card field-card"><div class="task-note"><b>Не удалось загрузить журнал</b><br>${escapeHtml(journal.error)}</div></div>` : ""}
+        ${journal.loading && !journal.loaded ? `<div class="card field-card">${itemEmpty("Загружаем журнал перемещений…")}</div>` : ""}
         <div class="op-list">${movements.length ? movements.map((movement) => `
           <div class="card report-row"><div><b>${escapeHtml(wmsMovementLabel(movement.movement_type))}</b><span>${escapeHtml(wmsProductLabel(movement.product_key))}<br>${escapeHtml(wmsLocationLabel(movement.from_location_id))} → ${escapeHtml(wmsLocationLabel(movement.to_location_id))}${movement.reason ? `<br>${escapeHtml(movement.reason)}` : ""}</span></div><div><span class="status-chip">${escapeHtml(movement.quantity)} шт.</span><small>${escapeHtml(wmsMovementTime(movement.occurred_at))}</small></div></div>
-        `).join("") : itemEmpty("Складских движений пока нет.")}</div>
+        `).join("") : (!journal.loading ? itemEmpty(state.wmsMovementLocationId || state.wmsMovementProductKey ? "По выбранным фильтрам перемещений нет." : "Складских перемещений пока нет.") : "")}</div>
       `;
+      if (!journal.loaded && !journal.loading) window.setTimeout(() => refreshWmsMovementJournal({silent: true}), 0);
     }
 
     function renderWmsShipments() {
@@ -6710,6 +6725,39 @@ ${location.code}`)) return;
         showToast("Отгрузка", format === "pdf" ? "PDF сформирован." : "Excel сформирован.");
       } catch (error) {
         showToast("Отгрузка", error.message || "Не удалось выгрузить отгрузку.");
+      }
+    }
+
+    function selectedWmsMovementProductKey() {
+      if (!state.wmsMovementProductKey) return null;
+      try {
+        const product = JSON.parse(state.wmsMovementProductKey);
+        return product && typeof product === "object" ? product : null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    async function refreshWmsMovementJournal({silent = false} = {}) {
+      if (!canAccessWms() || state.wmsMovementJournal.loading) return;
+      state.wmsMovementJournal.loading = true;
+      state.wmsMovementJournal.error = "";
+      if (!silent) render();
+      try {
+        const data = await api("/api/wms/movements", {
+          limit: 1000,
+          location_id: state.wmsMovementLocationId || "",
+          product_key: selectedWmsMovementProductKey(),
+          include_filters: true,
+        });
+        state.wmsMovementJournal.movements = data.movements || [];
+        state.wmsMovementJournal.productOptions = data.product_options || [];
+        state.wmsMovementJournal.loaded = true;
+      } catch (error) {
+        state.wmsMovementJournal.error = error.apiMessage || "Проверьте соединение и повторите попытку.";
+      } finally {
+        state.wmsMovementJournal.loading = false;
+        if (state.workspace === "warehouse" && state.wmsView === "movements") render();
       }
     }
 
@@ -7948,6 +7996,7 @@ ${location.code}`)) return;
         ["map", "▦", "Карта склада"],
         ["putaway", "→", "Размещение"],
         ["transfer", "⇄", "Перемещение"],
+        ["movements", "↕", "Журнал перемещений"],
         ["shipments", "↑", "Отгрузки"],
         ["stock", "▤", "Остатки"],
         ["lookup", "⌕", "Проверка товара"],
@@ -7958,7 +8007,7 @@ ${location.code}`)) return;
         ["more", "•••", "Ещё"],
       ];
       return `<aside class="warehouse-v2-sidebar" aria-label="Разделы склада"><h3>Управление складом</h3>${items.map(([id, icon, label]) => `
-        <button type="button" class="warehouse-v2-nav ${state.wmsView === id || (id === "more" && warehouseMoreViews.has(state.wmsView) && !["stock-receipt", "map", "reports", "products", "lookup", "inventory", "stock", "transfer", "admin-stock-control"].includes(state.wmsView)) ? "active" : ""}" data-wms-view="${id}"><span class="warehouse-v2-icon">${icon}</span><span>${label}</span></button>
+        <button type="button" class="warehouse-v2-nav ${state.wmsView === id || (id === "more" && warehouseMoreViews.has(state.wmsView) && !["stock-receipt", "map", "reports", "products", "lookup", "inventory", "stock", "transfer", "movements", "admin-stock-control"].includes(state.wmsView)) ? "active" : ""}" data-wms-view="${id}"><span class="warehouse-v2-icon">${icon}</span><span>${label}</span></button>
       `).join("")}</aside>`;
     }
 
@@ -10261,6 +10310,22 @@ ${location.code}`)) return;
         return;
       }
 
+      const wmsMovementAction = event.target.closest("[data-wms-movement-action]");
+      if (wmsMovementAction) {
+        if (wmsMovementAction.dataset.wmsMovementAction === "reset") {
+          state.wmsMovementLocationId = "";
+          state.wmsMovementProductKey = "";
+        } else {
+          const location = document.getElementById("wmsMovementLocationFilter");
+          const product = document.getElementById("wmsMovementProductFilter");
+          state.wmsMovementLocationId = location ? location.value : "";
+          state.wmsMovementProductKey = product ? product.value : "";
+        }
+        state.wmsMovementJournal.loaded = false;
+        refreshWmsMovementJournal();
+        return;
+      }
+
       const wmsView = event.target.closest("[data-wms-view]");
       if (wmsView) {
         const nextView = wmsView.dataset.wmsView;
@@ -10291,6 +10356,7 @@ ${location.code}`)) return;
         state.screen = "warehouse";
         state.wmsView = nextView;
         render();
+        if (nextView === "movements") refreshWmsMovementJournal({silent: true});
         return;
       }
 
@@ -10921,6 +10987,7 @@ ${location.code}`)) return;
       }
       if (state.screen === "warehouse" || state.screen === "wms") {
         if (state.wmsView === "products") refreshWmsCatalog();
+        else if (state.wmsView === "movements") refreshWmsMovementJournal();
         else if (state.wmsView === "receive") refreshWmsWorkspace();
         else if (state.wmsView === "stock-receipt") postWmsStockReceipt();
         else if (state.wmsView === "putaway") wmsPutaway();

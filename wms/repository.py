@@ -428,19 +428,54 @@ def movement_exists(conn, request_key: str) -> bool:
 
 
 def list_movements(
-    conn, *, limit: int = 100, movement_type: str | None = None
+    conn,
+    *,
+    limit: int = 100,
+    movement_type: str | None = None,
+    location_id: int | None = None,
+    product_key: ProductKey | None = None,
 ) -> list[Movement]:
     sql = "SELECT * FROM wms_movements"
     params: list[Any] = []
+    clauses: list[str] = []
     if movement_type:
-        sql += " WHERE movement_type = %s"
+        clauses.append("movement_type = %s")
         params.append(movement_type)
+    if location_id is not None:
+        clauses.append("(from_location_id = %s OR to_location_id = %s)")
+        params.extend((location_id, location_id))
+    if product_key is not None:
+        clauses.append(
+            "(product_key || jsonb_build_object('product_article', "
+            "COALESCE(product_key->>'product_article', ''))) = %s::jsonb"
+        )
+        params.append(json.dumps(product_key.to_dict()))
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY occurred_at DESC LIMIT %s"
     params.append(limit)
     with conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
     return [_movement_from_row(r) for r in rows]
+
+
+def list_movement_products(conn, *, limit: int = 1000) -> list[ProductKey]:
+    """Return product choices represented in the immutable movement journal."""
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT product_key
+                 FROM (SELECT DISTINCT product_key FROM wms_movements) AS products
+                ORDER BY product_key->>'product_name',
+                         product_key->>'product_size',
+                         product_key->>'product_color',
+                         product_key->>'product_article'
+                LIMIT %s""",
+            (limit,),
+        )
+        rows = cur.fetchall()
+    return [ProductKey.from_dict(row["product_key"]) for row in rows]
 
 
 # ──────────────────────────────────────────────────────────────────────

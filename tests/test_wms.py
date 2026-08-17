@@ -31,6 +31,7 @@ from wms.barcode import (  # noqa: E402
 from wms.models import (  # noqa: E402
     BulkWriteoffResult,
     Location,
+    Movement,
     OperationResult,
     ProductKey,
     StockReceiptResult,
@@ -311,6 +312,79 @@ class WmsContractTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("целым числом", body["message"])
         post.assert_not_called()
+
+    def test_movement_journal_filters_by_location_and_exact_product(self):
+        from wms import api
+
+        product = ProductKey(
+            "finished", "Костюм", "116", "Коричневый", "Упаковано", "Склад",
+            product_article="КДШВН-9/116",
+        )
+        movement = Movement(
+            31, "test:movement:31", "transfer", product, 6, 4, 7,
+            "SELLABLE", "SELLABLE", "transfer", 9, "Перемещение", 23, None,
+            "2026-08-17T10:48:00+05:00",
+        )
+        with patch("wms.api.get_pg_connection") as connection, patch(
+            "wms.api.repo.list_movements", return_value=[movement]
+        ) as list_movements, patch(
+            "wms.api.repo.list_movement_products", return_value=[product]
+        ) as list_products:
+            status, body = api.handle(
+                "/api/wms/movements",
+                {
+                    "limit": 1000,
+                    "location_id": "7",
+                    "product_key": product.to_dict(),
+                    "include_filters": True,
+                },
+                employee_id=23,
+            )
+
+        self.assertEqual(status, 200)
+        list_movements.assert_called_once_with(
+            connection.return_value,
+            limit=1000,
+            movement_type=None,
+            location_id=7,
+            product_key=product,
+        )
+        list_products.assert_called_once_with(connection.return_value)
+        self.assertEqual(body["movements"][0]["to_location_id"], 7)
+        self.assertEqual(body["product_options"], [product.to_dict()])
+
+    def test_movement_repository_combines_cell_and_product_filters(self):
+        from wms import repository
+
+        product = ProductKey(
+            "finished", "Костюм", "116", "Коричневый", "Упаковано", "Склад",
+            product_article="КДШВН-9/116",
+        )
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
+
+        self.assertEqual(
+            repository.list_movements(
+                connection, limit=50, location_id=7, product_key=product
+            ),
+            [],
+        )
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("(from_location_id = %s OR to_location_id = %s)", sql)
+        self.assertIn("jsonb_build_object('product_article'", sql)
+        self.assertEqual(params[:2], [7, 7])
+        self.assertEqual(json.loads(params[2]), product.to_dict())
+        self.assertEqual(params[-1], 50)
+
+    def test_cell_card_has_no_history_and_journal_has_filters(self):
+        assets = MINIAPP_HTML
+        self.assertNotIn("История ячейки", assets)
+        self.assertIn("Журнал перемещений", assets)
+        self.assertIn('id="wmsMovementLocationFilter"', assets)
+        self.assertIn('id="wmsMovementProductFilter"', assets)
+        self.assertIn('include_filters: true', assets)
+        self.assertIn('["movements", "↕", "Журнал перемещений"]', assets)
 
     def test_pick_api_uses_authenticated_employee_and_location(self):
         from wms import api
@@ -967,6 +1041,36 @@ class WmsDbTests(unittest.TestCase):
         )
         defaults.update(kw)
         return ProductKey(**defaults)
+
+    def test_movement_journal_queries_real_postgres_filters(self):
+        from wms import repository
+
+        location = repository.get_location_by_code(self.conn, "RECEIVE-01")
+        self.assertIsNotNone(location)
+        product = self._pk(
+            product_name="Костюм",
+            product_size="116",
+            product_color="Коричневый",
+            product_article="КДШВН-9/116",
+        )
+        repository.insert_movement(
+            self.conn,
+            request_key="test:movement-journal:postgres",
+            movement_type="transfer",
+            product_key=product,
+            quantity=6,
+            from_location_id=location.id,
+            to_location_id=location.id,
+        )
+        self.conn.commit()
+
+        rows = repository.list_movements(
+            self.conn, location_id=location.id, product_key=product
+        )
+        products = repository.list_movement_products(self.conn)
+
+        self.assertTrue(any(row.request_key == "test:movement-journal:postgres" for row in rows))
+        self.assertIn(product, products)
 
     def test_seed_zones_present(self):
         with self.conn.cursor() as cur:

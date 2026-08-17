@@ -635,10 +635,21 @@ def _register_barcode(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
 def _movements(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     conn = get_pg_connection()
     limit = max(1, min(int(payload.get("limit", 100)), 1000))
+    location_id = None
+    if str(payload.get("location_id") or "").strip():
+        location_id = int(payload["location_id"])
+        if location_id <= 0:
+            raise ValueError("Выберите существующую ячейку.")
+    product_payload = payload.get("product_key")
+    product_key = ProductKey.from_dict(product_payload) if isinstance(product_payload, dict) and product_payload else None
     movements = repo.list_movements(
-        conn, limit=limit, movement_type=payload.get("movement_type")
+        conn,
+        limit=limit,
+        movement_type=payload.get("movement_type"),
+        location_id=location_id,
+        product_key=product_key,
     )
-    return 200, {
+    result = {
         "movements": [
             {
                 "id": m.id,
@@ -654,6 +665,11 @@ def _movements(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             for m in movements
         ]
     }
+    if str(payload.get("include_filters") or "").strip().lower() in {"1", "true", "yes"}:
+        result["product_options"] = [
+            item.to_dict() for item in repo.list_movement_products(conn)
+        ]
+    return 200, result
 
 
 # ──────────────────────────────────────────────────────────────────────
