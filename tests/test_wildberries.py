@@ -10,6 +10,7 @@ from urllib.error import HTTPError
 from wildberries import (
     WildberriesAPIError,
     WildberriesClient,
+    _current_snapshot,
     _flatten_cards,
     _now,
     _persisted_retry_remaining,
@@ -194,6 +195,29 @@ class WildberriesClientTests(unittest.TestCase):
         self.assertEqual(details["coverage_start_date"], "2026-05-08")
         self.assertEqual(details["coverage_end_date"], "2026-08-06")
         self.assertTrue(details["coverage_complete"])
+
+    def test_rate_limit_keeps_last_verified_snapshot_visible(self):
+        marker, usable = _current_snapshot({
+            "catalog": {
+                "status": "rate_limited",
+                "snapshot_started_at": "2026-08-17T07:40:00+03:00",
+                "last_successful_snapshot_started_at": "2026-08-17T07:10:00+03:00",
+            }
+        }, "catalog")
+
+        self.assertTrue(usable)
+        self.assertEqual(marker, "2026-08-17T07:10:00+03:00")
+
+    def test_authentication_error_does_not_mark_stale_snapshot_current(self):
+        marker, usable = _current_snapshot({
+            "catalog": {
+                "status": "invalid_token",
+                "last_successful_snapshot_started_at": "2026-08-17T07:10:00+03:00",
+            }
+        }, "catalog")
+
+        self.assertFalse(usable)
+        self.assertNotEqual(marker, "2026-08-17T07:10:00+03:00")
 
 
 if __name__ == "__main__":

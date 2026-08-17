@@ -1378,6 +1378,31 @@ def dashboard(*, read_only: bool = False) -> dict:
         conn.close()
 
 
+def _current_snapshot(capability_statuses: dict[str, dict], name: str) -> tuple[str, bool]:
+    """Return the newest verified snapshot that is safe to display.
+
+    A rate limit or temporary WB outage describes the current refresh attempt;
+    it must not make the last committed catalogue disappear.  Authentication,
+    validation and other permanent errors remain unavailable until a fresh
+    snapshot succeeds.
+    """
+
+    payload = capability_statuses.get(name)
+    if not payload:
+        # Backward-compatible view before the first capability-aware sync.
+        return "", True
+    status = _text(payload.get("status"))
+    if status == "available":
+        marker = _text(payload.get("snapshot_started_at")) or _text(
+            payload.get("last_successful_snapshot_started_at")
+        )
+    elif status in {"rate_limited", "wb_unavailable"}:
+        marker = _text(payload.get("last_successful_snapshot_started_at"))
+    else:
+        marker = ""
+    return (marker, True) if marker else (WB_SNAPSHOT_SENTINEL, False)
+
+
 def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> dict:
     from marketplaces import _marketplace_product_image, product_group_for
 
@@ -1454,21 +1479,15 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
             capability_rows.append(row)
     capability_statuses = {row["capability"]: row for row in capability_rows}
 
-    def current_snapshot(name: str) -> tuple[str, bool]:
-        payload = capability_statuses.get(name)
-        if not payload:
-            # Backward-compatible view before the first capability-aware sync.
-            return "", True
-        if payload.get("status") != "available":
-            return WB_SNAPSHOT_SENTINEL, False
-        marker = _text(payload.get("snapshot_started_at")) or _text(
-            payload.get("last_successful_snapshot_started_at")
-        )
-        return (marker, True) if marker else (WB_SNAPSHOT_SENTINEL, False)
-
-    catalog_snapshot_start, catalog_snapshot_usable = current_snapshot("catalog")
-    price_snapshot_start, price_snapshot_usable = current_snapshot("prices")
-    stock_snapshot_start, stock_snapshot_usable = current_snapshot("stocks")
+    catalog_snapshot_start, catalog_snapshot_usable = _current_snapshot(
+        capability_statuses, "catalog"
+    )
+    price_snapshot_start, price_snapshot_usable = _current_snapshot(
+        capability_statuses, "prices"
+    )
+    stock_snapshot_start, stock_snapshot_usable = _current_snapshot(
+        capability_statuses, "stocks"
+    )
 
     def coverage_payload(name: str) -> dict:
         payload = capability_statuses.get(name) or {}
