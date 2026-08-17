@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 
 LOGGER = logging.getLogger(__name__)
-FORMULA_VERSION = "analytics-overview-v2"
+FORMULA_VERSION = "analytics-overview-v3"
 VALID_STATUSES = {
     "fresh",
     "stale",
@@ -1234,6 +1234,144 @@ def _aggregate_known(values: Iterable[object], *, money: bool = False, quantity:
     return int(total)
 
 
+COMPARISON_METRICS = {
+    "orders": "integer",
+    "sales_units": "quantity",
+    "gross_sales": "money",
+    "recognized_sales": "money",
+    "net_payout": "money",
+}
+
+
+def _previous_period(period: PeriodWindow) -> PeriodWindow:
+    """Return the immediately preceding inclusive window of equal length."""
+    days = (period.end - period.start).days + 1
+    previous_end = period.start - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=days - 1)
+    return PeriodWindow(
+        start=previous_start,
+        end=previous_end,
+        label=f"{previous_start.strftime('%d.%m.%Y')} — {previous_end.strftime('%d.%m.%Y')}",
+        preset="comparison",
+    )
+
+
+def _comparison_number(value: Decimal, value_type: str) -> object:
+    if value_type == "money":
+        return _money(value)
+    if value_type == "quantity":
+        return _quantity(value)
+    return int(value)
+
+
+def _comparison_entry(current: object, previous: object, value_type: str) -> dict[str, Any]:
+    current_number = _decimal(current)
+    previous_number = _decimal(previous)
+    if current_number is None or previous_number is None:
+        return {
+            "available": False,
+            "current": _comparison_number(current_number, value_type) if current_number is not None else None,
+            "previous": _comparison_number(previous_number, value_type) if previous_number is not None else None,
+            "absolute_change": None,
+            "percent_change": None,
+            "direction": "unavailable",
+        }
+
+    change = current_number - previous_number
+    percent = None
+    if previous_number != 0:
+        percent = (change / abs(previous_number) * Decimal("100")).quantize(
+            Decimal("0.1"), rounding=ROUND_HALF_UP
+        )
+    elif change == 0:
+        percent = Decimal("0")
+    return {
+        "available": True,
+        "current": _comparison_number(current_number, value_type),
+        "previous": _comparison_number(previous_number, value_type),
+        "absolute_change": _comparison_number(change, value_type),
+        "percent_change": _quantity(percent),
+        "direction": "up" if change > 0 else "down" if change < 0 else "flat",
+    }
+
+
+def _aggregate_comparison_entry(
+    code: str,
+    value_type: str,
+    current_providers: list[dict[str, Any]],
+    previous_by_marketplace: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    current_values: list[Decimal] = []
+    previous_values: list[Decimal] = []
+    current_population: set[str] = set()
+    previous_population: set[str] = set()
+    for current_provider in current_providers:
+        marketplace = str(current_provider.get("marketplace") or "")
+        current_value = _decimal(current_provider.get(code))
+        previous_value = _decimal(previous_by_marketplace.get(marketplace, {}).get(code))
+        if current_value is not None:
+            current_population.add(marketplace)
+            current_values.append(current_value)
+        if previous_value is not None:
+            previous_population.add(marketplace)
+            previous_values.append(previous_value)
+
+    current_total = sum(current_values, Decimal("0")) if current_values else None
+    previous_total = sum(previous_values, Decimal("0")) if previous_values else None
+    result = _comparison_entry(current_total, previous_total, value_type)
+    if current_population != previous_population:
+        # Comparing totals with different marketplace populations would create
+        # a convincing but false growth rate. Keep the values visible for
+        # diagnosis, but fail closed for the delta.
+        result.update({
+            "available": False,
+            "absolute_change": None,
+            "percent_change": None,
+            "direction": "unavailable",
+        })
+    return result
+
+
+def _comparison_payload(
+    period: PeriodWindow,
+    current_providers: list[dict[str, Any]],
+    previous_providers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    previous_by_marketplace = {
+        str(row.get("marketplace") or ""): row for row in previous_providers
+    }
+    provider_rows = []
+    for current_provider in current_providers:
+        marketplace = str(current_provider.get("marketplace") or "")
+        previous_provider = previous_by_marketplace.get(marketplace, {})
+        provider_rows.append({
+            "marketplace": marketplace,
+            "label": current_provider.get("label") or marketplace,
+            "metrics": {
+                code: _comparison_entry(
+                    current_provider.get(code), previous_provider.get(code), value_type
+                )
+                for code, value_type in COMPARISON_METRICS.items()
+            },
+        })
+
+    aggregate_metrics = {}
+    for code, value_type in COMPARISON_METRICS.items():
+        aggregate_metrics[code] = _aggregate_comparison_entry(
+            code, value_type, current_providers, previous_by_marketplace
+        )
+    available_count = sum(
+        1 for row in aggregate_metrics.values() if row.get("available") is True
+    )
+    return {
+        "period": _previous_period(period).as_dict(),
+        "metrics": aggregate_metrics,
+        "providers": provider_rows,
+        "available_metrics": available_count,
+        "status": "fresh" if available_count == len(COMPARISON_METRICS) else "partial" if available_count else "no_data",
+    }
+
+
 def _metric(
     code: str,
     label: str,
@@ -1759,6 +1897,14 @@ def analytics_overview(
         "wildberries", "Wildberries", wb_provider, {}, period, generated_at
     )
     providers = [ozon, wb]
+    comparison_period = _previous_period(period)
+    previous_ozon, _, _, _ = _provider_payload(
+        "ozon", "Ozon", ozon_provider, quality, comparison_period, generated_at
+    )
+    previous_wb, _, _, _ = _provider_payload(
+        "wildberries", "Wildberries", wb_provider, {}, comparison_period, generated_at
+    )
+    comparison = _comparison_payload(period, providers, [previous_ozon, previous_wb])
     series = _combined_series(
         ozon_finance, wb_finance, ozon_orders, wb_orders, ozon_sales, wb_sales
     )
@@ -1961,6 +2107,7 @@ def analytics_overview(
         "breakdowns": breakdowns,
         "providers": providers,
         "marketplaceBreakdown": providers,
+        "comparison": comparison,
         "risks": risks,
         "supplies": supplies,
         "catalog_reconciliation": _as_dict(dashboard.get("catalog_reconciliation")),

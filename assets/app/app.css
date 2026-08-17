@@ -4603,11 +4603,17 @@
     .ac-filterbar select,.ac-filterbar input { width:100%; min-height:38px; border:1px solid var(--ac-border); border-radius:9px; background:#fafbfd; color:var(--ac-text); padding:0 10px; font-size:11px; }
     .ac-filter-range { align-self:center; color:#6f7b8e; font-size:10px; font-weight:750; }
     .ac-kpis { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; margin-bottom:12px; }
-    .ac-kpi { position:relative; min-width:0; min-height:128px; padding:15px; border:1px solid var(--ac-border); border-radius:16px; background:#fff; box-shadow:0 3px 12px rgba(15,23,42,.035); }
+    .ac-kpi { position:relative; min-width:0; min-height:142px; padding:15px; border:1px solid var(--ac-border); border-radius:16px; background:#fff; box-shadow:0 3px 12px rgba(15,23,42,.035); }
     .ac-kpi.accent { border-color:#d8ddff; background:linear-gradient(145deg,#fff,#f8f8ff); }
     .ac-kpi-label { display:flex; align-items:flex-start; justify-content:space-between; gap:7px; min-height:27px; color:#758196; font-size:9px; font-weight:750; }
     .ac-kpi-value { margin:11px 0 9px; color:#0f172a; font-size:clamp(20px,1.65vw,28px); font-weight:850; line-height:1.05; letter-spacing:-.045em; overflow-wrap:anywhere; }
     .ac-kpi-meta { color:#909aaa; font-size:8px; line-height:1.4; }
+    .ac-kpi-delta { display:inline-flex; align-items:center; width:max-content; max-width:100%; min-height:22px; margin-top:9px; padding:0 7px; border-radius:7px; font-size:8px; font-style:normal; font-weight:850; line-height:1.25; }
+    .ac-kpi-delta.up,.ac-table-delta.up { color:#13795b; background:#eaf8f2; }
+    .ac-kpi-delta.down,.ac-table-delta.down { color:#a53745; background:#fff0f2; }
+    .ac-kpi-delta.flat,.ac-table-delta.flat { color:#526075; background:#f0f3f8; }
+    .ac-kpi-delta.unavailable,.ac-table-delta.unavailable { color:#7f8a9d; background:#f5f7fa; }
+    .ac-table-delta { display:inline-flex; align-items:center; min-height:24px; padding:0 8px; border-radius:8px; font-size:8px; font-weight:850; white-space:nowrap; }
     .ac-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:12px; }
     .ac-span-12 { grid-column:span 12; }.ac-span-8 { grid-column:span 8; }.ac-span-7 { grid-column:span 7; }.ac-span-6 { grid-column:span 6; }.ac-span-5 { grid-column:span 5; }.ac-span-4 { grid-column:span 4; }
     .ac-panel { min-width:0; padding:16px; border:1px solid var(--ac-border); border-radius:16px; background:#fff; box-shadow:0 3px 12px rgba(15,23,42,.035); }

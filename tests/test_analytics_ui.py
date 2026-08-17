@@ -11,6 +11,15 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('if (!force && cached)', MINIAPP_HTML)
         self.assertIn('payload.catalog_reconciliation || root.catalog_reconciliation', MINIAPP_HTML)
 
+    def test_kpis_compare_with_previous_equal_period(self):
+        self.assertIn('payload.comparison && typeof payload.comparison === "object"', MINIAPP_HTML)
+        self.assertIn('comparisonMetric("sales_units")', MINIAPP_HTML)
+        self.assertIn('comparisonMetric("gross_sales")', MINIAPP_HTML)
+        self.assertIn('comparisonMetric("net_payout")', MINIAPP_HTML)
+        self.assertIn('к предыдущему периоду', MINIAPP_HTML)
+        self.assertIn('Сравнение площадок', MINIAPP_HTML)
+        self.assertIn('Нет данных для сравнения', MINIAPP_HTML)
+
     def test_region_page_contains_interactive_ozon_map(self):
         self.assertIn('Карта регионов:', MINIAPP_HTML)
         self.assertIn('Карта продаж по регионам', MINIAPP_HTML)

@@ -1,10 +1,73 @@
 from datetime import datetime, timezone
 import unittest
 
-from analytics_overview import analytics_overview
+from analytics_overview import _aggregate_comparison_entry, analytics_overview
 
 
 class AnalyticsOverviewTests(unittest.TestCase):
+    def test_aggregate_comparison_rejects_different_marketplace_populations(self):
+        result = _aggregate_comparison_entry(
+            "gross_sales",
+            "money",
+            [
+                {"marketplace": "ozon", "gross_sales": "1000.00"},
+                {"marketplace": "wildberries", "gross_sales": "500.00"},
+            ],
+            {
+                "ozon": {"marketplace": "ozon", "gross_sales": "900.00"},
+                "wildberries": {"marketplace": "wildberries", "gross_sales": None},
+            },
+        )
+
+        self.assertFalse(result["available"])
+        self.assertEqual(result["current"], "1500.00")
+        self.assertEqual(result["previous"], "900.00")
+        self.assertIsNone(result["percent_change"])
+        self.assertEqual(result["direction"], "unavailable")
+
+    def test_compares_selected_period_with_previous_equal_window(self):
+        observed_at = "2026-08-04T08:00:00Z"
+        dashboard = {
+            "ok": True,
+            "configured": True,
+            "accounts": [{"marketplace": "ozon", "last_sync_at": observed_at}],
+            "orders_rows": [{"external_order_id": "ozon-order"}],
+            "analytics": {
+                "sales_daily": [
+                    {"date": "2026-08-01", "orders": 1, "units": 2, "amount": 200},
+                    {"date": "2026-08-02", "orders": 1, "units": 1, "amount": 200},
+                    {"date": "2026-08-03", "orders": 2, "units": 4, "amount": 500},
+                    {"date": "2026-08-04", "orders": 1, "units": 2, "amount": 300},
+                ],
+                "finance_daily": [
+                    {"date": "2026-08-01", "revenue": 180, "net": 150},
+                    {"date": "2026-08-02", "revenue": 170, "net": 150},
+                    {"date": "2026-08-03", "revenue": 350, "net": 300},
+                    {"date": "2026-08-04", "revenue": 350, "net": 300},
+                ],
+            },
+            "wildberries": {"ok": True, "configured": False},
+        }
+
+        result = analytics_overview(
+            {"start_date": "2026-08-03", "end_date": "2026-08-04"},
+            dashboard_reader=lambda: dashboard,
+            data_quality_reader=lambda: {"ok": True, "enabled": False},
+            production_reader=lambda _start, _end: {},
+            current=datetime(2026, 8, 4, 8, 5, tzinfo=timezone.utc),
+        )
+
+        comparison = result["comparison"]
+        self.assertEqual(comparison["period"]["start_date"], "2026-08-01")
+        self.assertEqual(comparison["period"]["end_date"], "2026-08-02")
+        self.assertEqual(comparison["metrics"]["sales_units"]["current"], "6")
+        self.assertEqual(comparison["metrics"]["sales_units"]["previous"], "3")
+        self.assertEqual(comparison["metrics"]["sales_units"]["percent_change"], "100")
+        self.assertEqual(comparison["metrics"]["gross_sales"]["absolute_change"], "400.00")
+        self.assertEqual(comparison["metrics"]["net_payout"]["percent_change"], "100")
+        ozon = next(row for row in comparison["providers"] if row["marketplace"] == "ozon")
+        self.assertEqual(ozon["metrics"]["orders"]["direction"], "up")
+
     def test_uses_positive_finance_accruals_for_sales_before_withholdings(self):
         dashboard = {
             "ok": True,
