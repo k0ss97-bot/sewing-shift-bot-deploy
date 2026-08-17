@@ -2217,16 +2217,27 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertEqual(rework["parent_batch_id"], batch["id"])
         self.assertEqual(rework["priority"], "urgent")
         self.assertEqual(rework["quantity"], 1)
-        control = miniapp_server.get_production_control_payload(
-            self.database.local_today().isoformat(),
-            self.database.local_today().isoformat(),
-        )
+        class ReceiptConnection:
+            def rollback(self):
+                return None
+
+        with patch.object(
+            miniapp_server, "get_pg_connection", return_value=ReceiptConnection()
+        ), patch.object(
+            miniapp_server.wms_repository,
+            "finished_production_receipts",
+            return_value={"quantity": 0},
+        ):
+            control = miniapp_server.get_production_control_payload(
+                self.database.local_today().isoformat(),
+                self.database.local_today().isoformat(),
+            )
         # This route step produces a semi-finished component. Production
         # plan/fact now count only finished goods accepted into WMS RECEIVE.
         self.assertEqual(control["plan"], 0)
-        self.assertIsNone(control["fact"])
+        self.assertEqual(control["fact"], 0)
         self.assertEqual(control["defect_quantity"], 1)
-        self.assertIsNone(control["fpy"])
+        self.assertEqual(control["fpy"], 0)
         self.assertEqual(control["schedule_adherence"], 100)
         self.assertEqual(control["active_tasks"], 2)
         self.assertTrue(any(alert["type"] == "defect" for alert in control["alerts"]))
