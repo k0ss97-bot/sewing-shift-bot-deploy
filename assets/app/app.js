@@ -9251,8 +9251,12 @@ ${location.code}`)) return;
       const nav = pages.map(([id, icon, label]) => `<button type="button" class="${page === id ? "active" : ""}" data-ac-page="${id}"><i>${icon}</i><span>${label}</span></button>`).join("");
       const mobileNav = `<label class="ac-mobile-nav"><span>Раздел аналитики</span><select id="analyticsMobilePage" aria-label="Раздел аналитики">${pages.map(([id, , label]) => `<option value="${id}" ${page === id ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>`;
       const marketplaceSwitch = `<div class="ac-market-switch" aria-label="Источник аналитики"><button data-ac-provider="all" class="${marketplace === "all" ? "active all" : ""}">Все</button><button data-ac-provider="ozon" class="${marketplace === "ozon" ? "active ozon" : ""}">Ozon</button><button data-ac-provider="wildberries" class="${marketplace === "wildberries" ? "active wb" : ""}">WB</button><button data-ac-provider="production" class="${marketplace === "production" ? "active production" : ""}">Производство</button></div>`;
-      const periodOptions = [["7d","7 дней"],["30d","30 дней"],["month","Месяц"],["previous-month","Прошлый месяц"]];
-      const filterbar = `<div class="ac-filterbar"><label><span>Период</span><select id="analyticsHubPeriod">${periodOptions.map(([id,label]) => `<option value="${id}" ${state.marketplacePeriod === id ? "selected" : ""}>${label}</option>`).join("")}</select></label><span class="ac-period-label">${escapeHtml(period)}</span><button type="button" data-ac-action="refresh" ${overviewState.loading ? "disabled" : ""}>${overviewState.loading ? "Загрузка…" : "Обновить"}</button></div>`;
+      const periodOptions = [["today","Сегодня"],["yesterday","Вчера"],["7d","Последние 7 дней"],["30d","Последние 30 дней"],["month","Текущий месяц"],["previous-month","Предыдущий месяц"],["custom","Произвольный диапазон"]];
+      const calendarMax = marketplaceLocalIsoDate();
+      const customPeriodFields = state.marketplacePeriod === "custom"
+        ? `<div class="ac-filter-dates"><label><span>С даты</span><input id="analyticsHubDateFrom" type="date" max="${calendarMax}" value="${escapeHtml(state.marketplaceDateFrom)}"></label><label><span>По дату</span><input id="analyticsHubDateTo" type="date" max="${calendarMax}" value="${escapeHtml(state.marketplaceDateTo)}"></label></div>`
+        : "";
+      const filterbar = `<div class="ac-filterbar ${state.marketplacePeriod === "custom" ? "has-custom-range" : ""}"><label><span>Период</span><select id="analyticsHubPeriod">${periodOptions.map(([id,label]) => `<option value="${id}" ${state.marketplacePeriod === id ? "selected" : ""}>${label}</option>`).join("")}</select></label>${customPeriodFields}<span class="ac-period-label">${escapeHtml(period)}</span><button type="button" data-ac-action="refresh" ${overviewState.loading ? "disabled" : ""}>${overviewState.loading ? "Загрузка…" : "Обновить"}</button></div>`;
       const sourceState = overviewState.loading ? `<div class="ac-skeleton"></div>` : overviewState.error ? empty("Не удалось обновить данные", "Структура экрана сохранена. Повторите загрузку или откройте диагностику.", "diagnostics") : "";
 
       function renderOverviewPage() {
@@ -9286,12 +9290,53 @@ ${location.code}`)) return;
       }
 
       function renderSalesPage() {
+        const grossSalesMetric = metric("gross_sales");
+        const salesUnitsMetric = metric("sales_units");
+        const ordersMetric = metric("orders");
+        const grossValue = grossSalesMetric.value !== null && grossSalesMetric.value !== undefined ? Number(grossSalesMetric.value) : null;
+        const unitsValue = salesUnitsMetric.value !== null && salesUnitsMetric.value !== undefined ? Number(salesUnitsMetric.value) : null;
+        const ordersValue = ordersMetric.value !== null && ordersMetric.value !== undefined ? Number(ordersMetric.value) : null;
+        const periodStartDate = periodStart ? new Date(`${periodStart}T00:00:00Z`) : null;
+        const periodEndDate = periodEnd ? new Date(`${periodEnd}T00:00:00Z`) : null;
+        const calendarDays = periodStartDate && periodEndDate && !Number.isNaN(periodStartDate.getTime()) && !Number.isNaN(periodEndDate.getTime())
+          ? Math.max(1, Math.round((periodEndDate.getTime() - periodStartDate.getTime()) / 86400000) + 1)
+          : null;
+        const ratio = (numerator, denominator) => numerator !== null && denominator !== null && Number.isFinite(numerator) && Number.isFinite(denominator) && denominator > 0 ? numerator / denominator : null;
+        const decimal = (value, digits = 1) => value === null || value === undefined ? "—" : Number(value).toLocaleString("ru-RU", {minimumFractionDigits: digits, maximumFractionDigits: digits});
+        const averageCheck = ratio(grossValue, ordersValue);
+        const itemsPerOrder = ratio(unitsValue, ordersValue);
+        const averageUnitPrice = ratio(grossValue, unitsValue);
+        const unitsPerDay = ratio(unitsValue, calendarDays);
+        const revenuePerDay = ratio(grossValue, calendarDays);
         const visibleOrders = periodOrders.slice(0, 100);
         const orderRows = visibleOrders.map((row) => `<tr><td>${escapeHtml(row.shipment_date || row.updated_at || "—")}</td><td>${escapeHtml(row.posting_number || row.external_order_id || row.id || "—")}</td><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${row.quantity !== null && row.quantity !== undefined ? escapeHtml(fmt(row.quantity)) : "—"}</td><td>${row.amount_available || row.amount_partial ? escapeHtml(money(row.amount)) : "—"}</td><td>${escapeHtml(businessStatusLabel(row.status))}</td></tr>`);
-        const providerComparison = providerCards.map((row) => `<tr><td>${escapeHtml(row.label || row.marketplace)}</td><td>${row.sales_units !== null && row.sales_units !== undefined ? escapeHtml(fmt(row.sales_units)) : "—"}</td><td>${row.gross_sales !== null && row.gross_sales !== undefined ? escapeHtml(money(row.gross_sales)) : "—"}</td><td>${row.orders !== null && row.orders !== undefined ? escapeHtml(fmt(row.orders)) : "—"}</td></tr>`);
-        const warehouseRows = salesByWarehouse.slice(0, 200).map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.warehouse || "Склад не указан")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${row.amount_status === "partial" ? "Частично" : "Полностью"}</td></tr>`);
-        const productRows = salesByProduct.slice(0, 300).map((row) => `<tr><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.product || "Товар не указан")}</td><td>${escapeHtml(row.offer_id || row.sku || "—")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td></tr>`);
-        return `${filterbar}<div class="ac-kpis">${kpi("Продано", safeValue(metric("sales_units")), "Штук за период", "", comparisonMetric("sales_units"))}${kpi("Сумма заказов", safeValue(metric("gross_sales"), money), "По ценам строк заказа", "", comparisonMetric("gross_sales"))}${kpi("Заказы", safeValue(metric("orders")), "Количество заказов", "", comparisonMetric("orders"))}${kpi("Начисления", safeValue(metric("recognized_sales"), money), "До удержаний", "", comparisonMetric("recognized_sales"))}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению", "", comparisonMetric("net_payout"))}</div><div class="ac-grid">${panel("Продажи в штуках по дням", period, analyticsHubCombinedChart(salesChartModels("units"), "units"), "span-6")}${panel("Продажи в рублях по дням", period, analyticsHubCombinedChart(salesChartModels("amount"), "amount"), "span-6")}${panel("Ozon / Wildberries", "Раздельные итоги", table(["Площадка","Продано, шт.","Сумма заказов","Заказы"], providerComparison, "Площадки не вернули продажи."), "span-12")}${panel("Продажи по складам", `${salesByWarehouse.length} складов за выбранный период`, table(["Площадка","Склад","Заказы","Штук","Сумма","Цены"], warehouseRows, "Складской разрез за выбранный период не получен."), "span-6")}${panel("Продажи по товарам", `${salesByProduct.length} SKU за выбранный период`, table(["Площадка","Товар","Артикул","Заказы","Штук","Сумма"], productRows, "Товарный разрез за выбранный период не получен."), "span-6")}${panel("Последние заказы в выбранном периоде", `Показано ${visibleOrders.length}; итог рассчитан по полному набору ${safeValue(metric("orders"))}`, table(["Дата","Отправление","Площадка","Штук","Сумма","Статус"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
+        const knownProviderGross = providerCards.filter((row) => row.gross_sales !== null && row.gross_sales !== undefined);
+        const providerGrossTotal = knownProviderGross.reduce((sum, row) => sum + Number(row.gross_sales || 0), 0);
+        const providerStructure = [...knownProviderGross].sort((left, right) => Number(right.gross_sales || 0) - Number(left.gross_sales || 0)).map((row) => {
+          const share = providerGrossTotal > 0 ? Number(row.gross_sales || 0) / providerGrossTotal * 100 : 0;
+          return `<div class="ac-sales-provider"><div><b>${escapeHtml(row.label || row.marketplace || "Площадка")}</b><span>${row.sales_units !== null && row.sales_units !== undefined ? `${escapeHtml(fmt(row.sales_units))} шт.` : "Продажи в штуках недоступны"} · ${row.orders !== null && row.orders !== undefined ? `${escapeHtml(fmt(row.orders))} заказов` : "заказы недоступны"}</span></div><strong>${escapeHtml(money(row.gross_sales))}<small>${share.toLocaleString("ru-RU", {maximumFractionDigits: 1})}%</small></strong><div class="ac-sales-share"><i class="${safePercentClass(share)}"></i></div></div>`;
+        }).join("");
+        const productAmountTotal = salesByProduct.reduce((sum, row) => sum + (Number.isFinite(Number(row.amount)) ? Number(row.amount) : 0), 0);
+        let cumulativeProductShare = 0;
+        const rankedProducts = [...salesByProduct].sort((left, right) => Number(right.amount || 0) - Number(left.amount || 0));
+        const productRows = rankedProducts.slice(0, 50).map((row, index) => {
+          const amount = Number(row.amount || 0);
+          const share = productAmountTotal > 0 ? amount / productAmountTotal * 100 : 0;
+          cumulativeProductShare += share;
+          const unitPrice = ratio(Number.isFinite(amount) ? amount : null, Number.isFinite(Number(row.units)) ? Number(row.units) : null);
+          return `<tr><td><span class="ac-rank">${index + 1}</span></td><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td><strong>${escapeHtml(row.product || "Товар не указан")}</strong><span>${escapeHtml(row.offer_id || row.sku || "—")}</span></td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${unitPrice === null ? "—" : money(unitPrice)}</td><td><b>${share.toLocaleString("ru-RU", {maximumFractionDigits: 1})}%</b><div class="ac-sales-share compact"><i class="${safePercentClass(share)}"></i></div></td><td>${cumulativeProductShare.toLocaleString("ru-RU", {maximumFractionDigits: 1})}%</td></tr>`;
+        });
+        const warehouseAmountTotal = salesByWarehouse.reduce((sum, row) => sum + (Number.isFinite(Number(row.amount)) ? Number(row.amount) : 0), 0);
+        const rankedWarehouses = [...salesByWarehouse].sort((left, right) => Number(right.amount || 0) - Number(left.amount || 0));
+        const warehouseRows = rankedWarehouses.slice(0, 100).map((row, index) => {
+          const amount = Number(row.amount || 0);
+          const share = warehouseAmountTotal > 0 ? amount / warehouseAmountTotal * 100 : 0;
+          const warehouseAverageCheck = ratio(Number.isFinite(amount) ? amount : null, Number.isFinite(Number(row.orders)) ? Number(row.orders) : null);
+          return `<tr><td><span class="ac-rank">${index + 1}</span></td><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td><strong>${escapeHtml(row.warehouse || "Склад не указан")}</strong><span>${row.amount_status === "partial" ? "Сумма загружена частично" : "Сумма загружена полностью"}</span></td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${warehouseAverageCheck === null ? "—" : money(warehouseAverageCheck)}</td><td><b>${share.toLocaleString("ru-RU", {maximumFractionDigits: 1})}%</b><div class="ac-sales-share compact"><i class="${safePercentClass(share)}"></i></div></td></tr>`;
+        });
+        const efficiency = `<div class="ac-efficiency-grid"><article><span>Товаров в заказе</span><strong>${decimal(itemsPerOrder)}</strong><small>Среднее количество единиц</small></article><article><span>Средняя цена единицы</span><strong>${averageUnitPrice === null ? "—" : escapeHtml(money(averageUnitPrice))}</strong><small>Сумма заказов / продано</small></article><article><span>Продаж в день</span><strong>${unitsPerDay === null ? "—" : `${decimal(unitsPerDay)} шт.`}</strong><small>${calendarDays ? `${calendarDays} календарных дней` : "Период не определён"}</small></article><article><span>Выручка в день</span><strong>${revenuePerDay === null ? "—" : escapeHtml(money(revenuePerDay))}</strong><small>Средний темп периода</small></article></div>`;
+        const structureBody = providerStructure || empty("Нет данных по площадкам", "Структура не рассчитывается, пока площадки не вернули сумму заказов.");
+        return `${filterbar}<div class="ac-kpis">${kpi("Продано", safeValue(salesUnitsMetric), "Штук за период", "", comparisonMetric("sales_units"))}${kpi("Сумма заказов", safeValue(grossSalesMetric, money), "По ценам строк заказа", "", comparisonMetric("gross_sales"))}${kpi("Заказы", safeValue(ordersMetric), "Количество заказов", "", comparisonMetric("orders"))}${kpi("Средний чек", averageCheck === null ? "—" : money(averageCheck), "Сумма заказов / заказы")}${kpi("Начисления", safeValue(metric("recognized_sales"), money), "До удержаний", "", comparisonMetric("recognized_sales"))}${kpi("После удержаний", safeValue(metric("net_payout"), money), "К перечислению", "", comparisonMetric("net_payout"))}</div><div class="ac-grid">${panel("Продажи в штуках по дням", period, analyticsHubCombinedChart(salesChartModels("units"), "units"), "span-6")}${panel("Продажи в рублях по дням", period, analyticsHubCombinedChart(salesChartModels("amount"), "amount"), "span-6")}${panel("Эффективность периода", "Средние показатели без прогноза", efficiency, "span-12")}${panel("Структура продаж по площадкам", "Доля суммы заказов", `<div class="ac-sales-structure">${structureBody}</div>`, "span-4")}${panel("Топ товаров по сумме заказов", `Показано ${Math.min(50, rankedProducts.length)} из ${rankedProducts.length} SKU`, table(["№","Площадка","Товар / артикул","Заказы","Штук","Сумма","Цена за единицу","Доля суммы заказов","Накопленная доля"], productRows, "Товарный разрез за выбранный период не получен."), "span-8")}${panel("Рейтинг складов", `${rankedWarehouses.length} складов за выбранный период`, table(["№","Площадка","Склад","Заказы","Штук","Сумма","Средний чек","Доля суммы заказов"], warehouseRows, "Складской разрез за выбранный период не получен."), "span-12")}${panel("Последние заказы в выбранном периоде", `Показано ${visibleOrders.length}; итог рассчитан по полному набору ${safeValue(ordersMetric)}`, table(["Дата","Отправление","Площадка","Штук","Сумма","Статус"], orderRows, "Заказы за выбранный период не получены."), "span-12")}</div>`;
       }
 
       function renderProductsPage() {
@@ -11386,6 +11431,7 @@ ${location.code}`)) return;
         if (event.target.id === "analyticsHubDateFrom") state.marketplaceDateFrom = event.target.value || "";
         if (event.target.id === "analyticsHubDateTo") state.marketplaceDateTo = event.target.value || "";
         if (state.marketplaceDateFrom && state.marketplaceDateTo) state.marketplacePeriod = "custom";
+        state.analyticsMapRegion = "";
         persistUiState();
         state.analyticsOverview.loaded = false;
         state.analyticsOverview.payload = null;

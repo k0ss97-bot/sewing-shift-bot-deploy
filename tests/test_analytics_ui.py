@@ -20,6 +20,21 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('Сравнение площадок', MINIAPP_HTML)
         self.assertIn('Нет данных для сравнения', MINIAPP_HTML)
 
+    def test_sales_page_has_professional_period_and_management_metrics(self):
+        self.assertIn('["today","Сегодня"]', MINIAPP_HTML)
+        self.assertIn('["yesterday","Вчера"]', MINIAPP_HTML)
+        self.assertIn('["custom","Произвольный диапазон"]', MINIAPP_HTML)
+        self.assertIn('id="analyticsHubDateFrom"', MINIAPP_HTML)
+        self.assertIn('id="analyticsHubDateTo"', MINIAPP_HTML)
+        self.assertIn('Средний чек', MINIAPP_HTML)
+        self.assertIn('Товаров в заказе', MINIAPP_HTML)
+        self.assertIn('Продаж в день', MINIAPP_HTML)
+        self.assertIn('Структура продаж по площадкам', MINIAPP_HTML)
+        self.assertIn('Топ товаров по сумме заказов', MINIAPP_HTML)
+        self.assertIn('Доля суммы заказов', MINIAPP_HTML)
+        self.assertIn('Накопленная доля', MINIAPP_HTML)
+        self.assertIn('Рейтинг складов', MINIAPP_HTML)
+
     def test_region_page_contains_interactive_ozon_map(self):
         self.assertIn('Кластеры назначения', MINIAPP_HTML)
         self.assertIn('География заказов ${mapProviderLabel}', MINIAPP_HTML)
@@ -54,7 +69,7 @@ class AnalyticsUITests(unittest.TestCase):
 
     def test_all_analytics_sections_have_business_content(self):
         for label in (
-            "Продажи по складам", "Продажи по товарам",
+            "Рейтинг складов", "Топ товаров по сумме заказов",
             "Каталог и связь с производством", "Остатки по SKU",
             "Спрос маркетплейсов → производство", "Поставки Ozon / Wildberries",
             "Финансы Ozon / Wildberries", "География заказов", "Наборы данных",
