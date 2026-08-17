@@ -46,6 +46,7 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('Источник: financial_data.cluster_to', MINIAPP_HTML)
         self.assertIn('Карта показывает кластер назначения заказа Ozon, а не адрес покупателя.', MINIAPP_HTML)
         self.assertIn('Круги автоматически разнесены', MINIAPP_HTML)
+        self.assertNotIn('selected.scrollIntoView({block: "nearest"})', MINIAPP_HTML)
         self.assertIn('"беларусь"', MINIAPP_HTML)
         self.assertIn('"кыргызстан"', MINIAPP_HTML)
         self.assertIn('"узбекистан"', MINIAPP_HTML)

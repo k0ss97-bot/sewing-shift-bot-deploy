@@ -7262,7 +7262,7 @@ ${location.code}`)) return;
       if (tooltip) tooltip.hidden = true;
     }
 
-    function setAnalyticsRegionHighlight(regionKey, active, reveal = false) {
+    function setAnalyticsRegionHighlight(regionKey, active) {
       const lockedKey = String(state.analyticsMapRegion || "");
       const visibleKey = active ? String(regionKey || "") : lockedKey;
       document.querySelectorAll("[data-ac-region-key]").forEach((node) => {
@@ -7294,7 +7294,6 @@ ${location.code}`)) return;
         [...card.classList].filter((name) => name.startsWith("region-tone-")).forEach((name) => card.classList.remove(name));
         card.classList.add(source.dataset.acRegionTone || "region-tone-0");
       }
-      if (selected && reveal) selected.scrollIntoView({block: "nearest"});
     }
 
     function renderMarketplaceDetail(products, orders, runs) {
@@ -10743,7 +10742,7 @@ ${location.code}`)) return;
         const key = analyticsRegion.dataset.acRegionKey || "";
         state.analyticsMapRegion = state.analyticsMapRegion === key ? "" : key;
         persistUiState();
-        setAnalyticsRegionHighlight(key, false, analyticsRegion.classList.contains("ac-region-point"));
+        setAnalyticsRegionHighlight(key, false);
         return;
       }
 
@@ -11549,7 +11548,7 @@ ${location.code}`)) return;
       const point = event.target.closest("[data-chart-tooltip]");
       if (point) showMarketplaceChartTooltip(point);
       const region = event.target.closest("[data-ac-region-key]");
-      if (region) setAnalyticsRegionHighlight(region.dataset.acRegionKey, true, region.classList.contains("ac-region-point"));
+      if (region) setAnalyticsRegionHighlight(region.dataset.acRegionKey, true);
     });
     document.addEventListener("mouseout", (event) => {
       const point = event.target.closest("[data-chart-tooltip]");
@@ -11563,7 +11562,7 @@ ${location.code}`)) return;
       const point = event.target.closest("[data-chart-tooltip]");
       if (point) showMarketplaceChartTooltip(point);
       const region = event.target.closest("[data-ac-region-key]");
-      if (region) setAnalyticsRegionHighlight(region.dataset.acRegionKey, true, region.classList.contains("ac-region-point"));
+      if (region) setAnalyticsRegionHighlight(region.dataset.acRegionKey, true);
     });
     document.addEventListener("focusout", (event) => {
       const point = event.target.closest("[data-chart-tooltip]");
