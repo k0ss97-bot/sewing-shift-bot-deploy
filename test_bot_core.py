@@ -137,6 +137,57 @@ class IsolatedDatabaseTest(unittest.TestCase):
         self.assertIn("обязательно закройте", opened["shift_close_reminder"])
         self.assertNotIn("shift_close_reminder", repeated)
 
+    def test_manager_can_read_analytics_but_cannot_run_marketplace_mutations(self):
+        miniapp_server = importlib.import_module("miniapp_server")
+        self.database.create_employee(4113, "Тест Менеджер", "Менеджер")
+        manager = self.database.get_employee_by_telegram_id(4113)
+        self.database.update_employee_status(manager[0], "active")
+
+        self.assertTrue(miniapp_server.is_manager(4113))
+        self.assertTrue(miniapp_server.can_view_marketplaces(4113))
+        self.assertTrue(miniapp_server.can_view_analytics(4113))
+        self.assertFalse(miniapp_server.is_admin(4113))
+        self.assertIn("Менеджер", miniapp_server.POSITIONS)
+
+        with patch.object(
+            miniapp_server,
+            "_cached_marketplace_dashboard_payload",
+            return_value={"ok": True, "products_rows": [], "supplies": []},
+        ):
+            dashboard = miniapp_server.get_marketplace_dashboard_for_admin(4113)
+        self.assertTrue(dashboard["ok"])
+
+        miniapp_server._ANALYTICS_READ_MODEL_CACHE.clear()
+        with patch.object(
+            miniapp_server,
+            "build_analytics_overview",
+            return_value={"ok": True, "metrics": [], "catalog_reconciliation": {}},
+        ):
+            analytics = miniapp_server.get_analytics_overview_for_admin(
+                4113, {"period": "last_7_days"}
+            )
+        self.assertTrue(analytics["ok"])
+
+        with (
+            patch.object(miniapp_server, "get_shift_state", return_value={"employee": {"status": "active"}}),
+            patch.object(miniapp_server, "get_current_report_for_telegram", return_value={}),
+            patch.object(miniapp_server, "get_employee_history_for_telegram", return_value=[]),
+            patch.object(miniapp_server, "get_routes_payload", return_value={}),
+            patch.object(miniapp_server, "get_production_state_for_telegram", return_value={}),
+        ):
+            app_state = miniapp_server.get_app_state(4113)
+        self.assertTrue(app_state["features"]["can_view_marketplaces"])
+        self.assertTrue(app_state["features"]["can_view_analytics"])
+        self.assertFalse(app_state["features"]["can_admin"])
+
+        self.assertEqual(miniapp_server.sync_marketplace_for_telegram(4113)["code"], "forbidden")
+        self.assertEqual(miniapp_server.start_marketplace_phase1a_for_admin(4113, {})["code"], "forbidden")
+        self.assertEqual(miniapp_server.create_marketplace_shipment_for_admin(4113, 1)["code"], "forbidden")
+
+        self.database.update_employee_status(manager[0], "inactive")
+        self.assertFalse(miniapp_server.is_manager(4113))
+        self.assertFalse(miniapp_server.can_view_analytics(4113))
+
     def test_shift_can_pause_resume_and_keeps_assigned_task(self):
         miniapp_server = importlib.import_module("miniapp_server")
         route_maps = importlib.import_module("route_maps")

@@ -260,6 +260,7 @@ POSITIONS = {
     "2": "Упаковщик",
     "3": "Раскройщик",
     "4": "Ремонт",
+    "5": "Менеджер",
 }
 
 FEEDBACK_CATEGORIES = {
@@ -1799,7 +1800,7 @@ async def process_new_employee_position(message: Message, state: FSMContext):
     selected_position = message.text.strip()
 
     if selected_position not in POSITIONS:
-        await message.answer("Введите номер должности: 1, 2 или 3.")
+        await message.answer("Введите номер должности: от 1 до 5.")
         return
 
     data = await state.get_data()
@@ -2352,7 +2353,7 @@ async def add_operation_position(message: Message, state: FSMContext):
     selected_position = message.text.strip()
 
     if selected_position not in POSITIONS:
-        await message.answer("Введите номер раздела: 1, 2 или 3.")
+        await message.answer("Введите номер раздела: от 1 до 5.")
         return
 
     position = POSITIONS[selected_position]
@@ -2530,7 +2531,7 @@ async def edit_operation_value(message: Message, state: FSMContext):
 
     if field == "position":
         if value not in POSITIONS:
-            await message.answer("Введите номер должности: 1, 2 или 3.")
+            await message.answer("Введите номер должности: от 1 до 5.")
             return
 
         value = POSITIONS[value]
@@ -7180,7 +7181,8 @@ async def process_full_name(message: Message, state: FSMContext):
         "1. Швея\n"
         "2. Упаковщик\n"
         "3. Раскройщик\n"
-        "4. Ремонт"
+        "4. Ремонт\n"
+        "5. Менеджер"
     )
 
 
@@ -7192,7 +7194,7 @@ async def process_position(message: Message, state: FSMContext):
     selected_position = message.text.strip()
 
     if selected_position not in POSITIONS:
-        await message.answer("Введите номер должности: 1, 2 или 3.")
+        await message.answer("Введите номер должности: от 1 до 5.")
         return
 
     data = await state.get_data()

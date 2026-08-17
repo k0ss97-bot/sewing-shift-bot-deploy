@@ -382,6 +382,23 @@ def is_admin(telegram_id: int):
     return telegram_id in get_admin_ids()
 
 
+def is_manager(telegram_id: int) -> bool:
+    employee = get_employee_by_telegram_id(telegram_id)
+    return bool(
+        employee
+        and employee[3] == "Менеджер"
+        and employee[5] == "active"
+    )
+
+
+def can_view_marketplaces(telegram_id: int) -> bool:
+    return is_admin(telegram_id) or is_manager(telegram_id)
+
+
+def can_view_analytics(telegram_id: int) -> bool:
+    return is_admin(telegram_id) or is_manager(telegram_id)
+
+
 def _merge_marketplace_supplies(primary, supplement):
     """Merge provider snapshots without replacing authoritative Ozon rows.
 
@@ -635,8 +652,8 @@ def _marketplace_dashboard_client_payload(snapshot):
 
 
 def get_marketplace_dashboard_for_admin(telegram_id: int, *, include_analytics_detail=False):
-    if not is_admin(telegram_id):
-        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    if not can_view_marketplaces(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к маркетплейсам."}
     snapshot = _cached_marketplace_dashboard_payload()
     return snapshot if include_analytics_detail else _marketplace_dashboard_client_payload(snapshot)
 
@@ -862,14 +879,14 @@ def sync_marketplace_for_telegram(telegram_id: int):
 
 
 def get_marketplace_data_quality_for_admin(telegram_id: int):
-    if not is_admin(telegram_id):
-        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    if not can_view_marketplaces(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к маркетплейсам."}
     return phase1a_data_quality()
 
 
 def get_marketplace_products_page_for_admin(telegram_id: int, payload: dict | None = None):
-    if not is_admin(telegram_id):
-        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    if not can_view_marketplaces(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к маркетплейсам."}
     return phase1a_products_page(payload)
 
 
@@ -899,8 +916,8 @@ def marketplace_phase1a_http_status(result: dict) -> int:
 
 
 def get_analytics_overview_for_admin(telegram_id: int, payload: dict | None = None):
-    if not is_admin(telegram_id):
-        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    if not can_view_analytics(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к аналитике."}
     request_payload = payload if isinstance(payload, dict) else {}
     cache_key = json.dumps(request_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -924,8 +941,8 @@ def get_analytics_overview_for_admin(telegram_id: int, payload: dict | None = No
 
 
 def get_marketplace_supplies_for_admin(telegram_id: int, payload: dict | None = None):
-    if not is_admin(telegram_id):
-        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    if not can_view_marketplaces(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к маркетплейсам."}
     payload = payload or {}
     return marketplace_supplies(
         marketplace=str(payload.get("marketplace") or ""),
@@ -937,8 +954,8 @@ def get_marketplace_supplies_for_admin(telegram_id: int, payload: dict | None = 
 
 
 def get_marketplace_supply_detail_for_admin(telegram_id: int, supply_id: int):
-    if not is_admin(telegram_id):
-        return {"ok": False, "code": "forbidden", "message": "Нет прав администратора."}
+    if not can_view_marketplaces(telegram_id):
+        return {"ok": False, "code": "forbidden", "message": "Нет доступа к маркетплейсам."}
     supply = marketplace_supply_detail(supply_id)
     return {"ok": True, "supply": supply} if supply else {"ok": False, "message": "Поставка не найдена."}
 
@@ -4231,7 +4248,7 @@ ADMIN_MENU = [
     },
 ]
 
-POSITIONS = ["Швея", "Упаковщик", "Раскройщик", "Ремонт"]
+POSITIONS = ["Швея", "Упаковщик", "Раскройщик", "Ремонт", "Менеджер"]
 
 
 def clean_date(value: str | None, fallback: str):
@@ -6665,6 +6682,8 @@ def get_app_state(telegram_id: int, message: str = ""):
             "can_work": bool(employee and employee.get("status") == "active"),
             "can_admin": is_admin_user,
             "can_wms": can_access_wms(telegram_id),
+            "can_view_marketplaces": can_view_marketplaces(telegram_id),
+            "can_view_analytics": can_view_analytics(telegram_id),
             # UI-only feature flag. Warehouse operations keep using the same
             # guarded WMS endpoints and existing location ids/barcodes.
             "warehouse_ui_v2": os.getenv("WAREHOUSE_UI_V2", "1").strip().lower() not in {"0", "false", "no", "off"},
@@ -7576,8 +7595,12 @@ def make_handler(bot_token: str, debug: bool):
                 result = submit_cutting_stage_for_telegram(telegram_id, payload)
             elif path == "/api/marketplaces/dashboard":
                 result = get_marketplace_dashboard_for_admin(telegram_id)
+                self.send_json(result, status=403 if result.get("code") == "forbidden" else 200)
+                return
             elif path == "/api/marketplaces/sync":
                 result = sync_marketplace_for_telegram(telegram_id)
+                self.send_json(result, status=403 if result.get("code") == "forbidden" else 200)
+                return
             elif path == "/api/marketplaces/data-quality":
                 result = get_marketplace_data_quality_for_admin(telegram_id)
                 self.send_json(result, status=marketplace_phase1a_http_status(result))
@@ -7596,18 +7619,24 @@ def make_handler(bot_token: str, debug: bool):
                 return
             elif path == "/api/marketplaces/supplies":
                 result = get_marketplace_supplies_for_admin(telegram_id, payload)
+                self.send_json(result, status=403 if result.get("code") == "forbidden" else 200)
+                return
             elif path == "/api/marketplaces/supply/detail":
                 try:
                     supply_id = int(payload.get("supply_id") or 0)
                 except (TypeError, ValueError):
                     supply_id = 0
                 result = get_marketplace_supply_detail_for_admin(telegram_id, supply_id)
+                self.send_json(result, status=403 if result.get("code") == "forbidden" else 200)
+                return
             elif path == "/api/marketplaces/supply/create-shipment":
                 try:
                     supply_id = int(payload.get("supply_id") or 0)
                 except (TypeError, ValueError):
                     supply_id = 0
                 result = create_marketplace_shipment_for_admin(telegram_id, supply_id)
+                self.send_json(result, status=403 if result.get("code") == "forbidden" else 200)
+                return
             elif path == "/api/routes/create-batch":
                 result = create_route_batch_for_telegram(telegram_id, payload)
             elif path == "/api/routes/start":

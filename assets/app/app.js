@@ -1354,6 +1354,10 @@
     }
 
     function canAccessMarketplaces() {
+      return Boolean(state.data && (state.data.is_admin || (state.data.features && state.data.features.can_view_marketplaces)));
+    }
+
+    function canManageMarketplaces() {
       return Boolean(state.data && state.data.is_admin);
     }
 
@@ -2149,7 +2153,7 @@
     }
 
     async function syncMarketplaces() {
-      if (!canAccessMarketplaces() || state.marketplaceData.loading) return;
+      if (!canManageMarketplaces() || state.marketplaceData.loading) return;
       state.marketplaceDetail = null;
       state.marketplaceData.loading = true;
       state.marketplaceData.error = "";
@@ -2240,7 +2244,7 @@
 
     async function syncMarketplacePhase1A() {
       const workerRunning = Boolean(state.marketplaceQuality.payload?.phase1a?.worker?.running);
-      if (!canAccessMarketplaces() || state.marketplaceQuality.loading || state.marketplaceQuality.syncing || workerRunning) return;
+      if (!canManageMarketplaces() || state.marketplaceQuality.loading || state.marketplaceQuality.syncing || workerRunning) return;
       state.marketplaceQuality.syncing = true;
       state.marketplaceQuality.loading = true;
       state.marketplaceQuality.error = "";
@@ -2283,7 +2287,7 @@
     }
 
     async function createMarketplaceShipment(supplyId) {
-      if (!supplyId || state.marketplaceData.loading) return;
+      if (!canManageMarketplaces() || !supplyId || state.marketplaceData.loading) return;
       state.marketplaceData.loading = true;
       render();
       try {
@@ -7572,10 +7576,12 @@ ${location.code}`)) return;
         || state.marketplaceQuality.syncing
         || Boolean(state.marketplaceQuality.payload?.phase1a?.worker?.running));
       mainButton.hidden = false;
-      mainButton.textContent = qualityView
-        ? (qualityActionBusy ? "Синхронизация выполняется…" : (isWildberries ? "Синхронизировать Wildberries" : "Запустить PostgreSQL sync"))
-        : (state.marketplaceData.loading ? "Синхронизация…" : `Синхронизировать ${isWildberries ? "Wildberries" : isAll ? "маркетплейсы" : "Ozon"}`);
-      mainButton.disabled = qualityView ? qualityActionBusy : state.marketplaceData.loading;
+      mainButton.textContent = canManageMarketplaces()
+        ? (qualityView
+          ? (qualityActionBusy ? "Синхронизация выполняется…" : (isWildberries ? "Синхронизировать Wildberries" : "Запустить PostgreSQL sync"))
+          : (state.marketplaceData.loading ? "Синхронизация…" : `Синхронизировать ${isWildberries ? "Wildberries" : isAll ? "маркетплейсы" : "Ozon"}`))
+        : (state.marketplaceData.loading ? "Обновляем…" : "Обновить данные");
+      mainButton.disabled = canManageMarketplaces() && qualityView ? qualityActionBusy : state.marketplaceData.loading;
       const errorNotice = state.marketplaceData.error ? `<div class="card field-card"><div class="task-note"><b>Ошибка маркетплейса</b><br>${escapeHtml(state.marketplaceData.error)}</div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="refresh">Повторить</button></div></div>` : "";
       const notConfigured = !providerConfigured && !providerLoadFailed ? `<div class="card field-card"><div class="task-note"><b>${isAll ? "Маркетплейсы не подключены" : `${providerName} не подключён`}</b></div></div>` : "";
       const kpiUnavailable = (label, hint) => `<div class="card marketplace-v2-kpi unavailable" title="${escapeHtml(hint)}"><span>${escapeHtml(label)}</span><strong>—</strong><small>Нет данных от API</small></div>`;
@@ -7723,7 +7729,7 @@ ${location.code}`)) return;
           } else if (row.unmatched_count) {
             action = `<span class="status-chip warn">Нужно сопоставление</span>`;
           } else {
-            action = `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>`;
+            action = canManageMarketplaces() ? `<button type="button" class="small-button" data-marketplace-supply-create="${escapeHtml(row.id)}">Создать задание складу</button>` : "";
           }
           return `<div class="card report-row marketplace-supply-card"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id)}</b><span>${escapeHtml(row.destination_name || "Направление не указано")} · ${escapeHtml(marketplaceQuantity(itemCount))} поз. · ${escapeHtml(marketplaceQuantity(row.total_quantity))} шт.${row.unmatched_count ? `<br><span class="critical-text">Не сопоставлено: ${escapeHtml(marketplaceQuantity(row.unmatched_count))}</span>` : ""}</span></div><div class="supply-actions"><span class="status-chip ${["SHORTAGE","SYNC_ERROR","CANCELLED","EXTERNAL_DRAFT"].includes(status) ? "warn" : ""}">${escapeHtml(businessStatusLabel(status))}</span>${action}</div></div>`;
         }).join("")}</div>`;
@@ -7834,7 +7840,7 @@ ${location.code}`)) return;
       const qualityProductTotal = qualityProductsAvailable && qualityProductsEnvelope.total != null ? qualityProductsEnvelope.total : null;
       const qualityBlock = `
         <div class="button-row">
-          <button type="button" class="small-button" data-marketplace-action="phase1a-sync" ${qualityBusy ? "disabled" : ""}>Запустить read-only sync</button>
+          ${canManageMarketplaces() ? `<button type="button" class="small-button" data-marketplace-action="phase1a-sync" ${qualityBusy ? "disabled" : ""}>Запустить read-only sync</button>` : ""}
           <button type="button" class="small-button secondary" data-marketplace-action="quality-refresh" ${state.marketplaceQuality.loading ? "disabled" : ""}>Обновить состояние</button>
           <span class="status-chip ${qualityChipClass(qualityWorkerRunning ? "running" : quality.state)}">${state.marketplaceQuality.loading ? "загрузка" : qualityWorkerRunning ? "sync выполняется" : escapeHtml(qualityStateLabel[quality.state] || quality.state || "не загружено")}</span>
         </div>
@@ -7872,7 +7878,7 @@ ${location.code}`)) return;
       }).join("") : `<div class="card field-card">${itemEmpty("Wildberries ещё не записал результаты проверки источников.")}</div>`;
       const wbQualityBlock = `
         <div class="button-row">
-          <button type="button" class="small-button" data-marketplace-action="sync" ${state.marketplaceData.loading ? "disabled" : ""}>Запустить read-only sync Wildberries</button>
+          ${canManageMarketplaces() ? `<button type="button" class="small-button" data-marketplace-action="sync" ${state.marketplaceData.loading ? "disabled" : ""}>Запустить read-only sync Wildberries</button>` : ""}
           <button type="button" class="small-button secondary" data-marketplace-action="refresh" ${state.marketplaceData.loading ? "disabled" : ""}>Обновить состояние</button>
           <span class="status-chip ${wbQualityReady ? "" : "warn"}">${wbQualityReady ? "все источники доступны" : "нужна проверка"}</span>
         </div>
@@ -7884,7 +7890,7 @@ ${location.code}`)) return;
         </div>
         <div class="marketplace-wide-grid">${wbQualityCards}</div>`;
       const ozonSettingsBlock = `<div class="card field-card"><div class="section-title"><b>Доступ Ozon Seller API</b><span class="status-chip ${ozonRolesCapability.status === "available" ? "" : "warn"}">${escapeHtml(ozonRolesCapability.status === "available" ? "проверен" : "не проверен")}</span></div><div class="marketplace-mini-list"><div class="marketplace-mini-row"><span>Роль ключа</span><b>${escapeHtml(ozonRoleNames.join(", ") || "не определена")}</b></div><div class="marketplace-mini-row"><span>Методов разрешено Ozon</span><b>${escapeHtml(ozonMethodPaths.length || "—")}</b></div><div class="marketplace-mini-row"><span>Интегрированные наборы PostgreSQL</span><b>${escapeHtml(qualityDatasets.length)}</b></div><div class="marketplace-mini-row"><span>Изменение данных в Ozon</span><b>${ozonRoleNames.some((name) => String(name).toLowerCase().includes("read only")) ? "заблокировано ключом" : "зависит от прав ключа"}</b></div></div><div class="task-note"><b>Что означает «подключён»</b><br>Сайт показывает только данные, реально подтверждённые отдельными синхронизациями. Внутренние задания склада создаются у нас и не изменяют кабинет Ozon.</div></div>`;
-      const wbSettingsBlock = `<div class="card field-card"><div class="section-title"><b>Доступ Wildberries API</b><span class="status-chip ${wildberriesConnected ? "" : "warn"}">${wildberriesConnected ? "подключён" : "не подключён"}</span></div><div class="marketplace-mini-list"><div class="marketplace-mini-row"><span>Аккаунт</span><b>${escapeHtml(account.account_name || "Основной Wildberries")}</b></div><div class="marketplace-mini-row"><span>Источников проверено</span><b>${escapeHtml(wbQualityRows.length)}</b></div><div class="marketplace-mini-row"><span>Доступно полностью</span><b>${escapeHtml(wbQualityRows.filter((row) => row.status === "available").length)}</b></div><div class="marketplace-mini-row"><span>Требует прав или проверки</span><b>${escapeHtml(wbQualityRows.filter((row) => row.status !== "available").length)}</b></div></div><div class="button-row"><button type="button" class="small-button" data-marketplace-action="sync" ${state.marketplaceData.loading || !wildberriesConnected ? "disabled" : ""}>Синхронизировать Wildberries</button><button type="button" class="small-button secondary" data-marketplace-action="refresh" ${state.marketplaceData.loading ? "disabled" : ""}>Проверить подключение</button></div></div><div class="marketplace-wide-grid">${wbQualityCards}</div>`;
+      const wbSettingsBlock = `<div class="card field-card"><div class="section-title"><b>Доступ Wildberries API</b><span class="status-chip ${wildberriesConnected ? "" : "warn"}">${wildberriesConnected ? "подключён" : "не подключён"}</span></div><div class="marketplace-mini-list"><div class="marketplace-mini-row"><span>Аккаунт</span><b>${escapeHtml(account.account_name || "Основной Wildberries")}</b></div><div class="marketplace-mini-row"><span>Источников проверено</span><b>${escapeHtml(wbQualityRows.length)}</b></div><div class="marketplace-mini-row"><span>Доступно полностью</span><b>${escapeHtml(wbQualityRows.filter((row) => row.status === "available").length)}</b></div><div class="marketplace-mini-row"><span>Требует прав или проверки</span><b>${escapeHtml(wbQualityRows.filter((row) => row.status !== "available").length)}</b></div></div><div class="button-row">${canManageMarketplaces() ? `<button type="button" class="small-button" data-marketplace-action="sync" ${state.marketplaceData.loading || !wildberriesConnected ? "disabled" : ""}>Синхронизировать Wildberries</button>` : ""}<button type="button" class="small-button secondary" data-marketplace-action="refresh" ${state.marketplaceData.loading ? "disabled" : ""}>Проверить подключение</button></div></div><div class="marketplace-wide-grid">${wbQualityCards}</div>`;
       const safeProductsBlock = isWildberries && !wbCatalogUsable ? itemEmpty("Текущий snapshot каталога Wildberries не подтверждён.") : productsBlock;
       const safeStocksBlock = isWildberries && !wbStocksUsable ? itemEmpty("Текущий snapshot остатков Wildberries не подтверждён; исторический ноль скрыт.") : stocksBlock;
       const catalogReconciliation = payload.catalog_reconciliation || {};
@@ -9026,7 +9032,7 @@ ${location.code}`)) return;
                 ? `${row.production_name || row.name} · ${row.production_size || row.size || "—"} · ${row.production_color || row.color || "—"}`
                 : `${row.name || "Без названия"} · ${row.size || "—"} · ${row.color || "—"}`;
               return `<div class="analytics-risk-row"><div class="analytics-risk-copy"><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.article || row.sku || "без артикула")}</b><span>${escapeHtml(productIdentity)}${warehouseKnown && Array.isArray(row.locations) && row.locations.length ? `<br>Ячейки: ${escapeHtml(row.locations.map((location) => `${location.code}: ${Number(location.available_quantity || 0)} шт.`).join(" · "))}` : ""}</span></div><span class="status-chip ${statusClass}">${escapeHtml(statusText)}</span></div>`;
-            }).join("")}<div class="button-row"><button type="button" class="small-button" data-analytics-matrix-action="production">Создать задание</button><button type="button" class="small-button secondary" data-analytics-matrix-action="links">Открыть все связи</button></div></div>`;
+            }).join("")}<div class="button-row">${canManageMarketplaces() ? `<button type="button" class="small-button" data-analytics-matrix-action="production">Создать задание</button>` : ""}<button type="button" class="small-button secondary" data-analytics-matrix-action="links">Открыть все связи</button></div></div>`;
       const criticalSupplyStatuses = new Set(["SHORTAGE", "SYNC_ERROR", "PARTIALLY_ACCEPTED", "DOCUMENTS_REQUIRED"]);
       const suppliesBlock = supplies.length
         ? `<div class="analytics-supply-list">${supplies.slice(0, 8).map((row) => { const status = String(row.canonical_status || row.status || "UNKNOWN"); return `<div class="analytics-supply-row"><div class="analytics-supply-copy"><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.external_supply_id || row.number || "без номера")}</b><span>${escapeHtml(row.destination_name || "направление не указано")}${row.total_quantity !== null && row.total_quantity !== undefined ? ` · ${escapeHtml(marketplaceQuantity(row.total_quantity))} шт.` : ""}${row.unmatched_count ? ` · не сопоставлено ${escapeHtml(marketplaceQuantity(row.unmatched_count))}` : ""}</span></div><span class="status-chip ${criticalSupplyStatuses.has(status) ? "warn" : "gray"}">${escapeHtml(businessStatusLabel(status))}</span></div>`; }).join("")}</div>`
@@ -9180,7 +9186,7 @@ ${location.code}`)) return;
           const identity = routeReady ? `${row.production_name || row.name} · ${row.production_size || row.size || "—"} · ${row.production_color || row.color || "—"}` : `${row.name || "Без названия"} · ${row.size || "—"} · ${row.color || "—"}`;
           return `<div class="ac-list-row"><div><b>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")} · ${escapeHtml(row.article || row.sku || "без артикула")}</b><span>${escapeHtml(identity)}</span></div><strong>${escapeHtml(stateText)}</strong></div>`;
         }).join("");
-        const matrixActions = `<div class="button-row"><button type="button" class="small-button" data-analytics-matrix-action="production">Создать задание</button><button type="button" class="small-button secondary" data-analytics-matrix-action="links">Все связи</button></div>`;
+        const matrixActions = `<div class="button-row">${canManageMarketplaces() ? `<button type="button" class="small-button" data-analytics-matrix-action="production">Создать задание</button>` : ""}<button type="button" class="small-button secondary" data-analytics-matrix-action="links">Все связи</button></div>`;
         const matrixBody = !reconciliation.ok
           ? empty("Связь со складом недоступна", "Данные не подменены нулевым остатком.", "diagnostics")
           : matrixList
@@ -9236,7 +9242,7 @@ ${location.code}`)) return;
           commercialAvailable: true, commercialLabel: "готовая продукция", unit: "units",
           commercialRows: dailyOutput.map((row) => ({date: row.date, value: Number(row.quantity || 0)})),
         }]) : empty("За период приёмок нет", "Готовая продукция ещё не поступала в WMS-зону приёмки.");
-        const actions = `<div class="button-row"><button type="button" class="small-button" data-analytics-matrix-action="production">Создать производственное задание</button><button type="button" class="small-button secondary" data-analytics-matrix-action="links">Проверить связи</button></div>`;
+        const actions = `<div class="button-row">${canManageMarketplaces() ? `<button type="button" class="small-button" data-analytics-matrix-action="production">Создать производственное задание</button>` : ""}<button type="button" class="small-button secondary" data-analytics-matrix-action="links">Проверить связи</button></div>`;
         const productionOnlyPanels = `${panel("Выпуск готовой продукции", period, outputChart, "span-8")}${panel("Правило расчёта", "План / факт", `<p class="ac-panel-copy">План считается один раз по готовым изделиям в производственных заданиях. Факт — только готовые изделия, принятые из производства в зону RECEIVE. Полуфабрикаты в план и факт не входят.</p>`, "span-4")}${panel("Приёмка готовой продукции", `${finishedReceipts.length} записей`, table(["Дата","Изделие","Размер","Цвет","Зона","Количество"], receiptRows, "За выбранный период готовая продукция в зону приёмки не поступала."), "span-12")}`;
         const demandPanel = panel("Спрос маркетплейсов → производство", `${matrixRows.length} активных SKU`, `${table(["Площадка","Товар","Артикул","Цвет","Размер","Готовый остаток","Действие"], demandRows, "Активных связанных карточек нет.")}${actions}`, "span-12");
         return `<div class="ac-kpis">${kpi("План готовой продукции", production.plan !== undefined && production.plan !== null ? fmt(production.plan) : "—", "Изделий в заданиях")}${kpi("Факт готовой продукции", production.fact !== undefined && production.fact !== null ? fmt(production.fact) : "—", "Принято в RECEIVE")}${kpi("В работе", production.active_quantity !== undefined && production.active_quantity !== null ? fmt(production.active_quantity) : "—", "Активный WIP, не входит в факт")}${kpi("Брак", production.defect_quantity !== undefined && production.defect_quantity !== null ? fmt(production.defect_quantity) : "—", "Подтверждённые записи")}</div><div class="ac-grid">${productionOnly ? productionOnlyPanels : ""}${panel("Этапы производства", `${stages.length} этапов`, table(["Этап","Задания","Свободно","Количество","Просрочено"], stageRows, "Активных производственных этапов нет."), "span-8")}${panel("Требует внимания", `${alerts.length} сигналов`, alertRows || empty("Отклонений нет", "Новых подтверждённых производственных отклонений не найдено."), "span-4")}${productionOnly ? "" : demandPanel}</div>`;
@@ -9359,13 +9365,16 @@ ${location.code}`)) return;
         ];
         const statusText = (value) => value === "fresh" || value === "available" ? "Актуально" : value === "stale" ? "Обновление задерживается" : value === "permission_required" ? "Требуется доступ" : value === "partial" ? "Частично" : value === "no_data" ? "Нет данных" : "Недоступно";
         const detailRows = qualityDetails.map((row) => `<tr><td>${escapeHtml(row.source)}</td><td>${escapeHtml(row.name || "—")}</td><td>${escapeHtml(statusText(row.status))}</td><td>${escapeHtml(analyticsHubDateTime(row.updated))}</td></tr>`);
-        return `<div class="ac-kpis">${kpi("Источники", fmt(providerCards.length), "Подключённые площадки")}${kpi("Состояние", businessStatus[0], "Без технических кодов")}${kpi("Обновлено", analyticsHubDateTime(payload.meta && payload.meta.generated_at || payload.as_of), "Время аналитического среза")}</div><div class="ac-grid">${panel("Качество данных", "Понятные бизнес-состояния", table(["Источник","Состояние","Последнее обновление"], rows, "Источники аналитики пока не подключены."), "span-8")}${panel("Диагностика", "Для администратора", `<p class="ac-panel-copy">Технические ответы API и журнал синхронизации доступны отдельно.</p><button type="button" class="small-button" data-ac-action="diagnostics">Открыть диагностику</button>`, "span-4")}${panel("Наборы данных", `${qualityDetails.length} проверок`, table(["Площадка","Раздел","Состояние","Проверено"], detailRows, "Проверки наборов данных пока не выполнялись."), "span-12")}</div>`;
+        const diagnostics = canManageMarketplaces()
+          ? `<p class="ac-panel-copy">Технические ответы API и журнал синхронизации доступны отдельно.</p><button type="button" class="small-button" data-ac-action="diagnostics">Открыть диагностику</button>`
+          : `<p class="ac-panel-copy">Менеджеру доступны бизнес-показатели и состояние источников без технических журналов и операций.</p>`;
+        return `<div class="ac-kpis">${kpi("Источники", fmt(providerCards.length), "Подключённые площадки")}${kpi("Состояние", businessStatus[0], "Без технических кодов")}${kpi("Обновлено", analyticsHubDateTime(payload.meta && payload.meta.generated_at || payload.as_of), "Время аналитического среза")}</div><div class="ac-grid">${panel("Качество данных", "Понятные бизнес-состояния", table(["Источник","Состояние","Последнее обновление"], rows, "Источники аналитики пока не подключены."), "span-8")}${panel("Диагностика", canManageMarketplaces() ? "Для администратора" : "Режим просмотра", diagnostics, "span-4")}${panel("Наборы данных", `${qualityDetails.length} проверок`, table(["Площадка","Раздел","Состояние","Проверено"], detailRows, "Проверки наборов данных пока не выполнялись."), "span-12")}</div>`;
       }
 
       const renderers = {general: renderOverviewPage, sales: renderSalesPage, products: renderProductsPage, inventory: renderInventoryPage, production: renderProductionPage, supplies: renderSuppliesPage, finance: renderFinancePage, map: renderMapPage, "data-quality": renderQualityPage};
       const title = pages.find(([id]) => id === page)[2];
       mainButton.hidden = true;
-      mount.innerHTML = `<div class="ac-shell"><aside class="ac-sidebar"><div class="ac-brand"><b>АНАЛИТИКА</b><span>центр управления</span></div>${mobileNav}<nav class="ac-nav" aria-label="Разделы аналитики">${nav}</nav></aside><div class="ac-main"><header class="ac-topbar"><label class="ac-search"><span aria-hidden="true">⌕</span><input id="analyticsSearchTop" aria-label="Найти товар, артикул или поставку" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Найти товар, артикул, поставку"></label>${marketplaceSwitch}<button type="button" class="ac-sync" data-ac-action="sync">↻ Синхронизировать</button></header><main class="ac-content"><div class="ac-heading"><div><h2>${escapeHtml(title)}</h2><p>${productionOnly ? "Только производство: готовая продукция, этапы и подтверждённая приёмка." : "Продажи, остатки, производство и качество данных в едином центре."}</p></div><span class="ac-business-state ${businessStatus[1]}">${escapeHtml(businessStatus[0])}</span></div>${renderers[page]()}</main></div></div>`;
+      mount.innerHTML = `<div class="ac-shell"><aside class="ac-sidebar"><div class="ac-brand"><b>АНАЛИТИКА</b><span>центр управления</span></div>${mobileNav}<nav class="ac-nav" aria-label="Разделы аналитики">${nav}</nav></aside><div class="ac-main"><header class="ac-topbar"><label class="ac-search"><span aria-hidden="true">⌕</span><input id="analyticsSearchTop" aria-label="Найти товар, артикул или поставку" value="${escapeHtml(state.analyticsSearch || "")}" placeholder="Найти товар, артикул, поставку"></label>${marketplaceSwitch}<button type="button" class="ac-sync" data-ac-action="${canManageMarketplaces() ? "sync" : "refresh"}">${canManageMarketplaces() ? "↻ Синхронизировать" : "↻ Обновить"}</button></header><main class="ac-content"><div class="ac-heading"><div><h2>${escapeHtml(title)}</h2><p>${productionOnly ? "Только производство: готовая продукция, этапы и подтверждённая приёмка." : "Продажи, остатки, производство и качество данных в едином центре."}</p></div><span class="ac-business-state ${businessStatus[1]}">${escapeHtml(businessStatus[0])}</span></div>${renderers[page]()}</main></div></div>`;
     }
 
     function render() {
@@ -10484,6 +10493,10 @@ ${location.code}`)) return;
       const marketplaceSupplyCreate = event.target.closest("[data-marketplace-supply-create]");
       if (marketplaceSupplyCreate) {
         event.preventDefault();
+        if (!canManageMarketplaces()) {
+          showToast("Маркетплейсы", "Менеджеру доступен только просмотр.");
+          return;
+        }
         createMarketplaceShipment(marketplaceSupplyCreate.dataset.marketplaceSupplyCreate || "");
         return;
       }
@@ -10536,6 +10549,10 @@ ${location.code}`)) return;
           state.marketplaceDetail = null;
           switchWorkspace("marketplaces");
         } else {
+          if (!canManageMarketplaces()) {
+            showToast("Аналитика", "Создавать задания может только администратор.");
+            return;
+          }
           state.productionScreen = "orders";
           state.orderMode = "create";
           switchWorkspace("production");
@@ -10583,9 +10600,9 @@ ${location.code}`)) return;
       const analyticsCenterAction = event.target.closest("[data-ac-action]");
       if (analyticsCenterAction) {
         const action = analyticsCenterAction.dataset.acAction;
-        if (action === "sync") syncMarketplaces();
+        if (action === "sync" && canManageMarketplaces()) syncMarketplaces();
         if (action === "refresh") refreshAnalyticsOverview({force: true});
-        if (action === "diagnostics") {
+        if (action === "diagnostics" && canManageMarketplaces()) {
           state.workspace = "production";
           state.screen = "admin";
           state.productionScreen = "admin";
@@ -10915,11 +10932,13 @@ ${location.code}`)) return;
         return;
       }
       if (state.screen === "marketplaces") {
-        if (state.marketplaceView === "data-quality" && state.marketplaceProvider !== "wildberries") syncMarketplacePhase1A();
+        if (!canManageMarketplaces()) refreshMarketplaces();
+        else if (state.marketplaceView === "data-quality" && state.marketplaceProvider !== "wildberries") syncMarketplacePhase1A();
         else syncMarketplaces();
         return;
       }
       if (state.screen === "analytics") {
+        if (state.workspace === "analytics") { refreshAnalyticsOverview({force: true}); return; }
         if (state.data && state.data.is_admin) { refreshAdminDashboard("Контроль производства обновлён."); return; }
         setScreen("orders");
         return;

@@ -818,6 +818,57 @@ class WebAppHttpTest(unittest.TestCase):
         self.assertFalse(demotion["ok"])
         self.assertIn("собственного аккаунта", demotion["message"])
 
+    def test_manager_http_analytics_access_is_read_only(self):
+        self.database.create_employee(23004, "Веб Менеджер", "Менеджер")
+        employee = self.database.get_employee_by_telegram_id(23004)
+        self.database.update_employee_status(employee[0], "active")
+        self.auth.upsert_web_account("web-manager", 23004, "web-manager-password")
+
+        _status, login, headers = self.login_admin("web-manager", "web-manager-password")
+        request_headers = {
+            "Cookie": headers["Set-Cookie"].split(";", 1)[0],
+            "X-CSRF-Token": login["csrf_token"],
+            "Origin": self.origin,
+        }
+
+        status, app_state, _ = self.request("POST", "/api/app/state", {}, request_headers)
+        self.assertEqual(status, 200)
+        self.assertFalse(app_state["is_admin"])
+        self.assertTrue(app_state["features"]["can_view_marketplaces"])
+        self.assertTrue(app_state["features"]["can_view_analytics"])
+
+        with patch.object(
+            self.server_module,
+            "_cached_marketplace_dashboard_payload",
+            return_value={"ok": True, "products_rows": [], "supplies": []},
+        ):
+            status, dashboard, _ = self.request(
+                "POST", "/api/marketplaces/dashboard", {}, request_headers
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(dashboard["ok"])
+
+        self.server_module._ANALYTICS_READ_MODEL_CACHE.clear()
+        with patch.object(
+            self.server_module,
+            "build_analytics_overview",
+            return_value={"ok": True, "metrics": [], "catalog_reconciliation": {}},
+        ):
+            status, analytics, _ = self.request(
+                "POST",
+                "/api/analytics/overview",
+                {"period": "last_7_days"},
+                request_headers,
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(analytics["ok"])
+
+        status, forbidden_sync, _ = self.request(
+            "POST", "/api/marketplaces/sync", {}, request_headers
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(forbidden_sync["code"], "forbidden")
+
     def test_admin_can_delete_unused_employee_and_web_access(self):
         self.database.create_employee(23003, "Веб Администратор", "Швея")
         admin = self.database.get_employee_by_telegram_id(23003)

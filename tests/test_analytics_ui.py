@@ -91,6 +91,13 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('data-wms-catalog-group=', MINIAPP_HTML)
         self.assertIn('productCardAvatar(representative)', MINIAPP_HTML)
 
+    def test_manager_analytics_is_read_only(self):
+        self.assertIn('state.data.features.can_view_marketplaces', MINIAPP_HTML)
+        self.assertIn('function canManageMarketplaces()', MINIAPP_HTML)
+        self.assertIn('canManageMarketplaces() ? "sync" : "refresh"', MINIAPP_HTML)
+        self.assertIn('Менеджеру доступны бизнес-показатели', MINIAPP_HTML)
+        self.assertIn('Создавать задания может только администратор.', MINIAPP_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()
