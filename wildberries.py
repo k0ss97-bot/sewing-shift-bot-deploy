@@ -1602,7 +1602,9 @@ def _dashboard_with_connection(conn: sqlite3.Connection, *, read_only: bool) -> 
     analytics=dashboard_extension(conn,account_id,ensure_schema_first=not read_only)
     finance_usable = coverage_is_usable("finance", {"available"})
     if capability_statuses.get("finance"):
-        finance_snapshot_start, finance_snapshot_usable = current_snapshot("finance")
+        finance_snapshot_start, finance_snapshot_usable = _current_snapshot(
+            capability_statuses, "finance"
+        )
         finance_usable = bool(finance_usable and finance_snapshot_usable)
         if finance_usable:
             finance_coverage = capability_statuses["finance"]

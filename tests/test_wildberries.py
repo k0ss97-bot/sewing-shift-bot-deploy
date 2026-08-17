@@ -11,10 +11,12 @@ from wildberries import (
     WildberriesAPIError,
     WildberriesClient,
     _current_snapshot,
+    _dashboard_with_connection,
     _flatten_cards,
     _now,
     _persisted_retry_remaining,
     _save_capabilities,
+    ensure_wildberries_schema,
 )
 
 
@@ -218,6 +220,43 @@ class WildberriesClientTests(unittest.TestCase):
 
         self.assertFalse(usable)
         self.assertNotEqual(marker, "2026-08-17T07:10:00+03:00")
+
+    def test_dashboard_reads_finance_capability_with_snapshot_fallback(self):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        ensure_wildberries_schema(connection)
+        account_id = connection.execute(
+            """INSERT INTO marketplace_accounts
+               (marketplace,account_name,seller_id,created_at,updated_at)
+               VALUES ('wildberries','Test WB','seller','2026-08-17','2026-08-17')"""
+        ).lastrowid
+        connection.execute(
+            """INSERT INTO marketplace_wb_capabilities
+               (account_id,capability,status,safe_message,http_status,
+                retry_after_seconds,row_count,details_json,checked_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                account_id,
+                "finance",
+                "rate_limited",
+                "later",
+                429,
+                60,
+                0,
+                json.dumps({
+                    "last_successful_snapshot_started_at": "2026-08-17T07:10:00+03:00",
+                    "coverage_start_date": "2026-08-01",
+                    "coverage_end_date": "2026-08-17",
+                }),
+                _now(),
+            ),
+        )
+        connection.commit()
+
+        payload = _dashboard_with_connection(connection, read_only=False)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["summary"]["products"], 0)
 
 
 if __name__ == "__main__":
