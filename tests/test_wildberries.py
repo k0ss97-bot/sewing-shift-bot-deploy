@@ -10,6 +10,7 @@ from urllib.error import HTTPError
 from wildberries import (
     WildberriesAPIError,
     WildberriesClient,
+    _commit_before_provider_call,
     _current_snapshot,
     _dashboard_with_connection,
     _flatten_cards,
@@ -56,6 +57,19 @@ class WildberriesClientTests(unittest.TestCase):
             max_attempts=kwargs.pop("max_attempts", 1),
             **kwargs,
         )
+
+    def test_provider_call_boundary_commits_pending_sqlite_write(self):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.execute("CREATE TABLE imported_rows (id INTEGER PRIMARY KEY)")
+        connection.commit()
+        connection.execute("INSERT INTO imported_rows DEFAULT VALUES")
+        self.assertTrue(connection.in_transaction)
+
+        _commit_before_provider_call(connection)
+
+        self.assertFalse(connection.in_transaction)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_rows").fetchone()[0], 1)
 
     @patch("wildberries.urlopen")
     def test_request_sends_bearer_and_client_secret(self, mocked_urlopen):

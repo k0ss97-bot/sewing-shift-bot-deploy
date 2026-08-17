@@ -1,10 +1,12 @@
 [Unit]
-Description=Hourly Shagaem Vmeste marketplace synchronization
+Description=Shagaem Vmeste marketplace synchronization
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=1h
-RandomizedDelaySec=5min
+# Count the interval from completion, not from start.  A long provider sync
+# must never be followed by an immediate overdue restart.
+OnUnitInactiveSec=5min
+RandomizedDelaySec=45s
 Persistent=true
 Unit=sewing-marketplaces-sync.service
 

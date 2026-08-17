@@ -916,6 +916,27 @@ def _upsert_product(conn, account_id: int, row: dict, now: str) -> int:
     ).fetchone()[0])
 
 
+def _commit_before_provider_call(conn: sqlite3.Connection) -> None:
+    """Release SQLite's write lock before a potentially slow WB API call.
+
+    The synchronization intentionally reuses one connection so each imported
+    section can be committed as a coherent snapshot.  A provider request can
+    nevertheless wait for rate limits or the network for many seconds.  If a
+    previous section left the connection inside a write transaction, keeping
+    that transaction open during the wait can block web authentication and WMS
+    requests that use the same database.
+
+    Every completed normalization step is safe to persist before fetching the
+    next independent provider section.  Committing here therefore shortens the
+    lock lifetime without treating an incomplete provider response as an
+    available snapshot; capability status is still finalized separately only
+    after its rows have been stored.
+    """
+
+    if conn.in_transaction:
+        conn.commit()
+
+
 def sync_wildberries() -> dict:
     from marketplaces import _account, sync_production_links, upsert_marketplace_supply
 
@@ -938,6 +959,11 @@ def sync_wildberries() -> dict:
     links: dict = {}
 
     def safe(name, callback, default):
+        # Never perform external I/O while holding SQLite's write lock.  Some
+        # WB endpoints legitimately wait for rate limits, so even a small
+        # pending transaction can otherwise make the whole web app appear
+        # offline until SQLite's busy timeout expires.
+        _commit_before_provider_call(conn)
         retry_remaining = _persisted_retry_remaining(conn, account_id, name)
         if retry_remaining > 0:
             message = f"Раздел WB «{name}» отложен ещё на {retry_remaining:.0f} с из-за лимита API."
