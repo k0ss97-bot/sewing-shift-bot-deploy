@@ -21,33 +21,42 @@ class AnalyticsUITests(unittest.TestCase):
         self.assertIn('Нет данных для сравнения', MINIAPP_HTML)
 
     def test_region_page_contains_interactive_ozon_map(self):
-        self.assertIn('Карта регионов:', MINIAPP_HTML)
-        self.assertIn('Карта продаж по регионам', MINIAPP_HTML)
-        self.assertIn('Размер круга — ${mapMetric', MINIAPP_HTML)
+        self.assertIn('Кластеры назначения', MINIAPP_HTML)
+        self.assertIn('География заказов ${mapProviderLabel}', MINIAPP_HTML)
+        self.assertIn('Размер круга — ${escapeHtml(mapMetricLabel)}', MINIAPP_HTML)
         self.assertIn('class="ac-region-bubble"', MINIAPP_HTML)
         self.assertIn('id="analyticsMapProduct"', MINIAPP_HTML)
         self.assertIn('data-ac-map-metric="units"', MINIAPP_HTML)
         self.assertIn('data-ac-map-metric="amount"', MINIAPP_HTML)
         self.assertIn('data-ac-map-zoom="in"', MINIAPP_HTML)
-        self.assertNotIn('class="ac-region-leader"', MINIAPP_HTML)
-        self.assertNotIn('class="ac-region-grid"', MINIAPP_HTML)
-        self.assertNotIn('class="ac-region-land-detail"', MINIAPP_HTML)
+        self.assertIn('data-ac-map-zoom="reset"', MINIAPP_HTML)
+        self.assertIn('const layoutMapPoints = (entries) =>', MINIAPP_HTML)
+        self.assertIn('class="ac-region-leader"', MINIAPP_HTML)
+        self.assertIn('class="ac-map-grid"', MINIAPP_HTML)
+        self.assertIn('class="ac-map-districts"', MINIAPP_HTML)
         self.assertIn('data-ac-region-key=', MINIAPP_HTML)
         self.assertIn('class="ac-region-hover-card"', MINIAPP_HTML)
-        self.assertIn('Распределение товаров', MINIAPP_HTML)
-        self.assertIn('Все регионы = 100%', MINIAPP_HTML)
+        self.assertIn('Структура регионов', MINIAPP_HTML)
+        self.assertIn('Доля по показателю', MINIAPP_HTML)
         self.assertIn('setAnalyticsRegionHighlight', MINIAPP_HTML)
+        self.assertIn('analyticsMapRegion', MINIAPP_HTML)
         self.assertIn('class="ac-region-share-stack"', MINIAPP_HTML)
         self.assertIn('id="analyticsRegionDetail"', MINIAPP_HTML)
         self.assertIn('id="analyticsRegionDetailAverage"', MINIAPP_HTML)
-        self.assertIn('Цвет круга совпадает с регионом в рейтинге.', MINIAPP_HTML)
+        self.assertIn('Источник: financial_data.cluster_to', MINIAPP_HTML)
+        self.assertIn('Карта показывает кластер назначения заказа Ozon, а не адрес покупателя.', MINIAPP_HTML)
+        self.assertIn('Круги автоматически разнесены', MINIAPP_HTML)
+        self.assertIn('"беларусь"', MINIAPP_HTML)
+        self.assertIn('"кыргызстан"', MINIAPP_HTML)
+        self.assertIn('"узбекистан"', MINIAPP_HTML)
+        self.assertNotIn('350 + (index % 8) * 82', MINIAPP_HTML)
 
     def test_all_analytics_sections_have_business_content(self):
         for label in (
             "Продажи по складам", "Продажи по товарам",
             "Каталог и связь с производством", "Остатки по SKU",
             "Спрос маркетплейсов → производство", "Поставки Ozon / Wildberries",
-            "Финансы Ozon / Wildberries", "Продажи по регионам", "Наборы данных",
+            "Финансы Ozon / Wildberries", "География заказов", "Наборы данных",
         ):
             self.assertIn(label, MINIAPP_HTML)
 

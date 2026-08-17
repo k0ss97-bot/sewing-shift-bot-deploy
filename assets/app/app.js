@@ -294,6 +294,7 @@
       "analyticsMapProduct",
       "analyticsMapMetric",
       "analyticsMapZoom",
+      "analyticsMapRegion",
       "displayDensity",
       "helpCategory",
       "helpQuery",
@@ -340,6 +341,7 @@
       analyticsMapProduct: "all",
       analyticsMapMetric: "units",
       analyticsMapZoom: 1,
+      analyticsMapRegion: "",
       displayDensity: "auto",
       helpCategory: "all",
       helpQuery: "",
@@ -7261,14 +7263,16 @@ ${location.code}`)) return;
     }
 
     function setAnalyticsRegionHighlight(regionKey, active, reveal = false) {
-      if (!regionKey) return;
+      const lockedKey = String(state.analyticsMapRegion || "");
+      const visibleKey = active ? String(regionKey || "") : lockedKey;
       document.querySelectorAll("[data-ac-region-key]").forEach((node) => {
-        const matches = node.dataset.acRegionKey === regionKey;
-        node.classList.toggle("is-active", Boolean(active && matches));
+        const matches = Boolean(visibleKey && node.dataset.acRegionKey === visibleKey);
+        node.classList.toggle("is-active", matches);
+        if (node.getAttribute("role") === "button") node.setAttribute("aria-pressed", matches ? "true" : "false");
       });
       const panel = document.querySelector("[data-ac-region-share-panel]");
       if (!panel) return;
-      const selected = active ? [...panel.querySelectorAll(".ac-region-share-row")].find((node) => node.dataset.acRegionKey === regionKey) : null;
+      const selected = visibleKey ? [...panel.querySelectorAll(".ac-region-share-row")].find((node) => node.dataset.acRegionKey === visibleKey) : null;
       const source = selected || panel;
       const detail = {
         name: source.dataset.acRegionName || "Все регионы",
@@ -9359,43 +9363,63 @@ ${location.code}`)) return;
       }
 
       function renderMapPage() {
-        const mapProviderLabel = marketplace === "ozon" ? "Ozon" : marketplace === "wildberries" ? "Wildberries" : "маркетплейсов";
         const mapMetric = state.analyticsMapMetric === "amount" ? "amount" : "units";
-        const mapZoom = [1, 1.25, 1.5].includes(Number(state.analyticsMapZoom)) ? Number(state.analyticsMapZoom) : 1;
-        const totalRegionUnits = geographyRows.reduce((sum, row) => sum + Number(row.units || 0), 0);
-        const totalRegionAmount = geographyRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-        const totalRegionOrders = geographyRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
-        const mapTotal = mapMetric === "amount" ? totalRegionAmount : totalRegionUnits;
+        const mapMetricLabel = mapMetric === "amount" ? "продажи в рублях" : "продажи в штуках";
+        const mapZoomLevels = [1, 1.25, 1.5, 1.75];
+        const mapZoom = mapZoomLevels.includes(Number(state.analyticsMapZoom)) ? Number(state.analyticsMapZoom) : 1;
         const regionKey = (row) => String(row.region || "Регион не указан").trim().toLocaleLowerCase("ru-RU");
         const regionTotals = new Map();
         geographyRows.forEach((row) => {
           const key = regionKey(row);
-          const current = regionTotals.get(key) || {region: row.region || "Регион не указан", units: 0, amount: 0, orders: 0};
+          const current = regionTotals.get(key) || {region: row.region || "Регион не указан", units: 0, amount: 0, orders: 0, marketplaces: new Set()};
           current.units += Number(row.units || 0);
           current.amount += Number(row.amount || 0);
           current.orders += Number(row.orders || 0);
+          current.marketplaces.add(String(row.marketplace || "ozon").toLowerCase());
           regionTotals.set(key, current);
         });
         const regionalSummaryRows = [...regionTotals.values()];
-        const rows = geographyRows.map((row) => `<tr data-ac-region-key="${escapeHtml(regionKey(row))}"><td>${escapeHtml(row.marketplace === "wildberries" ? "Wildberries" : "Ozon")}</td><td>${escapeHtml(row.region || "Регион не указан")}</td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${mapTotal > 0 ? `${(Number(row[mapMetric] || 0) * 100 / mapTotal).toLocaleString("ru-RU", {maximumFractionDigits: 1})}%` : "—"}</td></tr>`);
-        const shares = [...regionalSummaryRows].sort((left, right) => Number(right.units || 0) - Number(left.units || 0));
+        const totalRegionUnits = regionalSummaryRows.reduce((sum, row) => sum + Number(row.units || 0), 0);
+        const totalRegionAmount = regionalSummaryRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+        const totalRegionOrders = regionalSummaryRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
+        const totalAverage = totalRegionOrders > 0 ? totalRegionAmount / totalRegionOrders : 0;
+        const mapTotal = mapMetric === "amount" ? totalRegionAmount : totalRegionUnits;
+        const shares = [...regionalSummaryRows].sort((left, right) => Number(right[mapMetric] || 0) - Number(left[mapMetric] || 0) || String(left.region).localeCompare(String(right.region), "ru"));
         const regionVisuals = new Map(shares.map((row, index) => [regionKey(row), {tone: safeRegionTone(index), rank: index + 1}]));
+        const selectedRegionKey = shares.some((row) => regionKey(row) === state.analyticsMapRegion) ? state.analyticsMapRegion : "";
+        if (state.analyticsMapRegion && !selectedRegionKey) state.analyticsMapRegion = "";
+        const tableRows = shares.map((row, index) => {
+          const share = mapTotal > 0 ? Number(row[mapMetric] || 0) * 100 / mapTotal : 0;
+          const average = Number(row.orders || 0) > 0 ? Number(row.amount || 0) / Number(row.orders || 0) : 0;
+          const key = regionKey(row);
+          const tone = regionVisuals.get(key)?.tone || "region-tone-0";
+          return `<tr class="${selectedRegionKey === key ? "is-active" : ""}" data-ac-region-key="${escapeHtml(key)}"><td><span class="ac-region-rank-pill ${tone}">${index + 1}</span></td><td><b>${escapeHtml(row.region || "Регион не указан")}</b><small>Кластер назначения Ozon</small></td><td>${fmt(row.orders)}</td><td>${fmt(row.units)}</td><td>${money(row.amount)}</td><td>${money(average)}</td><td><b>${share.toLocaleString("ru-RU", {maximumFractionDigits: 1})}%</b><div class="ac-table-share"><i class="${safePercentClass(share)} ${tone}"></i></div></td></tr>`;
+        });
         const shareRows = shares.map((row, index) => {
           const units = Number(row.units || 0);
-          const share = totalRegionUnits > 0 ? units * 100 / totalRegionUnits : 0;
+          const metricValue = Number(row[mapMetric] || 0);
+          const share = mapTotal > 0 ? metricValue * 100 / mapTotal : 0;
           const orders = Number(row.orders || 0);
           const amount = Number(row.amount || 0);
           const average = orders > 0 ? amount / orders : 0;
           const tone = regionVisuals.get(regionKey(row)).tone;
           const shareLabel = `${share.toLocaleString("ru-RU", {maximumFractionDigits:1})}%`;
-          return `<div class="ac-region-share-row ${tone}" tabindex="0" role="button" aria-label="${escapeHtml(`${row.region || "Регион не указан"}: ${fmt(units)} шт., ${shareLabel}`)}" data-ac-region-key="${escapeHtml(regionKey(row))}" data-ac-region-name="${escapeHtml(row.region || "Регион не указан")}" data-ac-region-rank="${index + 1} место из ${shares.length}" data-ac-region-share="${shareLabel}" data-ac-region-units="${fmt(units)} шт." data-ac-region-orders="${fmt(orders)}" data-ac-region-amount="${money(amount)}" data-ac-region-average="${money(average)}" data-ac-region-tone="${tone}"><b>${index + 1}. ${escapeHtml(row.region || "Регион не указан")}</b><strong>${shareLabel}</strong><span>${fmt(units)} шт. · ${fmt(orders)} заказов</span><div class="ac-region-share-track"><i class="${safePercentClass(share)}"></i></div></div>`;
+          const metricValueLabel = mapMetric === "amount" ? money(metricValue) : `${fmt(metricValue)} шт.`;
+          return `<div class="ac-region-share-row ${tone} ${selectedRegionKey === regionKey(row) ? "is-active" : ""}" tabindex="0" role="button" aria-pressed="${selectedRegionKey === regionKey(row) ? "true" : "false"}" aria-label="${escapeHtml(`${row.region || "Регион не указан"}: ${metricValueLabel}, ${shareLabel}`)}" data-ac-region-key="${escapeHtml(regionKey(row))}" data-ac-region-name="${escapeHtml(row.region || "Регион не указан")}" data-ac-region-rank="${index + 1} место из ${shares.length}" data-ac-region-share="${shareLabel}" data-ac-region-units="${fmt(units)} шт." data-ac-region-orders="${fmt(orders)}" data-ac-region-amount="${money(amount)}" data-ac-region-average="${money(average)}" data-ac-region-tone="${tone}"><b>${index + 1}. ${escapeHtml(row.region || "Регион не указан")}</b><strong>${shareLabel}</strong><span>${escapeHtml(metricValueLabel)} · ${fmt(orders)} заказов</span><div class="ac-region-share-track"><i class="${safePercentClass(share)}"></i></div></div>`;
         }).join("");
         const shareStack = shares.map((row, index) => {
-          const share = totalRegionUnits > 0 ? Number(row.units || 0) * 100 / totalRegionUnits : 0;
+          const share = mapTotal > 0 ? Number(row[mapMetric] || 0) * 100 / mapTotal : 0;
           return `<i class="${safePercentClass(share)} ${safeRegionTone(index)}" title="${escapeHtml(`${row.region || "Регион не указан"}: ${share.toLocaleString("ru-RU", {maximumFractionDigits:1})}%`)}"></i>`;
         }).join("");
-        const totalAverage = totalRegionOrders > 0 ? totalRegionAmount / totalRegionOrders : 0;
-        const shareChart = regionalSummaryRows.length ? `<div class="ac-region-share-panel" data-ac-region-share-panel data-ac-region-name="Все регионы" data-ac-region-rank="100% периода" data-ac-region-share="100%" data-ac-region-units="${fmt(totalRegionUnits)} шт." data-ac-region-orders="${fmt(totalRegionOrders)}" data-ac-region-amount="${money(totalRegionAmount)}" data-ac-region-average="${money(totalAverage)}" data-ac-region-tone="region-tone-0"><div class="ac-region-detail region-tone-0" id="analyticsRegionDetail"><div class="ac-region-detail-head"><div><span>Выбранный регион</span><b id="analyticsRegionDetailName">Все регионы</b></div><strong id="analyticsRegionDetailRank">100% периода</strong></div><div class="ac-region-detail-grid"><div><span>Доля товаров</span><b id="analyticsRegionDetailShare">100%</b></div><div><span>Продано</span><b id="analyticsRegionDetailUnits">${fmt(totalRegionUnits)} шт.</b></div><div><span>Заказы</span><b id="analyticsRegionDetailOrders">${fmt(totalRegionOrders)}</b></div><div><span>Сумма</span><b id="analyticsRegionDetailAmount">${money(totalRegionAmount)}</b></div><div><span>Средний чек</span><b id="analyticsRegionDetailAverage">${money(totalAverage)}</b></div><div><span>Период</span><b>${escapeHtml(period)}</b></div></div></div><div class="ac-region-share-total"><strong>100%</strong><span>${fmt(totalRegionUnits)} товаров<br>${shares.length} регионов</span></div><div class="ac-region-share-stack" aria-label="100-процентное распределение товаров по регионам">${shareStack}</div><div class="ac-region-share-chart">${shareRows}</div></div>` : empty("Нет региональных данных", "Для выбранного периода распределение товаров пока недоступно.");
+        const selectedSummary = shares.find((row) => regionKey(row) === selectedRegionKey);
+        const initialDetail = selectedSummary ? {
+          name: selectedSummary.region, rank: `${regionVisuals.get(selectedRegionKey).rank} место из ${shares.length}`,
+          share: `${(mapTotal > 0 ? Number(selectedSummary[mapMetric] || 0) * 100 / mapTotal : 0).toLocaleString("ru-RU", {maximumFractionDigits:1})}%`,
+          units: `${fmt(selectedSummary.units)} шт.`, orders: fmt(selectedSummary.orders), amount: money(selectedSummary.amount),
+          average: money(Number(selectedSummary.orders || 0) > 0 ? Number(selectedSummary.amount || 0) / Number(selectedSummary.orders) : 0),
+          tone: regionVisuals.get(selectedRegionKey).tone,
+        } : {name:"Все регионы", rank:"100% периода", share:"100%", units:`${fmt(totalRegionUnits)} шт.`, orders:fmt(totalRegionOrders), amount:money(totalRegionAmount), average:money(totalAverage), tone:"region-tone-0"};
+        const shareChart = regionalSummaryRows.length ? `<div class="ac-region-share-panel" data-ac-region-share-panel data-ac-region-name="Все регионы" data-ac-region-rank="100% периода" data-ac-region-share="100%" data-ac-region-units="${fmt(totalRegionUnits)} шт." data-ac-region-orders="${fmt(totalRegionOrders)}" data-ac-region-amount="${money(totalRegionAmount)}" data-ac-region-average="${money(totalAverage)}" data-ac-region-tone="region-tone-0"><div class="ac-region-detail ${initialDetail.tone}" id="analyticsRegionDetail"><div class="ac-region-detail-head"><div><span>Выбранный кластер</span><b id="analyticsRegionDetailName">${escapeHtml(initialDetail.name)}</b></div><strong id="analyticsRegionDetailRank">${escapeHtml(initialDetail.rank)}</strong></div><div class="ac-region-detail-grid"><div><span>Доля по показателю</span><b id="analyticsRegionDetailShare">${escapeHtml(initialDetail.share)}</b></div><div><span>Продано</span><b id="analyticsRegionDetailUnits">${escapeHtml(initialDetail.units)}</b></div><div><span>Заказы</span><b id="analyticsRegionDetailOrders">${escapeHtml(initialDetail.orders)}</b></div><div><span>Сумма</span><b id="analyticsRegionDetailAmount">${escapeHtml(initialDetail.amount)}</b></div><div><span>Средний чек</span><b id="analyticsRegionDetailAverage">${escapeHtml(initialDetail.average)}</b></div><div><span>Период</span><b>${escapeHtml(period)}</b></div></div></div><div class="ac-region-share-total"><strong>100%</strong><span>${escapeHtml(mapMetricLabel)}<br>${shares.length} кластеров</span></div><div class="ac-region-share-stack" aria-label="Распределение продаж по кластерам назначения">${shareStack}</div><div class="ac-region-share-chart">${shareRows}</div></div>` : empty("Нет региональных данных", "Для выбранного периода распределение товаров пока недоступно.");
         const productMap = new Map();
         (Array.isArray(breakdowns.sales_by_product) ? breakdowns.sales_by_product : []).filter((row) => row.marketplace === "ozon").forEach((row) => {
           const key = String(row.offer_id || row.sku || "").trim();
@@ -9405,39 +9429,71 @@ ${location.code}`)) return;
         const selectedProduct = state.analyticsMapProduct || "all";
         const selectedProductLabel = selectedProduct === "all" ? "Вся номенклатура" : productMap.get(selectedProduct) || selectedProduct;
         const periodOptionsMap = [["7d","7 дней"],["30d","30 дней"],["month","Месяц"],["previous-month","Прошлый месяц"]];
-        const mapToolbar = `<div class="ac-map-toolbar"><label><span>Срок данных</span><select id="analyticsHubPeriod">${periodOptionsMap.map(([id,label]) => `<option value="${id}" ${state.marketplacePeriod === id ? "selected" : ""}>${label}</option>`).join("")}</select></label><label><span>Номенклатура</span><select id="analyticsMapProduct" ${marketplace === "wildberries" ? "disabled" : ""}><option value="all">Вся номенклатура</option>${productOptions.map(([key,label]) => `<option value="${escapeHtml(key)}" ${selectedProduct === key ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><div><label><span>Показатель</span></label><div class="ac-map-segment" role="group" aria-label="Показатель карты"><button type="button" data-ac-map-metric="units" class="${mapMetric === "units" ? "active" : ""}">Штуки</button><button type="button" data-ac-map-metric="amount" class="${mapMetric === "amount" ? "active" : ""}">Рубли</button></div></div><div><label><span>Масштаб</span></label><div class="ac-map-zoom"><button type="button" data-ac-map-zoom="out" aria-label="Уменьшить">−</button><output>${Math.round(mapZoom * 100)}%</output><button type="button" data-ac-map-zoom="in" aria-label="Увеличить">+</button></div></div></div>`;
+        const mapToolbar = `<div class="ac-map-toolbar"><label><span>Срок данных</span><select id="analyticsHubPeriod">${periodOptionsMap.map(([id,label]) => `<option value="${id}" ${state.marketplacePeriod === id ? "selected" : ""}>${label}</option>`).join("")}</select></label><label><span>Номенклатура</span><select id="analyticsMapProduct" ${marketplace === "wildberries" ? "disabled" : ""}><option value="all">Вся номенклатура</option>${productOptions.map(([key,label]) => `<option value="${escapeHtml(key)}" ${selectedProduct === key ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><div><label><span>Показатель</span></label><div class="ac-map-segment" role="group" aria-label="Показатель карты"><button type="button" data-ac-map-metric="units" class="${mapMetric === "units" ? "active" : ""}">Штуки</button><button type="button" data-ac-map-metric="amount" class="${mapMetric === "amount" ? "active" : ""}">Рубли</button></div></div><div><label><span>Масштаб карты</span></label><div class="ac-map-zoom"><button type="button" data-ac-map-zoom="out" aria-label="Уменьшить карту">−</button><output>${Math.round(mapZoom * 100)}%</output><button type="button" data-ac-map-zoom="in" aria-label="Увеличить карту">+</button><button type="button" data-ac-map-zoom="reset" aria-label="Сбросить масштаб">100%</button></div></div></div>`;
         const coordinates = {
-          "калининград":[236,337],"санкт-петербург":[342,225],"москва":[396,329],"тверь":[382,293],"ярославль":[425,278],
-          "воронеж":[403,382],"казань":[508,326],"уфа":[568,342],"самара":[535,377],"саратов":[494,406],
-          "волгоград":[467,445],"ростов":[400,462],"краснодар":[363,497],"невинномысск":[404,516],"махачкала":[475,535],
-          "екатеринбург":[632,328],"пермь":[590,276],"тюмень":[684,341],"омск":[743,373],"новосибирск":[807,385],
-          "красноярск":[884,345],"иркутск":[947,402],"дальний восток":[1025,398],"хабаровск":[1012,358],"владивосток":[1033,487],
-          "архангельск":[494,198],"мурманск":[411,151],"сочи":[356,519],"оренбург":[566,410],"астана":[700,425],"алматы":[755,490]
+          "калининград":[238,342],"санкт-петербург":[346,242],"москва":[397,337],"тверь":[379,297],"ярославль":[424,292],
+          "воронеж":[402,390],"казань":[510,340],"уфа":[571,355],"самара":[535,390],"саратов":[492,419],
+          "ростов":[394,470],"краснодар":[355,506],"невинномысск":[405,520],"махачкала":[474,535],
+          "екатеринбург":[637,340],"пермь":[588,292],"тюмень":[687,355],"омск":[744,390],"новосибирск":[815,400],
+          "красноярск":[888,357],"иркутск":[954,410],"дальний восток":[1062,405],"хабаровск":[1040,362],"владивосток":[1060,500],
+          "оренбург":[570,425],"беларусь":[270,405],"астана":[685,470],"алматы":[742,525],"армения":[330,570],
+          "кыргызстан":[720,568],"узбекистан":[650,575],"регион не указан":[190,580]
         };
         const coordinateFor = (name, index) => {
           const normalized = String(name || "").toLowerCase();
           const match = Object.entries(coordinates).find(([key]) => normalized.includes(key));
-          return match ? match[1] : [350 + (index % 8) * 82, 275 + Math.floor(index / 8) * 58];
+          return match ? match[1] : [190 + (index % 3) * 48, 535 + Math.floor(index / 3) * 35];
         };
         const ranked = [...regionalSummaryRows].sort((left, right) => Number(right[mapMetric] || 0) - Number(left[mapMetric] || 0));
         const maximumValue = Math.max(1, ...ranked.map((row) => Number(row[mapMetric] || 0)));
-        const positioned = ranked.map((row, index) => {
-          const [x,y] = coordinateFor(row.region, index);
-          return {row,index,x,y};
-        });
-        const points = positioned.map(({row,x,y}) => {
-          const radius = 6 + 20 * Math.sqrt(Math.max(0, Number(row[mapMetric] || 0)) / maximumValue);
+        const layoutMapPoints = (entries) => {
+          const result = entries.map((row, index) => {
+            const [targetX,targetY] = coordinateFor(row.region, index);
+            const radius = 7 + 22 * Math.sqrt(Math.max(0, Number(row[mapMetric] || 0)) / maximumValue);
+            return {row,index,targetX,targetY,x:targetX,y:targetY,radius};
+          });
+          for (let pass = 0; pass < 72; pass += 1) {
+            for (let leftIndex = 0; leftIndex < result.length; leftIndex += 1) {
+              for (let rightIndex = leftIndex + 1; rightIndex < result.length; rightIndex += 1) {
+                const left = result[leftIndex], right = result[rightIndex];
+                let dx = right.x - left.x, dy = right.y - left.y;
+                let distance = Math.hypot(dx, dy);
+                const minimum = left.radius + right.radius + 9;
+                if (distance >= minimum) continue;
+                if (distance < .01) {
+                  const angle = ((leftIndex + 1) * 137.5 + rightIndex * 23) * Math.PI / 180;
+                  dx = Math.cos(angle); dy = Math.sin(angle); distance = 1;
+                }
+                const push = (minimum - distance) / 2;
+                const nx = dx / distance, ny = dy / distance;
+                left.x -= nx * push; left.y -= ny * push;
+                right.x += nx * push; right.y += ny * push;
+              }
+            }
+            result.forEach((point) => {
+              point.x += (point.targetX - point.x) * .035;
+              point.y += (point.targetY - point.y) * .035;
+              point.x = Math.max(164 + point.radius, Math.min(1116 - point.radius, point.x));
+              point.y = Math.max(145 + point.radius, Math.min(606 - point.radius, point.y));
+            });
+          }
+          return result;
+        };
+        const positioned = layoutMapPoints(ranked);
+        const points = positioned.map(({row,index,targetX,targetY,x,y,radius}) => {
           const title = `${row.region || "Регион не указан"}: ${fmt(row.units)} шт., ${money(row.amount)}`;
           const metricText = mapMetric === "amount" ? `${money(row.amount)} · ${fmt(row.units)} шт.` : `${fmt(row.units)} шт. · ${money(row.amount)}`;
           const tone = regionVisuals.get(regionKey(row))?.tone || "region-tone-0";
-          const cardWidth = 180;
-          const cardX = x > 850 ? x - radius - cardWidth - 10 : x + radius + 10;
-          const cardY = Math.max(34, y - 29);
-          return `<g class="ac-region-point ${tone}" tabindex="0" role="img" aria-label="${escapeHtml(title)}" data-ac-region-key="${escapeHtml(regionKey(row))}"><circle class="ac-region-bubble" cx="${x}" cy="${y}" r="${radius.toFixed(1)}"><title>${escapeHtml(title)}</title></circle><g class="ac-region-hover-card"><rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="48"></rect><text class="ac-region-hover-name" x="${cardX+11}" y="${cardY+19}">${escapeHtml(row.region || "Регион не указан")}</text><text class="ac-region-hover-value" x="${cardX+11}" y="${cardY+35}">${escapeHtml(metricText)}</text></g></g>`;
+          const cardWidth = 216;
+          const cardX = x > 850 ? x - radius - cardWidth - 12 : x + radius + 12;
+          const cardY = Math.max(42, Math.min(590, y - 31));
+          const moved = Math.hypot(x-targetX, y-targetY) > 3;
+          return `<g class="ac-region-point ${tone} ${selectedRegionKey === regionKey(row) ? "is-active" : ""}" tabindex="0" role="button" aria-pressed="${selectedRegionKey === regionKey(row) ? "true" : "false"}" aria-label="${escapeHtml(title)}" data-ac-region-key="${escapeHtml(regionKey(row))}">${moved ? `<line class="ac-region-leader" x1="${targetX.toFixed(1)}" y1="${targetY.toFixed(1)}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"></line><circle class="ac-region-anchor" cx="${targetX}" cy="${targetY}" r="2.5"></circle>` : ""}<circle class="ac-region-bubble" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${radius.toFixed(1)}"><title>${escapeHtml(title)}</title></circle><text class="ac-region-rank" x="${x.toFixed(1)}" y="${(y+3.5).toFixed(1)}" text-anchor="middle">${index + 1}</text><g class="ac-region-hover-card"><rect x="${cardX.toFixed(1)}" y="${cardY.toFixed(1)}" width="${cardWidth}" height="56"></rect><text class="ac-region-hover-name" x="${(cardX+12).toFixed(1)}" y="${(cardY+21).toFixed(1)}">${escapeHtml(row.region || "Регион не указан")}</text><text class="ac-region-hover-value" x="${(cardX+12).toFixed(1)}" y="${(cardY+40).toFixed(1)}">${escapeHtml(metricText)}</text></g></g>`;
         }).join("");
-        const mapZoomClass = `zoom-${Math.max(80, Math.min(140, Math.round(mapZoom * 10) * 10))}`;
-        const map = geographyRows.length ? `<div class="ac-map"><div class="ac-map-stage"><svg class="ac-region-map ${mapZoomClass}" viewBox="0 0 1280 640" role="img" aria-label="Карта продаж по регионам ${escapeHtml(mapProviderLabel)}"><defs><linearGradient id="acRegionLand" x1="0" x2="1"><stop offset="0" stop-color="#edf4ff"/><stop offset=".55" stop-color="#eef1ff"/><stop offset="1" stop-color="#f5edff"/></linearGradient></defs><path class="ac-region-land" d="M220 338 L242 312 L258 278 L286 258 L300 225 L335 210 L358 176 L402 158 L442 177 L478 147 L520 172 L563 142 L606 166 L652 145 L700 170 L744 151 L786 178 L835 164 L876 190 L918 181 L952 210 L989 203 L1014 235 L1042 252 L1025 280 L1054 306 L1038 338 L1062 372 L1036 405 L1054 438 L1023 475 L984 461 L950 478 L914 455 L878 469 L840 446 L804 468 L765 445 L731 467 L690 448 L650 472 L613 452 L575 469 L540 441 L498 459 L462 438 L425 459 L393 437 L359 451 L330 422 L298 413 L280 383 L246 371 Z"/><path class="ac-region-water" d="M226 329 l20 -11 12 14 -13 17 -18 -6 z"/><path class="ac-region-water" d="M1048 404 c17 9 20 30 8 47 -8 -13 -15 -28 -8 -47 z"/><path class="ac-region-water" d="M1057 470 l8 9 -7 11 -8 -8 z M1065 497 l7 8 -6 10 -7 -8 z M1070 522 l6 7 -5 9 -6 -7 z"/>${points}</svg></div><div class="ac-map-legend"><i></i><span>Размер круга — ${mapMetric === "amount" ? "продажи в рублях" : "продажи в штуках"}</span></div><div class="ac-map-note">${escapeHtml(selectedProductLabel)} · ${escapeHtml(period)}. Цвет круга совпадает с регионом в рейтинге. Наведите на круг, чтобы увидеть подробную карточку региона.</div></div>` : empty("Карта пока пустая", marketplace === "wildberries" ? "Wildberries не передал региональный разрез в сохранённом snapshot." : selectedProduct === "all" ? "Региональные данные выбранной площадки ещё загружаются." : "По выбранной номенклатуре за этот срок продаж по регионам нет.");
-        return `${mapToolbar}<div class="ac-kpis">${kpi("Регионы", loadingWithoutPayload ? "…" : fmt(regionalSummaryRows.length), "Кластеры назначения")}${kpi("Заказы", loadingWithoutPayload ? "…" : fmt(totalRegionOrders), "С региональным разрезом")}${kpi("Продано", loadingWithoutPayload ? "…" : fmt(totalRegionUnits), "Штук")}${kpi("Сумма заказов", loadingWithoutPayload ? "…" : money(totalRegionAmount), "Рубли")}</div><div class="ac-grid">${panel(`Карта регионов: ${mapProviderLabel}`, `${regionalSummaryRows.length} регионов · ${selectedProductLabel}`, map, "span-12")}${panel("Продажи по регионам", `${geographyRows.length} строк`, table(["Площадка","Регион","Заказы","Штук","Сумма","Доля"], rows, marketplace === "wildberries" ? "Wildberries не передал региональный разрез в текущем snapshot." : "Региональный разрез пока не получен."), "span-8")}${panel("Распределение товаров", "Все регионы = 100%", shareChart, "span-4")}</div>`;
+        const visibleProviders = new Set(geographyRows.map((row) => String(row.marketplace || "ozon").toLowerCase()));
+        const mapProviderLabel = visibleProviders.has("wildberries") ? (visibleProviders.has("ozon") ? "Ozon и Wildberries" : "Wildberries") : "Ozon";
+        const map = geographyRows.length ? `<div class="ac-map"><div class="ac-map-source"><i></i><div><b>${escapeHtml(mapProviderLabel)} · кластеры назначения</b><span>Источник: financial_data.cluster_to</span></div></div><div class="ac-map-stage"><svg class="ac-region-map zoom-${Math.round(mapZoom*100)}" viewBox="0 0 1280 660" role="img" aria-label="Карта продаж по кластерам назначения ${escapeHtml(mapProviderLabel)}"><defs><linearGradient id="acRegionLand" x1="0" x2="1"><stop offset="0" stop-color="#e9f2ff"/><stop offset=".5" stop-color="#eef1ff"/><stop offset="1" stop-color="#f4efff"/></linearGradient><filter id="acMapShadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#49688f" flood-opacity=".16"/></filter></defs><g class="ac-map-grid">${[220,320,420,520,620,720,820,920,1020].map((x) => `<line x1="${x}" y1="118" x2="${x}" y2="590"></line>`).join("")}${[190,270,350,430,510].map((y) => `<line x1="150" y1="${y}" x2="1130" y2="${y}"></line>`).join("")}</g><path class="ac-region-land" filter="url(#acMapShadow)" d="M219 348 C238 326 249 299 276 282 C287 254 304 229 335 218 C349 190 376 166 414 170 C438 151 471 158 493 181 C522 158 557 151 584 177 C613 151 653 151 680 178 C713 157 748 166 774 191 C807 172 844 179 869 206 C904 191 941 204 961 235 C995 226 1025 245 1039 275 C1069 281 1089 309 1080 339 C1110 356 1124 388 1103 413 C1124 444 1111 481 1078 493 C1068 531 1028 544 996 521 C966 542 931 532 909 503 C877 522 839 516 818 485 C784 508 745 498 726 466 C688 486 651 472 635 440 C602 461 566 451 548 420 C514 443 478 436 460 404 C428 424 392 414 378 383 C343 401 309 389 299 357 C270 369 239 363 219 348 Z"></path><g class="ac-map-districts"><path class="district-1" d="M280 282 L420 170 L505 185 L468 405 L299 357 Z"></path><path class="district-2" d="M468 185 L590 171 L635 440 L468 405 Z"></path><path class="district-3" d="M590 171 L715 170 L727 467 L635 440 Z"></path><path class="district-4" d="M715 170 L855 185 L818 485 L727 467 Z"></path><path class="district-5" d="M855 185 L968 231 L909 503 L818 485 Z"></path><path class="district-6" d="M968 231 L1083 320 L1078 493 L909 503 Z"></path></g><g class="ac-map-borders"><path d="M333 223 C371 264 401 319 378 383"></path><path d="M494 181 C528 243 528 341 548 420"></path><path d="M680 178 C657 260 671 382 726 466"></path><path d="M869 206 C840 292 854 414 818 485"></path><path d="M961 235 C1002 321 971 420 996 521"></path></g><g class="ac-map-geo-labels"><text x="338" y="204">Северо-Запад</text><text x="421" y="448">Юг</text><text x="526" y="227">Поволжье</text><text x="625" y="224">Урал</text><text x="760" y="230">Сибирь</text><text x="950" y="268">Дальний Восток</text></g><g class="ac-map-neighbours"><rect x="155" y="447" width="171" height="157" rx="18"></rect><text x="174" y="475">Соседние страны</text></g>${points}</svg></div><div class="ac-map-legend"><span><i class="bubble"></i>Размер круга — ${escapeHtml(mapMetricLabel)}</span><span><i class="anchor"></i>Точка — географический центр кластера</span></div><div class="ac-map-note"><b>${escapeHtml(selectedProductLabel)}</b><span>${escapeHtml(period)} · Нажмите на круг или строку рейтинга для фиксации региона.</span><small>Карта показывает кластер назначения заказа Ozon, а не адрес покупателя. Круги автоматически разнесены, линии указывают исходную географическую точку.</small></div></div>` : empty("Карта пока пустая", marketplace === "wildberries" ? "Wildberries не передал региональный разрез в сохранённом snapshot. Переключитесь на Ozon или «Все»." : selectedProduct === "all" ? "Региональные данные Ozon за выбранный срок ещё не получены." : "По выбранной номенклатуре за этот срок продаж по кластерам назначения нет.");
+        return `${mapToolbar}<div class="ac-kpis ac-region-kpis">${kpi("Кластеры назначения", loadingWithoutPayload ? "…" : fmt(regionalSummaryRows.length), "Уникальные значения Ozon")}${kpi("Заказы", loadingWithoutPayload ? "…" : fmt(totalRegionOrders), "С региональным разрезом")}${kpi("Продано", loadingWithoutPayload ? "…" : fmt(totalRegionUnits), "Штук")}${kpi("Сумма заказов", loadingWithoutPayload ? "…" : money(totalRegionAmount), "По строкам заказов")}${kpi("Средний чек", loadingWithoutPayload ? "…" : money(totalAverage), "Сумма / заказы")}</div><div class="ac-grid">${panel(`География заказов ${mapProviderLabel}`, `${regionalSummaryRows.length} кластеров · ${selectedProductLabel}`, map, "span-12")}${panel("Рейтинг кластеров", `${shares.length} строк · ${mapMetricLabel}`, table(["№","Кластер назначения","Заказы","Штук","Сумма","Средний чек","Доля"], tableRows, marketplace === "wildberries" ? "Wildberries не передал региональный разрез в текущем snapshot." : "Региональный разрез Ozon пока не получен."), "span-8")}${panel("Структура регионов", `100% · ${mapMetricLabel}`, shareChart, "span-4")}</div>`;
       }
 
       function renderQualityPage() {
@@ -10677,7 +10733,17 @@ ${location.code}`)) return;
         const provider = analyticsCenterProvider.dataset.acProvider || "all";
         state.analyticsProvider = ["all", "ozon", "wildberries", "production"].includes(provider) ? provider : "all";
         state.analyticsHubTab = state.analyticsProvider === "production" ? "production" : "general";
+        state.analyticsMapRegion = "";
         render();
+        return;
+      }
+
+      const analyticsRegion = event.target.closest("[data-ac-region-key]");
+      if (analyticsRegion) {
+        const key = analyticsRegion.dataset.acRegionKey || "";
+        state.analyticsMapRegion = state.analyticsMapRegion === key ? "" : key;
+        persistUiState();
+        setAnalyticsRegionHighlight(key, false, analyticsRegion.classList.contains("ac-region-point"));
         return;
       }
 
@@ -10690,12 +10756,18 @@ ${location.code}`)) return;
 
       const analyticsMapZoom = event.target.closest("[data-ac-map-zoom]");
       if (analyticsMapZoom) {
-        const levels = [1, 1.25, 1.5];
-        const currentIndex = Math.max(0, levels.indexOf(Number(state.analyticsMapZoom) || 1));
-        const nextIndex = analyticsMapZoom.dataset.acMapZoom === "in"
-          ? Math.min(levels.length - 1, currentIndex + 1)
-          : Math.max(0, currentIndex - 1);
-        state.analyticsMapZoom = levels[nextIndex];
+        const levels = [1, 1.25, 1.5, 1.75];
+        const action = analyticsMapZoom.dataset.acMapZoom;
+        if (action === "reset") {
+          state.analyticsMapZoom = 1;
+        } else {
+          const currentIndex = Math.max(0, levels.indexOf(Number(state.analyticsMapZoom) || 1));
+          const nextIndex = action === "in"
+            ? Math.min(levels.length - 1, currentIndex + 1)
+            : Math.max(0, currentIndex - 1);
+          state.analyticsMapZoom = levels[nextIndex];
+        }
+        persistUiState();
         render();
         return;
       }
@@ -11080,6 +11152,12 @@ ${location.code}`)) return;
     });
 
     document.addEventListener("keydown", (event) => {
+      const analyticsRegion = event.target.closest('[role="button"][data-ac-region-key]');
+      if (analyticsRegion && ["Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        analyticsRegion.click();
+        return;
+      }
       const manualWmsLookup = event.target.closest("#wmsManualReceiptQuery, #wmsManualPutawayQuery");
       if (manualWmsLookup && event.key === "Enter") {
         event.preventDefault();
@@ -11285,6 +11363,7 @@ ${location.code}`)) return;
       }
       if (event.target.id === "analyticsHubPeriod") {
         state.marketplacePeriod = event.target.value || "7d";
+        state.analyticsMapRegion = "";
         persistUiState();
         state.analyticsOverview.loaded = false;
         state.analyticsOverview.payload = null;
@@ -11295,6 +11374,8 @@ ${location.code}`)) return;
       }
       if (event.target.id === "analyticsMapProduct") {
         state.analyticsMapProduct = event.target.value || "all";
+        state.analyticsMapRegion = "";
+        persistUiState();
         state.analyticsOverview.loaded = false;
         state.analyticsOverview.payload = null;
         state.analyticsOverview.error = "";
