@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 
 
@@ -19,6 +20,7 @@ FEATURE_FLAGS = {
     "warehouse_auto_receipt": ("WMS_AUTO_RECEIPT_ENABLED", True),
     "warehouse_ui_v2": ("WAREHOUSE_UI_V2", True),
 }
+COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _git(*arguments: str) -> str:
@@ -30,6 +32,23 @@ def _git(*arguments: str) -> str:
         text=True,
     )
     return process.stdout.strip()
+
+
+def _release_identity() -> dict[str, object]:
+    try:
+        return {
+            "commit": _git("rev-parse", "HEAD"),
+            "branch": _git("branch", "--show-current") or "detached",
+            "dirty": bool(_git("status", "--porcelain")),
+        }
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        commit_file = PROJECT_ROOT / "COMMIT"
+        if not commit_file.is_file():
+            raise RuntimeError("release identity is unavailable: no Git checkout or COMMIT file")
+        commit = commit_file.read_text(encoding="utf-8").strip()
+        if COMMIT_PATTERN.fullmatch(commit) is None:
+            raise RuntimeError("release COMMIT file must contain a full lowercase Git commit SHA")
+        return {"commit": commit, "branch": "release", "dirty": False}
 
 
 def _enabled(name: str, default: bool) -> bool:
@@ -113,11 +132,7 @@ def build_manifest(*, sbom_path: Path, test_report_path: Path | None = None) -> 
     return {
         "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "git": {
-            "commit": _git("rev-parse", "HEAD"),
-            "branch": _git("branch", "--show-current") or "detached",
-            "dirty": bool(_git("status", "--porcelain")),
-        },
+        "git": _release_identity(),
         "runtime": {"python": platform.python_version()},
         "provenance": _provenance(),
         "release_inputs_sha256": release_inputs_sha256,

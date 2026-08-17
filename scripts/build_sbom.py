@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENT_PATTERN = re.compile(
     r"^(?P<name>[A-Za-z0-9_.-]+)(?:\[(?P<extras>[A-Za-z0-9_,.-]+)\])?==(?P<version>[^\s;]+)$"
 )
+COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _git(*arguments: str) -> str:
@@ -32,9 +33,32 @@ def _git(*arguments: str) -> str:
     return process.stdout.strip()
 
 
+def _release_commit() -> str:
+    try:
+        commit = _git("rev-parse", "HEAD")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        commit_file = PROJECT_ROOT / "COMMIT"
+        if not commit_file.is_file():
+            raise RuntimeError("release identity is unavailable: no Git checkout or COMMIT file")
+        commit = commit_file.read_text(encoding="utf-8").strip()
+    if COMMIT_PATTERN.fullmatch(commit) is None:
+        raise RuntimeError("release identity must be a full lowercase Git commit SHA")
+    return commit
+
+
+def _release_epoch() -> int:
+    try:
+        return int(_git("show", "-s", "--format=%ct", "HEAD"))
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        commit_file = PROJECT_ROOT / "COMMIT"
+        if not commit_file.is_file():
+            raise RuntimeError("release timestamp is unavailable: no Git checkout or COMMIT file")
+        return int(commit_file.stat().st_mtime)
+
+
 def _timestamp() -> str:
     raw_epoch = os.environ.get("SOURCE_DATE_EPOCH")
-    epoch = int(raw_epoch) if raw_epoch else int(_git("show", "-s", "--format=%ct", "HEAD"))
+    epoch = int(raw_epoch) if raw_epoch else _release_epoch()
     return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -73,7 +97,7 @@ def _requirements(path: Path) -> list[dict[str, object]]:
 def build_sbom(requirements_path: Path | None = None) -> dict[str, object]:
     requirements = requirements_path or PROJECT_ROOT / "requirements.txt"
     requirements_digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
-    commit = _git("rev-parse", "HEAD")
+    commit = _release_commit()
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
