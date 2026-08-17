@@ -36,7 +36,12 @@ def applied_migrations(conn) -> set[str]:
         )
         conn.commit()
         cur.execute("SELECT filename FROM schema_migrations")
-        return {row[0] for row in cur.fetchall()}
+        rows = cur.fetchall()
+    # psycopg2 starts a transaction for the SELECT above. Startup may keep
+    # this pooled connection for the lifetime of the web process, so finish
+    # the read transaction explicitly even when no migration is pending.
+    conn.rollback()
+    return {row[0] for row in rows}
 
 
 def pending_migrations(conn) -> list[Path]:
@@ -89,6 +94,7 @@ def migration_status() -> list[str]:
             "SELECT filename FROM schema_migrations ORDER BY filename"
         )
         rows = [row[0] for row in cur.fetchall()]
+    conn.rollback()
     for name in rows:
         print(f"  applied: {name}")
     if not rows:

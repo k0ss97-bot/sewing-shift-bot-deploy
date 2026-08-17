@@ -876,6 +876,33 @@ class StockAdjustmentOperationTests(unittest.TestCase):
         self.conn.rollback.assert_called()
 
 
+class MigrationTransactionTests(unittest.TestCase):
+    def test_applied_migrations_finishes_read_transaction(self):
+        from wms.migrate import applied_migrations
+
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [("001_initial_wms.sql",)]
+
+        result = applied_migrations(connection)
+
+        self.assertEqual(result, {"001_initial_wms.sql"})
+        connection.commit.assert_called_once()
+        connection.rollback.assert_called_once()
+
+    def test_migration_status_finishes_read_transaction(self):
+        from wms.migrate import migration_status
+
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [("001_initial_wms.sql",)]
+        with patch("wms.migrate.get_pg_connection", return_value=connection):
+            result = migration_status()
+
+        self.assertEqual(result, ["001_initial_wms.sql"])
+        connection.rollback.assert_called_once()
+
+
 # ──────────────────────────────────────────────────────────────────────
 # DB-dependent tests (skipped if Postgres unreachable)
 # ──────────────────────────────────────────────────────────────────────
